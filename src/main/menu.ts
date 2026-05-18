@@ -3,6 +3,7 @@ import { getAppConfigDir, getLogPath } from "../config/paths";
 import { openClaudeLoginTerminal } from "../providers/claude";
 import { UsageProvider, UsageSnapshot } from "../providers/types";
 import { formatTimeRemaining } from "../usage/formatters";
+import { PaceStage, UsagePace } from "../usage/usagePace";
 import { isStartWithWindowsEnabled, setStartWithWindows } from "./autostart";
 
 export interface MenuActions {
@@ -62,11 +63,13 @@ function snapshotToMenuLines(displayName: string, snapshot: UsageSnapshot): stri
   }
 
   const lines = snapshot.windows.length > 0
-    ? snapshot.windows.map((window, index) => {
+    ? snapshot.windows.flatMap((window, index) => {
       const label = index === 0 ? displayName : window.name === "weekly" ? "Weekly" : window.label ?? titleCase(window.name);
       const usage = typeof window.usedPercent === "number" ? `${Math.round(window.usedPercent)}%` : window.label ?? "unknown";
       const reset = window.resetsAt ? ` (resets in ${formatTimeRemaining(window.resetsAt)})` : "";
-      return `${label}: ${usage}${reset}`;
+      const mainLine = `${label}: ${usage}${reset}`;
+      const paceLine = window.name === "weekly" && window.pace != null ? formatPaceLine(window.pace) : null;
+      return paceLine != null ? [mainLine, paceLine] : [mainLine];
     })
     : [`${displayName}: ${snapshot.status}`];
 
@@ -78,4 +81,27 @@ function snapshotToMenuLines(displayName: string, snapshot: UsageSnapshot): stri
 
 function titleCase(value: string): string {
   return value.slice(0, 1).toUpperCase() + value.slice(1);
+}
+
+function formatPaceLine(pace: UsagePace): string {
+  const STAGE_LABELS: Record<PaceStage, string> = {
+    onTrack: "On track",
+    slightlyAhead: "Slightly ahead",
+    ahead: "Ahead",
+    farAhead: "Far ahead",
+    slightlyBehind: "Slightly behind",
+    behind: "Behind",
+    farBehind: "Far behind",
+  };
+  const label = STAGE_LABELS[pace.stage];
+  const delta =
+    pace.stage !== "onTrack"
+      ? ` (${pace.deltaPercent >= 0 ? "+" : "−"}${Math.round(Math.abs(pace.deltaPercent))}%)`
+      : "";
+  const eta = pace.willLastToReset
+    ? " · Lasts to reset"
+    : pace.etaSeconds != null
+      ? ` · Runs out in ${formatTimeRemaining(new Date(Date.now() + pace.etaSeconds * 1000))}`
+      : "";
+  return `  Pace: ${label}${delta}${eta}`;
 }
