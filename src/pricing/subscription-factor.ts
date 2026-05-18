@@ -58,6 +58,14 @@ export class PricingEngine {
       factor,
       isEstimate: false,
       label: formatLabel(apiCostUSD, factor, false),
+      tokenUsage: {
+        inputTokens: tokens.inputTokens,
+        outputTokens: tokens.outputTokens,
+        cacheCreationTokens: tokens.cacheCreationTokens,
+        cacheReadTokens: tokens.cacheReadTokens,
+        totalTokens: tokens.inputTokens + tokens.outputTokens + tokens.cacheCreationTokens + tokens.cacheReadTokens,
+        models: tokens.modelNames,
+      },
     };
   }
 
@@ -77,12 +85,31 @@ export class PricingEngine {
     const apiCostUSD = await calculateCodexApiCost(events, this.fetcher, speedTier);
     const subscriptionCostUSD = this.settings.subscriptionCosts.codex;
     const factor = subscriptionCostUSD > 0 ? apiCostUSD / subscriptionCostUSD : 0;
+
+    let inputTokens = 0, cacheReadTokens = 0, outputTokens = 0, totalTokens = 0;
+    const modelSet = new Set<string>();
+    for (const e of events) {
+      inputTokens += e.inputTokens;
+      cacheReadTokens += e.cachedInputTokens;
+      outputTokens += e.outputTokens;
+      totalTokens += e.totalTokens;
+      if (e.model) modelSet.add(e.model);
+    }
+
     return {
       apiCostUSD,
       subscriptionCostUSD,
       factor,
       isEstimate: false,
       label: formatLabel(apiCostUSD, factor, false),
+      tokenUsage: {
+        inputTokens,
+        outputTokens,
+        cacheCreationTokens: 0,
+        cacheReadTokens,
+        totalTokens,
+        models: Array.from(modelSet),
+      },
     };
   }
 

@@ -1,11 +1,21 @@
 import type { UsagePace } from "../usage/usagePace";
 
+export interface TokenUsageDetail {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  models: string[];
+}
+
 export interface CostFactorResult {
   apiCostUSD: number;
   subscriptionCostUSD: number;
   factor: number | null;
   isEstimate: boolean;
   label: string;
+  tokenUsage?: TokenUsageDetail;
 }
 
 export type UsageStatus = "ok" | "not_authenticated" | "error" | "stale";

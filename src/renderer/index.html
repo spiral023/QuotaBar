@@ -512,6 +512,46 @@
     .save-btn:disabled { opacity: 0.55; cursor: default; }
     .save-note { font-size: 9.5px; color: var(--t400); text-align: center; margin-top: 6px; line-height: 1.4; }
 
+    /* ── Token detail ───────────────────────────────────────────── */
+    .token-section {
+      margin-top: 8px;
+      padding-top: 7px;
+      border-top: 1px solid var(--border);
+    }
+    .token-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px 8px;
+    }
+    .token-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    .token-cell-lbl {
+      font-size: 8px;
+      font-weight: 600;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--t400);
+    }
+    .token-cell-val {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10.5px;
+      font-variant-numeric: tabular-nums;
+      color: var(--t200);
+    }
+    .token-cell-val.is-cost { color: var(--t100); }
+    .token-models {
+      margin-top: 5px;
+      font-size: 9px;
+      color: var(--t400);
+      font-family: 'IBM Plex Mono', monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     /* ══ FOOTER ═════════════════════════════════════════════════ */
     .footer {
       height: 35px;
@@ -833,6 +873,36 @@
       })[stage] || stage;
     }
 
+    function fmtTokens(n) {
+      if (!n) return '0';
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+      if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K';
+      return String(n);
+    }
+
+    function tokenDetailHtml(cf) {
+      if (!cf?.tokenUsage) return '';
+      const t = cf.tokenUsage;
+      const cells = [
+        ['Input',    fmtTokens(t.inputTokens),        false],
+        ['Output',   fmtTokens(t.outputTokens),       false],
+        ['Cache +',  fmtTokens(t.cacheCreationTokens),false],
+        ['Cache ▷',  fmtTokens(t.cacheReadTokens),    false],
+        ['Total',    fmtTokens(t.totalTokens),         false],
+        ['Cost',     `$${(cf.apiCostUSD || 0).toFixed(2)}`, true],
+      ];
+      const cellsHtml = cells.map(([lbl, val, isCost]) =>
+        `<div class="token-cell">
+          <span class="token-cell-lbl">${lbl}</span>
+          <span class="token-cell-val${isCost ? ' is-cost' : ''}">${val}</span>
+        </div>`
+      ).join('');
+      const modelsHtml = t.models?.length > 0
+        ? `<div class="token-models">${esc(t.models.join(', '))}</div>`
+        : '';
+      return `<div class="token-section"><div class="token-grid">${cellsHtml}</div>${modelsHtml}</div>`;
+    }
+
     function costBadgeHtml(cf) {
       if (!cf) return '';
       if (cf.factor === null) {
@@ -1085,6 +1155,7 @@
             </div>
             ${bars}
             ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
+            ${tokenDetailHtml(snap.costFactor)}
           </div>
         </div>
       </div>`;
@@ -1108,6 +1179,7 @@
             </div>
             <div class="gemini-lbl">${esc(label)}</div>
             ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
+            ${tokenDetailHtml(snap.costFactor)}
           </div>
         </div>
       </div>`;

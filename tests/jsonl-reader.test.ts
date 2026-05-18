@@ -98,4 +98,41 @@ describe("readClaudeTokensForPeriod", () => {
     const result = await readClaudeTokensForPeriod(tmpDir, new Date("2026-05-01"));
     expect(result.modelNames.filter((m) => m === "claude-sonnet-4-5").length).toBe(1);
   });
+
+  it("deduplicates entries with the same message.id (streaming snapshots)", async () => {
+    const projectDir = path.join(tmpDir, "proj1");
+    await writeJsonl(projectDir, "session.jsonl", [
+      {
+        timestamp: "2026-05-10T10:00:00.000Z",
+        message: { id: "msg_abc123", model: "claude-sonnet-4-6", usage: { input_tokens: 5, output_tokens: 200, cache_read_input_tokens: 10000 } },
+      },
+      // Same API response stored again as a different streaming snapshot
+      {
+        timestamp: "2026-05-10T10:00:00.000Z",
+        message: { id: "msg_abc123", model: "claude-sonnet-4-6", usage: { input_tokens: 5, output_tokens: 200, cache_read_input_tokens: 10000 } },
+      },
+      // Different API call — should be counted
+      {
+        timestamp: "2026-05-10T10:01:00.000Z",
+        message: { id: "msg_def456", model: "claude-sonnet-4-6", usage: { input_tokens: 3, output_tokens: 50, cache_read_input_tokens: 8000 } },
+      },
+    ]);
+
+    const result = await readClaudeTokensForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(result.inputTokens).toBe(8);        // 5 + 3 (not 5+5+3)
+    expect(result.outputTokens).toBe(250);      // 200 + 50
+    expect(result.cacheReadTokens).toBe(18000); // 10000 + 8000
+  });
+
+  it("counts entries without message.id (no deduplication possible)", async () => {
+    const projectDir = path.join(tmpDir, "proj1");
+    await writeJsonl(projectDir, "session.jsonl", [
+      { timestamp: "2026-05-10T10:00:00.000Z", message: { model: "claude-sonnet-4-6", usage: { input_tokens: 10, output_tokens: 20 } } },
+      { timestamp: "2026-05-10T10:01:00.000Z", message: { model: "claude-sonnet-4-6", usage: { input_tokens: 15, output_tokens: 25 } } },
+    ]);
+
+    const result = await readClaudeTokensForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(result.inputTokens).toBe(25);
+    expect(result.outputTokens).toBe(45);
+  });
 });
