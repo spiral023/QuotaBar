@@ -1,5 +1,6 @@
 import { Tray } from "electron";
 import { renderTrayIcon } from "../icon/renderTrayIcon";
+import { buildIconState } from "../icon/iconState";
 import { UsageProvider, UsageSnapshot } from "../providers/types";
 import { RefreshLoop } from "../usage/refreshLoop";
 import { buildContextMenu } from "./menu";
@@ -24,7 +25,7 @@ export class TrayController {
   }
 
   async update(): Promise<void> {
-    this.tray.setImage(renderTrayIcon({ hasError: false })); // TODO: replaced by buildIconState in Task 4
+    this.tray.setImage(renderTrayIcon(buildIconState(this.snapshots)));
     this.tray.setToolTip(buildTooltip(this.snapshots));
     await this.rebuildMenu();
   }
