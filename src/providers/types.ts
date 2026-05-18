@@ -1,3 +1,5 @@
+import type { UsagePace } from "../usage/usagePace";
+
 export type UsageStatus = "ok" | "not_authenticated" | "error" | "stale";
 
 export interface UsageProvider {
@@ -15,6 +17,7 @@ export interface UsageWindow {
   resetsAt?: string;
   windowSeconds?: number;
   label?: string;
+  pace?: UsagePace | null;
 }
 
 export interface UsageSnapshot {
