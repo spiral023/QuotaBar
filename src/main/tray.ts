@@ -4,10 +4,12 @@ import { buildIconState } from "../icon/iconState";
 import { UsageProvider, UsageSnapshot } from "../providers/types";
 import { RefreshLoop } from "../usage/refreshLoop";
 import { buildContextMenu } from "./menu";
+import type { DetailsWindowController } from "./detailsWindow";
 
 export class TrayController {
   private tray: Tray;
   private snapshots: UsageSnapshot[] = [];
+  private detailsWindow: DetailsWindowController | null = null;
 
   constructor(
     private readonly providers: UsageProvider[],
@@ -24,6 +26,14 @@ export class TrayController {
     });
   }
 
+  getTray(): Tray {
+    return this.tray;
+  }
+
+  setDetailsWindow(dw: DetailsWindowController): void {
+    this.detailsWindow = dw;
+  }
+
   async update(): Promise<void> {
     this.tray.setImage(renderTrayIcon(buildIconState(this.snapshots)));
     this.tray.setToolTip(buildTooltip(this.snapshots));
@@ -36,7 +46,10 @@ export class TrayController {
         this.snapshots = await this.refreshLoop.refreshNow();
         await this.update();
       },
-      rebuildMenu: () => void this.rebuildMenu()
+      rebuildMenu: () => void this.rebuildMenu(),
+      openDashboard: () => {
+        this.detailsWindow?.open(() => void this.refreshLoop.refreshNow());
+      },
     }));
   }
 

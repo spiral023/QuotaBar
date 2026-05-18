@@ -9,9 +9,9 @@ const colorMap: Record<UsageColor | "gray", string> = {
 };
 
 export function getUsageColor(percent: number): UsageColor {
-  if (percent < 50) return "green";
-  if (percent < 75) return "yellow";
-  if (percent < 90) return "orange";
+  if (percent < 70) return "green";
+  if (percent < 85) return "yellow";
+  if (percent < 95) return "orange";
   return "red";
 }
 

@@ -9,6 +9,7 @@ import { isStartWithWindowsEnabled, setStartWithWindows } from "./autostart";
 export interface MenuActions {
   refreshNow(): Promise<void>;
   rebuildMenu(): void;
+  openDashboard(): void;
 }
 
 export async function buildContextMenu(
@@ -39,6 +40,7 @@ export async function buildContextMenu(
   }
 
   items.push(
+    { label: "Open Dashboard", click: () => actions.openDashboard() },
     { label: "Refresh Now", click: () => void actions.refreshNow() },
     {
       label: `Start with Windows: ${isStartWithWindowsEnabled() ? "On" : "Off"}`,

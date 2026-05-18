@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QuotaBar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base:       #07090d;
+      --bg-surface:    #0b0e14;
+      --bg-card:       #0f1319;
+      --bg-card-hover: #121720;
+      --bg-input:      rgba(255,255,255,0.04);
+
+      --border:        rgba(255,255,255,0.07);
+      --border-mid:    rgba(255,255,255,0.13);
+      --border-focus:  rgba(82,208,23,0.4);
+
+      --t100: #e6eff6;
+      --t200: #b4c8d8;
+      --t300: #8298aa;
+      --t400: #506070;
+
+      --green:  #52d017;
+      --yellow: #ffd700;
+      --orange: #ff8c00;
+      --red:    #ff4444;
+      --gray:   #475460;
+
+      --claude-col:  #f59830;
+      --codex-col:   #52d017;
+      --gemini-col:  #8b70f0;
+
+      --r-card:  11px;
+      --r-icon:  9px;
+      --r-btn:   7px;
+      --r-badge: 5px;
+      --r-pill:  6px;
+      --r-inner: 7px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { height: 100%; overflow: hidden; }
+
+    body {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-base);
+      color: var(--t100);
+      font-family: 'DM Sans', system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ══ TITLE BAR ══════════════════════════════════════════ */
+    .titlebar {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      padding: 0 8px 0 13px;
+      flex-shrink: 0;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      -webkit-app-region: drag;
+    }
+    .titlebar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+    }
+    .logo-name {
+      font-family: 'Syne', system-ui, sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--t100);
+    }
+    .titlebar-btns {
+      display: flex;
+      align-items: center;
+      gap: 1px;
+      -webkit-app-region: no-drag;
+    }
+
+    .tbtn {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      border-radius: var(--r-btn);
+      color: var(--t400);
+      cursor: pointer;
+      outline: none;
+      transition-property: background, color, scale;
+      transition-duration: 120ms;
+      transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+    }
+    .tbtn:hover { background: rgba(255,255,255,0.055); color: var(--t200); }
+    .tbtn:active { scale: 0.96; }
+    .tbtn.active { color: var(--green); }
+    .tbtn.spinning .icon-r { animation: spin 600ms linear infinite; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ══ VIEWS ══════════════════════════════════════════════ */
+    .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .view[hidden] { display: none; }
+
+    /* ══ DASHBOARD ══════════════════════════════════════════ */
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px;
+      scroll-behavior: smooth;
+    }
+    .content::-webkit-scrollbar { width: 3px; }
+    .content::-webkit-scrollbar-track { background: transparent; }
+    .content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+    /* ── Base card ──────────────────────────────────────────── */
+    .card {
+      position: relative;
+      border-radius: var(--r-card);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 11px 12px;
+      margin-bottom: 5px;
+      overflow: hidden;
+      animation: card-in 220ms cubic-bezier(0.2, 0, 0, 1) both;
+      transition-property: background, border-color;
+      transition-duration: 150ms;
+    }
+    .card:last-child { margin-bottom: 0; }
+    .card:hover { background: var(--bg-card-hover); }
+
+    .card.has-accent::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 10px; bottom: 10px;
+      width: 2px;
+      border-radius: 0 1px 1px 0;
+      background: var(--card-accent, var(--gray));
+      box-shadow: 1px 0 10px var(--card-accent, transparent);
+      opacity: 0.8;
+    }
+
+    @keyframes card-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Overview card ──────────────────────────────────────── */
+    .overview-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 11px;
+    }
+    .overview-label {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--t400);
+    }
+    .overview-right {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+    .overview-total-lbl {
+      font-size: 10px;
+      color: var(--t300);
+    }
+    .overview-pct {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 20px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+
+    /* Mini-bar rows */
+    .mini-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .mini-row {
+      display: grid;
+      grid-template-columns: 62px 1fr 28px;
+      align-items: center;
+      gap: 9px;
+    }
+    .mini-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--t200);
+      white-space: nowrap;
+    }
+    .mini-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .mini-track {
+      height: 4px;
+      background: rgba(255,255,255,0.07);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .mini-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition-property: width;
+      transition-duration: 500ms;
+      transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .mini-pct {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      color: var(--t300);
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    /* ── Provider icon ──────────────────────────────────────── */
+    .prov-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: var(--r-icon);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      outline: 1px solid rgba(255,255,255,0.07);
+    }
+    .prov-icon.icon-claude {
+      background: linear-gradient(145deg, #e07818 0%, #b85a10 100%);
+      box-shadow: 0 2px 12px rgba(224,120,24,0.25);
+      outline-color: rgba(224,120,24,0.2);
+    }
+    .prov-icon.icon-codex {
+      background: linear-gradient(145deg, #0c1e13 0%, #172d1e 100%);
+      border: 1px solid rgba(82,208,23,0.22);
+      box-shadow: 0 2px 12px rgba(82,208,23,0.12);
+      outline: none;
+    }
+    .prov-icon.icon-gemini {
+      background: linear-gradient(145deg, #18134a 0%, #231a6a 100%);
+      box-shadow: 0 2px 12px rgba(139,112,240,0.22);
+      outline-color: rgba(139,112,240,0.2);
+    }
+
+    /* ── Card body: icon + info ─────────────────────────────── */
+    .card-body {
+      display: flex;
+      gap: 11px;
+      align-items: flex-start;
+    }
+    .card-info { flex: 1; min-width: 0; }
+
+    .card-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 9px;
+    }
+    .prov-name {
+      font-family: 'Syne', system-ui, sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+      color: var(--t100);
+    }
+    .card-right {
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+    }
+    .prov-pct {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 20px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      transition-property: color;
+      transition-duration: 400ms;
+    }
+    .card-chevron {
+      font-size: 15px;
+      color: var(--t400);
+      line-height: 1;
+      font-weight: 400;
+    }
+
+    /* ── Bars ───────────────────────────────────────────────── */
+    .bar-group { margin-bottom: 7px; }
+    .bar-group:last-of-type { margin-bottom: 0; }
+
+    .bar-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .bar-tag {
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--t300);
+    }
+    .bar-cd {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9.5px;
+      font-variant-numeric: tabular-nums;
+      color: var(--t400);
+    }
+    .bar-track {
+      height: 5px;
+      background: rgba(255,255,255,0.07);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .bar-track.thick { height: 6px; }
+    .bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition-property: width, background;
+      transition-duration: 480ms;
+      transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .c-green  { background: var(--green);  box-shadow: 0 0 7px rgba(82,208,23,0.45); }
+    .c-yellow { background: var(--yellow); box-shadow: 0 0 7px rgba(255,215,0,0.4); }
+    .c-orange { background: var(--orange); box-shadow: 0 0 7px rgba(255,140,0,0.45); }
+    .c-red    { background: var(--red);    box-shadow: 0 0 7px rgba(255,68,68,0.5); }
+    .c-gray   { background: var(--gray); }
+
+    /* ── Badges ─────────────────────────────────────────────── */
+    .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 9px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 9.5px;
+      font-weight: 500;
+      padding: 2px 7px;
+      border-radius: var(--r-badge);
+      line-height: 1.45;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .b-ok    { background: rgba(82,208,23,0.1);    color: #72e832; border: 1px solid rgba(82,208,23,0.22); }
+    .b-warn  { background: rgba(255,215,0,0.1);    color: #ffd700; border: 1px solid rgba(255,215,0,0.24); }
+    .b-bad   { background: rgba(255,68,68,0.1);    color: #ff7272; border: 1px solid rgba(255,68,68,0.22); }
+    .b-cost  { background: rgba(255,255,255,0.05); color: var(--t200); border: 1px solid rgba(255,255,255,0.1); }
+    .b-stale { background: rgba(130,152,170,0.1);  color: #96aebb; border: 1px solid rgba(130,152,170,0.2); }
+    .b-error { background: rgba(255,68,68,0.08);   color: #ff7272; border: 1px solid rgba(255,68,68,0.18); }
+    .b-auth  { background: rgba(255,140,0,0.08);   color: #ffa030; border: 1px solid rgba(255,140,0,0.18); }
+
+    /* ── Gemini / status cards ─────────────────────────────── */
+    .card-status-row { display: flex; align-items: center; justify-content: space-between; }
+    .gemini-lbl { font-size: 12px; color: var(--t200); line-height: 1.4; text-wrap: pretty; }
+
+    /* ── TIP card ───────────────────────────────────────────── */
+    .tip-body-wrap {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .tip-icon-box {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      background: rgba(82,208,23,0.1);
+      border: 1px solid rgba(82,208,23,0.18);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .tip-content { flex: 1; min-width: 0; }
+    .tip-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--green);
+      margin-bottom: 3px;
+    }
+    .tip-text {
+      font-size: 11px;
+      color: var(--t200);
+      line-height: 1.5;
+      text-wrap: pretty;
+    }
+
+    /* ── Empty / loading ────────────────────────────────────── */
+    .empty {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 10px; padding: 40px 16px;
+      color: var(--t400); font-size: 12px;
+    }
+    .spinner {
+      width: 18px; height: 18px;
+      border: 1.5px solid rgba(255,255,255,0.06);
+      border-top-color: var(--t300);
+      border-radius: 50%;
+      animation: spin 700ms linear infinite;
+    }
+
+    /* ══ SETTINGS ══════════════════════════════════════════════ */
+    .settings-wrap {
+      flex: 1; overflow-y: auto; padding: 8px 10px 10px;
+    }
+    .settings-wrap::-webkit-scrollbar { width: 3px; }
+    .settings-wrap::-webkit-scrollbar-track { background: transparent; }
+    .settings-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+    .s-section { margin-bottom: 5px; }
+    .s-section-title {
+      font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--t400);
+      padding: 5px 3px 5px; border-bottom: 1px solid var(--border); margin-bottom: 8px;
+    }
+
+    .pill-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+    .pill {
+      padding: 7px 0; background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--r-pill); color: var(--t200);
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+      cursor: pointer; text-align: center; outline: none;
+      transition-property: background, border-color, color, scale; transition-duration: 120ms;
+    }
+    .pill:hover { background: var(--bg-card-hover); color: var(--t100); }
+    .pill:active { scale: 0.96; }
+    .pill.active { background: rgba(82,208,23,0.1); border-color: rgba(82,208,23,0.32); color: var(--green); }
+
+    .cost-rows { border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; }
+    .cost-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 11px; border-bottom: 1px solid var(--border);
+    }
+    .cost-row:last-child { border-bottom: none; }
+    .cost-label { font-size: 12px; color: var(--t200); font-weight: 500; }
+    .cost-wrap {
+      display: flex; align-items: center; gap: 2px; background: var(--bg-input);
+      border: 1px solid var(--border); border-radius: var(--r-inner); padding: 4px 8px;
+      transition-property: border-color, box-shadow; transition-duration: 120ms;
+    }
+    .cost-wrap:focus-within { border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(82,208,23,0.1); }
+    .cost-sym { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--t400); }
+    .cost-field {
+      width: 50px; background: none; border: none; outline: none;
+      font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+      font-variant-numeric: tabular-nums; color: var(--t100); text-align: right;
+    }
+    .cost-field::placeholder { color: var(--t400); }
+    .cost-field::-webkit-inner-spin-button,
+    .cost-field::-webkit-outer-spin-button { -webkit-appearance: none; }
+
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 11px; border: 1px solid var(--border); border-radius: var(--r-card);
+    }
+    .toggle-label { font-size: 12px; color: var(--t200); font-weight: 500; }
+
+    .tgl { position: relative; width: 34px; height: 19px; flex-shrink: 0; }
+    .tgl input { opacity: 0; width: 0; height: 0; }
+    .tgl-track {
+      position: absolute; inset: 0; border-radius: 10px;
+      background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+      cursor: pointer; transition-property: background, border-color; transition-duration: 150ms;
+    }
+    .tgl-track::after {
+      content: ''; position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+      width: 13px; height: 13px; border-radius: 50%; background: var(--t400);
+      transition-property: transform, background; transition-duration: 150ms;
+    }
+    .tgl input:checked + .tgl-track { background: rgba(82,208,23,0.18); border-color: rgba(82,208,23,0.36); }
+    .tgl input:checked + .tgl-track::after { transform: translateX(15px) translateY(-50%); background: var(--green); }
+
+    .save-btn {
+      width: 100%; padding: 9px 0; margin-top: 10px;
+      background: rgba(82,208,23,0.09); border: 1px solid rgba(82,208,23,0.22);
+      border-radius: var(--r-card); color: var(--green);
+      font-family: 'DM Sans', system-ui, sans-serif; font-size: 12px; font-weight: 600;
+      cursor: pointer; outline: none;
+      transition-property: background, scale; transition-duration: 120ms;
+    }
+    .save-btn:hover { background: rgba(82,208,23,0.15); }
+    .save-btn:active { scale: 0.98; }
+    .save-btn:disabled { opacity: 0.55; cursor: default; }
+    .save-note { font-size: 9.5px; color: var(--t400); text-align: center; margin-top: 6px; line-height: 1.4; }
+
+    /* ══ FOOTER ═════════════════════════════════════════════════ */
+    .footer {
+      height: 35px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      padding: 0 6px 0 13px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-surface);
+    }
+    .footer-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+    }
+    .footer-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px rgba(82,208,23,0.7);
+      flex-shrink: 0;
+    }
+    .footer-ts {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9.5px;
+      font-variant-numeric: tabular-nums;
+      color: var(--t300);
+    }
+    .footer-btns { display: flex; align-items: center; gap: 1px; }
+  </style>
+</head>
+<body>
+
+  <!-- ── Title Bar ──────────────────────────────────────── -->
+  <div class="titlebar">
+    <div class="titlebar-logo">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M9 1L17 9L9 17L1 9Z" fill="#52d017" opacity="0.85"/>
+        <path d="M9 4.5L13.5 9L9 13.5L4.5 9Z" fill="#07090d"/>
+        <path d="M9 7L11 9L9 11L7 9Z" fill="#52d017" opacity="0.65"/>
+      </svg>
+      <span class="logo-name">QuotaBar</span>
+    </div>
+    <div class="titlebar-btns">
+      <button class="tbtn" id="btn-refresh" title="Refresh now">
+        <svg class="icon-r" width="14" height="14" viewBox="0 0 14 14" fill="none"
+             stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1.5 7a5.5 5.5 0 0 1 9.9-3.3"/>
+          <path d="M12.5 7a5.5 5.5 0 0 1-9.9 3.3"/>
+          <path d="M11 2.2 13 4l-2 1.8"/>
+          <path d="M3 11.8 1 10l2-1.8"/>
+        </svg>
+      </button>
+      <button class="tbtn" id="btn-pin" title="Keep window open">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"
+             stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="6.5" y1="8.5" x2="6.5" y2="12"/>
+          <path d="M4 8.5h5"/>
+          <path d="M4.5 8.5V5.5L3 3.5V2h7v1.5L8.5 5.5v3"/>
+        </svg>
+      </button>
+      <button class="tbtn" id="btn-close" title="Close">
+        <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
+             stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <line x1="1" y1="1" x2="10" y2="10"/>
+          <line x1="10" y1="1" x2="1"  y2="10"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Dashboard View ─────────────────────────────────── -->
+  <div class="view" id="view-dashboard">
+    <div class="content" id="content">
+      <div class="empty">
+        <div class="spinner"></div>
+        <span>Loading…</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Settings View ──────────────────────────────────── -->
+  <div class="view" id="view-settings" hidden>
+    <div class="settings-wrap">
+      <div class="s-section">
+        <div class="s-section-title">Refresh Interval</div>
+        <div class="pill-grid" id="pill-grid">
+          <button class="pill" data-val="30">30s</button>
+          <button class="pill active" data-val="60">1m</button>
+          <button class="pill" data-val="120">2m</button>
+          <button class="pill" data-val="300">5m</button>
+        </div>
+      </div>
+
+      <div class="s-section">
+        <div class="s-section-title">Subscription Cost / month</div>
+        <div class="cost-rows">
+          <div class="cost-row">
+            <span class="cost-label">Claude</span>
+            <div class="cost-wrap">
+              <span class="cost-sym">$</span>
+              <input class="cost-field" id="cost-claude" type="number" min="0" step="1" placeholder="20">
+            </div>
+          </div>
+          <div class="cost-row">
+            <span class="cost-label">Codex</span>
+            <div class="cost-wrap">
+              <span class="cost-sym">$</span>
+              <input class="cost-field" id="cost-codex" type="number" min="0" step="1" placeholder="10">
+            </div>
+          </div>
+          <div class="cost-row">
+            <span class="cost-label">Gemini</span>
+            <div class="cost-wrap">
+              <span class="cost-sym">$</span>
+              <input class="cost-field" id="cost-gemini" type="number" min="0" step="1" placeholder="19">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="s-section">
+        <div class="s-section-title">Options</div>
+        <div class="toggle-row">
+          <span class="toggle-label">Pricing Offline Mode</span>
+          <label class="tgl">
+            <input type="checkbox" id="tog-offline">
+            <span class="tgl-track"></span>
+          </label>
+        </div>
+      </div>
+
+      <button class="save-btn" id="btn-save">Save Settings</button>
+      <div class="save-note">Refresh interval changes take effect on restart</div>
+    </div>
+  </div>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <div class="footer">
+    <div class="footer-status">
+      <div class="footer-dot" id="footer-dot"></div>
+      <span class="footer-ts" id="footer-ts">—</span>
+    </div>
+    <div class="footer-btns">
+      <button class="tbtn" id="btn-settings" title="Settings">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"
+             stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="6.5" cy="6.5" r="2"/>
+          <path d="M6.5 1v1.2M6.5 10.8V12M1 6.5h1.2M10.8 6.5H12M2.7 2.7l.85.85M9.45 9.45l.85.85M9.45 3.55l-.85.85M3.55 9.45l-.85.85"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    /* global require */
+    const { ipcRenderer } = require('electron');
+
+    let lastRefreshedAt = null;
+    let countdowns      = [];
+    let cdTimer         = null;
+    let footerTimer     = null;
+    let activePillVal   = 60;
+    let inSettings      = false;
+
+    // ── IPC ──────────────────────────────────────────────────────
+
+    ipcRenderer.on('quota:update', (_, data) => {
+      lastRefreshedAt = data.lastRefreshedAt ? new Date(data.lastRefreshedAt) : new Date();
+      render(data.snapshots);
+      startFooterTimer();
+    });
+
+    ipcRenderer.send('quota:ready');
+
+    ipcRenderer.on('window:pin-state', (_, pinned) => {
+      document.getElementById('btn-pin').classList.toggle('active', pinned);
+      document.getElementById('btn-pin').title = pinned ? 'Unpin window' : 'Keep window open';
+    });
+
+    // ── Global buttons ───────────────────────────────────────────
+
+    document.getElementById('btn-pin').addEventListener('click', () => {
+      ipcRenderer.send('window:toggle-pin');
+    });
+
+    document.getElementById('btn-refresh').addEventListener('click', () => {
+      const btn = document.getElementById('btn-refresh');
+      btn.classList.add('spinning');
+      ipcRenderer.send('quota:refresh');
+      setTimeout(() => btn.classList.remove('spinning'), 1600);
+    });
+
+    document.getElementById('btn-close').addEventListener('click', () => {
+      ipcRenderer.send('window:close');
+    });
+
+    document.getElementById('btn-settings').addEventListener('click', () => {
+      inSettings = !inSettings;
+      document.getElementById('view-dashboard').hidden = inSettings;
+      document.getElementById('view-settings').hidden  = !inSettings;
+      document.getElementById('btn-settings').classList.toggle('active', inSettings);
+      if (inSettings) loadSettingsUI();
+    });
+
+    // ── Interval pills ───────────────────────────────────────────
+
+    document.querySelectorAll('.pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activePillVal = parseInt(btn.dataset.val, 10);
+        document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+
+    // ── Settings: load ───────────────────────────────────────────
+
+    async function loadSettingsUI() {
+      try {
+        const s = await ipcRenderer.invoke('settings:get');
+        document.getElementById('cost-claude').value  = s.subscriptionCosts?.claude ?? 20;
+        document.getElementById('cost-codex').value   = s.subscriptionCosts?.codex  ?? 10;
+        document.getElementById('cost-gemini').value  = s.subscriptionCosts?.gemini ?? 19;
+        document.getElementById('tog-offline').checked = !!s.pricingOfflineMode;
+
+        activePillVal = s.pollIntervalSeconds ?? 60;
+        const stdVals = [30, 60, 120, 300];
+        const closest = stdVals.reduce((a, b) =>
+          Math.abs(b - activePillVal) < Math.abs(a - activePillVal) ? b : a
+        );
+        document.querySelectorAll('.pill').forEach(p => {
+          p.classList.toggle('active', parseInt(p.dataset.val, 10) === closest);
+        });
+      } catch (e) {
+        console.error('Failed to load settings', e);
+      }
+    }
+
+    // ── Settings: save ───────────────────────────────────────────
+
+    document.getElementById('btn-save').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-save');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+
+      const payload = {
+        pollIntervalSeconds: activePillVal,
+        subscriptionCosts: {
+          claude: parseFloat(document.getElementById('cost-claude').value) || 20,
+          codex:  parseFloat(document.getElementById('cost-codex').value)  || 10,
+          gemini: parseFloat(document.getElementById('cost-gemini').value) || 19,
+        },
+        pricingOfflineMode: document.getElementById('tog-offline').checked,
+      };
+
+      try {
+        await ipcRenderer.invoke('settings:save', payload);
+        btn.textContent = '✓ Saved';
+        setTimeout(() => { btn.textContent = 'Save Settings'; btn.disabled = false; }, 1800);
+      } catch {
+        btn.textContent = 'Error — try again';
+        btn.disabled = false;
+      }
+    });
+
+    // ── Helpers ──────────────────────────────────────────────────
+
+    function usageColor(pct) {
+      if (pct < 70) return 'green';
+      if (pct < 85) return 'yellow';
+      if (pct < 95) return 'orange';
+      return 'red';
+    }
+
+    function accentVar(pct) {
+      if (typeof pct !== 'number') return 'var(--gray)';
+      if (pct < 70) return 'var(--green)';
+      if (pct < 85) return 'var(--yellow)';
+      if (pct < 95) return 'var(--orange)';
+      return 'var(--red)';
+    }
+
+    function providerColor(name) {
+      const map = { claude: '#f59830', codex: '#52d017', gemini: '#8b70f0' };
+      return map[name] || '#475460';
+    }
+
+    function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+    function esc(s) {
+      return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatCountdown(isoStr) {
+      const ms = new Date(isoStr).getTime() - Date.now();
+      if (!isFinite(ms) || ms <= 0) return 'now';
+      const s  = Math.floor(ms / 1000);
+      const hh = Math.floor(s / 3600);
+      const mm = Math.floor((s % 3600) / 60);
+      const ss = s % 60;
+      const p  = n => String(n).padStart(2, '0');
+      return hh > 0 ? `${p(hh)}:${p(mm)}:${p(ss)}` : `${p(mm)}:${p(ss)}`;
+    }
+
+    function paceClass(stage) {
+      if (stage === 'onTrack') return 'b-ok';
+      if (['slightlyAhead','ahead','farAhead'].includes(stage)) return 'b-warn';
+      return 'b-bad';
+    }
+
+    function paceLabel(stage) {
+      return ({
+        onTrack:'On Track', slightlyAhead:'Slightly Ahead', ahead:'Ahead', farAhead:'Far Ahead',
+        slightlyBehind:'Slightly Behind', behind:'Behind', farBehind:'Far Behind',
+      })[stage] || stage;
+    }
+
+    function costBadgeHtml(cf) {
+      if (!cf) return '';
+      if (cf.factor === null) {
+        return `<span class="badge b-cost">${esc(cf.label || 'Keine Logs')}</span>`;
+      }
+      const pre = cf.isEstimate ? '~' : '';
+      const factorPart = `${pre}${cf.factor.toFixed(2)}× sub`;
+      if (cf.apiCostUSD >= 0.005) {
+        const costPart = `$${cf.apiCostUSD.toFixed(2)}`;
+        return `<span class="badge b-cost">${costPart} (${factorPart})</span>`;
+      }
+      return `<span class="badge b-cost">${factorPart}</span>`;
+    }
+
+    // ── Provider icon SVGs ────────────────────────────────────────
+
+    function providerIconHtml(provider) {
+      const cls = `prov-icon icon-${provider}`;
+      if (provider === 'claude') {
+        return `<div class="${cls}">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M5 16L10 4L15 16" stroke="rgba(255,255,255,0.88)" stroke-width="1.8"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M7 12h6" stroke="rgba(255,255,255,0.88)" stroke-width="1.8" stroke-linecap="round"/>
+            <line x1="15.5" y1="4" x2="15.5" y2="16" stroke="rgba(255,255,255,0.45)"
+                  stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </div>`;
+      }
+      if (provider === 'codex') {
+        return `<div class="${cls}">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <polyline points="4,7 8.5,10 4,13" stroke="#52d017" stroke-width="1.8"
+                      stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="10.5" y1="13" x2="16.5" y2="13" stroke="#52d017"
+                  stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </div>`;
+      }
+      if (provider === 'gemini') {
+        return `<div class="${cls}">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M10 2L11.6 8.4L18 10L11.6 11.6L10 18L8.4 11.6L2 10L8.4 8.4Z"
+                  stroke="rgba(200,185,255,0.9)" stroke-width="1.4" stroke-linejoin="round"
+                  fill="rgba(200,185,255,0.07)"/>
+          </svg>
+        </div>`;
+      }
+      return `<div class="${cls}"></div>`;
+    }
+
+    // ── Overview card ─────────────────────────────────────────────
+
+    function renderOverview(snapshots) {
+      const provData = snapshots.map(s => {
+        const win = s.windows.find(w => w.name === 'fiveHour');
+        const hasData = s.status === 'ok' || s.status === 'stale';
+        return {
+          name: s.provider,
+          pct:  hasData && typeof win?.usedPercent === 'number' ? win.usedPercent : null,
+        };
+      });
+
+      if (provData.length === 0) return '';
+
+      const validPcts = provData.filter(p => p.pct !== null).map(p => p.pct);
+      const maxPct    = validPcts.length > 0 ? Math.max(...validPcts) : 0;
+      const pctStr    = validPcts.length > 0 ? `${Math.round(maxPct)}%` : '—';
+      const pctColor  = validPcts.length > 0 ? `color:var(--${usageColor(maxPct)})` : '';
+
+      const rows = provData.map(p => {
+        const col      = providerColor(p.name);
+        const fill     = p.pct !== null ? clamp(p.pct, 0, 100) : 0;
+        const pctText  = p.pct !== null ? `${Math.round(p.pct)}%` : '—';
+        const nameStr  = p.name.charAt(0).toUpperCase() + p.name.slice(1);
+        const glow     = fill > 0 ? `box-shadow:0 0 6px ${col}66` : '';
+        const pctStyle = p.pct !== null ? `color:var(--${usageColor(p.pct)})` : 'color:var(--t400)';
+        return `<div class="mini-row">
+          <div class="mini-label">
+            <span class="mini-dot" style="background:${col}"></span>
+            ${nameStr}
+          </div>
+          <div class="mini-track">
+            <div class="mini-fill" style="width:${fill}%;background:${col};${glow}"></div>
+          </div>
+          <span class="mini-pct" style="${pctStyle}">${pctText}</span>
+        </div>`;
+      }).join('');
+
+      return `<div class="card" style="animation-delay:0ms">
+        <div class="overview-head">
+          <span class="overview-label">Overview</span>
+          <div class="overview-right">
+            <span class="overview-total-lbl">Peak Usage</span>
+            <span class="overview-pct" style="${pctColor}">${pctStr}</span>
+          </div>
+        </div>
+        <div class="mini-bars">${rows}</div>
+      </div>`;
+    }
+
+    // ── TIP card ──────────────────────────────────────────────────
+
+    function renderTip(snapshots) {
+      let worstStage = null;
+      let worstProvider = null;
+      const stageOrder = ['farBehind','behind','slightlyBehind','onTrack','slightlyAhead','ahead','farAhead'];
+
+      for (const snap of snapshots) {
+        const weekly = snap.windows.find(w => w.name === 'weekly');
+        if (weekly?.pace?.stage) {
+          const idx = stageOrder.indexOf(weekly.pace.stage);
+          const worstIdx = worstStage ? stageOrder.indexOf(worstStage) : 999;
+          if (idx < worstIdx) { worstStage = weekly.pace.stage; worstProvider = snap.provider; }
+        }
+      }
+
+      if (!worstStage || worstStage === 'onTrack') return '';
+
+      const name = worstProvider ? worstProvider.charAt(0).toUpperCase() + worstProvider.slice(1) : '';
+      const tips = {
+        farBehind:     `You're far behind on ${name}. Your usage is well above the expected pace.`,
+        behind:        `${name} usage is running behind the expected weekly pace.`,
+        slightlyBehind:`${name} is slightly behind pace — you may hit limits before reset.`,
+        slightlyAhead: `${name} usage is slightly ahead of pace this week.`,
+        ahead:         `${name} is well ahead of pace — quota should last until reset.`,
+        farAhead:      `${name} quota is very underutilized this week.`,
+      };
+      const text = tips[worstStage] || '';
+      if (!text) return '';
+
+      const delay = (snapshots.length + 1) * 65;
+
+      return `<div class="card" style="animation-delay:${delay}ms">
+        <div class="tip-body-wrap">
+          <div class="tip-icon-box">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+              <circle cx="7.5" cy="6" r="3.5" stroke="#52d017" stroke-width="1.4"/>
+              <path d="M5.5 10.5h4M6 12h3" stroke="#52d017" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="tip-content">
+            <div class="tip-label">Tip</div>
+            <div class="tip-text">${esc(text)}</div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    // ── Render ────────────────────────────────────────────────────
+
+    function render(snapshots) {
+      const el = document.getElementById('content');
+      stopCd();
+      countdowns = [];
+
+      if (!snapshots || snapshots.length === 0) {
+        el.innerHTML = '<div class="empty"><span>No provider data</span></div>';
+        return;
+      }
+
+      const overview = renderOverview(snapshots);
+      const cards    = snapshots.map((snap, i) => renderCard(snap, i + 1)).join('');
+      const tip      = renderTip(snapshots);
+
+      el.innerHTML = overview + cards + tip;
+      startCd();
+    }
+
+    function renderCard(snap, idx) {
+      const name  = snap.provider.charAt(0).toUpperCase() + snap.provider.slice(1);
+      const delay = `animation-delay:${idx * 65}ms`;
+
+      if (snap.status === 'not_authenticated') {
+        return `<div class="card card-status-row" style="--card-accent:var(--gray);${delay}">
+          <span class="prov-name">${esc(name)}</span>
+          <span class="badge b-auth">Not Authenticated</span>
+        </div>`;
+      }
+      if (snap.status === 'error' && snap.windows.length === 0) {
+        const msg = (snap.errorMessage || 'Error').slice(0, 42);
+        return `<div class="card card-status-row has-accent" style="--card-accent:var(--red);${delay}">
+          <span class="prov-name">${esc(name)}</span>
+          <span class="badge b-error">${esc(msg)}</span>
+        </div>`;
+      }
+      if (snap.provider === 'gemini') return renderGemini(snap, name, delay);
+      return renderStandard(snap, name, delay);
+    }
+
+    function renderStandard(snap, name, delay) {
+      const fiveH  = snap.windows.find(w => w.name === 'fiveHour');
+      const weekly = snap.windows.find(w => w.name === 'weekly');
+
+      const rawPct = fiveH?.usedPercent;
+      const hasPct = typeof rawPct === 'number';
+      const pct    = hasPct ? rawPct : 0;
+      const color  = hasPct ? usageColor(pct) : 'gray';
+      const pctTxt = hasPct ? `${Math.round(pct)}%` : '—';
+
+      const fhId = `cd-${snap.provider}-5h`;
+      const wkId = `cd-${snap.provider}-wk`;
+      if (fiveH?.resetsAt)  countdowns.push({ id: fhId, resetsAt: fiveH.resetsAt });
+      if (weekly?.resetsAt) countdowns.push({ id: wkId, resetsAt: weekly.resetsAt });
+
+      const fhCd  = fiveH?.resetsAt  ? formatCountdown(fiveH.resetsAt)  : '';
+      const wkCd  = weekly?.resetsAt ? formatCountdown(weekly.resetsAt) : '';
+
+      let bars = `<div class="bar-group">
+        <div class="bar-meta">
+          <span class="bar-tag">5-Hour</span>
+          <span class="bar-cd" id="${fhId}">${fhCd}</span>
+        </div>
+        <div class="bar-track thick">
+          <div class="bar-fill c-${color}" style="width:${clamp(pct,0,100)}%"></div>
+        </div>
+      </div>`;
+
+      if (weekly && typeof weekly.usedPercent === 'number') {
+        const wc = usageColor(weekly.usedPercent);
+        bars += `<div class="bar-group">
+          <div class="bar-meta">
+            <span class="bar-tag">Weekly</span>
+            <span class="bar-cd" id="${wkId}">${wkCd}</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill c-${wc}" style="width:${clamp(weekly.usedPercent,0,100)}%"></div>
+          </div>
+        </div>`;
+      }
+
+      const bdgs = [];
+      if (snap.status === 'stale') bdgs.push(`<span class="badge b-stale">Stale</span>`);
+      if (weekly?.pace) bdgs.push(`<span class="badge ${paceClass(weekly.pace.stage)}">${paceLabel(weekly.pace.stage)}</span>`);
+      const costHtml = costBadgeHtml(snap.costFactor);
+      if (costHtml) bdgs.push(costHtml);
+
+      const accent = accentVar(hasPct ? pct : null);
+
+      return `<div class="card has-accent" style="--card-accent:${accent};${delay}">
+        <div class="card-body">
+          ${providerIconHtml(snap.provider)}
+          <div class="card-info">
+            <div class="card-head">
+              <span class="prov-name">${esc(name)}</span>
+              <div class="card-right">
+                <span class="prov-pct" style="color:var(--${color})">${pctTxt}</span>
+                <span class="card-chevron">›</span>
+              </div>
+            </div>
+            ${bars}
+            ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
+    }
+
+    function renderGemini(snap, name, delay) {
+      const label = snap.windows[0]?.label ?? (snap.status === 'error' ? 'Unavailable' : 'No local session data');
+      const bdgs = [];
+      if (snap.status === 'stale') bdgs.push(`<span class="badge b-stale">Stale</span>`);
+      if (snap.status === 'error') bdgs.push(`<span class="badge b-error">Error</span>`);
+      const costHtml = costBadgeHtml(snap.costFactor);
+      if (costHtml) bdgs.push(costHtml);
+
+      return `<div class="card has-accent" style="--card-accent:var(--gray);${delay}">
+        <div class="card-body">
+          ${providerIconHtml('gemini')}
+          <div class="card-info">
+            <div class="card-head">
+              <span class="prov-name">${esc(name)}</span>
+              <span class="card-chevron">›</span>
+            </div>
+            <div class="gemini-lbl">${esc(label)}</div>
+            ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
+    }
+
+    // ── Countdown ─────────────────────────────────────────────────
+
+    function startCd() {
+      cdTimer = setInterval(() => {
+        for (const { id, resetsAt } of countdowns) {
+          const el = document.getElementById(id);
+          if (el) el.textContent = formatCountdown(resetsAt);
+        }
+      }, 1000);
+    }
+    function stopCd() {
+      if (cdTimer) { clearInterval(cdTimer); cdTimer = null; }
+    }
+
+    // ── Footer ────────────────────────────────────────────────────
+
+    function startFooterTimer() {
+      if (footerTimer) clearInterval(footerTimer);
+      updateFooter();
+      footerTimer = setInterval(updateFooter, 5000);
+    }
+    function updateFooter() {
+      const el = document.getElementById('footer-ts');
+      if (!lastRefreshedAt || !el) return;
+      const sec = Math.round((Date.now() - lastRefreshedAt.getTime()) / 1000);
+      if (sec < 10)  { el.textContent = 'Just updated'; return; }
+      if (sec < 60)  { el.textContent = `Updated ${sec}s ago`; return; }
+      el.textContent = `Updated ${Math.floor(sec / 60)}m ago`;
+    }
+  </script>
+</body>
+</html>

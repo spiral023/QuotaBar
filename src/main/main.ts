@@ -8,6 +8,7 @@ import { UsageStore } from "../usage/usageStore";
 import { applyStartupFlag } from "./autostart";
 import { initializeLogging, log } from "./logging";
 import { TrayController } from "./tray";
+import { DetailsWindowController } from "./detailsWindow";
 import { initializeUpdater } from "./updater";
 import { NotificationService } from "./notifications";
 
@@ -40,9 +41,14 @@ if (!app.requestSingleInstanceLock()) {
       const pricingEngine = new PricingEngine(settings);
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine);
       const tray = new TrayController(providers, refreshLoop);
+      const detailsWindow = new DetailsWindowController(() => tray.getTray());
+      tray.setDetailsWindow(detailsWindow);
       await tray.rebuildMenu();
       const notificationService = new NotificationService();
-      refreshLoop.onRefresh((snapshots) => notificationService.onRefresh(snapshots));
+      refreshLoop.onRefresh((snapshots) => {
+        notificationService.onRefresh(snapshots);
+        detailsWindow.notifyUpdate(snapshots);
+      });
       refreshLoop.start();
       await initializeUpdater();
       log.info(`QuotaBar started; poll interval ${settings.pollIntervalSeconds}s; noWindow=${cli.noWindow}`);
