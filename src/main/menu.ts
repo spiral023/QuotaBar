@@ -87,6 +87,7 @@ function snapshotToMenuLines(displayName: string, snapshot: UsageSnapshot): stri
 }
 
 function formatCostFactorLine(cost: CostFactorResult): string {
+  if (cost.factor === null) return `  API-Äq: ${cost.label}`;
   if (cost.apiCostUSD === 0 && !cost.isEstimate) return "  API-Äq: $0.00 (keine Daten)";
   const prefix = cost.isEstimate ? "~" : "";
   return `  API-Äq: ${prefix}$${cost.apiCostUSD.toFixed(2)} (${cost.label})`;

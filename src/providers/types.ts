@@ -3,7 +3,7 @@ import type { UsagePace } from "../usage/usagePace";
 export interface CostFactorResult {
   apiCostUSD: number;
   subscriptionCostUSD: number;
-  factor: number;
+  factor: number | null;
   isEstimate: boolean;
   label: string;
 }
