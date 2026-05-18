@@ -41,4 +41,11 @@ describe("LiteLLMFetcher (offline mode)", () => {
     const pricing = await fetcher.getModelPricing("opus-4");
     expect(pricing).not.toBeNull();
   });
+
+  it("still resolves gpt-4o after prefix-lookup change (regression)", async () => {
+    const fetcher = new LiteLLMFetcher(true);
+    const pricing = await fetcher.getModelPricing("gpt-4o");
+    expect(pricing).not.toBeNull();
+    expect(pricing!.input_cost_per_token).toBeGreaterThan(0);
+  });
 });

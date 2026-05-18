@@ -64,7 +64,7 @@ export class LiteLLMFetcher {
 
   private lookup(modelName: string, pricing: Map<string, ModelPricing>): ModelPricing | null {
     if (pricing.has(modelName)) return pricing.get(modelName)!;
-    for (const prefix of ["anthropic/", "claude-3-5-", "claude-3-", "claude-"]) {
+    for (const prefix of ["openai/", "azure/", "openrouter/openai/", "anthropic/", "claude-3-5-", "claude-3-", "claude-"]) {
       const key = `${prefix}${modelName}`;
       if (pricing.has(key)) return pricing.get(key)!;
     }
