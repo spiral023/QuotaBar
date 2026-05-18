@@ -2,6 +2,7 @@ import { UsageProvider, UsageSnapshot, errorSnapshot } from "../providers/types"
 import { toErrorMessage } from "../shared/errors";
 import { log } from "../main/logging";
 import { UsageStore } from "./usageStore";
+import { computeLinearPace, toRateWindow } from "./usagePace";
 
 export type RefreshListener = (snapshots: UsageSnapshot[]) => void;
 
@@ -40,6 +41,14 @@ export class RefreshLoop {
     this.isRefreshing = true;
     try {
       const snapshots = await Promise.all(this.providers.map((provider) => this.fetchWithTimeout(provider)));
+      const now = new Date();
+      for (const snapshot of snapshots) {
+        for (const window of snapshot.windows) {
+          if (window.name === "weekly") {
+            window.pace = computeLinearPace(toRateWindow(window), now);
+          }
+        }
+      }
       const merged = this.store.update(snapshots);
       for (const listener of this.listeners) listener(merged);
       return merged;

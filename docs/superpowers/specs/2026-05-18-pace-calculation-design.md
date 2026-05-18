@@ -280,5 +280,5 @@ function formatPaceLine(pace: UsagePace, now: Date): string {
 ## Nicht im Scope (MVP)
 
 - Historische Pace (gewichteter Median über Vorwochen) — spätere Erweiterung
-- Custom BrowserWindow-Popover (wie im CodexBar-Screenshot) — natürliche nächste UI-Ausbaustufe
+- Custom BrowserWindow-Popover (wie im Swift-Quell-Screenshot) — natürliche nächste UI-Ausbaustufe
 - Pace für andere Fenster (session, fiveHour, credits)
