@@ -1,8 +1,9 @@
-import { getClaudeProjectsDir } from "../config/paths";
+import { getClaudeProjectsDir, getCodexConfigPath, getCodexSessionsDir } from "../config/paths";
 import type { Settings } from "../config/settings";
 import type { CostFactorResult, UsageSnapshot, UsageWindow } from "../providers/types";
+import { calculateCodexApiCost, readCodexSpeedTier } from "./codex-cost-calculator";
+import { readCodexTokensForPeriod } from "./codex-log-reader";
 import { calculateCostFromTokens } from "./cost-calculator";
-import { estimateCodexCost } from "./codex-estimator";
 import { estimateGeminiCost } from "./gemini-estimator";
 import { readClaudeTokensForPeriod } from "./jsonl-reader";
 import { LiteLLMFetcher } from "./litellm-fetcher";
@@ -13,6 +14,8 @@ export class PricingEngine {
   constructor(
     private readonly settings: Settings,
     private readonly claudeProjectsDir: string = getClaudeProjectsDir(),
+    private readonly codexSessionsDir: string = getCodexSessionsDir(),
+    private readonly codexConfigPath: string = getCodexConfigPath(),
   ) {
     this.fetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
   }
@@ -32,7 +35,7 @@ export class PricingEngine {
   }
 
   private async calculateClaudeFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const billingStart = getBillingStart(snapshot);
+    const billingStart = getClaudeBillingStart(snapshot);
     const tokens = await readClaudeTokensForPeriod(this.claudeProjectsDir, billingStart);
     const primaryModel = tokens.modelNames[0] ?? snapshot.model ?? "claude-sonnet-4-5";
     const pricing = await this.fetcher.getModelPricing(primaryModel);
@@ -58,18 +61,28 @@ export class PricingEngine {
     };
   }
 
-  private async calculateCodexFactor(snapshot: UsageSnapshot): Promise<CostFactorResult | undefined> {
-    const usedPercent = getUsedPercent(snapshot);
-    if (usedPercent == null) return undefined;
-    const apiCostUSD = await estimateCodexCost(usedPercent, this.fetcher);
+  private async calculateCodexFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
+    const billingStart = getCodexBillingStart(snapshot);
+    const events = await readCodexTokensForPeriod(this.codexSessionsDir, billingStart);
+    if (events.length === 0) {
+      return {
+        apiCostUSD: 0,
+        subscriptionCostUSD: this.settings.subscriptionCosts.codex,
+        factor: null,
+        isEstimate: true,
+        label: "Keine Logs verfügbar",
+      };
+    }
+    const speedTier = await readCodexSpeedTier(this.codexConfigPath);
+    const apiCostUSD = await calculateCodexApiCost(events, this.fetcher, speedTier);
     const subscriptionCostUSD = this.settings.subscriptionCosts.codex;
     const factor = subscriptionCostUSD > 0 ? apiCostUSD / subscriptionCostUSD : 0;
     return {
       apiCostUSD,
       subscriptionCostUSD,
       factor,
-      isEstimate: true,
-      label: formatLabel(apiCostUSD, factor, true),
+      isEstimate: false,
+      label: formatLabel(apiCostUSD, factor, false),
     };
   }
 
@@ -88,7 +101,7 @@ export class PricingEngine {
   }
 }
 
-function getBillingStart(snapshot: UsageSnapshot): Date {
+function getClaudeBillingStart(snapshot: UsageSnapshot): Date {
   const creditsWindow = snapshot.windows.find(
     (w: UsageWindow) => w.name === "credits" && w.resetsAt,
   );
@@ -100,12 +113,16 @@ function getBillingStart(snapshot: UsageSnapshot): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 
-function getUsedPercent(snapshot: UsageSnapshot): number | undefined {
-  for (const name of ["weekly", "fiveHour", "monthly", "credits"] as UsageWindow["name"][]) {
-    const w = snapshot.windows.find((w) => w.name === name);
-    if (w?.usedPercent != null) return w.usedPercent;
+function getCodexBillingStart(snapshot: UsageSnapshot): Date {
+  const weekly = snapshot.windows.find((w: UsageWindow) => w.name === "weekly" && w.resetsAt);
+  if (weekly?.resetsAt) {
+    const resetsAt = new Date(weekly.resetsAt);
+    if (!isNaN(resetsAt.getTime())) {
+      return new Date(resetsAt.getTime() - 7 * 24 * 60 * 60 * 1000);
+    }
   }
-  return undefined;
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 
 function getGeminiSessionCount(snapshot: UsageSnapshot): number {
