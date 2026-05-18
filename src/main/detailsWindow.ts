@@ -19,7 +19,7 @@ export class DetailsWindowController {
   private lastSnapshots: UsageSnapshot[] = [];
   private lastRefreshedAt: Date | null = null;
   private isPinned = false;
-  private analyticsSummaryCache: AnalyticsSummary | null = null;
+  private analyticsSummaryCache: Promise<AnalyticsSummary> | null = null;
 
   constructor(private readonly getTray: () => Tray | null) {
     this.registerIpcHandlers();
@@ -184,49 +184,50 @@ export class DetailsWindowController {
     ipcMain.handle("analytics:summary", async () => {
       if (this.analyticsSummaryCache) return this.analyticsSummaryCache;
 
-      const settings = await loadSettings();
-      const windowDays = settings.costWindow === "7d" ? 7 : 30;
-      const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      this.analyticsSummaryCache = (async () => {
+        const settings = await loadSettings();
+        const windowDays = settings.costWindow === "7d" ? 7 : 30;
+        const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
 
-      const [claudeReport, codexReport] = await Promise.all([
-        generateUsageReport({ type: "daily", provider: "claude", since, order: "asc", breakdown: true }, { settings }),
-        generateUsageReport({ type: "daily", provider: "codex",  since, order: "asc", breakdown: true }, { settings }),
-      ]);
+        const [claudeReport, codexReport] = await Promise.all([
+          generateUsageReport({ type: "daily", provider: "claude", since, order: "asc", breakdown: true }, { settings }),
+          generateUsageReport({ type: "daily", provider: "codex",  since, order: "asc", breakdown: true }, { settings }),
+        ]);
 
-      const claudeEntries = await readClaudeUsageEntriesForPeriod(
-        getClaudeProjectsDirs(),
-        new Date(Date.now() - windowDays * 24 * 3600 * 1000),
-      );
+        const claudeEntries = await readClaudeUsageEntriesForPeriod(
+          getClaudeProjectsDirs(),
+          new Date(Date.now() - windowDays * 24 * 3600 * 1000),
+        );
 
-      const activeDays        = computeActiveDays(claudeReport.rows, codexReport.rows);
-      const sparkline7d       = buildSparkline7d(claudeReport.rows, codexReport.rows);
-      const topModels         = buildTopModels(claudeReport.rows, codexReport.rows, 5);
-      const avgSessionMinutes = computeAvgSessionMinutes(claudeEntries);
-      const cacheHitRate      = computeCacheHitRate(this.lastSnapshots);
+        const activeDays        = computeActiveDays(claudeReport.rows, codexReport.rows);
+        const sparkline7d       = buildSparkline7d(claudeReport.rows, codexReport.rows);
+        const topModels         = buildTopModels(claudeReport.rows, codexReport.rows, 5);
+        const avgSessionMinutes = computeAvgSessionMinutes(claudeEntries);
+        const cacheHitRate      = computeCacheHitRate(this.lastSnapshots);
 
-      const claudeCost = claudeReport.totals.costUSD;
-      const codexCost  = codexReport.totals.costUSD;
-      const claudeSub  = settings.subscriptionCosts.claude;
-      const codexSub   = settings.subscriptionCosts.codex;
+        const claudeCost = claudeReport.totals.costUSD;
+        const codexCost  = codexReport.totals.costUSD;
+        const claudeSub  = settings.subscriptionCosts.claude;
+        const codexSub   = settings.subscriptionCosts.codex;
 
-      const summary: AnalyticsSummary = {
-        apiCostUSD:          { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },
-        subscriptionCostUSD: { claude: claudeSub,  codex: codexSub,  total: claudeSub  + codexSub  },
-        roiFactor: {
-          claude:   claudeSub  > 0 ? claudeCost  / claudeSub  : 0,
-          codex:    codexSub   > 0 ? codexCost   / codexSub   : 0,
-          combined: (claudeSub + codexSub) > 0 ? (claudeCost + codexCost) / (claudeSub + codexSub) : 0,
-        },
-        activeDays,
-        avgSessionMinutes,
-        cacheHitRate,
-        sparkline7d,
-        topModels,
-        windowDays,
-      };
+        return {
+          apiCostUSD:          { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },
+          subscriptionCostUSD: { claude: claudeSub,  codex: codexSub,  total: claudeSub  + codexSub  },
+          roiFactor: {
+            claude:   claudeSub  > 0 ? claudeCost  / claudeSub  : 0,
+            codex:    codexSub   > 0 ? codexCost   / codexSub   : 0,
+            combined: (claudeSub + codexSub) > 0 ? (claudeCost + codexCost) / (claudeSub + codexSub) : 0,
+          },
+          activeDays,
+          avgSessionMinutes,
+          cacheHitRate,
+          sparkline7d,
+          topModels,
+          windowDays,
+        } satisfies AnalyticsSummary;
+      })();
 
-      this.analyticsSummaryCache = summary;
-      return summary;
+      return this.analyticsSummaryCache;
     });
 
     ipcMain.handle("window:set-view", async (_, mode: string) => {
