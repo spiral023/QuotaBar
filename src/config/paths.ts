@@ -36,3 +36,7 @@ export function getGeminiSettingsPath(): string {
 export function getGeminiTmpDir(): string {
   return path.join(getHomeDir(), ".gemini", "tmp");
 }
+
+export function getClaudeProjectsDir(): string {
+  return path.join(getHomeDir(), ".claude", "projects");
+}

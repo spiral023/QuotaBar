@@ -1,5 +1,13 @@
 import type { UsagePace } from "../usage/usagePace";
 
+export interface CostFactorResult {
+  apiCostUSD: number;
+  subscriptionCostUSD: number;
+  factor: number;
+  isEstimate: boolean;
+  label: string;
+}
+
 export type UsageStatus = "ok" | "not_authenticated" | "error" | "stale";
 
 export interface UsageProvider {
@@ -32,6 +40,7 @@ export interface UsageSnapshot {
   windows: UsageWindow[];
   updatedAt: string;
   errorMessage?: string;
+  costFactor?: CostFactorResult;
 }
 
 export interface ProviderContext {
