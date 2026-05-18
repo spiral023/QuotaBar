@@ -88,6 +88,8 @@ Liest Claude JSONL-Logs für die aktuelle Billing-Periode.
 
 **Billing-Periode:**
 - Primär: `resetsAt` des `credits`-Fensters aus dem Claude-Snapshot
+- Sekundär: `resetsAt` des `monthly`-Fensters (falls `credits` fehlt)
+- Tertiär: `resetsAt` des `weekly`-Fensters (falls kein monatliches Fenster)
 - Fallback: Erster Tag des laufenden Monats
 
 **Pro Zeile gelesen:**
@@ -128,7 +130,7 @@ Schätzt Gemini-Kosten aus Session-Anzahl.
 
 **Methode:**
 - Session-Anzahl aus `~/.gemini/tmp/*.json` (bereits im bestehenden Gemini-Provider)
-- Durchschnittliche Tokens pro Session: 5.000 Input + 1.000 Output (Schätzwert)
+- Durchschnittliche Tokens pro Session: 5.000 Input + 1.000 Output (grober Orientierungswert, keine Garantie)
 - × Gemini Flash/Pro-Preise aus LiteLLM
 - Ergebnis immer mit `isEstimate: true` markiert
 
@@ -148,7 +150,7 @@ interface CostFactorResult {
 }
 ```
 
-Aufruf: einmal pro Provider nach jedem Refresh-Zyklus.
+Aufruf: einmal pro Provider nach jedem Refresh-Zyklus. LiteLLM-Preise werden lazy beim ersten Aufruf geladen und für die gesamte App-Session gecached (kein erneuter Fetch bei jedem Refresh).
 
 ---
 
@@ -188,6 +190,7 @@ pricingOfflineMode: false
 | JSONL-Verzeichnis nicht vorhanden | `apiCostUSD: 0`, Label: `$0.00 (keine Daten)` |
 | Einzelne JSONL-Zeile ungültig | Zeile überspringen, Rest verarbeiten |
 | Provider-Snapshot im Error-Status | `costFactor` bleibt `undefined`, keine Zeile im Menü |
+| Codex `usedPercent` fehlt im Snapshot | `apiCostUSD: 0`, keine Zeile im Menü |
 | `subscriptionCosts`-Felder fehlen in Settings | Defaults greifen: claude=20, codex=10, gemini=19 |
 
 ---
