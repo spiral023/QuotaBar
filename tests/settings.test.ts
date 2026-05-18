@@ -22,3 +22,25 @@ describe("normalizeSettings costWindow", () => {
     expect(result.costWindow).toBe("billing");
   });
 });
+
+describe("normalizeSettings viewMode", () => {
+  it("defaults viewMode to 'dashboard'", () => {
+    const result = normalizeSettings({ ...defaultSettings });
+    expect(result.viewMode).toBe("dashboard");
+  });
+
+  it("accepts viewMode 'compact'", () => {
+    const result = normalizeSettings({ ...defaultSettings, viewMode: "compact" });
+    expect(result.viewMode).toBe("compact");
+  });
+
+  it("rejects unknown viewMode, falls back to 'dashboard'", () => {
+    const result = normalizeSettings({ ...defaultSettings, viewMode: "sidebar" as never });
+    expect(result.viewMode).toBe("dashboard");
+  });
+
+  it("defaults insightsPanelOpen to false", () => {
+    const result = normalizeSettings({ ...defaultSettings });
+    expect(result.insightsPanelOpen).toBe(false);
+  });
+});

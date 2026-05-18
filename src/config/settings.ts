@@ -3,6 +3,7 @@ import { ensureConfigDir } from "../main/logging";
 import { getSettingsPath } from "./paths";
 
 export type CostWindow = "7d" | "30d" | "billing";
+export type ViewMode = "dashboard" | "compact";
 
 export interface SubscriptionCosts {
   claude: number;
@@ -15,6 +16,8 @@ export interface Settings {
   subscriptionCosts: SubscriptionCosts;
   pricingOfflineMode: boolean;
   costWindow: CostWindow;
+  viewMode: ViewMode;
+  insightsPanelOpen: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -23,6 +26,8 @@ export const defaultSettings: Settings = {
   subscriptionCosts: { claude: 20, codex: 10 },
   pricingOfflineMode: false,
   costWindow: "billing",
+  viewMode: "dashboard",
+  insightsPanelOpen: false,
 };
 
 export async function loadSettings(overrides: Partial<Settings> = {}): Promise<Settings> {
@@ -46,6 +51,10 @@ export function normalizeSettings(settings: Settings): Settings {
   const costWindow: CostWindow = validWindows.includes(settings.costWindow as CostWindow)
     ? (settings.costWindow as CostWindow)
     : "billing";
+  const validViewModes: ViewMode[] = ["dashboard", "compact"];
+  const viewMode: ViewMode = validViewModes.includes(settings.viewMode as ViewMode)
+    ? (settings.viewMode as ViewMode)
+    : "dashboard";
   return {
     pollIntervalSeconds: Math.max(15, Math.floor(Number(settings.pollIntervalSeconds) || defaultSettings.pollIntervalSeconds)),
     providerTimeoutMs: Math.max(1000, Math.floor(Number(settings.providerTimeoutMs) || defaultSettings.providerTimeoutMs)),
@@ -55,5 +64,7 @@ export function normalizeSettings(settings: Settings): Settings {
     },
     pricingOfflineMode: Boolean(settings.pricingOfflineMode),
     costWindow,
+    viewMode,
+    insightsPanelOpen: Boolean(settings.insightsPanelOpen),
   };
 }
