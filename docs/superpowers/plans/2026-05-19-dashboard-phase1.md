@@ -35,7 +35,7 @@
 - Modify: `src/config/settings.ts`
 - Modify: `tests/settings.test.ts`
 
-- [ ] **Step 1: Failing tests schreiben**
+- [x] **Step 1: Failing tests schreiben**
 
 In `tests/settings.test.ts` am Ende des `describe`-Blocks einfügen:
 
@@ -61,14 +61,14 @@ In `tests/settings.test.ts` am Ende des `describe`-Blocks einfügen:
   });
 ```
 
-- [ ] **Step 2: Test laufen lassen — muss FAIL sein**
+- [x] **Step 2: Test laufen lassen — muss FAIL sein**
 
 ```
 npx vitest run tests/settings.test.ts
 ```
 Erwartet: 4 neue Tests schlagen fehl mit `viewMode is not a property`.
 
-- [ ] **Step 3: Implementation**
+- [x] **Step 3: Implementation**
 
 `src/config/settings.ts` vollständig ersetzen:
 
@@ -145,21 +145,21 @@ export function normalizeSettings(settings: Settings): Settings {
 }
 ```
 
-- [ ] **Step 4: Tests laufen lassen — müssen PASS sein**
+- [x] **Step 4: Tests laufen lassen — müssen PASS sein**
 
 ```
 npx vitest run tests/settings.test.ts
 ```
 Erwartet: Alle Tests grün.
 
-- [ ] **Step 5: Gesamte Tests**
+- [x] **Step 5: Gesamte Tests**
 
 ```
 npx vitest run
 ```
 Erwartet: Nur der pre-existing `colors.test.ts`-Fail bleibt.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```
 git add src/config/settings.ts tests/settings.test.ts
@@ -174,7 +174,7 @@ git commit -m "feat(settings): add viewMode and insightsPanelOpen settings"
 - Modify: `src/pricing/litellm-fetcher.ts`
 - Modify: `tests/litellm-fetcher.test.ts`
 
-- [ ] **Step 1: Failing tests schreiben**
+- [x] **Step 1: Failing tests schreiben**
 
 In `tests/litellm-fetcher.test.ts` am Ende des `describe`-Blocks einfügen:
 
@@ -206,14 +206,14 @@ In `tests/litellm-fetcher.test.ts` am Ende des `describe`-Blocks einfügen:
   });
 ```
 
-- [ ] **Step 2: Test laufen — muss FAIL sein**
+- [x] **Step 2: Test laufen — muss FAIL sein**
 
 ```
 npx vitest run tests/litellm-fetcher.test.ts
 ```
 Erwartet: 3 neue Tests schlagen fehl.
 
-- [ ] **Step 3: Implementation**
+- [x] **Step 3: Implementation**
 
 `FALLBACK_PRICES` in `src/pricing/litellm-fetcher.ts` erweitern — nach dem `"gpt-4o"`-Eintrag einfügen:
 
@@ -257,14 +257,14 @@ Erwartet: 3 neue Tests schlagen fehl.
 
 **Wichtig:** `"gpt-5.4-mini"` muss VOR `"gpt-5.4"` stehen, damit der Substring-Match `"gpt-5.4"` nicht fälschlicherweise auf `"gpt-5.4-mini"` matched. Die `lookup`-Methode iteriert die Map in Einfügereihenfolge.
 
-- [ ] **Step 4: Tests laufen lassen — müssen PASS sein**
+- [x] **Step 4: Tests laufen lassen — müssen PASS sein**
 
 ```
 npx vitest run tests/litellm-fetcher.test.ts
 ```
 Erwartet: Alle Tests grün.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```
 git add src/pricing/litellm-fetcher.ts tests/litellm-fetcher.test.ts
@@ -280,7 +280,7 @@ git commit -m "feat(pricing): add gpt-5.x fallback prices for Codex models"
 - Create: `tests/analyticsSummary.test.ts`
 - Modify: `src/main/detailsWindow.ts`
 
-- [ ] **Step 1: Failing tests schreiben**
+- [x] **Step 1: Failing tests schreiben**
 
 Neue Datei `tests/analyticsSummary.test.ts`:
 
@@ -380,14 +380,14 @@ describe("computeCacheHitRate", () => {
 });
 ```
 
-- [ ] **Step 2: Tests laufen — müssen FAIL sein**
+- [x] **Step 2: Tests laufen — müssen FAIL sein**
 
 ```
 npx vitest run tests/analyticsSummary.test.ts
 ```
 Erwartet: Fehler `Cannot find module '../src/main/analyticsSummary'`.
 
-- [ ] **Step 3: `src/main/analyticsSummary.ts` anlegen**
+- [x] **Step 3: `src/main/analyticsSummary.ts` anlegen**
 
 ```typescript
 import type { ReportRow } from "../reports/types";
@@ -496,14 +496,14 @@ function getLast7Days(): string[] {
 }
 ```
 
-- [ ] **Step 4: Tests laufen lassen — müssen PASS sein**
+- [x] **Step 4: Tests laufen lassen — müssen PASS sein**
 
 ```
 npx vitest run tests/analyticsSummary.test.ts
 ```
 Erwartet: Alle 7 Tests grün.
 
-- [ ] **Step 5: `analytics:summary` IPC-Handler in `detailsWindow.ts` verdrahten**
+- [x] **Step 5: `analytics:summary` IPC-Handler in `detailsWindow.ts` verdrahten**
 
 In `src/main/detailsWindow.ts`:
 
@@ -593,14 +593,14 @@ In `registerIpcHandlers()` am Ende vor der schließenden `}` einfügen:
     });
 ```
 
-- [ ] **Step 6: Alle Tests laufen**
+- [x] **Step 6: Alle Tests laufen**
 
 ```
 npx vitest run
 ```
 Erwartet: Nur der pre-existing `colors.test.ts`-Fail bleibt.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```
 git add src/main/analyticsSummary.ts tests/analyticsSummary.test.ts src/main/detailsWindow.ts
