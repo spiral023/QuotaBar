@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { detectResets } from "../src/usage/resetDetection";
-import type { UsageSnapshot } from "../src/providers/types";
+import type { UsageSnapshot, UsageWindow } from "../src/providers/types";
 
 function snap(
   provider: string,
-  windows: { name: string; usedPercent?: number }[],
+  windows: { name: UsageWindow["name"]; usedPercent?: number }[],
   status: UsageSnapshot["status"] = "ok"
 ): UsageSnapshot {
   return {
     provider,
     status,
-    windows: windows as UsageSnapshot["windows"],
-    updatedAt: new Date().toISOString(),
+    windows,
+    updatedAt: "2024-01-01T00:00:00.000Z",
   };
 }
 
