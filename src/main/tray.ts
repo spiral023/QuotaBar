@@ -24,7 +24,7 @@ export class TrayController {
   }
 
   async update(): Promise<void> {
-    this.tray.setImage(renderTrayIcon({ hasError: false }));
+    this.tray.setImage(renderTrayIcon({ hasError: false })); // TODO: replaced by buildIconState in Task 4
     this.tray.setToolTip(buildTooltip(this.snapshots));
     await this.rebuildMenu();
   }

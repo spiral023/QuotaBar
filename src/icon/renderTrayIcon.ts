@@ -1,6 +1,5 @@
 import { nativeImage, NativeImage } from "electron";
 import { PNG } from "pngjs";
-import { getUsageColor, getUsageColorHex, hexToRgb } from "./colors";
 
 export interface BarData {
   usedPercent?: number;
@@ -13,10 +12,6 @@ export interface TrayIconState {
   gemini?: BarData;
   hasError: boolean;
 }
-
-const PADDING_H = 3;
-const BAR_WIDTH = 26;
-const TRACK_COLOR: RGBA = [40, 40, 40, 255];
 
 type RGBA = [number, number, number, number];
 
