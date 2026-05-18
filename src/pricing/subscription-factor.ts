@@ -37,10 +37,27 @@ export class PricingEngine {
   private async calculateClaudeFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
     const billingStart = getClaudeBillingStart(snapshot);
     const tokens = await readClaudeTokensForPeriod(this.claudeProjectsDir, billingStart);
-    const primaryModel = tokens.modelNames[0] ?? snapshot.model ?? "claude-sonnet-4-5";
-    const pricing = await this.fetcher.getModelPricing(primaryModel);
-    const apiCostUSD = pricing
-      ? calculateCostFromTokens(
+
+    let apiCostUSD = 0;
+    for (const [modelName, modelTokens] of Object.entries(tokens.perModel)) {
+      const pricing = await this.fetcher.getModelPricing(modelName);
+      if (!pricing) continue;
+      apiCostUSD += calculateCostFromTokens(
+        {
+          input_tokens: modelTokens.inputTokens,
+          output_tokens: modelTokens.outputTokens,
+          cache_creation_input_tokens: modelTokens.cacheCreationTokens,
+          cache_read_input_tokens: modelTokens.cacheReadTokens,
+        },
+        pricing,
+      );
+    }
+    // Fallback: if no perModel data (legacy entries without model field), use aggregated totals
+    if (Object.keys(tokens.perModel).length === 0 && tokens.inputTokens + tokens.outputTokens > 0) {
+      const fallbackModel = tokens.modelNames[0] ?? snapshot.model ?? "claude-sonnet-4-5";
+      const pricing = await this.fetcher.getModelPricing(fallbackModel);
+      if (pricing) {
+        apiCostUSD = calculateCostFromTokens(
           {
             input_tokens: tokens.inputTokens,
             output_tokens: tokens.outputTokens,
@@ -48,8 +65,9 @@ export class PricingEngine {
             cache_read_input_tokens: tokens.cacheReadTokens,
           },
           pricing,
-        )
-      : 0;
+        );
+      }
+    }
     const subscriptionCostUSD = this.settings.subscriptionCosts.claude;
     const factor = subscriptionCostUSD > 0 ? apiCostUSD / subscriptionCostUSD : 0;
     return {

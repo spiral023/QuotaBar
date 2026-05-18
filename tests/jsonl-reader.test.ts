@@ -18,7 +18,7 @@ async function writeJsonl(dir: string, filename: string, entries: unknown[]): Pr
 describe("readClaudeTokensForPeriod", () => {
   it("returns zeros when directory does not exist", async () => {
     const result = await readClaudeTokensForPeriod("/nonexistent/path/xyz", new Date("2026-05-01"));
-    expect(result).toEqual({ inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, modelNames: [] });
+    expect(result).toEqual({ inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, modelNames: [], perModel: {} });
   });
 
   it("aggregates tokens from entries within billing period", async () => {
@@ -134,5 +134,34 @@ describe("readClaudeTokensForPeriod", () => {
     const result = await readClaudeTokensForPeriod(tmpDir, new Date("2026-05-01"));
     expect(result.inputTokens).toBe(25);
     expect(result.outputTokens).toBe(45);
+  });
+
+  it("tracks tokens per model separately in perModel", async () => {
+    const projectDir = path.join(tmpDir, "proj1");
+    await writeJsonl(projectDir, "session.jsonl", [
+      {
+        timestamp: "2026-05-10T10:00:00.000Z",
+        message: { id: "msg_001", model: "claude-haiku-4-5", usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 5000 } },
+      },
+      {
+        timestamp: "2026-05-10T10:01:00.000Z",
+        message: { id: "msg_002", model: "claude-sonnet-4-6", usage: { input_tokens: 200, output_tokens: 80, cache_creation_input_tokens: 1000 } },
+      },
+      {
+        timestamp: "2026-05-10T10:02:00.000Z",
+        message: { id: "msg_003", model: "claude-haiku-4-5", usage: { input_tokens: 50, output_tokens: 20, cache_read_input_tokens: 2000 } },
+      },
+    ]);
+
+    const result = await readClaudeTokensForPeriod(tmpDir, new Date("2026-05-01"));
+
+    expect(result.perModel["claude-haiku-4-5"]).toEqual({ inputTokens: 150, outputTokens: 70, cacheCreationTokens: 0, cacheReadTokens: 7000 });
+    expect(result.perModel["claude-sonnet-4-6"]).toEqual({ inputTokens: 200, outputTokens: 80, cacheCreationTokens: 1000, cacheReadTokens: 0 });
+
+    // Overall totals should still be consistent
+    expect(result.inputTokens).toBe(350);
+    expect(result.outputTokens).toBe(150);
+    expect(result.cacheCreationTokens).toBe(1000);
+    expect(result.cacheReadTokens).toBe(7000);
   });
 });

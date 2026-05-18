@@ -120,4 +120,46 @@ describe("PricingEngine", () => {
     const result = await engine.calculateFactor(makeSnapshot("claude"));
     expect(result!.label).not.toMatch(/^~/);
   });
+
+  it("calculates Claude cost per model separately (haiku + sonnet)", async () => {
+    const claudeDir = path.join(os.tmpdir(), `quotabar-sf-claude-multimodel-${Date.now()}`);
+    const projectDir = path.join(claudeDir, "proj1");
+    await fs.mkdir(projectDir, { recursive: true });
+    const billingStart = new Date("2026-05-01T00:00:00.000Z");
+    await fs.writeFile(
+      path.join(projectDir, "session.jsonl"),
+      [
+        // haiku entry: cache_read dominant (cheap)
+        JSON.stringify({
+          timestamp: "2026-05-10T10:00:00.000Z",
+          message: { id: "msg_h1", model: "claude-haiku-4-5", usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 } },
+        }),
+        // sonnet entry: cache_read dominant (expensive, 3.75× haiku)
+        JSON.stringify({
+          timestamp: "2026-05-10T10:01:00.000Z",
+          message: { id: "msg_s1", model: "claude-sonnet-4-5", usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 } },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    try {
+      const engine = new PricingEngine(settings, claudeDir);
+      const result = await engine.calculateFactor(makeSnapshot("claude", {
+        windows: [{ name: "credits", resetsAt: billingStart.toISOString() }],
+      }));
+
+      expect(result).not.toBeUndefined();
+      expect(result!.apiCostUSD).toBeGreaterThan(0);
+
+      // haiku cache_read: 1M × $0.08/M = $0.08
+      // sonnet cache_read: 1M × $0.30/M = $0.30
+      // total: $0.38
+      // Using only haiku pricing for both would give $0.16 (too low)
+      // Using only sonnet pricing for both would give $0.60 (too high)
+      expect(result!.apiCostUSD).toBeCloseTo(0.08 + 0.30, 2);
+    } finally {
+      await fs.rm(claudeDir, { recursive: true, force: true });
+    }
+  });
 });

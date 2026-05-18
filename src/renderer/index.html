@@ -252,10 +252,18 @@
       flex-shrink: 0;
       outline: 1px solid rgba(255,255,255,0.07);
     }
+    .prov-logo {
+      width: 26px;
+      height: 26px;
+      object-fit: contain;
+      display: block;
+      filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
+    }
     .prov-icon.icon-claude {
-      background: linear-gradient(145deg, #e07818 0%, #b85a10 100%);
-      box-shadow: 0 2px 12px rgba(224,120,24,0.25);
-      outline-color: rgba(224,120,24,0.2);
+      background: linear-gradient(145deg, rgba(255,255,255,0.095) 0%, rgba(255,255,255,0.035) 100%);
+      border: 1px solid rgba(245,152,48,0.28);
+      box-shadow: 0 2px 12px rgba(245,152,48,0.16), inset 0 0 0 1px rgba(0,0,0,0.16);
+      outline: none;
     }
     .prov-icon.icon-codex {
       background: linear-gradient(145deg, #0c1e13 0%, #172d1e 100%);
@@ -917,41 +925,20 @@
       return `<span class="badge b-cost">${factorPart}</span>`;
     }
 
-    // ── Provider icon SVGs ────────────────────────────────────────
+    // ── Provider logo icons ────────────────────────────────────────
 
     function providerIconHtml(provider) {
       const cls = `prov-icon icon-${provider}`;
-      if (provider === 'claude') {
-        return `<div class="${cls}">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <path d="M5 16L10 4L15 16" stroke="rgba(255,255,255,0.88)" stroke-width="1.8"
-                  stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M7 12h6" stroke="rgba(255,255,255,0.88)" stroke-width="1.8" stroke-linecap="round"/>
-            <line x1="15.5" y1="4" x2="15.5" y2="16" stroke="rgba(255,255,255,0.45)"
-                  stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-        </div>`;
-      }
-      if (provider === 'codex') {
-        return `<div class="${cls}">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <polyline points="4,7 8.5,10 4,13" stroke="#52d017" stroke-width="1.8"
-                      stroke-linecap="round" stroke-linejoin="round"/>
-            <line x1="10.5" y1="13" x2="16.5" y2="13" stroke="#52d017"
-                  stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-        </div>`;
-      }
-      if (provider === 'gemini') {
-        return `<div class="${cls}">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <path d="M10 2L11.6 8.4L18 10L11.6 11.6L10 18L8.4 11.6L2 10L8.4 8.4Z"
-                  stroke="rgba(200,185,255,0.9)" stroke-width="1.4" stroke-linejoin="round"
-                  fill="rgba(200,185,255,0.07)"/>
-          </svg>
-        </div>`;
-      }
-      return `<div class="${cls}"></div>`;
+      const logos = {
+        claude: '../../logos/claude.png',
+        codex: '../../logos/codex.png',
+        gemini: '../../logos/gemini.webp',
+      };
+      const src = logos[provider];
+      if (!src) return `<div class="${cls}"></div>`;
+      return `<div class="${cls}">
+        <img class="prov-logo" src="${src}" alt="" aria-hidden="true" draggable="false">
+      </div>`;
     }
 
     // ── Overview card ─────────────────────────────────────────────
