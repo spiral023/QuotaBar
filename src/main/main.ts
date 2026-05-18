@@ -41,9 +41,9 @@ if (!app.requestSingleInstanceLock()) {
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine);
       const tray = new TrayController(providers, refreshLoop);
       await tray.rebuildMenu();
-      refreshLoop.start();
       const notificationService = new NotificationService();
       refreshLoop.onRefresh((snapshots) => notificationService.onRefresh(snapshots));
+      refreshLoop.start();
       await initializeUpdater();
       log.info(`QuotaBar started; poll interval ${settings.pollIntervalSeconds}s; noWindow=${cli.noWindow}`);
     })
