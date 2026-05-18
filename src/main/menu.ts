@@ -68,7 +68,11 @@ function snapshotToMenuLines(displayName: string, snapshot: UsageSnapshot): stri
     ? snapshot.windows.flatMap((window, index) => {
       const label = index === 0 ? displayName : window.name === "weekly" ? "Weekly" : window.label ?? titleCase(window.name);
       const usage = typeof window.usedPercent === "number" ? `${Math.round(window.usedPercent)}%` : window.label ?? "unknown";
-      const reset = window.resetsAt ? ` (resets in ${formatTimeRemaining(window.resetsAt)})` : "";
+      const reset = window.resetsAt
+        ? new Date(window.resetsAt).getTime() <= Date.now()
+          ? " (resetting...)"
+          : ` (resets in ${formatTimeRemaining(window.resetsAt)})`
+        : "";
       const mainLine = `${label}: ${usage}${reset}`;
       const paceLine = window.name === "weekly" && window.pace != null ? formatPaceLine(window.pace) : null;
       return paceLine != null ? [mainLine, paceLine] : [mainLine];
