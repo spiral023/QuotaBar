@@ -11,6 +11,7 @@ const settings: Settings = {
   providerTimeoutMs: 10_000,
   subscriptionCosts: { claude: 20, codex: 10, gemini: 19 },
   pricingOfflineMode: true,
+  costWindow: "billing",
 };
 
 function makeSnapshot(provider: string, overrides: Partial<UsageSnapshot> = {}): UsageSnapshot {
@@ -158,6 +159,58 @@ describe("PricingEngine", () => {
       // Using only haiku pricing for both would give $0.16 (too low)
       // Using only sonnet pricing for both would give $0.60 (too high)
       expect(result!.apiCostUSD).toBeCloseTo(0.08 + 0.30, 2);
+    } finally {
+      await fs.rm(claudeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes windowLabel in CostFactorResult", async () => {
+    const engine = new PricingEngine({ ...settings, costWindow: "7d" }, "/nonexistent/path");
+    const result = await engine.calculateFactor(makeSnapshot("claude"));
+    expect(result).not.toBeUndefined();
+    expect(result!.windowLabel).toBe("7d");
+  });
+
+  it("Claude 7d: billingStart ist 7 Tage vor jetzt (näherungsweise)", async () => {
+    const claudeDir = path.join(os.tmpdir(), `qb-sf-7d-${Date.now()}`);
+    const projectDir = path.join(claudeDir, "proj1");
+    await fs.mkdir(projectDir, { recursive: true });
+    const recentTs = new Date(Date.now() - 1000).toISOString();
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    await fs.writeFile(
+      path.join(projectDir, "session.jsonl"),
+      [
+        JSON.stringify({ timestamp: recentTs, message: { id: "msg_r1", model: "claude-haiku-4-5", usage: { output_tokens: 1000 } } }),
+        JSON.stringify({ timestamp: oldTs,    message: { id: "msg_o1", model: "claude-haiku-4-5", usage: { output_tokens: 9999 } } }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    try {
+      const engine = new PricingEngine({ ...settings, costWindow: "7d" }, claudeDir);
+      const result = await engine.calculateFactor(makeSnapshot("claude"));
+      expect(result!.windowLabel).toBe("7d");
+      // Nur recentTs-Token sollen zählen — output 1000 tokens haiku = $0.004
+      expect(result!.apiCostUSD).toBeCloseTo(1000 * 4e-6, 5);
+    } finally {
+      await fs.rm(claudeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("Claude 30d: billingStart ist 30 Tage vor jetzt", async () => {
+    const claudeDir = path.join(os.tmpdir(), `qb-sf-30d-${Date.now()}`);
+    const projectDir = path.join(claudeDir, "proj1");
+    await fs.mkdir(projectDir, { recursive: true });
+    const ts20d = new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString();
+    await fs.writeFile(
+      path.join(projectDir, "session.jsonl"),
+      [JSON.stringify({ timestamp: ts20d, message: { id: "msg_20d", model: "claude-haiku-4-5", usage: { output_tokens: 500 } } })].join("\n") + "\n",
+      "utf8",
+    );
+    try {
+      const engine = new PricingEngine({ ...settings, costWindow: "30d" }, claudeDir);
+      const result = await engine.calculateFactor(makeSnapshot("claude"));
+      expect(result!.windowLabel).toBe("30d");
+      expect(result!.apiCostUSD).toBeCloseTo(500 * 4e-6, 5);
     } finally {
       await fs.rm(claudeDir, { recursive: true, force: true });
     }

@@ -15,6 +15,7 @@ export interface CostFactorResult {
   factor: number | null;
   isEstimate: boolean;
   label: string;
+  windowLabel?: string;
   tokenUsage?: TokenUsageDetail;
 }
 

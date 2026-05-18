@@ -1,5 +1,5 @@
 import { getClaudeProjectsDir, getCodexConfigPath, getCodexSessionsDir } from "../config/paths";
-import type { Settings } from "../config/settings";
+import type { CostWindow, Settings } from "../config/settings";
 import type { CostFactorResult, UsageSnapshot, UsageWindow } from "../providers/types";
 import { calculateCodexApiCost, readCodexSpeedTier } from "./codex-cost-calculator";
 import { readCodexTokensForPeriod } from "./codex-log-reader";
@@ -35,7 +35,7 @@ export class PricingEngine {
   }
 
   private async calculateClaudeFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const billingStart = getClaudeBillingStart(snapshot);
+    const { billingStart, windowLabel } = resolveBillingStart(this.settings.costWindow, snapshot, "claude");
     const tokens = await readClaudeTokensForPeriod(this.claudeProjectsDir, billingStart);
 
     let apiCostUSD = 0;
@@ -52,7 +52,6 @@ export class PricingEngine {
         pricing,
       );
     }
-    // Fallback: if no perModel data (legacy entries without model field), use aggregated totals
     if (Object.keys(tokens.perModel).length === 0 && tokens.inputTokens + tokens.outputTokens > 0) {
       const fallbackModel = tokens.modelNames[0] ?? snapshot.model ?? "claude-sonnet-4-5";
       const pricing = await this.fetcher.getModelPricing(fallbackModel);
@@ -68,6 +67,7 @@ export class PricingEngine {
         );
       }
     }
+
     const subscriptionCostUSD = this.settings.subscriptionCosts.claude;
     const factor = subscriptionCostUSD > 0 ? apiCostUSD / subscriptionCostUSD : 0;
     return {
@@ -75,6 +75,7 @@ export class PricingEngine {
       subscriptionCostUSD,
       factor,
       isEstimate: false,
+      windowLabel,
       label: formatLabel(apiCostUSD, factor, false),
       tokenUsage: {
         inputTokens: tokens.inputTokens,
@@ -88,7 +89,7 @@ export class PricingEngine {
   }
 
   private async calculateCodexFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const billingStart = getCodexBillingStart(snapshot);
+    const { billingStart, windowLabel } = resolveBillingStart(this.settings.costWindow, snapshot, "codex");
     const events = await readCodexTokensForPeriod(this.codexSessionsDir, billingStart);
     if (events.length === 0) {
       return {
@@ -96,6 +97,7 @@ export class PricingEngine {
         subscriptionCostUSD: this.settings.subscriptionCosts.codex,
         factor: null,
         isEstimate: true,
+        windowLabel,
         label: "Keine Logs verfügbar",
       };
     }
@@ -119,6 +121,7 @@ export class PricingEngine {
       subscriptionCostUSD,
       factor,
       isEstimate: false,
+      windowLabel,
       label: formatLabel(apiCostUSD, factor, false),
       tokenUsage: {
         inputTokens,
@@ -141,9 +144,28 @@ export class PricingEngine {
       subscriptionCostUSD,
       factor,
       isEstimate: true,
+      windowLabel: undefined,
       label: formatLabel(apiCostUSD, factor, true),
     };
   }
+}
+
+function resolveBillingStart(
+  costWindow: CostWindow,
+  snapshot: UsageSnapshot,
+  provider: "claude" | "codex",
+): { billingStart: Date; windowLabel: string } {
+  if (costWindow === "7d") {
+    return { billingStart: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), windowLabel: "7d" };
+  }
+  if (costWindow === "30d") {
+    return { billingStart: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), windowLabel: "30d" };
+  }
+  // "billing" — provider-native period
+  if (provider === "claude") {
+    return { billingStart: getClaudeBillingStart(snapshot), windowLabel: "billing" };
+  }
+  return { billingStart: getCodexBillingStart(snapshot), windowLabel: "billing" };
 }
 
 function getClaudeBillingStart(snapshot: UsageSnapshot): Date {
