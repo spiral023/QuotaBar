@@ -14,16 +14,10 @@ export function buildIconState(snapshots: UsageSnapshot[]): TrayIconState {
     };
   }
 
-  const geminiSnap = byProvider.get("gemini");
-  const gemini =
-    geminiSnap && (geminiSnap.status === "ok" || geminiSnap.status === "stale")
-      ? { usedPercent: undefined as undefined, isStale: geminiSnap.status === "stale" }
-      : undefined;
-
   return {
     codex: barFor("codex"),
     claude: barFor("claude"),
-    gemini,
-    hasError: snapshots.some((s) => s.status === "stale"),
+    gemini: barFor("gemini"),
+    hasError: snapshots.some((s) => s.status === "stale" || s.status === "error"),
   };
 }

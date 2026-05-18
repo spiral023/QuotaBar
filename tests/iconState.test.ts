@@ -69,6 +69,11 @@ describe("buildIconState", () => {
     expect(state.hasError).toBe(true);
   });
 
+  it("sets hasError=true when any snapshot has error status", () => {
+    const state = buildIconState([snap("codex", "ok"), snap("claude", "error")]);
+    expect(state.hasError).toBe(true);
+  });
+
   it("sets hasError=false when no stale snapshots", () => {
     const state = buildIconState([snap("codex", "ok"), snap("claude", "ok")]);
     expect(state.hasError).toBe(false);
