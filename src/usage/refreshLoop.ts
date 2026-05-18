@@ -3,6 +3,7 @@ import { toErrorMessage } from "../shared/errors";
 import { log } from "../main/logging";
 import { UsageStore } from "./usageStore";
 import { computeLinearPace, toRateWindow } from "./usagePace";
+import type { PricingEngine } from "../pricing/subscription-factor";
 
 export type RefreshListener = (snapshots: UsageSnapshot[]) => void;
 
@@ -15,7 +16,8 @@ export class RefreshLoop {
     private readonly providers: UsageProvider[],
     private readonly store: UsageStore,
     private readonly intervalSeconds: number,
-    private readonly timeoutMs: number
+    private readonly timeoutMs: number,
+    private readonly pricingEngine?: PricingEngine
   ) {}
 
   onRefresh(listener: RefreshListener): () => void {
@@ -47,6 +49,9 @@ export class RefreshLoop {
           if (window.name === "weekly") {
             window.pace = computeLinearPace(toRateWindow(window), now);
           }
+        }
+        if (this.pricingEngine) {
+          snapshot.costFactor = await this.pricingEngine.calculateFactor(snapshot);
         }
       }
       const merged = this.store.update(snapshots);

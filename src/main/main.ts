@@ -2,6 +2,7 @@ import { app } from "electron";
 import { runFirstRunPrompt } from "../config/firstRun";
 import { loadSettings } from "../config/settings";
 import { createProviderRegistry } from "../providers/providerRegistry";
+import { PricingEngine } from "../pricing/subscription-factor";
 import { RefreshLoop } from "../usage/refreshLoop";
 import { UsageStore } from "../usage/usageStore";
 import { applyStartupFlag } from "./autostart";
@@ -35,7 +36,8 @@ if (!app.requestSingleInstanceLock()) {
       const settings = await loadSettings(cli.pollIntervalSeconds ? { pollIntervalSeconds: cli.pollIntervalSeconds } : {});
       const providers = createProviderRegistry(settings.providerTimeoutMs);
       const store = new UsageStore();
-      const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs);
+      const pricingEngine = new PricingEngine(settings);
+      const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine);
       const tray = new TrayController(providers, refreshLoop);
       await tray.rebuildMenu();
       refreshLoop.start();

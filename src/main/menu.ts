@@ -1,7 +1,7 @@
 import { app, Menu, MenuItemConstructorOptions, shell } from "electron";
 import { getAppConfigDir, getLogPath } from "../config/paths";
 import { openClaudeLoginTerminal } from "../providers/claude";
-import { UsageProvider, UsageSnapshot } from "../providers/types";
+import { CostFactorResult, UsageProvider, UsageSnapshot } from "../providers/types";
 import { formatTimeRemaining } from "../usage/formatters";
 import { PaceStage, UsagePace } from "../usage/usagePace";
 import { isStartWithWindowsEnabled, setStartWithWindows } from "./autostart";
@@ -59,7 +59,9 @@ export async function buildContextMenu(
 function snapshotToMenuLines(displayName: string, snapshot: UsageSnapshot): string[] {
   if (snapshot.provider === "gemini") {
     const label = snapshot.windows[0]?.label ?? "local sessions unavailable";
-    return [`${displayName}: ${label}`];
+    const lines = [`${displayName}: ${label}`];
+    if (snapshot.costFactor) lines.push(formatCostFactorLine(snapshot.costFactor));
+    return lines;
   }
 
   const lines = snapshot.windows.length > 0
@@ -76,7 +78,18 @@ function snapshotToMenuLines(displayName: string, snapshot: UsageSnapshot): stri
   if (snapshot.status === "stale") {
     lines[0] = `${lines[0]} (stale)`;
   }
+
+  if (snapshot.costFactor) {
+    lines.push(formatCostFactorLine(snapshot.costFactor));
+  }
+
   return lines;
+}
+
+function formatCostFactorLine(cost: CostFactorResult): string {
+  if (cost.apiCostUSD === 0 && !cost.isEstimate) return "  API-Äq: $0.00 (keine Daten)";
+  const prefix = cost.isEstimate ? "~" : "";
+  return `  API-Äq: ${prefix}$${cost.apiCostUSD.toFixed(2)} (${cost.label})`;
 }
 
 function titleCase(value: string): string {
