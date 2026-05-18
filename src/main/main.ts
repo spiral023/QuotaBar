@@ -9,6 +9,7 @@ import { applyStartupFlag } from "./autostart";
 import { initializeLogging, log } from "./logging";
 import { TrayController } from "./tray";
 import { initializeUpdater } from "./updater";
+import { NotificationService } from "./notifications";
 
 interface CliOptions {
   debug: boolean;
@@ -41,6 +42,8 @@ if (!app.requestSingleInstanceLock()) {
       const tray = new TrayController(providers, refreshLoop);
       await tray.rebuildMenu();
       refreshLoop.start();
+      const notificationService = new NotificationService();
+      refreshLoop.onRefresh((snapshots) => notificationService.onRefresh(snapshots));
       await initializeUpdater();
       log.info(`QuotaBar started; poll interval ${settings.pollIntervalSeconds}s; noWindow=${cli.noWindow}`);
     })
