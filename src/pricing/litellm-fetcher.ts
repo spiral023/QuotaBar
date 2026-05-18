@@ -29,6 +29,41 @@ const FALLBACK_PRICES: Record<string, ModelPricing> = {
     input_cost_per_token: 2.5e-6,
     output_cost_per_token: 1e-5,
   },
+  "gpt-5.5": {
+    input_cost_per_token: 5e-6,
+    output_cost_per_token: 30e-6,
+    cache_read_input_token_cost: 0.5e-6,
+  },
+  "gpt-5.4-mini": {
+    input_cost_per_token: 0.75e-6,
+    output_cost_per_token: 4.5e-6,
+    cache_read_input_token_cost: 0.075e-6,
+  },
+  "gpt-5.4": {
+    input_cost_per_token: 2.5e-6,
+    output_cost_per_token: 15e-6,
+    cache_read_input_token_cost: 0.25e-6,
+  },
+  "gpt-5.3": {
+    input_cost_per_token: 2e-6,
+    output_cost_per_token: 12e-6,
+    cache_read_input_token_cost: 0.2e-6,
+  },
+  "gpt-5.2": {
+    input_cost_per_token: 1.75e-6,
+    output_cost_per_token: 14e-6,
+    cache_read_input_token_cost: 0.175e-6,
+  },
+  "gpt-5.1": {
+    input_cost_per_token: 1.25e-6,
+    output_cost_per_token: 10e-6,
+    cache_read_input_token_cost: 0.125e-6,
+  },
+  "gpt-5": {
+    input_cost_per_token: 1.25e-6,
+    output_cost_per_token: 10e-6,
+    cache_read_input_token_cost: 0.125e-6,
+  },
 };
 
 export class LiteLLMFetcher {

@@ -42,4 +42,30 @@ describe("LiteLLMFetcher (offline mode)", () => {
     expect(pricing).not.toBeNull();
     expect(pricing!.input_cost_per_token).toBeGreaterThan(0);
   });
+
+  it("returns pricing for gpt-5.5", async () => {
+    const fetcher = new LiteLLMFetcher(true);
+    const pricing = await fetcher.getModelPricing("gpt-5.5");
+    expect(pricing).not.toBeNull();
+    expect(pricing!.input_cost_per_token).toBeCloseTo(5e-6, 10);
+    expect(pricing!.output_cost_per_token).toBeCloseTo(30e-6, 10);
+    expect(pricing!.cache_read_input_token_cost).toBeCloseTo(0.5e-6, 10);
+  });
+
+  it("returns pricing for gpt-5.4", async () => {
+    const fetcher = new LiteLLMFetcher(true);
+    const pricing = await fetcher.getModelPricing("gpt-5.4");
+    expect(pricing).not.toBeNull();
+    expect(pricing!.input_cost_per_token).toBeCloseTo(2.5e-6, 10);
+    expect(pricing!.output_cost_per_token).toBeCloseTo(15e-6, 10);
+    expect(pricing!.cache_read_input_token_cost).toBeCloseTo(0.25e-6, 10);
+  });
+
+  it("returns pricing for gpt-5.4-mini", async () => {
+    const fetcher = new LiteLLMFetcher(true);
+    const pricing = await fetcher.getModelPricing("gpt-5.4-mini");
+    expect(pricing).not.toBeNull();
+    expect(pricing!.input_cost_per_token).toBeCloseTo(0.75e-6, 10);
+    expect(pricing!.output_cost_per_token).toBeCloseTo(4.5e-6, 10);
+  });
 });
