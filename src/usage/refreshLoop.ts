@@ -1,5 +1,5 @@
 import { UsageProvider, UsageSnapshot, errorSnapshot } from "../providers/types";
-import { toErrorMessage } from "../shared/errors";
+import { RateLimitError, toErrorMessage } from "../shared/errors";
 import { log } from "../main/logging";
 import { UsageStore } from "./usageStore";
 import { computeLinearPace, toRateWindow } from "./usagePace";
@@ -11,6 +11,7 @@ export class RefreshLoop {
   private timer: NodeJS.Timeout | null = null;
   private isRefreshing = false;
   private readonly listeners = new Set<RefreshListener>();
+  private readonly backoff = new Map<string, number>(); // provider.id → expiry timestamp (ms)
 
   constructor(
     private readonly providers: UsageProvider[],
@@ -42,7 +43,14 @@ export class RefreshLoop {
 
     this.isRefreshing = true;
     try {
-      const snapshots = await Promise.all(this.providers.map((provider) => this.fetchWithTimeout(provider)));
+      const nowMs = Date.now();
+      const active = this.providers.filter((p) => {
+        const until = this.backoff.get(p.id);
+        if (until === undefined || nowMs >= until) return true;
+        log.info(`${p.id} rate-limited, skipping refresh (${Math.ceil((until - nowMs) / 1000)}s remaining)`);
+        return false;
+      });
+      const snapshots = await Promise.all(active.map((provider) => this.fetchWithTimeout(provider)));
       const now = new Date();
       for (const snapshot of snapshots) {
         for (const window of snapshot.windows) {
@@ -66,6 +74,11 @@ export class RefreshLoop {
     try {
       return await withTimeout(provider.fetchUsage(), this.timeoutMs, `${provider.displayName} timed out`);
     } catch (error) {
+      if (error instanceof RateLimitError) {
+        this.backoff.set(provider.id, Date.now() + error.retryAfterMs);
+        log.warn(`${provider.id} rate-limited, backing off for ${Math.round(error.retryAfterMs / 1000)}s`);
+        return errorSnapshot(provider.id, toErrorMessage(error), "error");
+      }
       log.warn(`${provider.id} refresh failed: ${toErrorMessage(error)}`);
       return errorSnapshot(provider.id, toErrorMessage(error), "error");
     }

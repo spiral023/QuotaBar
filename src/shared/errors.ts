@@ -12,6 +12,13 @@ export class ProviderFetchError extends Error {
   }
 }
 
+export class RateLimitError extends Error {
+  constructor(public readonly retryAfterMs: number) {
+    super(`rate limited, retry after ${Math.round(retryAfterMs / 1000)}s`);
+    this.name = "RateLimitError";
+  }
+}
+
 export function toErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) {
     return String(error);

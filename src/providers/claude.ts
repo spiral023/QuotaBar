@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { isClaudeTokenExpired, loadClaudeCredentials, ClaudeCredentials } from "../auth/claudeAuth";
 import { refreshClaudeToken } from "../auth/tokenRefresh";
 import { log } from "../main/logging";
-import { NotAuthenticatedError, toErrorMessage } from "../shared/errors";
+import { NotAuthenticatedError, RateLimitError, toErrorMessage } from "../shared/errors";
 import { errorSnapshot, UsageProvider, UsageSnapshot, UsageWindow } from "./types";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -42,6 +42,11 @@ export class ClaudeProvider implements UsageProvider {
       if (response.status === 401 || response.status === 403) {
         throw new NotAuthenticatedError(`Claude usage returned HTTP ${response.status}`);
       }
+      if (response.status === 429) {
+        const header = response.headers.get("Retry-After");
+        const retryAfterMs = header !== null ? parseInt(header, 10) * 1000 : 5 * 60 * 1000;
+        throw new RateLimitError(retryAfterMs);
+      }
       if (!response.ok) {
         throw new Error(`Claude usage returned HTTP ${response.status}`);
       }
@@ -50,6 +55,7 @@ export class ClaudeProvider implements UsageProvider {
         rateLimitTier: credentials.rateLimitTier
       });
     } catch (error) {
+      if (error instanceof RateLimitError) throw error;
       const status = error instanceof NotAuthenticatedError ? "not_authenticated" : "error";
       log.warn(`Claude fetch failed: ${toErrorMessage(error)}`);
       return errorSnapshot("claude", toErrorMessage(error), status);
