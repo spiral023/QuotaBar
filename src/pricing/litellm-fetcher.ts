@@ -1,0 +1,91 @@
+import type { ModelPricing } from "./cost-calculator";
+
+export type { ModelPricing };
+
+const LITELLM_URL =
+  "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+
+const FALLBACK_PRICES: Record<string, ModelPricing> = {
+  "claude-opus-4": {
+    input_cost_per_token: 1.5e-5,
+    output_cost_per_token: 7.5e-5,
+    cache_creation_input_token_cost: 1.875e-5,
+    cache_read_input_token_cost: 1.5e-6,
+    provider_specific_entry: { fast: 6 },
+  },
+  "claude-sonnet-4-5": {
+    input_cost_per_token: 3e-6,
+    output_cost_per_token: 1.5e-5,
+    cache_creation_input_token_cost: 3.75e-6,
+    cache_read_input_token_cost: 3e-7,
+  },
+  "claude-haiku-4-5": {
+    input_cost_per_token: 8e-7,
+    output_cost_per_token: 4e-6,
+    cache_creation_input_token_cost: 1e-6,
+    cache_read_input_token_cost: 8e-8,
+  },
+  "gpt-4o": {
+    input_cost_per_token: 2.5e-6,
+    output_cost_per_token: 1e-5,
+  },
+  "gemini-2.0-flash": {
+    input_cost_per_token: 7.5e-8,
+    output_cost_per_token: 3e-7,
+  },
+};
+
+export class LiteLLMFetcher {
+  private cache: Map<string, ModelPricing> | null = null;
+
+  constructor(private readonly offlineMode: boolean = false) {}
+
+  async getModelPricing(modelName: string): Promise<ModelPricing | null> {
+    const map = await this.getPricingMap();
+    return this.lookup(modelName, map);
+  }
+
+  private async getPricingMap(): Promise<Map<string, ModelPricing>> {
+    if (this.cache) return this.cache;
+    if (this.offlineMode) {
+      this.cache = new Map(Object.entries(FALLBACK_PRICES));
+      return this.cache;
+    }
+    try {
+      const response = await fetch(LITELLM_URL, { signal: AbortSignal.timeout(10_000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const json = (await response.json()) as Record<string, unknown>;
+      this.cache = buildPricingMap(json);
+    } catch {
+      this.cache = new Map(Object.entries(FALLBACK_PRICES));
+    }
+    return this.cache;
+  }
+
+  private lookup(modelName: string, pricing: Map<string, ModelPricing>): ModelPricing | null {
+    if (pricing.has(modelName)) return pricing.get(modelName)!;
+    for (const prefix of ["anthropic/", "claude-3-5-", "claude-3-", "claude-"]) {
+      const key = `${prefix}${modelName}`;
+      if (pricing.has(key)) return pricing.get(key)!;
+    }
+    const lower = modelName.toLowerCase();
+    for (const [key, value] of pricing) {
+      const k = key.toLowerCase();
+      if (k.includes(lower) || lower.includes(k)) return value;
+    }
+    return null;
+  }
+}
+
+function buildPricingMap(json: Record<string, unknown>): Map<string, ModelPricing> {
+  const map = new Map<string, ModelPricing>();
+  for (const [key, value] of Object.entries(json)) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      map.set(key, value as ModelPricing);
+    }
+  }
+  for (const [key, value] of Object.entries(FALLBACK_PRICES)) {
+    if (!map.has(key)) map.set(key, value);
+  }
+  return map;
+}
