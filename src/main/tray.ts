@@ -12,7 +12,7 @@ export class TrayController {
     private readonly providers: UsageProvider[],
     private readonly refreshLoop: RefreshLoop
   ) {
-    this.tray = new Tray(renderTrayIcon({ connected: false, hasError: false }));
+    this.tray = new Tray(renderTrayIcon({ hasError: false }));
     this.tray.setToolTip("QuotaBar");
     this.tray.on("double-click", () => void this.showMenu());
     this.tray.on("click", () => void this.showMenu());
@@ -24,10 +24,7 @@ export class TrayController {
   }
 
   async update(): Promise<void> {
-    const maxUsage = computeMaxUsage(this.snapshots);
-    const connected = this.snapshots.some((snapshot) => snapshot.status === "ok" || snapshot.status === "stale");
-    const hasError = this.snapshots.some((snapshot) => snapshot.status === "error" || snapshot.status === "stale");
-    this.tray.setImage(renderTrayIcon({ maxUsage, connected, hasError }));
+    this.tray.setImage(renderTrayIcon({ hasError: false }));
     this.tray.setToolTip(buildTooltip(this.snapshots));
     await this.rebuildMenu();
   }
@@ -46,16 +43,6 @@ export class TrayController {
     await this.rebuildMenu();
     this.tray.popUpContextMenu();
   }
-}
-
-function computeMaxUsage(snapshots: UsageSnapshot[]): number | undefined {
-  const codex = snapshots.find((snapshot) => snapshot.provider === "codex");
-  const claude = snapshots.find((snapshot) => snapshot.provider === "claude");
-  const candidates = [
-    codex?.windows.find((window) => window.name === "fiveHour" || window.name === "session")?.usedPercent,
-    claude?.windows.find((window) => window.name === "fiveHour")?.usedPercent
-  ].filter((value): value is number => typeof value === "number");
-  return candidates.length > 0 ? Math.max(...candidates) : undefined;
 }
 
 function buildTooltip(snapshots: UsageSnapshot[]): string {
