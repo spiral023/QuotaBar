@@ -16,8 +16,8 @@ export async function runFirstRunPrompt(): Promise<void> {
     buttons: ["Yes", "No"],
     defaultId: 0,
     cancelId: 1,
-    title: "CodexBar for Windows",
-    message: "Start CodexBar automatically when Windows starts?"
+    title: "QuotaBar for Windows",
+    message: "Start QuotaBar automatically when Windows starts?"
   });
 
   if (choice.response === 0) {

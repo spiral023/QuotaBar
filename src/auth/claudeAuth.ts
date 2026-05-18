@@ -36,7 +36,7 @@ export function parseClaudeCredentialsJson(content: string): ClaudeCredentials |
 }
 
 export async function loadClaudeCredentials(): Promise<ClaudeCredentials | null> {
-  const envToken = process.env.CODEXBAR_CLAUDE_OAUTH_TOKEN?.trim();
+  const envToken = process.env.QUOTABAR_CLAUDE_OAUTH_TOKEN?.trim();
   if (envToken) {
     return {
       accessToken: envToken,

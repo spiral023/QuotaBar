@@ -6,11 +6,11 @@ export function getHomeDir(): string {
 }
 
 export function getAppConfigDir(): string {
-  return path.join(getHomeDir(), ".codexbar-win");
+  return path.join(getHomeDir(), ".quotabar-win");
 }
 
 export function getLogPath(): string {
-  return path.join(getAppConfigDir(), "codexbar.log");
+  return path.join(getAppConfigDir(), "quotabar.log");
 }
 
 export function getSettingsPath(): string {

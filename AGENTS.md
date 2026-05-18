@@ -2,7 +2,7 @@
 
 ## Projekt
 
-Dieses Repository enthaelt eine Electron/TypeScript Windows-Tray-App fuer CodexBar direkt im Repo-Root.
+Dieses Repository enthaelt eine Electron/TypeScript Windows-Tray-App fuer QuotaBar direkt im Repo-Root.
 
 ## Arbeitsregeln
 

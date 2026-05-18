@@ -28,7 +28,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady()
     .then(async () => {
-      app.setAppUserModelId("com.codexbar.windows");
+      app.setAppUserModelId("com.quotabar.windows");
       applyStartupFlag(cli.startupAction);
 
       await runFirstRunPrompt();
@@ -40,7 +40,7 @@ if (!app.requestSingleInstanceLock()) {
       await tray.rebuildMenu();
       refreshLoop.start();
       await initializeUpdater();
-      log.info(`CodexBar started; poll interval ${settings.pollIntervalSeconds}s; noWindow=${cli.noWindow}`);
+      log.info(`QuotaBar started; poll interval ${settings.pollIntervalSeconds}s; noWindow=${cli.noWindow}`);
     })
     .catch((error: unknown) => {
       log.error(`Startup failed: ${error instanceof Error ? error.message : String(error)}`);

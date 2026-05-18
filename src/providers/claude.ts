@@ -85,7 +85,7 @@ export function normalizeClaudeUsageResponse(input: unknown, identity: { rateLim
 }
 
 export function openClaudeLoginTerminal(): void {
-  const command = "Write-Host 'Run claude login, then restart or refresh CodexBar.'; Write-Host ''; claude login";
+  const command = "Write-Host 'Run claude login, then restart or refresh QuotaBar.'; Write-Host ''; claude login";
   spawn("powershell.exe", ["-NoExit", "-Command", command], {
     detached: true,
     stdio: "ignore",
@@ -101,7 +101,7 @@ async function requestClaudeUsage(credentials: ClaudeCredentials, timeoutMs: num
       "Content-Type": "application/json",
       "Authorization": `Bearer ${credentials.accessToken}`,
       "anthropic-beta": CLAUDE_OAUTH_BETA,
-      "User-Agent": "CodexBar for Windows"
+      "User-Agent": "QuotaBar for Windows"
     },
     signal: AbortSignal.timeout(timeoutMs)
   });

@@ -13,7 +13,7 @@ export class TrayController {
     private readonly refreshLoop: RefreshLoop
   ) {
     this.tray = new Tray(renderTrayIcon({ connected: false, hasError: false }));
-    this.tray.setToolTip("CodexBar");
+    this.tray.setToolTip("QuotaBar");
     this.tray.on("double-click", () => void this.showMenu());
     this.tray.on("click", () => void this.showMenu());
     this.tray.on("right-click", () => void this.showMenu());
@@ -59,7 +59,7 @@ function computeMaxUsage(snapshots: UsageSnapshot[]): number | undefined {
 }
 
 function buildTooltip(snapshots: UsageSnapshot[]): string {
-  const lines = ["CodexBar"];
+  const lines = ["QuotaBar"];
   for (const provider of ["claude", "codex"]) {
     const snapshot = snapshots.find((item) => item.provider === provider);
     const usage = snapshot?.windows.find((window) => typeof window.usedPercent === "number")?.usedPercent;

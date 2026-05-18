@@ -1,99 +1,29 @@
-# CodexBar for Windows
+# QuotaBar for Windows
 
-Electron/TypeScript MVP einer Windows-System-Tray-App für lokale AI-Coding-Quota-Anzeige.
+QuotaBar is a lightweight Windows tray app for keeping an eye on AI coding usage across local developer tools.
 
-## Technische Analyse der Referenzen
+It runs in the background, reads credentials and local state from known CLI locations, and shows current quota status for supported providers from the system tray. The project is intentionally small: no main window, no account dashboard, no broad disk scans.
 
-### steipete/CodexBar
+## Supported Providers
 
-- Architektur: Swift/macOS-Menüleisten-App mit getrenntem Core (`Sources/CodexBarCore`) für Fetching/Parsing, App-Schicht (`Sources/CodexBar`) für `UsageStore`, Settings, Menü und Icon, plus CLI und Widgets.
-- Provider-Modell: Provider-Descriptoren kapseln Auth-Quelle, Fetch-Strategie, Parser und Präsentation. Sources sind unter anderem OAuth, CLI, Browser-Cookies, API Keys und lokale Dateien.
-- Auth-Quellen: Codex nutzt Codex-CLI/OAuth und optionale OpenAI-Web-Dashboard-Extras. Claude nutzt OAuth, Web/Cookies und CLI-PTY-Fallback. Gemini nutzt OAuth-backed CLI-Credentials.
-- Refresh-Loop: Background refresh aktualisiert `UsageStore`; manuelles Refresh bleibt immer verfügbar; Fehler/Stale-Zustände dimmen die Anzeige.
-- Tray/Icon/UI: macOS Status Item mit dynamischen Meters, Provider-Reihen, Reset-Countdowns, Settings und optionalen Extras.
-- macOS-spezifisch: Keychain, Sparkle, WidgetKit, WebKit, menu bar APIs und macOS Permission-Prompts.
+| Provider | Status | Data source |
+| --- | --- | --- |
+| Claude | Usage windows | Claude Code OAuth credentials from `~/.claude/.credentials.json` |
+| Codex | Usage windows | Codex CLI OAuth credentials from `~/.codex/auth.json` |
+| Gemini | Local session summary | Gemini settings and local `session-*.json` files |
 
-### Finesssee/Win-CodexBar
+Claude and Codex usage currently depends on unofficial or internal provider endpoints. Those APIs can change without notice, so QuotaBar treats provider failures defensively and keeps the last successful snapshot as stale instead of crashing the tray app.
 
-- Architektur: Windows-Port mit Tauri + React UI und Rust-Backend; Rust enthält Provider, Credential-Härtung, Tray-Rendering, CLI und Windows-Packaging.
-- Provider-Modell: Rust `Provider` trait plus Fetch-Plan/Source-Modi. Codex/Claude/Gemini sind sauber isolierte Provider-Module.
-- Auth-Quellen: Codex liest `~/.codex/auth.json` und ruft `https://chatgpt.com/backend-api/wham/usage` auf. Claude liest `~/.claude/.credentials.json` und ruft `https://api.anthropic.com/api/oauth/usage` auf. Gemini nutzt im Port eine API-Strategie; dieses MVP bleibt bewusst lokal.
-- Refresh/UI: System-Tray, dynamische Usage-Meter, Provider Panel und Settings. Credential Stores werden unter Windows mit DPAPI gehärtet.
-- Windows-spezifisch: Tauri/WebView2, Inno/portable Packaging, Windows Tray und Autostart.
+## Features
 
-## Architekturentscheidung
-
-Dieses MVP übernimmt die Referenz-Ideen, aber nicht deren Code:
-
-- Electron Main Process ohne Hauptfenster.
-- Provider sind TypeScript-Module hinter einem einheitlichen `UsageProvider` Interface.
-- Inoffizielle/fragile APIs bleiben in `src/providers/codex.ts`, `src/providers/claude.ts` und `src/auth/tokenRefresh.ts` gekapselt.
-- Credentials werden nur aus bekannten Standardpfaden gelesen. Tokens werden nicht angezeigt und vor Logging redigiert.
-- `UsageStore` hält letzte erfolgreiche Snapshots und markiert sie bei Folgefehlern als `stale`.
-- Dynamisches PNG-Tray-Icon wird zur Laufzeit erzeugt.
-
-## Risiken
-
-- `chatgpt.com/backend-api/wham/usage`, `api.anthropic.com/api/oauth/usage` und Claude OAuth Refresh sind inoffiziell oder intern und können Format, Auth oder Statuscodes ändern.
-- `~/.codex/auth.json` und `~/.claude/.credentials.json` sind CLI-Implementierungsdetails.
-- Electron/electron-builder bringen transitive npm-Abhängigkeiten mit; `npm audit` sollte vor Releases gesondert bewertet werden.
-
-## MVP-Scope
-
-- Windows 10/11 Tray-App ohne Hauptfenster.
-- Rechtsklick/Klick/Doppelklick öffnet Kontextmenü.
-- Periodischer Refresh, manuelles Refresh, Start-with-Windows Toggle, Open Log, Open Config Folder, Exit.
-- Codex Provider über Codex-CLI-OAuth-Datei.
-- Claude Provider über Claude-Code-OAuth-Datei plus optionaler Token-Refresh und Env-Fallback.
-- Gemini Provider nur lokal: Modellname und `session-*.json` Zählung.
-- Unit Tests für JWT, Auth-Parser, Formatter, Farben, Redaction und Snapshot-Normalisierung.
-
-## Dateibaum
-
-```text
-.
-├─ package.json
-├─ tsconfig.json
-├─ electron-builder.yml
-├─ README.md
-├─ AGENTS.md
-├─ src/
-│  ├─ main/
-│  │  ├─ main.ts
-│  │  ├─ tray.ts
-│  │  ├─ menu.ts
-│  │  ├─ autostart.ts
-│  │  ├─ updater.ts
-│  │  └─ logging.ts
-│  ├─ providers/
-│  │  ├─ types.ts
-│  │  ├─ codex.ts
-│  │  ├─ claude.ts
-│  │  ├─ gemini.ts
-│  │  └─ providerRegistry.ts
-│  ├─ auth/
-│  │  ├─ codexAuth.ts
-│  │  ├─ claudeAuth.ts
-│  │  ├─ tokenRefresh.ts
-│  │  └─ jwt.ts
-│  ├─ usage/
-│  │  ├─ usageStore.ts
-│  │  ├─ refreshLoop.ts
-│  │  └─ formatters.ts
-│  ├─ icon/
-│  │  ├─ renderTrayIcon.ts
-│  │  └─ colors.ts
-│  ├─ config/
-│  │  ├─ paths.ts
-│  │  ├─ settings.ts
-│  │  └─ firstRun.ts
-│  └─ shared/
-│     ├─ redaction.ts
-│     └─ errors.ts
-├─ tests/
-└─ assets/
-   └─ icon.ico
-```
+- Windows 10/11 system tray app with no main window.
+- Dynamic tray icon generated at runtime from current usage state.
+- Tray menu with provider status, reset countdowns, manual refresh, logs, config folder, startup toggle, and exit.
+- Periodic background refresh, defaulting to every 60 seconds.
+- Provider isolation through a shared `UsageProvider` interface.
+- Token redaction before logging.
+- Credential reads limited to known provider paths.
+- Unit tests for auth parsing, JWT handling, formatting, colors, redaction, normalization, and branding.
 
 ## Installation
 
@@ -102,33 +32,137 @@ npm install
 npm run build
 ```
 
-## Entwicklung
+## Development
+
+Start the tray app in development mode:
 
 ```powershell
 npm run dev
+```
+
+Run tests:
+
+```powershell
 npm test
 ```
 
-`npm run dev` baut TypeScript und startet Electron mit `--no-window --debug`.
+`npm run dev` builds TypeScript first, then starts Electron with `--no-window --debug`.
 
 ## Packaging
+
+Build Windows installer and portable artifacts:
 
 ```powershell
 npm run package
 ```
 
-Packaging nutzt `electron-builder` und erzeugt Windows NSIS/portable Artefakte unter `package-output/`.
+Packaging uses `electron-builder` and writes output to `package-output/`.
 
-## Auth-Hinweise
+## Authentication
 
-- Codex: `codex login` ausführen. Das MVP liest `~/.codex/auth.json`.
-- Claude: `claude login` ausführen. Das MVP liest `~/.claude/.credentials.json`; alternativ `CODEXBAR_CLAUDE_OAUTH_TOKEN` setzen.
-- Gemini: Das MVP liest nur `~/.gemini/settings.json` und zählt lokale Sessions unter `~/.gemini/tmp/`.
+QuotaBar does not implement its own login flow for every provider. It uses credentials already created by the official local CLI tools where available.
 
-## Sicherheit und Datenschutz
+### Claude
 
-- Keine Passwörter werden gespeichert.
-- Tokens, Cookies, Authorization Header und JWTs werden nicht im UI angezeigt und vor dem Logging redigiert.
-- Logs liegen unter `%USERPROFILE%\.codexbar-win\codexbar.log`.
-- Gelesen werden nur bekannte Provider-Standardpfade; es findet kein Festplatten-Scan statt.
-- Claude/OpenAI interne oder inoffizielle APIs können sich ohne Vorankündigung ändern.
+Run:
+
+```powershell
+claude login
+```
+
+QuotaBar reads:
+
+```text
+~/.claude/.credentials.json
+```
+
+For local testing, you can also set:
+
+```powershell
+$env:QUOTABAR_CLAUDE_OAUTH_TOKEN = "..."
+```
+
+### Codex
+
+Run:
+
+```powershell
+codex login
+```
+
+QuotaBar reads:
+
+```text
+~/.codex/auth.json
+```
+
+If `CODEX_HOME` is set, QuotaBar reads `auth.json` from that directory instead.
+
+### Gemini
+
+QuotaBar currently reads local Gemini state only:
+
+```text
+~/.gemini/settings.json
+~/.gemini/tmp/session-*.json
+```
+
+This is used for a local session summary, not remote quota usage.
+
+## Local Data
+
+QuotaBar writes its own runtime files under:
+
+```text
+%USERPROFILE%\.quotabar-win
+```
+
+Common files:
+
+| File | Purpose |
+| --- | --- |
+| `settings.json` | Poll interval and provider timeout settings |
+| `quotabar.log` | Local app log with sensitive values redacted |
+| `.installed` | First-run marker |
+
+## Architecture
+
+```text
+src/
+├─ main/       Electron app lifecycle, tray menu, autostart, logging
+├─ providers/  Claude, Codex, Gemini, and provider registry
+├─ auth/       Credential parsing, JWT helpers, token refresh
+├─ usage/      Refresh loop, snapshot store, formatters
+├─ icon/       Runtime tray icon rendering
+├─ config/     Paths, settings, first-run prompt
+└─ shared/     Redaction and shared error types
+```
+
+The core flow is:
+
+1. Electron starts without opening a main window.
+2. Settings are loaded from `%USERPROFILE%\.quotabar-win`.
+3. Providers fetch or summarize usage through the shared provider interface.
+4. `UsageStore` keeps the latest successful snapshots.
+5. The tray icon and menu update after each refresh.
+
+## Security Notes
+
+- Tokens, cookies, authorization headers, and JWTs are not printed in UI output.
+- Logs pass through redaction helpers before sensitive values are written.
+- Credentials are read only from known provider paths.
+- QuotaBar does not scan the disk for auth files.
+- Provider APIs used for Claude and Codex quota data are unofficial or internal and may change.
+
+## Project Scripts
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Build and start Electron in debug mode |
+| `npm run build` | Compile TypeScript into `dist/` |
+| `npm test` | Run the Vitest test suite |
+| `npm run package` | Build Windows release artifacts |
+
+## License
+
+MIT

@@ -1,7 +1,7 @@
 {
-  "name": "codexbar-electron",
+  "name": "quotabar",
   "version": "0.1.0",
-  "description": "CodexBar for Windows - Electron tray app for AI coding quota usage",
+  "description": "QuotaBar for Windows - Electron tray app for AI coding quota usage",
   "main": "dist/main/main.js",
   "type": "commonjs",
   "scripts": {

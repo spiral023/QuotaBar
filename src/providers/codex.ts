@@ -83,7 +83,7 @@ function buildHeaders(credentials: CodexCredentials): HeadersInit {
   const headers: Record<string, string> = {
     "Accept": "application/json",
     "Authorization": `Bearer ${credentials.accessToken}`,
-    "User-Agent": "CodexBar for Windows"
+    "User-Agent": "QuotaBar for Windows"
   };
   if (credentials.accountId) {
     headers["ChatGPT-Account-Id"] = credentials.accountId;

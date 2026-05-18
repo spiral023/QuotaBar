@@ -1,5 +1,5 @@
-appId: com.codexbar.windows
-productName: CodexBar for Windows
+appId: com.quotabar.windows
+productName: QuotaBar for Windows
 publish: null
 directories:
   output: package-output
