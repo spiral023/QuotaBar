@@ -36,11 +36,13 @@ QuotaBar runs quietly in the system tray, reads credentials from known local CLI
 
 | Area | What QuotaBar does |
 | --- | --- |
-| **Tray-first UI** | Shows provider status from the Windows system tray |
+| **Tray-first UI** | Stacked per-provider progress bars in the Windows system tray |
 | **Multi-provider** | Supports Claude, Codex, and local Gemini session state |
 | **Real cost tracking** | Reads JSONL logs to calculate actual API costs vs. subscription |
+| **Reset notifications** | Windows toast when a provider's usage limit resets back to 0% |
 | **Background refresh** | Updates usage periodically, with manual refresh in the tray menu |
 | **Defensive fetches** | Keeps the last successful snapshot when a provider endpoint fails |
+| **Rate limit handling** | Per-provider backoff on HTTP 429; respects `Retry-After` header |
 | **Privacy-aware** | Reads only known paths and redacts sensitive values before logging |
 
 ## Provider Support
@@ -97,20 +99,24 @@ Set `pricingOfflineMode: true` to skip LiteLLM price fetches and use built-in fa
 
 <p>
   <img alt="No main window" src="https://img.shields.io/badge/UI-tray_only-blue">
-  <img alt="Runtime icon rendering" src="https://img.shields.io/badge/icon-dynamic_PNG-blue">
+  <img alt="Progress bars" src="https://img.shields.io/badge/icon-progress_bars-blue">
+  <img alt="Reset notifications" src="https://img.shields.io/badge/notifications-reset_alerts-blue">
   <img alt="Startup toggle" src="https://img.shields.io/badge/Windows-startup_toggle-blue">
   <img alt="Subscription factor" src="https://img.shields.io/badge/cost-subscription_factor-orange">
   <img alt="Sensitive values redacted" src="https://img.shields.io/badge/logs-redacted-green">
 </p>
 
 - Windows 10/11 tray app with click, double-click, and right-click menu access.
-- Dynamic tray icon generated from current usage and error state.
-- Provider rows with usage percentages, reset countdowns, stale state, and auth hints.
+- **Tray icon shows stacked horizontal progress bars** — one bar per active provider (Codex top, Claude middle, Gemini bottom). Only authenticated providers appear. Bar color reflects usage level; stale data is dimmed. Disconnected state shows a single gray track.
+- **Windows toast notification** when a provider's usage window resets to 0% so you know immediately when you can work again.
+- Provider rows with usage percentages, reset countdowns, and stale-data indicators.
+- **Weekly usage pace tracking** — shows whether you're on track, ahead, or behind relative to a linear weekly burn rate, with ETA until the quota runs out.
 - Subscription factor label in tray menu (e.g. `1.4× Abo`, `~0.3× Abo` for estimates).
+- **Per-provider rate limit backoff** — on HTTP 429, QuotaBar backs off that provider (respecting the `Retry-After` header; default 5 minutes) without pausing other providers or the global refresh tick.
 - Manual refresh, Open Log, Open Config Folder, Start with Windows, and Exit actions.
 - Background refresh loop with a default 60 second interval.
 - Provider abstraction through a shared `UsageProvider` interface.
-- Unit coverage for auth parsing, JWT handling, formatters, colors, redaction, normalization, and branding.
+- Unit coverage for auth parsing, JWT handling, formatters, colors, redaction, normalization, branding, icon state, reset detection, and refresh loop backoff.
 
 <!-- Add screenshot: tray-menu.png -->
 
@@ -198,12 +204,12 @@ QuotaBar writes runtime files under:
 
 ```text
 src/
-├─ main/       Electron lifecycle, tray menu, autostart, logging
+├─ main/       Electron lifecycle, tray menu, notifications, autostart, logging
 ├─ providers/  Claude, Codex, Gemini, provider registry
 ├─ auth/       Credential parsing, JWT helpers, token refresh
-├─ usage/      Refresh loop, snapshot store, formatters, usage pace
+├─ usage/      Refresh loop (with rate-limit backoff), snapshot store, reset detection, formatters, usage pace
 ├─ pricing/    PricingEngine, JSONL readers, cost calculators, LiteLLM fetcher
-├─ icon/       Runtime tray icon rendering
+├─ icon/       Tray icon: stacked progress bars rendered per active provider
 ├─ config/     Paths, settings, first-run prompt
 └─ shared/     Redaction and shared error types
 ```
@@ -213,9 +219,10 @@ The runtime flow:
 1. Electron starts without opening a main window.
 2. Settings load from `%USERPROFILE%\.quotabar-win`.
 3. Providers fetch or summarize usage through `UsageProvider`.
-4. `UsageStore` keeps the latest successful snapshots.
+4. `UsageStore` keeps the latest successful snapshots; marks them stale on error.
 5. `PricingEngine` reads JSONL logs and calculates the subscription factor for each provider.
-6. The tray icon and menu update after each refresh cycle.
+6. The tray icon (progress bars) and menu update after each refresh cycle.
+7. `NotificationService` fires a Windows toast whenever a usage window resets from ≥ 99.5% back to ≤ 1%.
 
 ### Pricing module
 
@@ -253,6 +260,7 @@ Early Windows MVP. The core app is usable for local development.
 - Cost tracking requires local JSONL logs. If no logs exist for a billing period, the cost factor is not displayed.
 - Gemini cost is an estimate based on session count, not real token data.
 - LiteLLM price fetches require network access. Set `pricingOfflineMode: true` in `settings.json` to use built-in fallback prices instead.
+- Reset notifications fire only for windows that drop from ≥ 99.5% to ≤ 1% with status `ok`; they require QuotaBar to be running at the time of the reset.
 
 ## License
 
