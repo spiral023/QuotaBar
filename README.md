@@ -1,82 +1,82 @@
 # QuotaBar for Windows
 
-QuotaBar is a lightweight Windows tray app for keeping an eye on AI coding usage across local developer tools.
+<p>
+  <img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-0078D4">
+  <img alt="Runtime: Electron" src="https://img.shields.io/badge/runtime-Electron-47848F">
+  <img alt="Language: TypeScript" src="https://img.shields.io/badge/language-TypeScript-3178C6">
+  <img alt="Tests: Vitest" src="https://img.shields.io/badge/tests-Vitest-6E9F18">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green">
+</p>
 
-It runs in the background, reads credentials and local state from known CLI locations, and shows current quota status for supported providers from the system tray. The project is intentionally small: no main window, no account dashboard, no broad disk scans.
+**A small Windows tray app for tracking AI coding quota usage across Claude, Codex, and local Gemini state.**
 
-## Supported Providers
+QuotaBar runs quietly in the system tray, reads credentials from known local CLI locations, and keeps your current AI coding usage one click away. It is intentionally narrow: no main window, no broad disk scans, and no account dashboard.
 
-| Provider | Status | Data source |
-| --- | --- | --- |
-| Claude | Usage windows | Claude Code OAuth credentials from `~/.claude/.credentials.json` |
-| Codex | Usage windows | Codex CLI OAuth credentials from `~/.codex/auth.json` |
-| Gemini | Local session summary | Gemini settings and local `session-*.json` files |
+## At A Glance
 
-Claude and Codex usage currently depends on unofficial or internal provider endpoints. Those APIs can change without notice, so QuotaBar treats provider failures defensively and keeps the last successful snapshot as stale instead of crashing the tray app.
+| Area | What QuotaBar does |
+| --- | --- |
+| **Tray-first UI** | Shows provider status from the Windows system tray |
+| **Multi-provider** | Supports Claude, Codex, and local Gemini session state |
+| **Background refresh** | Updates usage periodically, with manual refresh in the tray menu |
+| **Defensive fetches** | Keeps the last successful snapshot when a provider endpoint fails |
+| **Privacy-aware** | Reads only known paths and redacts sensitive values before logging |
+
+## Provider Support
+
+| Provider | Support level | Source | Notes |
+| --- | --- | --- | --- |
+| <img alt="Claude" src="https://img.shields.io/badge/Claude-usage_windows-8A5CF6"> | Usage windows | `~/.claude/.credentials.json` | Uses Claude Code OAuth credentials |
+| <img alt="Codex" src="https://img.shields.io/badge/Codex-usage_windows-111827"> | Usage windows | `~/.codex/auth.json` | Uses Codex CLI OAuth credentials |
+| <img alt="Gemini" src="https://img.shields.io/badge/Gemini-local_sessions-4285F4"> | Local summary | `~/.gemini/settings.json`, `~/.gemini/tmp/` | Counts local `session-*.json` files |
+
+> [!IMPORTANT]
+> Claude and Codex quota data currently depends on unofficial or internal provider endpoints. These endpoints can change without notice. QuotaBar handles failures defensively, but provider behavior may break until the integration is updated.
 
 ## Features
 
-- Windows 10/11 system tray app with no main window.
-- Dynamic tray icon generated at runtime from current usage state.
-- Tray menu with provider status, reset countdowns, manual refresh, logs, config folder, startup toggle, and exit.
-- Periodic background refresh, defaulting to every 60 seconds.
-- Provider isolation through a shared `UsageProvider` interface.
-- Token redaction before logging.
-- Credential reads limited to known provider paths.
-- Unit tests for auth parsing, JWT handling, formatting, colors, redaction, normalization, and branding.
+<p>
+  <img alt="No main window" src="https://img.shields.io/badge/UI-tray_only-blue">
+  <img alt="Runtime icon rendering" src="https://img.shields.io/badge/icon-dynamic_PNG-blue">
+  <img alt="Startup toggle" src="https://img.shields.io/badge/Windows-startup_toggle-blue">
+  <img alt="Sensitive values redacted" src="https://img.shields.io/badge/logs-redacted-green">
+</p>
 
-## Installation
+- Windows 10/11 tray app with click, double-click, and right-click menu access.
+- Dynamic tray icon generated from current usage and error state.
+- Provider rows with usage percentages, reset countdowns, stale state, and auth hints.
+- Manual refresh, Open Log, Open Config Folder, Start with Windows, and Exit actions.
+- Background refresh loop with a default 60 second interval.
+- Provider abstraction through a shared `UsageProvider` interface.
+- Unit coverage for auth parsing, JWT handling, formatters, colors, redaction, normalization, and branding.
+
+## Quick Start
 
 ```powershell
 npm install
 npm run build
-```
-
-## Development
-
-Start the tray app in development mode:
-
-```powershell
 npm run dev
 ```
 
-Run tests:
+`npm run dev` builds TypeScript and starts Electron with `--no-window --debug`.
 
-```powershell
-npm test
-```
+## Authentication Setup
 
-`npm run dev` builds TypeScript first, then starts Electron with `--no-window --debug`.
-
-## Packaging
-
-Build Windows installer and portable artifacts:
-
-```powershell
-npm run package
-```
-
-Packaging uses `electron-builder` and writes output to `package-output/`.
-
-## Authentication
-
-QuotaBar does not implement its own login flow for every provider. It uses credentials already created by the official local CLI tools where available.
+QuotaBar does not replace provider login flows. Sign in with the local CLI tools first, then start QuotaBar.
 
 ### Claude
-
-Run:
 
 ```powershell
 claude login
 ```
 
-QuotaBar reads:
+QuotaBar reads Claude Code OAuth credentials from:
 
 ```text
 ~/.claude/.credentials.json
 ```
 
-For local testing, you can also set:
+For local testing, you can set an OAuth token directly:
 
 ```powershell
 $env:QUOTABAR_CLAUDE_OAUTH_TOKEN = "..."
@@ -84,13 +84,11 @@ $env:QUOTABAR_CLAUDE_OAUTH_TOKEN = "..."
 
 ### Codex
 
-Run:
-
 ```powershell
 codex login
 ```
 
-QuotaBar reads:
+QuotaBar reads Codex CLI auth from:
 
 ```text
 ~/.codex/auth.json
@@ -107,17 +105,26 @@ QuotaBar currently reads local Gemini state only:
 ~/.gemini/tmp/session-*.json
 ```
 
-This is used for a local session summary, not remote quota usage.
+This is a local session summary, not remote Gemini quota usage.
 
-## Local Data
+## Commands
 
-QuotaBar writes its own runtime files under:
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Build and start Electron in debug mode |
+| `npm run build` | Compile TypeScript into `dist/` |
+| `npm test` | Run the Vitest test suite |
+| `npm run package` | Build Windows installer and portable artifacts |
+
+Packaging uses `electron-builder` and writes artifacts to `package-output/`.
+
+## Local Files
+
+QuotaBar writes runtime files under:
 
 ```text
 %USERPROFILE%\.quotabar-win
 ```
-
-Common files:
 
 | File | Purpose |
 | --- | --- |
@@ -129,8 +136,8 @@ Common files:
 
 ```text
 src/
-├─ main/       Electron app lifecycle, tray menu, autostart, logging
-├─ providers/  Claude, Codex, Gemini, and provider registry
+├─ main/       Electron lifecycle, tray menu, autostart, logging
+├─ providers/  Claude, Codex, Gemini, provider registry
 ├─ auth/       Credential parsing, JWT helpers, token refresh
 ├─ usage/      Refresh loop, snapshot store, formatters
 ├─ icon/       Runtime tray icon rendering
@@ -138,30 +145,31 @@ src/
 └─ shared/     Redaction and shared error types
 ```
 
-The core flow is:
+The runtime flow is deliberately simple:
 
 1. Electron starts without opening a main window.
-2. Settings are loaded from `%USERPROFILE%\.quotabar-win`.
-3. Providers fetch or summarize usage through the shared provider interface.
+2. Settings load from `%USERPROFILE%\.quotabar-win`.
+3. Providers fetch or summarize usage through `UsageProvider`.
 4. `UsageStore` keeps the latest successful snapshots.
 5. The tray icon and menu update after each refresh.
 
-## Security Notes
+## Security Model
+
+<p>
+  <img alt="No broad scans" src="https://img.shields.io/badge/files-no_broad_scans-green">
+  <img alt="Known auth paths only" src="https://img.shields.io/badge/auth-known_paths_only-green">
+  <img alt="JWTs redacted" src="https://img.shields.io/badge/JWTs-redacted-green">
+</p>
 
 - Tokens, cookies, authorization headers, and JWTs are not printed in UI output.
 - Logs pass through redaction helpers before sensitive values are written.
 - Credentials are read only from known provider paths.
 - QuotaBar does not scan the disk for auth files.
-- Provider APIs used for Claude and Codex quota data are unofficial or internal and may change.
+- Provider/Auth code keeps unofficial endpoints isolated and defensive.
 
-## Project Scripts
+## Status
 
-| Command | Description |
-| --- | --- |
-| `npm run dev` | Build and start Electron in debug mode |
-| `npm run build` | Compile TypeScript into `dist/` |
-| `npm test` | Run the Vitest test suite |
-| `npm run package` | Build Windows release artifacts |
+This is an early Windows MVP. The core app is usable for local development, but the provider integrations depend on upstream CLI credential formats and private usage APIs.
 
 ## License
 
