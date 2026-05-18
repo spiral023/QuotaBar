@@ -452,6 +452,7 @@
     }
 
     .pill-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+    .pill-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
     .pill {
       padding: 7px 0; background: var(--bg-card); border: 1px solid var(--border);
       border-radius: var(--r-pill); color: var(--t200);
@@ -684,6 +685,15 @@
       </div>
 
       <div class="s-section">
+        <div class="s-section-title">Cost Window</div>
+        <div class="pill-grid-3" id="window-pill-grid">
+          <button class="pill" data-win="7d">7 Tage</button>
+          <button class="pill" data-win="30d">30 Tage</button>
+          <button class="pill active" data-win="billing">Abrechn.</button>
+        </div>
+      </div>
+
+      <div class="s-section">
         <div class="s-section-title">Options</div>
         <div class="toggle-row">
           <span class="toggle-label">Pricing Offline Mode</span>
@@ -724,8 +734,9 @@
     let countdowns      = [];
     let cdTimer         = null;
     let footerTimer     = null;
-    let activePillVal   = 60;
-    let inSettings      = false;
+    let activePillVal    = 60;
+    let activeCostWindow = 'billing';
+    let inSettings       = false;
 
     // ── IPC ──────────────────────────────────────────────────────
 
@@ -769,10 +780,20 @@
 
     // ── Interval pills ───────────────────────────────────────────
 
-    document.querySelectorAll('.pill').forEach(btn => {
+    document.querySelectorAll('#pill-grid .pill').forEach(btn => {
       btn.addEventListener('click', () => {
         activePillVal = parseInt(btn.dataset.val, 10);
-        document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('#pill-grid .pill').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+
+    // ── Cost Window pills ────────────────────────────────────────
+
+    document.querySelectorAll('#window-pill-grid .pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeCostWindow = btn.dataset.win;
+        document.querySelectorAll('#window-pill-grid .pill').forEach(p => p.classList.remove('active'));
         btn.classList.add('active');
       });
     });
@@ -792,8 +813,13 @@
         const closest = stdVals.reduce((a, b) =>
           Math.abs(b - activePillVal) < Math.abs(a - activePillVal) ? b : a
         );
-        document.querySelectorAll('.pill').forEach(p => {
+        document.querySelectorAll('#pill-grid .pill').forEach(p => {
           p.classList.toggle('active', parseInt(p.dataset.val, 10) === closest);
+        });
+
+        activeCostWindow = s.costWindow ?? 'billing';
+        document.querySelectorAll('#window-pill-grid .pill').forEach(p => {
+          p.classList.toggle('active', p.dataset.win === activeCostWindow);
         });
       } catch (e) {
         console.error('Failed to load settings', e);
@@ -815,6 +841,7 @@
           gemini: parseFloat(document.getElementById('cost-gemini').value) || 19,
         },
         pricingOfflineMode: document.getElementById('tog-offline').checked,
+        costWindow: activeCostWindow,
       };
 
       try {
@@ -913,6 +940,7 @@
 
     function costBadgeHtml(cf) {
       if (!cf) return '';
+      const winSuffix = cf.windowLabel && cf.windowLabel !== 'billing' ? ` · ${cf.windowLabel}` : '';
       if (cf.factor === null) {
         return `<span class="badge b-cost">${esc(cf.label || 'Keine Logs')}</span>`;
       }
@@ -920,9 +948,9 @@
       const factorPart = `${pre}${cf.factor.toFixed(2)}× sub`;
       if (cf.apiCostUSD >= 0.005) {
         const costPart = `$${cf.apiCostUSD.toFixed(2)}`;
-        return `<span class="badge b-cost">${costPart} (${factorPart})</span>`;
+        return `<span class="badge b-cost">${costPart}${winSuffix} (${factorPart})</span>`;
       }
-      return `<span class="badge b-cost">${factorPart}</span>`;
+      return `<span class="badge b-cost">${factorPart}${winSuffix}</span>`;
     }
 
     // ── Provider logo icons ────────────────────────────────────────
