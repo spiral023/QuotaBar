@@ -57,15 +57,24 @@ describe("PricingEngine", () => {
   });
 
   it("returns real cost for Codex when JSONL events exist", async () => {
+    const resetsAt = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+    const billingStart = new Date(resetsAt.getTime() - 7 * 24 * 3600 * 1000);
+    const eventTime = new Date(billingStart.getTime() + 1000).toISOString(); // 1 second after billing start
+
+    // Build a session directory path matching the billing start date
+    const year = billingStart.getUTCFullYear();
+    const month = String(billingStart.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(billingStart.getUTCDate()).padStart(2, "0");
+
     const sessionsDir = path.join(os.tmpdir(), `quotabar-sf-test-${Date.now()}`);
-    const sessionFile = path.join(sessionsDir, "2026/05/18");
+    const sessionFile = path.join(sessionsDir, `${year}/${month}/${day}`);
     await fs.mkdir(sessionFile, { recursive: true });
     await fs.writeFile(
       path.join(sessionFile, "session.jsonl"),
       [
-        JSON.stringify({ timestamp: "2026-05-18T10:00:00.000Z", type: "turn_context", payload: { model: "gpt-4o" } }),
+        JSON.stringify({ timestamp: eventTime, type: "turn_context", payload: { model: "gpt-4o" } }),
         JSON.stringify({
-          timestamp: "2026-05-18T10:00:01.000Z",
+          timestamp: new Date(billingStart.getTime() + 2000).toISOString(), // 2 seconds after billing start
           type: "event_msg",
           payload: {
             type: "token_count",
@@ -82,7 +91,7 @@ describe("PricingEngine", () => {
     try {
       const engine = new PricingEngine(settings, "/nonexistent/claude", sessionsDir, "/nonexistent/config.toml");
       const snapshot = makeSnapshot("codex", {
-        windows: [{ name: "weekly", usedPercent: 5, resetsAt: "2026-05-25T00:00:00.000Z" }],
+        windows: [{ name: "weekly", usedPercent: 5, resetsAt: resetsAt.toISOString() }],
       });
       const result = await engine.calculateFactor(snapshot);
       expect(result).not.toBeUndefined();

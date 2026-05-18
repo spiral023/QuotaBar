@@ -121,8 +121,7 @@ function getCodexBillingStart(snapshot: UsageSnapshot): Date {
       return new Date(resetsAt.getTime() - 7 * 24 * 60 * 60 * 1000);
     }
   }
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 }
 
 function getGeminiSessionCount(snapshot: UsageSnapshot): number {
