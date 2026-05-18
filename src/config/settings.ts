@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import { ensureConfigDir } from "../main/logging";
 import { getSettingsPath } from "./paths";
 
+export type CostWindow = "7d" | "30d" | "billing";
+
 export interface SubscriptionCosts {
   claude: number;
   codex: number;
@@ -13,13 +15,15 @@ export interface Settings {
   providerTimeoutMs: number;
   subscriptionCosts: SubscriptionCosts;
   pricingOfflineMode: boolean;
+  costWindow: CostWindow;
 }
 
 export const defaultSettings: Settings = {
   pollIntervalSeconds: 60,
   providerTimeoutMs: 10_000,
   subscriptionCosts: { claude: 20, codex: 10, gemini: 19 },
-  pricingOfflineMode: false
+  pricingOfflineMode: false,
+  costWindow: "billing",
 };
 
 export async function loadSettings(overrides: Partial<Settings> = {}): Promise<Settings> {
@@ -37,8 +41,12 @@ export async function saveSettings(settings: Settings): Promise<void> {
   await fs.writeFile(getSettingsPath(), `${JSON.stringify(normalizeSettings(settings), null, 2)}\n`, "utf8");
 }
 
-function normalizeSettings(settings: Settings): Settings {
+export function normalizeSettings(settings: Settings): Settings {
   const sub = (settings.subscriptionCosts ?? {}) as Partial<SubscriptionCosts>;
+  const validWindows: CostWindow[] = ["7d", "30d", "billing"];
+  const costWindow: CostWindow = validWindows.includes(settings.costWindow as CostWindow)
+    ? (settings.costWindow as CostWindow)
+    : "billing";
   return {
     pollIntervalSeconds: Math.max(15, Math.floor(Number(settings.pollIntervalSeconds) || defaultSettings.pollIntervalSeconds)),
     providerTimeoutMs: Math.max(1000, Math.floor(Number(settings.providerTimeoutMs) || defaultSettings.providerTimeoutMs)),
@@ -47,6 +55,7 @@ function normalizeSettings(settings: Settings): Settings {
       codex: Math.max(0, Number(sub.codex) || defaultSettings.subscriptionCosts.codex),
       gemini: Math.max(0, Number(sub.gemini) || defaultSettings.subscriptionCosts.gemini),
     },
-    pricingOfflineMode: Boolean(settings.pricingOfflineMode)
+    pricingOfflineMode: Boolean(settings.pricingOfflineMode),
+    costWindow,
   };
 }
