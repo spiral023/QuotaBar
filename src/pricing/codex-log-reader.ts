@@ -83,7 +83,18 @@ async function parseCodexJsonlFile(
     const totalUsage = asRecord(info.total_token_usage);
 
     const oldTotals = previousTotals;
-    if (totalUsage) previousTotals = extractTotals(totalUsage);
+    if (totalUsage) {
+      previousTotals = extractTotals(totalUsage);
+    } else if (lastUsage) {
+      const d = extractTotals(lastUsage);
+      previousTotals = {
+        input_tokens: previousTotals.input_tokens + d.input_tokens,
+        cached_input_tokens: previousTotals.cached_input_tokens + d.cached_input_tokens,
+        output_tokens: previousTotals.output_tokens + d.output_tokens,
+        reasoning_output_tokens: previousTotals.reasoning_output_tokens + d.reasoning_output_tokens,
+        total_tokens: previousTotals.total_tokens + d.total_tokens,
+      };
+    }
 
     const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : null;
     if (!timestamp || new Date(timestamp) < billingStart) continue;

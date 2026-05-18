@@ -37,6 +37,20 @@ function makeTokenCountWithLast(
   };
 }
 
+function makeTokenCountLastOnly(
+  timestamp: string,
+  last: { input_tokens: number; cached_input_tokens: number; output_tokens: number; reasoning_output_tokens: number; total_tokens: number },
+) {
+  return {
+    timestamp,
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      info: { last_token_usage: last },
+    },
+  };
+}
+
 function makeTokenCountTotalOnly(
   timestamp: string,
   total: { input_tokens: number; cached_input_tokens: number; output_tokens: number; reasoning_output_tokens: number; total_tokens: number },
@@ -180,6 +194,46 @@ describe("readCodexTokensForPeriod", () => {
     expect(events).toHaveLength(2);
     const totalInput = events.reduce((s, e) => s + e.inputTokens, 0);
     expect(totalInput).toBe(125);
+  });
+
+  it("handles last_token_usage-only entries (no total_token_usage)", async () => {
+    await writeJsonl(path.join(tmpDir, "2026/05/18"), "session.jsonl", [
+      makeTurnContext("gpt-4o"),
+      makeTokenCountLastOnly("2026-05-18T10:00:01.000Z", {
+        input_tokens: 800, cached_input_tokens: 0, output_tokens: 80, reasoning_output_tokens: 0, total_tokens: 880,
+      }),
+      makeTokenCountLastOnly("2026-05-18T10:00:02.000Z", {
+        input_tokens: 600, cached_input_tokens: 0, output_tokens: 60, reasoning_output_tokens: 0, total_tokens: 660,
+      }),
+    ]);
+
+    const events = await readCodexTokensForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(events).toHaveLength(2);
+    expect(events[0].inputTokens).toBe(800);
+    expect(events[1].inputTokens).toBe(600);
+  });
+
+  it("reads model from info.model when no turn_context present", async () => {
+    await fs.mkdir(path.join(tmpDir, "2026/05/18"), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, "2026/05/18", "session.jsonl"),
+      JSON.stringify({
+        timestamp: "2026-05-18T10:00:01.000Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            model: "gpt-4o-mini",
+            last_token_usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 0, total_tokens: 110 },
+          },
+        },
+      }) + "\n",
+      "utf8",
+    );
+
+    const events = await readCodexTokensForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(events[0].model).toBe("gpt-4o-mini");
+    expect(events[0].isFallback).toBe(false);
   });
 
   it("skips invalid JSONL lines without throwing", async () => {
