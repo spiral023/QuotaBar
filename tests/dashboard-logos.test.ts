@@ -16,7 +16,6 @@ describe("dashboard provider logos", () => {
 
     expect(html).toContain("../../logos/claude.png");
     expect(html).toContain("../../logos/codex.png");
-    expect(html).toContain("../../logos/gemini.webp");
   });
 
   it("includes the logo folder in packaged builds", () => {

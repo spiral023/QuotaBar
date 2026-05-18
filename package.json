@@ -14,8 +14,7 @@
     "electron",
     "tray",
     "codex",
-    "claude",
-    "gemini"
+    "claude"
   ],
   "author": "",
   "license": "MIT",

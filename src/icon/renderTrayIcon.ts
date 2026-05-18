@@ -10,7 +10,6 @@ export interface BarData {
 export interface TrayIconState {
   codex?: BarData;
   claude?: BarData;
-  gemini?: BarData;
   hasError: boolean;
 }
 
@@ -24,7 +23,7 @@ export function renderTrayIcon(state: TrayIconState, size = 32): NativeImage {
   const png = new PNG({ width: size, height: size });
   fillTransparent(png);
 
-  const slots = [state.codex, state.claude, state.gemini].filter(
+  const slots = [state.codex, state.claude].filter(
     (s): s is BarData => s !== undefined
   );
 
@@ -34,7 +33,7 @@ export function renderTrayIcon(state: TrayIconState, size = 32): NativeImage {
     drawRect(png, PADDING_H, y, BAR_WIDTH, barH, TRACK_COLOR);
   } else {
     const barH = slots.length === 1 ? 8 : 7;
-    const gap = slots.length === 3 ? 2 : slots.length === 2 ? 4 : 0;
+    const gap = slots.length === 2 ? 4 : 0;
     const totalH = slots.length * barH + Math.max(0, slots.length - 1) * gap;
     const startY = Math.floor((size - totalH) / 2);
 

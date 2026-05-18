@@ -9,7 +9,7 @@ import type { UsageSnapshot } from "../src/providers/types";
 const settings: Settings = {
   pollIntervalSeconds: 60,
   providerTimeoutMs: 10_000,
-  subscriptionCosts: { claude: 20, codex: 10, gemini: 19 },
+  subscriptionCosts: { claude: 20, codex: 10 },
   pricingOfflineMode: true,
   costWindow: "billing",
 };
@@ -103,17 +103,6 @@ describe("PricingEngine", () => {
     } finally {
       await fs.rm(sessionsDir, { recursive: true, force: true });
     }
-  });
-
-  it("returns estimate for Gemini with label containing session count", async () => {
-    const engine = new PricingEngine(settings, "/nonexistent/path");
-    const snapshot = makeSnapshot("gemini", {
-      windows: [{ name: "session", label: "5 sessions (gemini-2.0-flash)" }],
-    });
-    const result = await engine.calculateFactor(snapshot);
-    expect(result).not.toBeUndefined();
-    expect(result!.isEstimate).toBe(true);
-    expect(result!.subscriptionCostUSD).toBe(19);
   });
 
   it("label has no ~ prefix for exact Claude result", async () => {

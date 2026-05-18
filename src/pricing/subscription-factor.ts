@@ -1,11 +1,10 @@
-import { getClaudeProjectsDir, getCodexConfigPath, getCodexSessionsDir } from "../config/paths";
+import { getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs } from "../config/paths";
 import type { CostWindow, Settings } from "../config/settings";
 import type { CostFactorResult, UsageSnapshot, UsageWindow } from "../providers/types";
-import { calculateCodexApiCost, readCodexSpeedTier } from "./codex-cost-calculator";
+import { calculateCodexApiCost, readCodexSpeedTierFromPaths } from "./codex-cost-calculator";
 import { readCodexTokensForPeriod } from "./codex-log-reader";
 import { calculateCostFromTokens } from "./cost-calculator";
-import { estimateGeminiCost } from "./gemini-estimator";
-import { readClaudeTokensForPeriod } from "./jsonl-reader";
+import { aggregateClaudeEntries, readClaudeUsageEntriesForPeriod } from "./jsonl-reader";
 import { LiteLLMFetcher } from "./litellm-fetcher";
 
 export class PricingEngine {
@@ -13,9 +12,9 @@ export class PricingEngine {
 
   constructor(
     private readonly settings: Settings,
-    private readonly claudeProjectsDir: string = getClaudeProjectsDir(),
-    private readonly codexSessionsDir: string = getCodexSessionsDir(),
-    private readonly codexConfigPath: string = getCodexConfigPath(),
+    private readonly claudeProjectsDir: string | string[] = getClaudeProjectsDirs(),
+    private readonly codexSessionsDir: string | string[] = getCodexSessionsDirs(),
+    private readonly codexConfigPath: string | string[] = getCodexConfigPaths(),
   ) {
     this.fetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
   }
@@ -26,7 +25,6 @@ export class PricingEngine {
       switch (snapshot.provider) {
         case "claude": return await this.calculateClaudeFactor(snapshot);
         case "codex": return await this.calculateCodexFactor(snapshot);
-        case "gemini": return await this.calculateGeminiFactor(snapshot);
         default: return undefined;
       }
     } catch {
@@ -36,10 +34,14 @@ export class PricingEngine {
 
   private async calculateClaudeFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
     const { billingStart, windowLabel } = resolveBillingStart(this.settings.costWindow, snapshot, "claude");
-    const tokens = await readClaudeTokensForPeriod(this.claudeProjectsDir, billingStart);
+    const entries = await readClaudeUsageEntriesForPeriod(this.claudeProjectsDir, billingStart);
+    const tokens = aggregateClaudeEntries(entries);
 
     let apiCostUSD = 0;
-    for (const [modelName, modelTokens] of Object.entries(tokens.perModel)) {
+    const entriesWithoutCost = entries.filter((entry) => entry.costUSD === undefined);
+    apiCostUSD += entries.reduce((sum, entry) => sum + (entry.costUSD ?? 0), 0);
+    const tokensToCalculate = aggregateClaudeEntries(entriesWithoutCost);
+    for (const [modelName, modelTokens] of Object.entries(tokensToCalculate.perModel)) {
       const pricing = await this.fetcher.getModelPricing(modelName);
       if (!pricing) continue;
       apiCostUSD += calculateCostFromTokens(
@@ -52,16 +54,16 @@ export class PricingEngine {
         pricing,
       );
     }
-    if (Object.keys(tokens.perModel).length === 0 && tokens.inputTokens + tokens.outputTokens > 0) {
-      const fallbackModel = tokens.modelNames[0] ?? snapshot.model ?? "claude-sonnet-4-5";
+    if (Object.keys(tokensToCalculate.perModel).length === 0 && tokensToCalculate.inputTokens + tokensToCalculate.outputTokens > 0) {
+      const fallbackModel = tokensToCalculate.modelNames[0] ?? snapshot.model ?? "claude-sonnet-4-5";
       const pricing = await this.fetcher.getModelPricing(fallbackModel);
       if (pricing) {
-        apiCostUSD = calculateCostFromTokens(
+        apiCostUSD += calculateCostFromTokens(
           {
-            input_tokens: tokens.inputTokens,
-            output_tokens: tokens.outputTokens,
-            cache_creation_input_tokens: tokens.cacheCreationTokens,
-            cache_read_input_tokens: tokens.cacheReadTokens,
+            input_tokens: tokensToCalculate.inputTokens,
+            output_tokens: tokensToCalculate.outputTokens,
+            cache_creation_input_tokens: tokensToCalculate.cacheCreationTokens,
+            cache_read_input_tokens: tokensToCalculate.cacheReadTokens,
           },
           pricing,
         );
@@ -101,7 +103,7 @@ export class PricingEngine {
         label: "Keine Logs verfügbar",
       };
     }
-    const speedTier = await readCodexSpeedTier(this.codexConfigPath);
+    const speedTier = await readCodexSpeedTierFromPaths(Array.isArray(this.codexConfigPath) ? this.codexConfigPath : [this.codexConfigPath]);
     const apiCostUSD = await calculateCodexApiCost(events, this.fetcher, speedTier);
     const subscriptionCostUSD = this.settings.subscriptionCosts.codex;
     const factor = subscriptionCostUSD > 0 ? apiCostUSD / subscriptionCostUSD : 0;
@@ -134,20 +136,6 @@ export class PricingEngine {
     };
   }
 
-  private async calculateGeminiFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const sessionCount = getGeminiSessionCount(snapshot);
-    const apiCostUSD = await estimateGeminiCost(sessionCount, this.fetcher);
-    const subscriptionCostUSD = this.settings.subscriptionCosts.gemini;
-    const factor = subscriptionCostUSD > 0 ? apiCostUSD / subscriptionCostUSD : 0;
-    return {
-      apiCostUSD,
-      subscriptionCostUSD,
-      factor,
-      isEstimate: true,
-      windowLabel: undefined,
-      label: formatLabel(apiCostUSD, factor, true),
-    };
-  }
 }
 
 function resolveBillingStart(
@@ -189,12 +177,6 @@ function getCodexBillingStart(snapshot: UsageSnapshot): Date {
     }
   }
   return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-}
-
-function getGeminiSessionCount(snapshot: UsageSnapshot): number {
-  const label = snapshot.windows[0]?.label ?? "";
-  const match = /^(\d+)\s+session/i.exec(label);
-  return match ? parseInt(match[1], 10) : 0;
 }
 
 function formatLabel(apiCostUSD: number, factor: number, isEstimate: boolean): string {

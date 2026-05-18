@@ -18,7 +18,16 @@ async function writeJsonl(dir: string, filename: string, entries: unknown[]): Pr
 describe("readClaudeTokensForPeriod", () => {
   it("returns zeros when directory does not exist", async () => {
     const result = await readClaudeTokensForPeriod("/nonexistent/path/xyz", new Date("2026-05-01"));
-    expect(result).toEqual({ inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, modelNames: [], perModel: {} });
+    expect(result).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      costUSD: 0,
+      hasCostUSD: false,
+      modelNames: [],
+      perModel: {},
+    });
   });
 
   it("aggregates tokens from entries within billing period", async () => {

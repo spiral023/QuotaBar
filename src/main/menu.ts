@@ -59,13 +59,6 @@ export async function buildContextMenu(
 }
 
 function snapshotToMenuLines(displayName: string, snapshot: UsageSnapshot): string[] {
-  if (snapshot.provider === "gemini") {
-    const label = snapshot.windows[0]?.label ?? "local sessions unavailable";
-    const lines = [`${displayName}: ${label}`];
-    if (snapshot.costFactor) lines.push(formatCostFactorLine(snapshot.costFactor));
-    return lines;
-  }
-
   const lines = snapshot.windows.length > 0
     ? snapshot.windows.flatMap((window, index) => {
       const label = index === 0 ? displayName : window.name === "weekly" ? "Weekly" : window.label ?? titleCase(window.name);

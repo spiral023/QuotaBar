@@ -15,6 +15,17 @@ export interface AggregatedTokens {
   cacheReadTokens: number;
   modelNames: string[];
   perModel: Record<string, ModelTokens>;
+  costUSD: number;
+  hasCostUSD: boolean;
+}
+
+export interface ClaudeUsageEntry extends ModelTokens {
+  provider: "claude";
+  timestamp: string;
+  model: string;
+  project: string;
+  session: string;
+  costUSD?: number;
 }
 
 const EMPTY: Omit<AggregatedTokens, "modelNames" | "perModel"> = {
@@ -22,89 +33,137 @@ const EMPTY: Omit<AggregatedTokens, "modelNames" | "perModel"> = {
   outputTokens: 0,
   cacheCreationTokens: 0,
   cacheReadTokens: 0,
+  costUSD: 0,
+  hasCostUSD: false,
 };
 
 export async function readClaudeTokensForPeriod(
-  projectsDir: string,
+  projectsDir: string | string[],
   billingStart: Date,
 ): Promise<AggregatedTokens> {
+  const entries = await readClaudeUsageEntriesForPeriod(projectsDir, billingStart);
+  return aggregateClaudeEntries(entries);
+}
+
+export async function readClaudeUsageEntriesForPeriod(
+  projectsDir: string | string[],
+  billingStart: Date,
+): Promise<ClaudeUsageEntry[]> {
+  const dirs = Array.isArray(projectsDir) ? projectsDir : [projectsDir];
+  const result: ClaudeUsageEntry[] = [];
+  const seenMessageIds = new Set<string>();
+  for (const dir of dirs) {
+    result.push(...(await readClaudeEntriesFromDir(dir, billingStart, seenMessageIds)));
+  }
+  return result;
+}
+
+export function aggregateClaudeEntries(entries: ClaudeUsageEntry[]): AggregatedTokens {
+  const totals = { ...EMPTY, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
+  const modelSet = new Set<string>();
+  const perModel: Record<string, ModelTokens> = {};
+  let costUSD = 0;
+  let hasCostUSD = false;
+
+  for (const entry of entries) {
+    totals.inputTokens += entry.inputTokens;
+    totals.outputTokens += entry.outputTokens;
+    totals.cacheCreationTokens += entry.cacheCreationTokens;
+    totals.cacheReadTokens += entry.cacheReadTokens;
+    if (entry.costUSD !== undefined) {
+      costUSD += entry.costUSD;
+      hasCostUSD = true;
+    }
+    if (entry.model) {
+      modelSet.add(entry.model);
+      const m = perModel[entry.model] ?? (perModel[entry.model] = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 });
+      m.inputTokens += entry.inputTokens;
+      m.outputTokens += entry.outputTokens;
+      m.cacheCreationTokens += entry.cacheCreationTokens;
+      m.cacheReadTokens += entry.cacheReadTokens;
+    }
+  }
+
+  return { ...totals, modelNames: Array.from(modelSet), perModel, costUSD, hasCostUSD };
+}
+
+async function readClaudeEntriesFromDir(
+  projectsDir: string,
+  billingStart: Date,
+  seenMessageIds: Set<string>,
+): Promise<ClaudeUsageEntry[]> {
   let entries: string[];
   try {
     entries = (await fs.readdir(projectsDir, { recursive: true })) as string[];
   } catch {
-    return { ...EMPTY, modelNames: [], perModel: {} };
+    return [];
   }
 
   const files = entries.filter((e) => e.endsWith(".jsonl")).map((e) => path.join(projectsDir, e));
-
-  const totals = { ...EMPTY, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
-  const modelSet = new Set<string>();
-  const seenMessageIds = new Set<string>();
-  const perModel: Record<string, ModelTokens> = {};
+  const result: ClaudeUsageEntry[] = [];
 
   for (const file of files) {
-    await processJsonlFile(file, billingStart, totals, modelSet, seenMessageIds, perModel);
+    result.push(...(await processJsonlFile(file, projectsDir, billingStart, seenMessageIds)));
   }
 
-  return { ...totals, modelNames: Array.from(modelSet), perModel };
+  return result;
 }
 
 async function processJsonlFile(
   filePath: string,
+  projectsDir: string,
   billingStart: Date,
-  totals: Omit<AggregatedTokens, "modelNames" | "perModel">,
-  modelSet: Set<string>,
   seenMessageIds: Set<string>,
-  perModel: Record<string, ModelTokens>,
-): Promise<void> {
+): Promise<ClaudeUsageEntry[]> {
   let content: string;
   try {
     content = await fs.readFile(filePath, "utf8");
   } catch {
-    return;
+    return [];
   }
 
+  const result: ClaudeUsageEntry[] = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const entry = JSON.parse(trimmed) as Record<string, unknown>;
-      processEntry(entry, billingStart, totals, modelSet, seenMessageIds, perModel);
+      const parsed = processEntry(entry, filePath, projectsDir, billingStart, seenMessageIds);
+      if (parsed) result.push(parsed);
     } catch {
       // skip invalid lines
     }
   }
+  return result;
 }
 
 function processEntry(
   entry: Record<string, unknown>,
+  filePath: string,
+  projectsDir: string,
   billingStart: Date,
-  totals: Omit<AggregatedTokens, "modelNames" | "perModel">,
-  modelSet: Set<string>,
   seenMessageIds: Set<string>,
-  perModel: Record<string, ModelTokens>,
-): void {
+): ClaudeUsageEntry | null {
   const ts = typeof entry.timestamp === "string" ? entry.timestamp : null;
-  if (!ts) return;
-  if (new Date(ts) < billingStart) return;
+  if (!ts) return null;
+  if (new Date(ts) < billingStart) return null;
 
   const msg = entry.message;
-  if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
+  if (!msg || typeof msg !== "object" || Array.isArray(msg)) return null;
   const message = msg as Record<string, unknown>;
 
   const usage = message.usage;
-  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
 
   // Claude Code logs multiple streaming snapshots of the same API response.
   // Deduplicate by message.id so each API call is counted exactly once.
   const msgId = typeof message.id === "string" ? message.id : null;
   if (msgId) {
-    if (seenMessageIds.has(msgId)) return;
+    if (seenMessageIds.has(msgId)) return null;
     seenMessageIds.add(msgId);
   }
 
-  const model = typeof message.model === "string" ? message.model : null;
-  if (model) modelSet.add(model);
+  const model = typeof message.model === "string" ? message.model : "unknown";
 
   const u = usage as Record<string, unknown>;
 
@@ -113,18 +172,23 @@ function processEntry(
   const cacheCreate = positiveNumber(u.cache_creation_input_tokens);
   const cacheRead = positiveNumber(u.cache_read_input_tokens);
 
-  totals.inputTokens += input;
-  totals.outputTokens += output;
-  totals.cacheCreationTokens += cacheCreate;
-  totals.cacheReadTokens += cacheRead;
+  const relative = path.relative(projectsDir, filePath);
+  const parts = relative.split(/[\\/]/).filter(Boolean);
+  const fileBase = path.basename(filePath, ".jsonl");
+  const cost = positiveNumber(entry.costUSD);
 
-  if (model) {
-    const m = perModel[model] ?? (perModel[model] = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 });
-    m.inputTokens += input;
-    m.outputTokens += output;
-    m.cacheCreationTokens += cacheCreate;
-    m.cacheReadTokens += cacheRead;
-  }
+  return {
+    provider: "claude",
+    timestamp: ts,
+    model,
+    project: parts[0] ?? "unknown",
+    session: typeof entry.sessionId === "string" ? entry.sessionId : fileBase,
+    inputTokens: input,
+    outputTokens: output,
+    cacheCreationTokens: cacheCreate,
+    cacheReadTokens: cacheRead,
+    ...(cost > 0 ? { costUSD: cost } : {}),
+  };
 }
 
 function positiveNumber(value: unknown): number {

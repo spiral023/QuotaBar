@@ -7,7 +7,6 @@ export type CostWindow = "7d" | "30d" | "billing";
 export interface SubscriptionCosts {
   claude: number;
   codex: number;
-  gemini: number;
 }
 
 export interface Settings {
@@ -21,7 +20,7 @@ export interface Settings {
 export const defaultSettings: Settings = {
   pollIntervalSeconds: 60,
   providerTimeoutMs: 10_000,
-  subscriptionCosts: { claude: 20, codex: 10, gemini: 19 },
+  subscriptionCosts: { claude: 20, codex: 10 },
   pricingOfflineMode: false,
   costWindow: "billing",
 };
@@ -53,7 +52,6 @@ export function normalizeSettings(settings: Settings): Settings {
     subscriptionCosts: {
       claude: Math.max(0, Number(sub.claude) || defaultSettings.subscriptionCosts.claude),
       codex: Math.max(0, Number(sub.codex) || defaultSettings.subscriptionCosts.codex),
-      gemini: Math.max(0, Number(sub.gemini) || defaultSettings.subscriptionCosts.gemini),
     },
     pricingOfflineMode: Boolean(settings.pricingOfflineMode),
     costWindow,

@@ -29,10 +29,6 @@ const FALLBACK_PRICES: Record<string, ModelPricing> = {
     input_cost_per_token: 2.5e-6,
     output_cost_per_token: 1e-5,
   },
-  "gemini-2.0-flash": {
-    input_cost_per_token: 7.5e-8,
-    output_cost_per_token: 3e-7,
-  },
 };
 
 export class LiteLLMFetcher {

@@ -20,7 +20,6 @@ describe("buildIconState", () => {
     const state = buildIconState([snap("codex", "ok", [{ name: "fiveHour", usedPercent: 75 }])]);
     expect(state.codex).toEqual({ usedPercent: 75, isStale: false });
     expect(state.claude).toBeUndefined();
-    expect(state.gemini).toBeUndefined();
   });
 
   it("returns claude bar with usedPercent from fiveHour window", () => {
@@ -29,19 +28,9 @@ describe("buildIconState", () => {
     expect(state.codex).toBeUndefined();
   });
 
-  it("returns gemini bar with usedPercent=undefined when gemini is ok", () => {
-    const state = buildIconState([snap("gemini", "ok")]);
-    expect(state.gemini).toEqual({ usedPercent: undefined, isStale: false });
-  });
-
   it("returns bar with isStale=true for stale provider", () => {
     const state = buildIconState([snap("codex", "stale", [{ name: "fiveHour", usedPercent: 90 }])]);
     expect(state.codex).toEqual({ usedPercent: 90, isStale: true });
-  });
-
-  it("returns gemini stale bar with isStale=true", () => {
-    const state = buildIconState([snap("gemini", "stale")]);
-    expect(state.gemini).toEqual({ usedPercent: undefined, isStale: true });
   });
 
   it("returns undefined for not_authenticated provider", () => {
@@ -83,19 +72,16 @@ describe("buildIconState", () => {
     const state = buildIconState([]);
     expect(state.codex).toBeUndefined();
     expect(state.claude).toBeUndefined();
-    expect(state.gemini).toBeUndefined();
     expect(state.hasError).toBe(false);
   });
 
-  it("handles all three providers active simultaneously", () => {
+  it("handles both providers active simultaneously", () => {
     const state = buildIconState([
       snap("codex", "ok", [{ name: "fiveHour", usedPercent: 100 }]),
       snap("claude", "ok", [{ name: "fiveHour", usedPercent: 50 }]),
-      snap("gemini", "ok"),
     ]);
     expect(state.codex).toEqual({ usedPercent: 100, isStale: false });
     expect(state.claude).toEqual({ usedPercent: 50, isStale: false });
-    expect(state.gemini).toEqual({ usedPercent: undefined, isStale: false });
     expect(state.hasError).toBe(false);
   });
 });

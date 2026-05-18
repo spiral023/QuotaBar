@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { calculateCodexApiCost, readCodexSpeedTier } from "../src/pricing/codex-cost-calculator";
+import { calculateCodexApiCost, readCodexSpeedTier, readCodexSpeedTierFromPaths } from "../src/pricing/codex-cost-calculator";
 import { LiteLLMFetcher } from "../src/pricing/litellm-fetcher";
 import type { CodexTokenEvent } from "../src/pricing/codex-log-reader";
 
@@ -51,11 +51,11 @@ describe("calculateCodexApiCost", () => {
   it("subtracts cached tokens from non-cached input", async () => {
     const fetcher = new LiteLLMFetcher(true);
     // 1M input, 400K cached → 600K non-cached at input price, 400K at cache_read price
-    // gpt-4o has no cache_read price → cached cost = 0
+    // gpt-4o has no cache_read price → cached cost falls back to input price
     const events = [makeEvent({ inputTokens: 1_000_000, cachedInputTokens: 400_000, outputTokens: 0 })];
     const cost = await calculateCodexApiCost(events, fetcher, "standard");
-    // non-cached: 600_000 * 2.5e-6 = $1.50; cached: 400_000 * 0 = $0
-    expect(cost).toBeCloseTo(1.5, 4);
+    // non-cached: 600_000 * 2.5e-6 = $1.50; cached: 400_000 * 2.5e-6 = $1.00
+    expect(cost).toBeCloseTo(2.5, 4);
   });
 
   it("applies fast-tier multiplier", async () => {
@@ -128,5 +128,21 @@ describe("readCodexSpeedTier", () => {
     await fs.writeFile(path.join(tmpDir, "config.toml"), 'model = "gpt-5"\npersonality = "pragmatic"\n', "utf8");
     const tier = await readCodexSpeedTier(path.join(tmpDir, "config.toml"));
     expect(tier).toBe("standard");
+  });
+
+  it("returns fast when any config path enables priority tier", async () => {
+    const dirA = path.join(tmpDir, "a");
+    const dirB = path.join(tmpDir, "b");
+    await fs.mkdir(dirA, { recursive: true });
+    await fs.mkdir(dirB, { recursive: true });
+    await fs.writeFile(path.join(dirA, "config.toml"), 'service_tier = "standard"\n', "utf8");
+    await fs.writeFile(path.join(dirB, "config.toml"), 'service_tier = "priority"\n', "utf8");
+
+    const tier = await readCodexSpeedTierFromPaths([
+      path.join(dirA, "config.toml"),
+      path.join(dirB, "config.toml"),
+    ]);
+
+    expect(tier).toBe("fast");
   });
 });

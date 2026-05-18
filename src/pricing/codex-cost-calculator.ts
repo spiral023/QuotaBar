@@ -21,7 +21,7 @@ export async function calculateCodexApiCost(
     const nonCachedInput = Math.max(event.inputTokens - event.cachedInputTokens, 0);
     let cost =
       nonCachedInput * (pricing.input_cost_per_token ?? 0) +
-      event.cachedInputTokens * (pricing.cache_read_input_token_cost ?? 0) +
+      event.cachedInputTokens * (pricing.cache_read_input_token_cost ?? pricing.input_cost_per_token ?? 0) +
       event.outputTokens * (pricing.output_cost_per_token ?? 0);
 
     if (speedTier === "fast") {
@@ -43,6 +43,13 @@ export async function readCodexSpeedTier(configPath: string): Promise<"standard"
     }
   } catch {
     // config not found or not readable — default to standard
+  }
+  return "standard";
+}
+
+export async function readCodexSpeedTierFromPaths(configPaths: string[]): Promise<"standard" | "fast"> {
+  for (const configPath of configPaths) {
+    if ((await readCodexSpeedTier(configPath)) === "fast") return "fast";
   }
   return "standard";
 }

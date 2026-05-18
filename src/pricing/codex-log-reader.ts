@@ -5,6 +5,8 @@ export interface CodexTokenEvent {
   timestamp: string;
   model: string;
   isFallback: boolean;
+  session: string;
+  directory: string;
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
@@ -21,6 +23,18 @@ type TokenTotals = {
 };
 
 export async function readCodexTokensForPeriod(
+  sessionsDir: string | string[],
+  billingStart: Date,
+): Promise<CodexTokenEvent[]> {
+  const dirs = Array.isArray(sessionsDir) ? sessionsDir : [sessionsDir];
+  const result: CodexTokenEvent[] = [];
+  for (const dir of dirs) {
+    result.push(...(await readCodexTokensFromDir(dir, billingStart)));
+  }
+  return result;
+}
+
+async function readCodexTokensFromDir(
   sessionsDir: string,
   billingStart: Date,
 ): Promise<CodexTokenEvent[]> {
@@ -37,13 +51,14 @@ export async function readCodexTokensForPeriod(
 
   const events: CodexTokenEvent[] = [];
   for (const file of files) {
-    events.push(...(await parseCodexJsonlFile(file, billingStart)));
+    events.push(...(await parseCodexJsonlFile(file, sessionsDir, billingStart)));
   }
   return events;
 }
 
 async function parseCodexJsonlFile(
   filePath: string,
+  sessionsDir: string,
   billingStart: Date,
 ): Promise<CodexTokenEvent[]> {
   let content: string;
@@ -113,6 +128,8 @@ async function parseCodexJsonlFile(
       timestamp,
       model,
       isFallback: model === "gpt-5",
+      session: path.basename(filePath, ".jsonl"),
+      directory: path.relative(sessionsDir, path.dirname(filePath)) || ".",
       inputTokens: delta.input_tokens,
       cachedInputTokens: Math.min(delta.cached_input_tokens, delta.input_tokens),
       outputTokens: delta.output_tokens,

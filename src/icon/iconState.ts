@@ -17,7 +17,6 @@ export function buildIconState(snapshots: UsageSnapshot[]): TrayIconState {
   return {
     codex: barFor("codex"),
     claude: barFor("claude"),
-    gemini: barFor("gemini"),
     hasError: snapshots.some((s) => s.status === "stale" || s.status === "error"),
   };
 }

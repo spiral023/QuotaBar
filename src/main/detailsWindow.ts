@@ -1,8 +1,10 @@
 import path from "path";
-import { BrowserWindow, ipcMain, screen, Tray } from "electron";
+import { BrowserWindow, ipcMain, screen, Tray, clipboard } from "electron";
 import { UsageSnapshot } from "../providers/types";
 import { loadSettings, saveSettings } from "../config/settings";
 import { log } from "./logging";
+import { generateUsageReport } from "../reports/reportService";
+import type { ReportRequest } from "../reports/types";
 
 export class DetailsWindowController {
   private win: BrowserWindow | null = null;
@@ -155,6 +157,18 @@ export class DetailsWindowController {
       await saveSettings(merged);
       log.info("Settings saved via dashboard");
       this._onRefreshRequest?.();
+    });
+
+    ipcMain.handle("reports:get", async (_, request: ReportRequest) => {
+      const settings = await loadSettings();
+      return await generateUsageReport(request, { settings });
+    });
+
+    ipcMain.handle("reports:copy-json", async (_, request: ReportRequest) => {
+      const settings = await loadSettings();
+      const report = await generateUsageReport(request, { settings });
+      clipboard.writeText(JSON.stringify(report, null, 2));
+      return { ok: true };
     });
   }
 }

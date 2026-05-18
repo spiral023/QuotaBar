@@ -17,12 +17,6 @@ describe("LiteLLMFetcher (offline mode)", () => {
     expect(pricing!.input_cost_per_token).toBeGreaterThan(0);
   });
 
-  it("returns fallback pricing for gemini-2.0-flash", async () => {
-    const fetcher = new LiteLLMFetcher(true);
-    const pricing = await fetcher.getModelPricing("gemini-2.0-flash");
-    expect(pricing).not.toBeNull();
-  });
-
   it("returns null for unknown model", async () => {
     const fetcher = new LiteLLMFetcher(true);
     const pricing = await fetcher.getModelPricing("unknown-model-xyz-9999");

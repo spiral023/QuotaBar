@@ -32,8 +32,6 @@
 
       --claude-col:  #f59830;
       --codex-col:   #52d017;
-      --gemini-col:  #8b70f0;
-
       --r-card:  11px;
       --r-icon:  9px;
       --r-btn:   7px;
@@ -271,11 +269,6 @@
       box-shadow: 0 2px 12px rgba(82,208,23,0.12);
       outline: none;
     }
-    .prov-icon.icon-gemini {
-      background: linear-gradient(145deg, #18134a 0%, #231a6a 100%);
-      box-shadow: 0 2px 12px rgba(139,112,240,0.22);
-      outline-color: rgba(139,112,240,0.2);
-    }
 
     /* ── Card body: icon + info ─────────────────────────────── */
     .card-body {
@@ -385,9 +378,67 @@
     .b-error { background: rgba(255,68,68,0.08);   color: #ff7272; border: 1px solid rgba(255,68,68,0.18); }
     .b-auth  { background: rgba(255,140,0,0.08);   color: #ffa030; border: 1px solid rgba(255,140,0,0.18); }
 
-    /* ── Gemini / status cards ─────────────────────────────── */
+    /* ── Status cards ─────────────────────────────────────── */
     .card-status-row { display: flex; align-items: center; justify-content: space-between; }
-    .gemini-lbl { font-size: 12px; color: var(--t200); line-height: 1.4; text-wrap: pretty; }
+    .status-lbl { font-size: 12px; color: var(--t200); line-height: 1.4; text-wrap: pretty; }
+
+    /* ── Tabs / reports ────────────────────────────────────── */
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 5px;
+      padding: 6px 6px 0;
+      background: var(--bg-base);
+    }
+    .tab-btn {
+      height: 30px;
+      border: 1px solid var(--border);
+      border-radius: var(--r-btn);
+      background: var(--bg-card);
+      color: var(--t300);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab-btn.active { color: var(--green); border-color: rgba(82,208,23,0.28); background: rgba(82,208,23,0.08); }
+    .panel[hidden] { display: none; }
+    .report-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .report-toolbar {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 5px;
+      padding: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    .report-toolbar select,
+    .report-toolbar input {
+      min-width: 0;
+      height: 28px;
+      border: 1px solid var(--border);
+      border-radius: var(--r-btn);
+      background: var(--bg-card);
+      color: var(--t200);
+      font: 10px 'IBM Plex Mono', monospace;
+      padding: 0 7px;
+      outline: none;
+    }
+    .report-toolbar .wide { grid-column: span 2; }
+    .report-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; padding: 0 6px 6px; }
+    .report-action {
+      height: 29px;
+      border-radius: var(--r-btn);
+      border: 1px solid rgba(82,208,23,0.22);
+      background: rgba(82,208,23,0.08);
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .report-table { width: 100%; border-collapse: collapse; font: 10px 'IBM Plex Mono', monospace; color: var(--t200); }
+    .report-table th, .report-table td { padding: 5px 4px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+    .report-table th:first-child, .report-table td:first-child,
+    .report-table th:nth-child(2), .report-table td:nth-child(2) { text-align: left; }
+    .report-summary { font: 10px 'IBM Plex Mono', monospace; color: var(--t300); padding: 6px 8px; border-bottom: 1px solid var(--border); }
 
     /* ── TIP card ───────────────────────────────────────────── */
     .tip-body-wrap {
@@ -636,10 +687,64 @@
 
   <!-- ── Dashboard View ─────────────────────────────────── -->
   <div class="view" id="view-dashboard">
-    <div class="content" id="content">
-      <div class="empty">
-        <div class="spinner"></div>
-        <span>Loading…</span>
+    <div class="tabs">
+      <button class="tab-btn active" id="tab-live">Live</button>
+      <button class="tab-btn" id="tab-reports">Reports</button>
+    </div>
+    <div class="panel view" id="panel-live">
+      <div class="content" id="content">
+        <div class="empty">
+          <div class="spinner"></div>
+          <span>Loading…</span>
+        </div>
+      </div>
+    </div>
+    <div class="panel report-wrap" id="panel-reports" hidden>
+      <div class="report-toolbar">
+        <select id="rep-provider">
+          <option value="all">All</option>
+          <option value="claude">Claude</option>
+          <option value="codex">Codex</option>
+        </select>
+        <select id="rep-type">
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+          <option value="session">Session</option>
+        </select>
+        <input id="rep-since" type="date" title="Since">
+        <input id="rep-until" type="date" title="Until">
+        <input id="rep-timezone" class="wide" type="text" title="Timezone" placeholder="Timezone">
+        <input id="rep-project" class="wide" type="text" title="Project / instance filter" placeholder="Project / instance filter">
+        <select id="rep-cost-mode">
+          <option value="auto">Cost auto</option>
+          <option value="calculate">Calculate</option>
+          <option value="display">Display</option>
+        </select>
+        <select id="rep-speed">
+          <option value="auto">Speed auto</option>
+          <option value="standard">Standard</option>
+          <option value="fast">Fast</option>
+        </select>
+        <select id="rep-order">
+          <option value="desc">Newest</option>
+          <option value="asc">Oldest</option>
+        </select>
+        <select id="rep-instances">
+          <option value="false">Combined</option>
+          <option value="true">Instances</option>
+        </select>
+        <select id="rep-breakdown" class="wide">
+          <option value="false">Compact rows</option>
+          <option value="true">Model breakdown in JSON</option>
+        </select>
+      </div>
+      <div class="report-actions">
+        <button class="report-action" id="btn-report-run">Run Report</button>
+        <button class="report-action" id="btn-report-copy">Copy JSON</button>
+      </div>
+      <div class="content" id="report-content">
+        <div class="empty"><span>Select report filters</span></div>
       </div>
     </div>
   </div>
@@ -672,13 +777,6 @@
             <div class="cost-wrap">
               <span class="cost-sym">$</span>
               <input class="cost-field" id="cost-codex" type="number" min="0" step="1" placeholder="10">
-            </div>
-          </div>
-          <div class="cost-row">
-            <span class="cost-label">Gemini</span>
-            <div class="cost-wrap">
-              <span class="cost-sym">$</span>
-              <input class="cost-field" id="cost-gemini" type="number" min="0" step="1" placeholder="19">
             </div>
           </div>
         </div>
@@ -737,12 +835,14 @@
     let activePillVal    = 60;
     let activeCostWindow = 'billing';
     let inSettings       = false;
+    let activePanel       = 'live';
+    let lastReport        = null;
 
     // ── IPC ──────────────────────────────────────────────────────
 
     ipcRenderer.on('quota:update', (_, data) => {
       lastRefreshedAt = data.lastRefreshedAt ? new Date(data.lastRefreshedAt) : new Date();
-      render(data.snapshots);
+      if (activePanel === 'live') render(data.snapshots);
       startFooterTimer();
     });
 
@@ -778,6 +878,27 @@
       if (inSettings) loadSettingsUI();
     });
 
+    document.getElementById('tab-live').addEventListener('click', () => setPanel('live'));
+    document.getElementById('tab-reports').addEventListener('click', () => setPanel('reports'));
+    document.getElementById('btn-report-run').addEventListener('click', () => loadReport());
+    document.getElementById('btn-report-copy').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-report-copy');
+      btn.textContent = 'Copying…';
+      try {
+        if (!lastReport) lastReport = await ipcRenderer.invoke('reports:get', reportRequest());
+        await navigator.clipboard.writeText(JSON.stringify(lastReport, null, 2));
+        btn.textContent = 'Copied';
+      } catch {
+        try {
+          await ipcRenderer.invoke('reports:copy-json', reportRequest());
+          btn.textContent = 'Copied';
+        } catch {
+          btn.textContent = 'Copy failed';
+        }
+      }
+      setTimeout(() => { btn.textContent = 'Copy JSON'; }, 1400);
+    });
+
     // ── Interval pills ───────────────────────────────────────────
 
     document.querySelectorAll('#pill-grid .pill').forEach(btn => {
@@ -805,7 +926,6 @@
         const s = await ipcRenderer.invoke('settings:get');
         document.getElementById('cost-claude').value  = s.subscriptionCosts?.claude ?? 20;
         document.getElementById('cost-codex').value   = s.subscriptionCosts?.codex  ?? 10;
-        document.getElementById('cost-gemini').value  = s.subscriptionCosts?.gemini ?? 19;
         document.getElementById('tog-offline').checked = !!s.pricingOfflineMode;
 
         activePillVal = s.pollIntervalSeconds ?? 60;
@@ -838,7 +958,6 @@
         subscriptionCosts: {
           claude: parseFloat(document.getElementById('cost-claude').value) || 20,
           codex:  parseFloat(document.getElementById('cost-codex').value)  || 10,
-          gemini: parseFloat(document.getElementById('cost-gemini').value) || 19,
         },
         pricingOfflineMode: document.getElementById('tog-offline').checked,
         costWindow: activeCostWindow,
@@ -857,22 +976,22 @@
     // ── Helpers ──────────────────────────────────────────────────
 
     function usageColor(pct) {
-      if (pct < 70) return 'green';
-      if (pct < 85) return 'yellow';
-      if (pct < 95) return 'orange';
+      if (pct < 50) return 'green';
+      if (pct < 75) return 'yellow';
+      if (pct < 90) return 'orange';
       return 'red';
     }
 
     function accentVar(pct) {
       if (typeof pct !== 'number') return 'var(--gray)';
-      if (pct < 70) return 'var(--green)';
-      if (pct < 85) return 'var(--yellow)';
-      if (pct < 95) return 'var(--orange)';
+      if (pct < 50) return 'var(--green)';
+      if (pct < 75) return 'var(--yellow)';
+      if (pct < 90) return 'var(--orange)';
       return 'var(--red)';
     }
 
     function providerColor(name) {
-      const map = { claude: '#f59830', codex: '#52d017', gemini: '#8b70f0' };
+      const map = { claude: '#f59830', codex: '#52d017' };
       return map[name] || '#475460';
     }
 
@@ -960,7 +1079,6 @@
       const logos = {
         claude: '../../logos/claude.png',
         codex: '../../logos/codex.png',
-        gemini: '../../logos/gemini.webp',
       };
       const src = logos[provider];
       if (!src) return `<div class="${cls}"></div>`;
@@ -1104,7 +1222,6 @@
           <span class="badge b-error">${esc(msg)}</span>
         </div>`;
       }
-      if (snap.provider === 'gemini') return renderGemini(snap, name, delay);
       return renderStandard(snap, name, delay);
     }
 
@@ -1176,28 +1293,67 @@
       </div>`;
     }
 
-    function renderGemini(snap, name, delay) {
-      const label = snap.windows[0]?.label ?? (snap.status === 'error' ? 'Unavailable' : 'No local session data');
-      const bdgs = [];
-      if (snap.status === 'stale') bdgs.push(`<span class="badge b-stale">Stale</span>`);
-      if (snap.status === 'error') bdgs.push(`<span class="badge b-error">Error</span>`);
-      const costHtml = costBadgeHtml(snap.costFactor);
-      if (costHtml) bdgs.push(costHtml);
+    function setPanel(panel) {
+      activePanel = panel;
+      document.getElementById('tab-live').classList.toggle('active', panel === 'live');
+      document.getElementById('tab-reports').classList.toggle('active', panel === 'reports');
+      document.getElementById('panel-live').hidden = panel !== 'live';
+      document.getElementById('panel-reports').hidden = panel !== 'reports';
+      if (panel === 'reports' && !document.getElementById('rep-timezone').value) {
+        document.getElementById('rep-timezone').value = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      }
+      if (panel === 'reports') loadReport();
+    }
 
-      return `<div class="card has-accent" style="--card-accent:var(--gray);${delay}">
-        <div class="card-body">
-          ${providerIconHtml('gemini')}
-          <div class="card-info">
-            <div class="card-head">
-              <span class="prov-name">${esc(name)}</span>
-              <span class="card-chevron">›</span>
-            </div>
-            <div class="gemini-lbl">${esc(label)}</div>
-            ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
-            ${tokenDetailHtml(snap.costFactor)}
-          </div>
-        </div>
-      </div>`;
+    function reportRequest() {
+      const text = id => document.getElementById(id).value.trim();
+      return {
+        provider: text('rep-provider'),
+        type: text('rep-type'),
+        since: text('rep-since') || undefined,
+        until: text('rep-until') || undefined,
+        timezone: text('rep-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone,
+        project: text('rep-project') || undefined,
+        instances: text('rep-instances') === 'true',
+        costMode: text('rep-cost-mode'),
+        codexSpeed: text('rep-speed'),
+        order: text('rep-order'),
+        breakdown: text('rep-breakdown') === 'true',
+      };
+    }
+
+    async function loadReport() {
+      const el = document.getElementById('report-content');
+      el.innerHTML = '<div class="empty"><div class="spinner"></div><span>Loading report…</span></div>';
+      try {
+        lastReport = await ipcRenderer.invoke('reports:get', reportRequest());
+        renderReport(lastReport);
+      } catch (e) {
+        el.innerHTML = `<div class="empty"><span>${esc(e?.message || 'Report failed')}</span></div>`;
+      }
+    }
+
+    function renderReport(report) {
+      const el = document.getElementById('report-content');
+      const total = report.totals || {};
+      const summary = `<div class="report-summary">${report.rows.length} rows · ${fmtTokens(total.totalTokens || 0)} tokens · $${(total.costUSD || 0).toFixed(2)}</div>`;
+      if (!report.rows.length) {
+        el.innerHTML = summary + '<div class="empty"><span>No report data</span></div>';
+        return;
+      }
+      const rows = report.rows.map(row => `<tr>
+        <td>${esc(row.bucket)}</td>
+        <td>${esc(row.provider)}${row.project ? `/${esc(row.project)}` : row.directory ? `/${esc(row.directory)}` : ''}</td>
+        <td>${fmtTokens(row.inputTokens)}</td>
+        <td>${fmtTokens(row.outputTokens)}</td>
+        <td>${fmtTokens(row.cacheReadTokens + row.cacheCreationTokens)}</td>
+        <td>${fmtTokens(row.totalTokens)}</td>
+        <td>$${(row.costUSD || 0).toFixed(2)}</td>
+      </tr>`).join('');
+      el.innerHTML = summary + `<table class="report-table">
+        <thead><tr><th>Bucket</th><th>Source</th><th>In</th><th>Out</th><th>Cache</th><th>Total</th><th>Cost</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
     }
 
     // ── Countdown ─────────────────────────────────────────────────
