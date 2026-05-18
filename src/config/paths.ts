@@ -40,3 +40,17 @@ export function getGeminiTmpDir(): string {
 export function getClaudeProjectsDir(): string {
   return path.join(getHomeDir(), ".claude", "projects");
 }
+
+export function getCodexSessionsDir(): string {
+  return path.join(
+    process.env.CODEX_HOME?.trim() || path.join(getHomeDir(), ".codex"),
+    "sessions",
+  );
+}
+
+export function getCodexConfigPath(): string {
+  return path.join(
+    process.env.CODEX_HOME?.trim() || path.join(getHomeDir(), ".codex"),
+    "config.toml",
+  );
+}
