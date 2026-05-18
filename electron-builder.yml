@@ -1,0 +1,18 @@
+appId: com.codexbar.windows
+productName: CodexBar for Windows
+publish: null
+directories:
+  output: package-output
+files:
+  - dist/**
+  - package.json
+  - assets/**
+win:
+  target:
+    - nsis
+    - portable
+  icon: assets/icon.ico
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
