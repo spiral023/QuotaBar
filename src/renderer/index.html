@@ -650,6 +650,99 @@
       font-variant-numeric: tabular-nums; line-height: 1;
     }
 
+    /* ══ ANALYTICS PHASE 3 ═════════════════════════════════════ */
+    .an-heatmap { display: flex; flex-direction: column; gap: 2px; }
+    .an-heatmap-row { display: flex; align-items: center; gap: 5px; }
+    .an-heatmap-lbl {
+      width: 26px; flex-shrink: 0; text-align: right;
+      font-family: 'IBM Plex Mono', monospace; font-size: 8px; color: var(--t400);
+    }
+    .an-heatmap-track {
+      flex: 1; height: 7px; background: rgba(255,255,255,0.04); border-radius: 2px;
+    }
+    .an-heatmap-fill { height: 100%; border-radius: 2px; background: #f59830; opacity: 0.75; }
+    .an-heatmap-count {
+      width: 32px; flex-shrink: 0; text-align: right;
+      font-family: 'IBM Plex Mono', monospace; font-size: 8px; color: var(--t400);
+    }
+
+    .an-wkday-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+    .an-wkday-lbl { width: 56px; flex-shrink: 0; font-size: 9.5px; color: var(--t300); }
+    .an-wkday-track {
+      flex: 1; height: 7px; background: rgba(255,255,255,0.04); border-radius: 2px;
+    }
+    .an-wkday-fill { height: 100%; border-radius: 2px; background: #52d017; opacity: 0.75; }
+    .an-wkday-pct {
+      width: 30px; flex-shrink: 0; text-align: right;
+      font-family: 'IBM Plex Mono', monospace; font-size: 8px; color: var(--t400);
+    }
+
+    .an-top-days { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
+    .an-top-day-row { display: flex; align-items: baseline; gap: 6px; font-size: 10px; }
+    .an-top-day-date {
+      font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+      color: var(--t300); flex-shrink: 0;
+    }
+    .an-top-day-count { font-weight: 600; color: var(--t100); }
+    .an-top-day-tokens { color: var(--t400); font-size: 9px; margin-left: auto; }
+
+    .an-peak-hero {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums;
+      color: var(--t100); line-height: 1;
+    }
+    .an-peak-sub { font-size: 9px; color: var(--t400); margin: 3px 0 10px; }
+    .an-threshold { display: flex; flex-direction: column; gap: 5px; }
+    .an-threshold-row { display: flex; align-items: center; gap: 8px; }
+    .an-threshold-lbl {
+      width: 88px; flex-shrink: 0; font-size: 10px; color: var(--t300);
+    }
+    .an-threshold-track {
+      flex: 1; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden;
+    }
+    .an-threshold-fill { height: 100%; border-radius: 3px; }
+    .an-threshold-pct {
+      width: 44px; flex-shrink: 0; text-align: right;
+      font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+      font-variant-numeric: tabular-nums; color: var(--t200);
+    }
+
+    .an-weekly-table {
+      width: 100%; border-collapse: collapse; font-size: 10px;
+    }
+    .an-weekly-table th {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
+      text-transform: uppercase; color: var(--t400);
+      padding: 3px 5px; text-align: right; border-bottom: 1px solid var(--border);
+    }
+    .an-weekly-table th:first-child { text-align: left; }
+    .an-weekly-table td {
+      padding: 4px 5px; color: var(--t200);
+      font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums;
+      text-align: right; border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .an-weekly-table td:first-child {
+      font-family: 'DM Sans', system-ui, sans-serif; text-align: left; color: var(--t300);
+    }
+    .an-weekly-table tr:last-child td { border-bottom: none; }
+
+    .an-roi-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .an-roi-table th {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
+      text-transform: uppercase; color: var(--t400);
+      padding: 3px 6px; text-align: left; border-bottom: 1px solid var(--border);
+    }
+    .an-roi-table th:last-child { text-align: right; }
+    .an-roi-table td {
+      padding: 5px 6px; color: var(--t200);
+      border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 10px;
+    }
+    .an-roi-table td:last-child {
+      font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+    .an-roi-table tr:last-child td { border-bottom: none; }
+
     /* ══ FOOTER ═════════════════════════════════════════════════ */
     .footer {
       height: 35px;
