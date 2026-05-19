@@ -2,6 +2,9 @@ import { nativeImage, NativeImage } from "electron";
 import { PNG } from "pngjs";
 import { getUsageColor, getUsageColorHex, hexToRgb } from "./colors";
 
+let _cachedStateKey: string | null = null;
+let _cachedImage: NativeImage | null = null;
+
 export interface BarData {
   usedPercent?: number;
   isStale: boolean;
@@ -19,7 +22,16 @@ const PADDING_H = 3;
 const BAR_WIDTH = 26;
 const TRACK_COLOR: RGBA = [40, 40, 40, 255];
 
+function trayStateKey(state: TrayIconState, size: number): string {
+  const c = state.claude;
+  const d = state.codex;
+  return `${size}|${state.hasError}|${c?.usedPercent ?? ""}|${c?.isStale}|${d?.usedPercent ?? ""}|${d?.isStale}`;
+}
+
 export function renderTrayIcon(state: TrayIconState, size = 32): NativeImage {
+  const key = trayStateKey(state, size);
+  if (key === _cachedStateKey && _cachedImage) return _cachedImage;
+
   const png = new PNG({ width: size, height: size });
   fillTransparent(png);
 
@@ -48,7 +60,10 @@ export function renderTrayIcon(state: TrayIconState, size = 32): NativeImage {
     }
   }
 
-  return nativeImage.createFromBuffer(PNG.sync.write(png));
+  const img = nativeImage.createFromBuffer(PNG.sync.write(png));
+  _cachedStateKey = key;
+  _cachedImage = img;
+  return img;
 }
 
 function barFill(bar: BarData): { fillWidth: number; color: RGBA } {
@@ -77,11 +92,7 @@ function drawRect(png: PNG, x: number, y: number, w: number, h: number, color: R
 }
 
 function fillTransparent(png: PNG): void {
-  for (let y = 0; y < png.height; y++) {
-    for (let x = 0; x < png.width; x++) {
-      setPixel(png, x, y, [0, 0, 0, 0]);
-    }
-  }
+  png.data.fill(0);
 }
 
 function setPixel(png: PNG, x: number, y: number, color: RGBA): void {

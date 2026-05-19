@@ -1,3 +1,5 @@
+import { createInterface } from "node:readline";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -115,24 +117,25 @@ async function processJsonlFile(
   billingStart: Date,
   seenMessageIds: Set<string>,
 ): Promise<ClaudeUsageEntry[]> {
-  let content: string;
-  try {
-    content = await fs.readFile(filePath, "utf8");
-  } catch {
-    return [];
-  }
-
   const result: ClaudeUsageEntry[] = [];
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const entry = JSON.parse(trimmed) as Record<string, unknown>;
-      const parsed = processEntry(entry, filePath, projectsDir, billingStart, seenMessageIds);
-      if (parsed) result.push(parsed);
-    } catch {
-      // skip invalid lines
+  try {
+    const rl = createInterface({
+      input: createReadStream(filePath, { encoding: "utf8" }),
+      crlfDelay: Infinity,
+    });
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const entry = JSON.parse(trimmed) as Record<string, unknown>;
+        const parsed = processEntry(entry, filePath, projectsDir, billingStart, seenMessageIds);
+        if (parsed) result.push(parsed);
+      } catch {
+        // skip invalid lines
+      }
     }
+  } catch {
+    // file not found or read error — return what was collected so far
   }
   return result;
 }

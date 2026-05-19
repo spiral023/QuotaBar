@@ -248,6 +248,7 @@ export function buildFiveHourPeak(
   const sorted = [...entries].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   );
+  const timestamps = sorted.map(e => new Date(e.timestamp).getTime());
 
   let maxOut = 0, maxTotal = 0, peakStart: string | null = null;
   let left = 0, winOut = 0, winTotal = 0;
@@ -257,8 +258,8 @@ export function buildFiveHourPeak(
     winOut   += e.outputTokens;
     winTotal += e.inputTokens + e.outputTokens + e.cacheReadTokens + e.cacheCreationTokens;
 
-    const rightMs = new Date(e.timestamp).getTime();
-    while (new Date(sorted[left].timestamp).getTime() < rightMs - FIVE_HOURS_MS) {
+    const rightMs = timestamps[right];
+    while (timestamps[left] < rightMs - FIVE_HOURS_MS) {
       winOut   -= sorted[left].outputTokens;
       winTotal -= sorted[left].inputTokens + sorted[left].outputTokens
                + sorted[left].cacheReadTokens + sorted[left].cacheCreationTokens;

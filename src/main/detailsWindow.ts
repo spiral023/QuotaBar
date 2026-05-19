@@ -200,16 +200,14 @@ export class DetailsWindowController {
         const settings = await loadSettings();
         const windowDays = settings.costWindow === "7d" ? 7 : 30;
         const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
+        const periodStart = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
+
+        const claudeEntries = await readClaudeUsageEntriesForPeriod(getClaudeProjectsDirs(), periodStart);
 
         const [claudeReport, codexReport] = await Promise.all([
-          generateUsageReport({ type: "daily", provider: "claude", since, order: "asc", breakdown: true }, { settings }),
+          generateUsageReport({ type: "daily", provider: "claude", since, order: "asc", breakdown: true }, { settings, claudeEntries }),
           generateUsageReport({ type: "daily", provider: "codex",  since, order: "asc", breakdown: true }, { settings }),
         ]);
-
-        const claudeEntries = await readClaudeUsageEntriesForPeriod(
-          getClaudeProjectsDirs(),
-          new Date(Date.now() - windowDays * 24 * 3600 * 1000),
-        );
 
         const activeDays        = computeActiveDays(claudeReport.rows, codexReport.rows);
         const sparkline7d       = buildSparkline7d(claudeReport.rows, codexReport.rows);
@@ -248,14 +246,14 @@ export class DetailsWindowController {
       const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
       const periodStart = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
 
-      const [claudeReport, codexReport] = await Promise.all([
-        generateUsageReport({ type: "daily", provider: "claude", since, order: "asc", breakdown: true }, { settings }),
-        generateUsageReport({ type: "daily", provider: "codex",  since, order: "asc", breakdown: true }, { settings }),
-      ]);
-
       const [claudeEntries, codexEvents] = await Promise.all([
         readClaudeUsageEntriesForPeriod(getClaudeProjectsDirs(), periodStart),
         readCodexTokensForPeriod(getCodexSessionsDirs(), periodStart),
+      ]);
+
+      const [claudeReport, codexReport] = await Promise.all([
+        generateUsageReport({ type: "daily", provider: "claude", since, order: "asc", breakdown: true }, { settings, claudeEntries }),
+        generateUsageReport({ type: "daily", provider: "codex",  since, order: "asc", breakdown: true }, { settings, codexEvents }),
       ]);
 
       const activeDays        = computeActiveDays(claudeReport.rows, codexReport.rows);

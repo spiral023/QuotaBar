@@ -1,3 +1,5 @@
+import { createInterface } from "node:readline";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -61,81 +63,82 @@ async function parseCodexJsonlFile(
   sessionsDir: string,
   billingStart: Date,
 ): Promise<CodexTokenEvent[]> {
-  let content: string;
-  try {
-    content = await fs.readFile(filePath, "utf8");
-  } catch {
-    return [];
-  }
-
   const events: CodexTokenEvent[] = [];
   let currentModel: string | null = null;
   let previousTotals = zeroTotals();
 
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let entry: Record<string, unknown>;
-    try {
-      entry = JSON.parse(trimmed) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-
-    if (entry.type === "turn_context") {
-      const model = asRecord(entry.payload)?.model;
-      if (typeof model === "string" && model) currentModel = model;
-      continue;
-    }
-
-    if (entry.type !== "event_msg") continue;
-    const payload = asRecord(entry.payload);
-    if (!payload || payload.type !== "token_count" || payload.info == null) continue;
-    const info = asRecord(payload.info);
-    if (!info) continue;
-
-    const lastUsage = asRecord(info.last_token_usage);
-    const totalUsage = asRecord(info.total_token_usage);
-
-    const oldTotals = previousTotals;
-    if (totalUsage) {
-      previousTotals = extractTotals(totalUsage);
-    } else if (lastUsage) {
-      const d = extractTotals(lastUsage);
-      previousTotals = {
-        input_tokens: previousTotals.input_tokens + d.input_tokens,
-        cached_input_tokens: previousTotals.cached_input_tokens + d.cached_input_tokens,
-        output_tokens: previousTotals.output_tokens + d.output_tokens,
-        reasoning_output_tokens: previousTotals.reasoning_output_tokens + d.reasoning_output_tokens,
-        total_tokens: previousTotals.total_tokens + d.total_tokens,
-      };
-    }
-
-    const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : null;
-    if (!timestamp || new Date(timestamp) < billingStart) continue;
-
-    let delta: TokenTotals;
-    if (lastUsage) {
-      delta = extractTotals(lastUsage);
-    } else if (totalUsage) {
-      delta = diffTotals(extractTotals(totalUsage), oldTotals);
-    } else {
-      continue;
-    }
-
-    const model = resolveModel(info, currentModel);
-    events.push({
-      timestamp,
-      model,
-      isFallback: model === "gpt-5",
-      session: path.basename(filePath, ".jsonl"),
-      directory: path.relative(sessionsDir, path.dirname(filePath)) || ".",
-      inputTokens: delta.input_tokens,
-      cachedInputTokens: Math.min(delta.cached_input_tokens, delta.input_tokens),
-      outputTokens: delta.output_tokens,
-      reasoningOutputTokens: delta.reasoning_output_tokens,
-      totalTokens: delta.total_tokens,
+  try {
+    const rl = createInterface({
+      input: createReadStream(filePath, { encoding: "utf8" }),
+      crlfDelay: Infinity,
     });
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let entry: Record<string, unknown>;
+      try {
+        entry = JSON.parse(trimmed) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+
+      if (entry.type === "turn_context") {
+        const model = asRecord(entry.payload)?.model;
+        if (typeof model === "string" && model) currentModel = model;
+        continue;
+      }
+
+      if (entry.type !== "event_msg") continue;
+      const payload = asRecord(entry.payload);
+      if (!payload || payload.type !== "token_count" || payload.info == null) continue;
+      const info = asRecord(payload.info);
+      if (!info) continue;
+
+      const lastUsage = asRecord(info.last_token_usage);
+      const totalUsage = asRecord(info.total_token_usage);
+
+      const oldTotals = previousTotals;
+      if (totalUsage) {
+        previousTotals = extractTotals(totalUsage);
+      } else if (lastUsage) {
+        const d = extractTotals(lastUsage);
+        previousTotals = {
+          input_tokens: previousTotals.input_tokens + d.input_tokens,
+          cached_input_tokens: previousTotals.cached_input_tokens + d.cached_input_tokens,
+          output_tokens: previousTotals.output_tokens + d.output_tokens,
+          reasoning_output_tokens: previousTotals.reasoning_output_tokens + d.reasoning_output_tokens,
+          total_tokens: previousTotals.total_tokens + d.total_tokens,
+        };
+      }
+
+      const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : null;
+      if (!timestamp || new Date(timestamp) < billingStart) continue;
+
+      let delta: TokenTotals;
+      if (lastUsage) {
+        delta = extractTotals(lastUsage);
+      } else if (totalUsage) {
+        delta = diffTotals(extractTotals(totalUsage), oldTotals);
+      } else {
+        continue;
+      }
+
+      const model = resolveModel(info, currentModel);
+      events.push({
+        timestamp,
+        model,
+        isFallback: model === "gpt-5",
+        session: path.basename(filePath, ".jsonl"),
+        directory: path.relative(sessionsDir, path.dirname(filePath)) || ".",
+        inputTokens: delta.input_tokens,
+        cachedInputTokens: Math.min(delta.cached_input_tokens, delta.input_tokens),
+        outputTokens: delta.output_tokens,
+        reasoningOutputTokens: delta.reasoning_output_tokens,
+        totalTokens: delta.total_tokens,
+      });
+    }
+  } catch {
+    // file not found or read error — return what was collected so far
   }
 
   return events;

@@ -15,6 +15,8 @@ export interface ReportDeps {
   claudeProjectsDirs?: string[];
   codexSessionsDirs?: string[];
   codexConfigPaths?: string[];
+  claudeEntries?: ClaudeUsageEntry[];
+  codexEvents?: CodexTokenEvent[];
 }
 
 const ZERO_TOTALS: ReportTotals = {
@@ -34,12 +36,12 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
   const start = new Date("1970-01-01T00:00:00.000Z");
 
   if (normalized.provider === "all" || normalized.provider === "claude") {
-    const entries = await readClaudeUsageEntriesForPeriod(deps.claudeProjectsDirs ?? getClaudeProjectsDirs(), start);
+    const entries = deps.claudeEntries ?? await readClaudeUsageEntriesForPeriod(deps.claudeProjectsDirs ?? getClaudeProjectsDirs(), start);
     rows.push(...(await buildClaudeRows(entries, normalized, fetcher)));
   }
 
   if (normalized.provider === "all" || normalized.provider === "codex") {
-    const events = await readCodexTokensForPeriod(deps.codexSessionsDirs ?? getCodexSessionsDirs(), start);
+    const events = deps.codexEvents ?? await readCodexTokensForPeriod(deps.codexSessionsDirs ?? getCodexSessionsDirs(), start);
     const speed = normalized.codexSpeed === "auto"
       ? await readCodexSpeedTierFromPaths(deps.codexConfigPaths ?? getCodexConfigPaths())
       : normalized.codexSpeed;
