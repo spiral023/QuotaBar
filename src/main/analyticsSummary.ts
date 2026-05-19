@@ -230,6 +230,43 @@ export function buildTopActiveDays(
     .slice(0, limit);
 }
 
+const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+
+export function buildFiveHourPeak(
+  entries: ClaudeUsageEntry[],
+): { maxOutputTokens: number; maxTotalTokens: number; peakWindowStart: string | null } {
+  if (entries.length === 0) return { maxOutputTokens: 0, maxTotalTokens: 0, peakWindowStart: null };
+
+  const sorted = [...entries].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  );
+
+  let maxOut = 0, maxTotal = 0, peakStart: string | null = null;
+  let left = 0, winOut = 0, winTotal = 0;
+
+  for (let right = 0; right < sorted.length; right++) {
+    const e = sorted[right];
+    winOut   += e.outputTokens;
+    winTotal += e.inputTokens + e.outputTokens + e.cacheReadTokens + e.cacheCreationTokens;
+
+    const rightMs = new Date(e.timestamp).getTime();
+    while (new Date(sorted[left].timestamp).getTime() < rightMs - FIVE_HOURS_MS) {
+      winOut   -= sorted[left].outputTokens;
+      winTotal -= sorted[left].inputTokens + sorted[left].outputTokens
+               + sorted[left].cacheReadTokens + sorted[left].cacheCreationTokens;
+      left++;
+    }
+
+    if (winOut > maxOut) {
+      maxOut   = winOut;
+      maxTotal = winTotal;
+      peakStart = sorted[left].timestamp;
+    }
+  }
+
+  return { maxOutputTokens: maxOut, maxTotalTokens: maxTotal, peakWindowStart: peakStart };
+}
+
 function getLastNDays(n: number): string[] {
   const days: string[] = [];
   for (let i = n - 1; i >= 0; i--) {

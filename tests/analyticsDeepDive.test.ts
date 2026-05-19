@@ -5,6 +5,7 @@ import {
   buildHourHeatmap,
   buildWeekdayDistribution,
   buildTopActiveDays,
+  buildFiveHourPeak,
 } from "../src/main/analyticsSummary";
 
 function makeEntry(isoTimestamp: string, out = 0): ClaudeUsageEntry {
@@ -142,5 +143,60 @@ describe("buildTopActiveDays", () => {
     expect(result).toHaveLength(2);
     expect(result[0].count).toBe(1);
     expect(result[1].count).toBe(1);
+  });
+});
+
+function makeEntryFull(isoTimestamp: string, outputTokens: number, inputTokens = 0): ClaudeUsageEntry {
+  return {
+    provider: "claude", timestamp: isoTimestamp, model: "claude-sonnet-4-6",
+    project: "p1", session: "s1",
+    inputTokens, outputTokens, cacheCreationTokens: 0, cacheReadTokens: 0,
+  };
+}
+
+describe("buildFiveHourPeak", () => {
+  it("returns zeros and null for empty input", () => {
+    const r = buildFiveHourPeak([]);
+    expect(r.maxOutputTokens).toBe(0);
+    expect(r.maxTotalTokens).toBe(0);
+    expect(r.peakWindowStart).toBeNull();
+  });
+
+  it("returns single entry as its own peak", () => {
+    const r = buildFiveHourPeak([makeEntryFull("2026-05-01T10:00:00.000Z", 1000, 500)]);
+    expect(r.maxOutputTokens).toBe(1000);
+    expect(r.maxTotalTokens).toBe(1500);
+    expect(r.peakWindowStart).toBe("2026-05-01T10:00:00.000Z");
+  });
+
+  it("sums entries within 5h window", () => {
+    const entries = [
+      makeEntryFull("2026-05-01T10:00:00.000Z", 300),
+      makeEntryFull("2026-05-01T12:00:00.000Z", 400),
+      makeEntryFull("2026-05-01T14:59:00.000Z", 200), // 4h59m after first → within 5h
+    ];
+    const r = buildFiveHourPeak(entries);
+    expect(r.maxOutputTokens).toBe(900);
+  });
+
+  it("excludes entries outside the 5h window", () => {
+    const entries = [
+      makeEntryFull("2026-05-01T10:00:00.000Z", 300),
+      makeEntryFull("2026-05-01T15:01:00.000Z", 1000), // 5h01m later → separate window
+    ];
+    const r = buildFiveHourPeak(entries);
+    expect(r.maxOutputTokens).toBe(1000); // second window wins
+  });
+
+  it("peakWindowStart is the first entry of the best window", () => {
+    const entries = [
+      makeEntryFull("2026-05-01T08:00:00.000Z", 100),
+      makeEntryFull("2026-05-01T10:00:00.000Z", 500),
+      makeEntryFull("2026-05-01T11:00:00.000Z", 500),
+    ];
+    const r = buildFiveHourPeak(entries);
+    // All three entries are within 5h of each other (11:00 - 08:00 = 3h),
+    // so the window starting at 08:00 (sum=1100) beats the one starting at 10:00 (sum=1000).
+    expect(r.peakWindowStart).toBe("2026-05-01T08:00:00.000Z");
   });
 });
