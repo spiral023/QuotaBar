@@ -288,7 +288,7 @@ function _buildFiveHourPeak(data) {
   const peak = data.fiveHourPeak ?? { maxOutputTokens: 0, maxTotalTokens: 0, peakWindowStart: null };
 
   const dateStr = peak.peakWindowStart
-    ? new Date(peak.peakWindowStart).toLocaleDateString('de-AT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
+    ? new Date(peak.peakWindowStart).toLocaleString('de-AT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
     : '—';
 
   const thresholdRows = _FIVE_HOUR_THRESHOLDS.map(t => {
