@@ -60,12 +60,34 @@ function _renderUI(data) {
       <div class="an-section-head"><span class="an-section-title">AKTIVITÄTSSTATS (30D)</span></div>
       <div class="an-stats-grid" id="an-stats-grid"></div>
     </div>
+
+    <div class="an-row2">
+      <div class="an-section">
+        <div class="an-section-head"><span class="an-section-title">STUNDEN-HEATMAP (UTC, 30D)</span></div>
+        <div id="an-hour-heatmap"></div>
+      </div>
+      <div class="an-section">
+        <div class="an-section-head"><span class="an-section-title">WOCHENTAG (30D)</span></div>
+        <div id="an-weekday-bars"></div>
+        <div class="an-section-head" style="margin-top:8px"><span class="an-section-title">TOP 5 TAGE</span></div>
+        <div id="an-top-days"></div>
+      </div>
+    </div>
+
+    <div class="an-section">
+      <div class="an-section-head"><span class="an-section-title">5H-FENSTER-PEAK (CLAUDE, 30D)</span></div>
+      <div id="an-peak"></div>
+    </div>
   `;
 
   _buildLineChart(data);
   _buildDonut(data);
   _buildTopModels(data);
   _buildStats(data);
+  _buildHourHeatmap(data);
+  _buildWeekdayBars(data);
+  _buildTopDays(data);
+  _buildFiveHourPeak(data);
 
   container.querySelectorAll('.an-window-pills .pill').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -201,4 +223,91 @@ function _buildStats(data) {
       <div class="an-stat-val" style="${t.color ? `color:${t.color}` : ''}">${QB.esc(String(t.val))}</div>
     </div>
   `).join('');
+}
+
+function _buildHourHeatmap(data) {
+  const el = document.getElementById('an-hour-heatmap');
+  if (!el) return;
+  const buckets = data.hourHeatmap ?? [];
+  if (buckets.every(b => b.count === 0)) {
+    el.innerHTML = '<div style="color:var(--t400);font-size:10px;padding:4px 0">Keine Daten</div>';
+    return;
+  }
+  el.innerHTML = '<div class="an-heatmap">' + buckets.map(b => `
+    <div class="an-heatmap-row">
+      <span class="an-heatmap-lbl">H${String(b.hour).padStart(2, '0')}</span>
+      <div class="an-heatmap-track">
+        <div class="an-heatmap-fill" style="width:${(b.pct * 100).toFixed(1)}%"></div>
+      </div>
+      <span class="an-heatmap-count">${b.count}</span>
+    </div>
+  `).join('') + '</div>';
+}
+
+function _buildWeekdayBars(data) {
+  const el = document.getElementById('an-weekday-bars');
+  if (!el) return;
+  const dist = data.weekdayDistribution ?? [];
+  el.innerHTML = dist.map(d => `
+    <div class="an-wkday-row">
+      <span class="an-wkday-lbl">${QB.esc(d.label)}</span>
+      <div class="an-wkday-track">
+        <div class="an-wkday-fill" style="width:${(d.pct * 100).toFixed(1)}%"></div>
+      </div>
+      <span class="an-wkday-pct">${(d.pct * 100).toFixed(0)}%</span>
+    </div>
+  `).join('');
+}
+
+function _buildTopDays(data) {
+  const el = document.getElementById('an-top-days');
+  if (!el) return;
+  const days = data.topActiveDays ?? [];
+  if (!days.length) {
+    el.innerHTML = '<div style="color:var(--t400);font-size:10px">Keine Daten</div>';
+    return;
+  }
+  el.innerHTML = '<div class="an-top-days">' + days.map(d => `
+    <div class="an-top-day-row">
+      <span class="an-top-day-date">${QB.esc(d.date)}</span>
+      <span class="an-top-day-count">${d.count} Calls</span>
+      <span class="an-top-day-tokens">${QB.fmtTokens(d.outputTokens)} out</span>
+    </div>
+  `).join('') + '</div>';
+}
+
+const _FIVE_HOUR_THRESHOLDS = [
+  { label: '200k Output', limit: 200_000 },
+  { label: '500k Output', limit: 500_000 },
+  { label: '800k Output', limit: 800_000 },
+];
+
+function _buildFiveHourPeak(data) {
+  const el = document.getElementById('an-peak');
+  if (!el) return;
+  const peak = data.fiveHourPeak ?? { maxOutputTokens: 0, maxTotalTokens: 0, peakWindowStart: null };
+
+  const dateStr = peak.peakWindowStart
+    ? new Date(peak.peakWindowStart).toLocaleDateString('de-AT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
+    : '—';
+
+  const thresholdRows = _FIVE_HOUR_THRESHOLDS.map(t => {
+    const pct = Math.min(peak.maxOutputTokens / t.limit, 1);
+    const color = pct >= 1 ? '#e55' : pct >= 0.7 ? '#f59830' : '#52d017';
+    return `
+      <div class="an-threshold-row">
+        <span class="an-threshold-lbl">${QB.esc(t.label)}</span>
+        <div class="an-threshold-track">
+          <div class="an-threshold-fill" style="width:${(pct * 100).toFixed(1)}%;background:${color}"></div>
+        </div>
+        <span class="an-threshold-pct" style="color:${color}">${(pct * 100).toFixed(0)}%</span>
+      </div>
+    `;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="an-peak-hero">${QB.fmtTokens(peak.maxOutputTokens)}</div>
+    <div class="an-peak-sub">Output-Token · Fenster: ${QB.esc(dateStr)} · Gesamt ${QB.fmtTokens(peak.maxTotalTokens)}</div>
+    <div class="an-threshold">${thresholdRows}</div>
+  `;
 }
