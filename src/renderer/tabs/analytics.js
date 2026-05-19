@@ -78,6 +78,22 @@ function _renderUI(data) {
       <div class="an-section-head"><span class="an-section-title">5H-FENSTER-PEAK (CLAUDE, 30D)</span></div>
       <div id="an-peak"></div>
     </div>
+
+    <div class="an-section">
+      <div class="an-section-head"><span class="an-section-title">WÖCHENTLICHER VERLAUF (30D)</span></div>
+      <div id="an-weekly"></div>
+    </div>
+
+    <div class="an-row2">
+      <div class="an-section">
+        <div class="an-section-head"><span class="an-section-title">KOSTENEFFIZIENZ</span></div>
+        <div id="an-cost-eff"></div>
+      </div>
+      <div class="an-section">
+        <div class="an-section-head"><span class="an-section-title">ROI NACH ABO-TIER</span></div>
+        <div id="an-roi-tiers"></div>
+      </div>
+    </div>
   `;
 
   _buildLineChart(data);
@@ -88,6 +104,8 @@ function _renderUI(data) {
   _buildWeekdayBars(data);
   _buildTopDays(data);
   _buildFiveHourPeak(data);
+  _buildWeeklySummary(data);
+  _buildCostEfficiency(data);
 
   container.querySelectorAll('.an-window-pills .pill').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -310,4 +328,82 @@ function _buildFiveHourPeak(data) {
     <div class="an-peak-sub">Output-Token · Fenster: ${QB.esc(dateStr)} · Gesamt ${QB.fmtTokens(peak.maxTotalTokens)}</div>
     <div class="an-threshold">${thresholdRows}</div>
   `;
+}
+
+function _buildWeeklySummary(data) {
+  const el = document.getElementById('an-weekly');
+  if (!el) return;
+  const weeks = data.weeklySummary ?? [];
+  if (!weeks.length) {
+    el.innerHTML = '<div style="color:var(--t400);font-size:10px;padding:4px 0">Keine Daten</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table class="an-weekly-table">
+      <thead>
+        <tr>
+          <th>Woche ab</th>
+          <th>Claude Msg</th>
+          <th>Claude Token</th>
+          <th>Kosten</th>
+          <th>Codex Ev.</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${weeks.map(w => {
+          const d = new Date(w.weekStart + 'T00:00:00Z');
+          const label = d.toLocaleDateString('de-AT', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+          return `
+            <tr>
+              <td>${QB.esc(label)}</td>
+              <td>${w.claudeMessages}</td>
+              <td>${QB.fmtTokens(w.claudeTokens)}</td>
+              <td>$${w.claudeCostUSD.toFixed(2)}</td>
+              <td>${w.codexEvents}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function _buildCostEfficiency(data) {
+  const elTiles = document.getElementById('an-cost-eff');
+  const elRoi   = document.getElementById('an-roi-tiers');
+  const eff = data.costEfficiency ?? { costPer1kOutputTokens: 0, costPerActiveHour: 0, roiByTier: [] };
+
+  if (elTiles) {
+    const tiles = [
+      { lbl: '$/1k Output',   val: `$${eff.costPer1kOutputTokens.toFixed(3)}` },
+      { lbl: '$/Arbeitsstd',  val: `$${eff.costPerActiveHour.toFixed(2)}` },
+    ];
+    elTiles.innerHTML = `<div class="an-stats-grid" style="grid-template-columns:1fr 1fr">` +
+      tiles.map(t => `
+        <div class="an-stat-tile">
+          <div class="an-stat-lbl">${QB.esc(t.lbl)}</div>
+          <div class="an-stat-val">${QB.esc(t.val)}</div>
+        </div>
+      `).join('') + '</div>';
+  }
+
+  if (elRoi) {
+    elRoi.innerHTML = `
+      <table class="an-roi-table">
+        <thead><tr><th>Abo</th><th>Preis/Mo</th><th>ROI</th></tr></thead>
+        <tbody>
+          ${(eff.roiByTier ?? []).map(t => {
+            const color = t.roi >= 5 ? '#52d017' : t.roi >= 1 ? '#f59830' : '#e55';
+            return `
+              <tr>
+                <td>${QB.esc(t.tier)}</td>
+                <td>$${t.price}</td>
+                <td style="color:${color}">${t.roi.toFixed(1)}×</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
 }
