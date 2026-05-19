@@ -118,6 +118,13 @@ export interface AnalyticsData extends AnalyticsSummary {
     claude: { input: number; output: number; cacheRead: number; cacheCreate: number };
     codex:  { input: number; output: number; cached: number };
   };
+  // Phase 3:
+  hourHeatmap: { hour: number; count: number; pct: number }[];
+  weekdayDistribution: { day: number; label: string; count: number; pct: number }[];
+  topActiveDays: { date: string; count: number; outputTokens: number }[];
+  fiveHourPeak: { maxOutputTokens: number; maxTotalTokens: number; peakWindowStart: string | null };
+  weeklySummary: WeeklyBucket[];
+  costEfficiency: CostEfficiency;
 }
 
 export function buildDailyBuckets(

@@ -12,8 +12,12 @@ import {
   computeActiveDays, buildSparkline7d, buildTopModels,
   computeAvgSessionMinutes, computeCacheHitRate,
   buildDailyBuckets, buildSessionStats, buildTotalTokens,
+  buildHourHeatmap, buildWeekdayDistribution, buildTopActiveDays,
+  buildFiveHourPeak, buildWeeklySummary, buildCostEfficiency,
   type AnalyticsSummary, type AnalyticsData,
 } from "./analyticsSummary";
+import { readCodexTokensForPeriod } from "../pricing/codex-log-reader";
+import { getCodexSessionsDirs } from "../config/paths";
 
 export class DetailsWindowController {
   private win: BrowserWindow | null = null;
@@ -242,16 +246,17 @@ export class DetailsWindowController {
       const settings = await loadSettings();
       const windowDays = 30;
       const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const periodStart = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
 
       const [claudeReport, codexReport] = await Promise.all([
         generateUsageReport({ type: "daily", provider: "claude", since, order: "asc", breakdown: true }, { settings }),
         generateUsageReport({ type: "daily", provider: "codex",  since, order: "asc", breakdown: true }, { settings }),
       ]);
 
-      const claudeEntries = await readClaudeUsageEntriesForPeriod(
-        getClaudeProjectsDirs(),
-        new Date(Date.now() - windowDays * 24 * 3600 * 1000),
-      );
+      const [claudeEntries, codexEvents] = await Promise.all([
+        readClaudeUsageEntriesForPeriod(getClaudeProjectsDirs(), periodStart),
+        readCodexTokensForPeriod(getCodexSessionsDirs(), periodStart),
+      ]);
 
       const activeDays        = computeActiveDays(claudeReport.rows, codexReport.rows);
       const sparkline7d       = buildSparkline7d(claudeReport.rows, codexReport.rows);
@@ -261,6 +266,16 @@ export class DetailsWindowController {
       const dailyBuckets      = buildDailyBuckets(claudeReport.rows, codexReport.rows, windowDays);
       const sessionStats      = buildSessionStats(claudeEntries, activeDays);
       const totalTokens       = buildTotalTokens(claudeReport.rows, codexReport.rows);
+      const hourHeatmap       = buildHourHeatmap(claudeEntries);
+      const weekdayDistribution = buildWeekdayDistribution(claudeEntries);
+      const topActiveDays     = buildTopActiveDays(claudeEntries, claudeReport.rows, 5);
+      const fiveHourPeak      = buildFiveHourPeak(claudeEntries);
+      const weeklySummary     = buildWeeklySummary(claudeReport.rows, codexReport.rows, claudeEntries, codexEvents);
+      const costEfficiency    = buildCostEfficiency(
+        claudeReport.totals.costUSD,
+        totalTokens.claude.output,
+        sessionStats.totalHours,
+      );
 
       const claudeCost = claudeReport.totals.costUSD;
       const codexCost  = codexReport.totals.costUSD;
@@ -275,15 +290,9 @@ export class DetailsWindowController {
           codex:    codexSub   > 0 ? codexCost   / codexSub   : 0,
           combined: (claudeSub + codexSub) > 0 ? (claudeCost + codexCost) / (claudeSub + codexSub) : 0,
         },
-        activeDays,
-        avgSessionMinutes,
-        cacheHitRate,
-        sparkline7d,
-        topModels,
-        windowDays,
-        dailyBuckets,
-        sessionStats,
-        totalTokens,
+        activeDays, avgSessionMinutes, cacheHitRate, sparkline7d, topModels, windowDays,
+        dailyBuckets, sessionStats, totalTokens,
+        hourHeatmap, weekdayDistribution, topActiveDays, fiveHourPeak, weeklySummary, costEfficiency,
       } satisfies AnalyticsData;
     });
 
