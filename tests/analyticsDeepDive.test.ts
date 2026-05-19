@@ -132,4 +132,15 @@ describe("buildTopActiveDays", () => {
     const result = buildTopActiveDays(entries, [], 5);
     expect(result[0].outputTokens).toBe(0);
   });
+
+  it("returns entries in stable order when counts tie", () => {
+    const entries = [
+      makeEntry("2026-05-01T10:00:00.000Z"),
+      makeEntry("2026-05-02T10:00:00.000Z"),
+    ];
+    const result = buildTopActiveDays(entries, [], 5);
+    expect(result).toHaveLength(2);
+    expect(result[0].count).toBe(1);
+    expect(result[1].count).toBe(1);
+  });
 });

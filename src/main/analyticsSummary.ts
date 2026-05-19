@@ -220,7 +220,7 @@ export function buildTopActiveDays(
 ): { date: string; count: number; outputTokens: number }[] {
   const countByDate = new Map<string, number>();
   for (const e of entries) {
-    const d = e.timestamp.slice(0, 10);
+    const d = e.timestamp.slice(0, 10); // assumes UTC ISO-8601 timestamp
     countByDate.set(d, (countByDate.get(d) ?? 0) + 1);
   }
   const outputByDate = new Map(claudeRows.map(r => [r.bucket, r.outputTokens]));
