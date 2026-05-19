@@ -110,6 +110,34 @@
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ══ TAB NAVIGATION ════════════════════════════════════════ */
+    .tab-nav {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      margin: 0 6px;
+      -webkit-app-region: no-drag;
+    }
+    .tab-btn {
+      padding: 4px 11px;
+      background: none;
+      border: 1px solid transparent;
+      border-radius: var(--r-btn);
+      color: var(--t400);
+      font-family: 'DM Sans', system-ui, sans-serif;
+      font-size: 10.5px;
+      font-weight: 500;
+      cursor: pointer;
+      outline: none;
+      transition-property: background, border-color, color;
+      transition-duration: 120ms;
+      -webkit-app-region: no-drag;
+    }
+    .tab-btn:hover  { color: var(--t200); background: rgba(255,255,255,0.04); }
+    .tab-btn:active { scale: 0.97; }
+    .tab-btn.active { color: var(--t100); border-color: rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); }
+    .view-compact .tab-nav { display: none; }
+
     /* ══ VIEWS ══════════════════════════════════════════════ */
     .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
     .view[hidden] { display: none; }
@@ -554,6 +582,74 @@
       white-space: nowrap;
     }
 
+    /* ══ ANALYTICS ═════════════════════════════════════════════ */
+    .analytics-wrap {
+      flex: 1; overflow-y: auto; padding: 8px 10px;
+    }
+    .analytics-wrap::-webkit-scrollbar { width: 3px; }
+    .analytics-wrap::-webkit-scrollbar-track { background: transparent; }
+    .analytics-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+    .an-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--r-card);
+      padding: 10px 12px;
+      margin-bottom: 6px;
+    }
+    .an-section-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .an-section-title {
+      font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--t400);
+    }
+    .an-window-pills { display: flex; gap: 3px; }
+    .an-window-pills .pill { padding: 3px 10px; font-size: 10px; height: auto; }
+    .an-chart-wrap { height: 140px; position: relative; }
+
+    .an-row2 {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;
+    }
+    .an-donut-wrap { position: relative; height: 130px; margin-bottom: 8px; }
+    .an-donut-center {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center; pointer-events: none;
+    }
+    .an-donut-center-val {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 16px; font-weight: 500;
+      font-variant-numeric: tabular-nums; line-height: 1;
+    }
+    .an-donut-center-lbl { font-size: 8px; color: var(--t400); margin-top: 2px; }
+    .an-legend { display: flex; flex-direction: column; gap: 4px; }
+    .an-legend-row { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--t200); }
+    .an-legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+    .an-legend-pct {
+      margin-left: auto;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; font-variant-numeric: tabular-nums; color: var(--t300);
+    }
+
+    .an-stats-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px;
+    }
+    .an-stat-tile {
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: var(--r-inner); padding: 7px 9px;
+    }
+    .an-stat-lbl {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
+      text-transform: uppercase; color: var(--t400); margin-bottom: 3px;
+    }
+    .an-stat-val {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 13px; font-weight: 500;
+      font-variant-numeric: tabular-nums; line-height: 1;
+    }
+
     /* ══ FOOTER ═════════════════════════════════════════════════ */
     .footer {
       height: 35px;
@@ -714,10 +810,13 @@
       font-size: 8px; color: var(--t400); text-align: right;
     }
   </style>
+  <script src="../../assets/vendor/chart.min.js"></script>
   <script src="shared/ipc.js"></script>
   <script src="shared/format.js"></script>
   <script src="shared/colors.js"></script>
+  <script src="shared/charts.js"></script>
   <script src="tabs/live.js"></script>
+  <script src="tabs/analytics.js"></script>
 </head>
 <body>
 
@@ -731,6 +830,10 @@
       </svg>
       <span class="logo-name">QuotaBar</span>
     </div>
+    <nav class="tab-nav">
+      <button class="tab-btn active" id="tab-live"      data-tab="live">Live</button>
+      <button class="tab-btn"        id="tab-analytics" data-tab="analytics">Analytics</button>
+    </nav>
     <div class="titlebar-btns">
       <button class="tbtn" id="btn-refresh" title="Refresh now">
         <svg class="icon-r" width="14" height="14" viewBox="0 0 14 14" fill="none"
@@ -818,6 +921,13 @@
     </div>
   </div>
 
+  <!-- ── Analytics View ────────────────────────────────── -->
+  <div class="view" id="view-analytics" hidden>
+    <div class="analytics-wrap" id="analytics-content">
+      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+    </div>
+  </div>
+
   <!-- ── Settings View ──────────────────────────────────── -->
   <div class="view" id="view-settings" hidden>
     <div class="settings-wrap">
@@ -890,6 +1000,26 @@
     let activePillVal    = 60;
     let inSettings       = false;
 
+    let activeTab = 'live';
+
+    function switchTab(tab) {
+      if (inSettings) {
+        inSettings = false;
+        document.getElementById('view-settings').hidden = true;
+        document.getElementById('btn-settings').classList.remove('active');
+      }
+      activeTab = tab;
+      document.getElementById('view-dashboard').hidden  = tab !== 'live';
+      document.getElementById('view-analytics').hidden  = tab !== 'analytics';
+      document.querySelectorAll('.tab-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.tab === tab)
+      );
+      if (tab === 'analytics') QB.renderAnalytics();
+    }
+
+    document.getElementById('tab-live').addEventListener('click',      () => switchTab('live'));
+    document.getElementById('tab-analytics').addEventListener('click', () => switchTab('analytics'));
+
     // ── IPC ──────────────────────────────────────────────────────
 
     QB.ipc.on('quota:update', (_, data) => {
@@ -946,8 +1076,9 @@
 
     document.getElementById('btn-settings').addEventListener('click', () => {
       inSettings = !inSettings;
-      document.getElementById('view-dashboard').hidden = inSettings;
-      document.getElementById('view-settings').hidden  = !inSettings;
+      document.getElementById('view-dashboard').hidden  = inSettings || activeTab !== 'live';
+      document.getElementById('view-analytics').hidden  = inSettings || activeTab !== 'analytics';
+      document.getElementById('view-settings').hidden   = !inSettings;
       document.getElementById('btn-settings').classList.toggle('active', inSettings);
       if (inSettings) loadSettingsUI();
     });
