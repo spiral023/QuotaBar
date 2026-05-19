@@ -25,6 +25,7 @@
   "devDependencies": {
     "@types/node": "^22.15.3",
     "@types/pngjs": "^6.0.5",
+    "chart.js": "^4.5.1",
     "electron": "^30.5.1",
     "electron-builder": "^24.13.3",
     "typescript": "^5.8.3",
