@@ -1,6 +1,7 @@
 import type { ReportRow } from "../reports/types";
 import type { ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import type { UsageSnapshot } from "../providers/types";
+import type { CodexTokenEvent } from "../pricing/codex-log-reader";
 
 export interface AnalyticsSummary {
   apiCostUSD: { claude: number; codex: number; total: number };
@@ -265,6 +266,82 @@ export function buildFiveHourPeak(
   }
 
   return { maxOutputTokens: maxOut, maxTotalTokens: maxTotal, peakWindowStart: peakStart };
+}
+
+export interface WeeklyBucket {
+  weekStart: string;
+  claudeMessages: number;
+  claudeTokens: number;
+  claudeCostUSD: number;
+  codexEvents: number;
+  codexTokens: number;
+}
+
+export function buildWeeklySummary(
+  claudeRows: ReportRow[],
+  codexRows: ReportRow[],
+  claudeEntries: ClaudeUsageEntry[],
+  codexEvents: CodexTokenEvent[],
+): WeeklyBucket[] {
+  const init = (): WeeklyBucket => ({
+    weekStart: "", claudeMessages: 0, claudeTokens: 0,
+    claudeCostUSD: 0, codexEvents: 0, codexTokens: 0,
+  });
+  const weeks = new Map<string, WeeklyBucket>();
+
+  const getOrCreate = (date: string) => {
+    const ws = getWeekStart(date);
+    if (!weeks.has(ws)) weeks.set(ws, { ...init(), weekStart: ws });
+    return weeks.get(ws)!;
+  };
+
+  for (const r of claudeRows) {
+    const b = getOrCreate(r.bucket);
+    b.claudeTokens  += r.totalTokens;
+    b.claudeCostUSD += r.costUSD;
+  }
+  for (const r of codexRows) {
+    const b = getOrCreate(r.bucket);
+    b.codexTokens += r.totalTokens;
+  }
+  for (const e of claudeEntries) {
+    getOrCreate(e.timestamp.slice(0, 10)).claudeMessages++;
+  }
+  for (const e of codexEvents) {
+    getOrCreate(e.timestamp.slice(0, 10)).codexEvents++;
+  }
+
+  return Array.from(weeks.values()).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+}
+
+export interface CostEfficiency {
+  costPer1kOutputTokens: number;
+  costPerActiveHour: number;
+  roiByTier: { tier: string; price: number; roi: number }[];
+}
+
+export function buildCostEfficiency(
+  claudeCostUSD: number,
+  claudeOutputTokens: number,
+  sessionTotalHours: number,
+): CostEfficiency {
+  return {
+    costPer1kOutputTokens: claudeOutputTokens > 0
+      ? (claudeCostUSD / claudeOutputTokens) * 1000 : 0,
+    costPerActiveHour: sessionTotalHours > 0
+      ? claudeCostUSD / sessionTotalHours : 0,
+    roiByTier: [
+      { tier: "Claude Pro",      price: 20  },
+      { tier: "Claude Max",      price: 100 },
+      { tier: "Claude Max 200",  price: 200 },
+    ].map(t => ({ ...t, roi: t.price > 0 ? claudeCostUSD / t.price : 0 })),
+  };
+}
+
+function getWeekStart(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  const toMonday = d.getUTCDay() === 0 ? -6 : 1 - d.getUTCDay();
+  return new Date(d.getTime() + toMonday * 86400000).toISOString().slice(0, 10);
 }
 
 function getLastNDays(n: number): string[] {

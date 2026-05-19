@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import type { ReportRow } from "../src/reports/types";
 import type { ClaudeUsageEntry } from "../src/pricing/jsonl-reader";
+import type { CodexTokenEvent } from "../src/pricing/codex-log-reader";
 import {
   buildHourHeatmap,
   buildWeekdayDistribution,
   buildTopActiveDays,
   buildFiveHourPeak,
+  buildWeeklySummary,
+  buildCostEfficiency,
 } from "../src/main/analyticsSummary";
 
 function makeEntry(isoTimestamp: string, out = 0): ClaudeUsageEntry {
@@ -198,5 +201,97 @@ describe("buildFiveHourPeak", () => {
     // All three entries are within 5h of each other (11:00 - 08:00 = 3h),
     // so the window starting at 08:00 (sum=1100) beats the one starting at 10:00 (sum=1000).
     expect(r.peakWindowStart).toBe("2026-05-01T08:00:00.000Z");
+  });
+});
+
+function makeCodexEvent(isoTimestamp: string): CodexTokenEvent {
+  return {
+    timestamp: isoTimestamp, model: "gpt-5.5", isFallback: false,
+    session: "s1", directory: "/home",
+    inputTokens: 100, cachedInputTokens: 0, outputTokens: 50,
+    reasoningOutputTokens: 0, totalTokens: 150,
+  };
+}
+
+describe("buildWeeklySummary", () => {
+  it("groups daily rows by Monday-start week", () => {
+    // 2026-05-04 = Monday, 2026-05-05 = Tuesday (same week)
+    // 2026-05-11 = Monday (next week)
+    const rows = [
+      makeRow("2026-05-04", 0),
+      makeRow("2026-05-05", 0),
+      makeRow("2026-05-11", 0),
+    ];
+    const result = buildWeeklySummary(rows, [], [], []);
+    expect(result).toHaveLength(2);
+    expect(result[0].weekStart).toBe("2026-05-04");
+    expect(result[1].weekStart).toBe("2026-05-11");
+  });
+
+  it("sums claudeTokens and claudeCostUSD from rows", () => {
+    const rows = [
+      { ...makeRow("2026-05-04", 200), totalTokens: 500, costUSD: 3.5 } as ReportRow,
+      { ...makeRow("2026-05-05", 100), totalTokens: 300, costUSD: 1.5 } as ReportRow,
+    ];
+    const result = buildWeeklySummary(rows, [], [], []);
+    expect(result[0].claudeTokens).toBe(800);
+    expect(result[0].claudeCostUSD).toBeCloseTo(5.0);
+  });
+
+  it("counts claudeMessages from entries", () => {
+    const entries = [
+      makeEntry("2026-05-04T10:00:00.000Z"),
+      makeEntry("2026-05-04T11:00:00.000Z"),
+      makeEntry("2026-05-11T10:00:00.000Z"),
+    ];
+    const result = buildWeeklySummary([], [], entries, []);
+    const week1 = result.find(w => w.weekStart === "2026-05-04");
+    expect(week1?.claudeMessages).toBe(2);
+  });
+
+  it("counts codexEvents from codex events", () => {
+    const events = [
+      makeCodexEvent("2026-05-04T10:00:00.000Z"),
+      makeCodexEvent("2026-05-04T12:00:00.000Z"),
+    ];
+    const result = buildWeeklySummary([], [], [], events);
+    expect(result[0].codexEvents).toBe(2);
+  });
+
+  it("returns weeks sorted oldest first", () => {
+    const rows = [makeRow("2026-05-11", 0), makeRow("2026-05-04", 0)];
+    const result = buildWeeklySummary(rows, [], [], []);
+    expect(result[0].weekStart < result[1].weekStart).toBe(true);
+  });
+});
+
+describe("buildCostEfficiency", () => {
+  it("computes costPer1kOutputTokens", () => {
+    const r = buildCostEfficiency(10, 100_000, 5);
+    expect(r.costPer1kOutputTokens).toBeCloseTo(0.1);
+  });
+
+  it("returns 0 costPer1kOutputTokens when outputTokens=0", () => {
+    expect(buildCostEfficiency(10, 0, 5).costPer1kOutputTokens).toBe(0);
+  });
+
+  it("computes costPerActiveHour", () => {
+    const r = buildCostEfficiency(50, 1_000_000, 10);
+    expect(r.costPerActiveHour).toBeCloseTo(5);
+  });
+
+  it("returns 0 costPerActiveHour when totalHours=0", () => {
+    expect(buildCostEfficiency(10, 100_000, 0).costPerActiveHour).toBe(0);
+  });
+
+  it("returns exactly 3 ROI tier entries", () => {
+    expect(buildCostEfficiency(200, 1_000_000, 10).roiByTier).toHaveLength(3);
+  });
+
+  it("computes ROI correctly for Pro tier", () => {
+    const r = buildCostEfficiency(200, 1_000_000, 10);
+    const pro = r.roiByTier.find(t => t.tier === "Claude Pro")!;
+    expect(pro.price).toBe(20);
+    expect(pro.roi).toBeCloseTo(10);
   });
 });
