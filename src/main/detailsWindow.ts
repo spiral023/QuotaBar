@@ -28,46 +28,49 @@ export class DetailsWindowController {
   open(onRefreshRequest: () => void): void {
     if (this.win && !this.win.isDestroyed()) {
       this.win.show();
-      this.positionNearTray();
+      this.positionWindow();
       this.pushUpdate();
       this.win.focus();
       return;
     }
 
-    this.win = new BrowserWindow({
-      width: 340,
-      height: 560,
-      frame: false,
-      resizable: false,
-      movable: true,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      backgroundColor: "#090c10",
-      show: false,
-      webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
-      },
+    void loadSettings().then(settings => {
+      const isDashboard = settings.viewMode !== "compact";
+      this.win = new BrowserWindow({
+        width:      isDashboard ? 900 : 340,
+        height:     isDashboard ? 660 : 560,
+        minWidth:   isDashboard ? 750 : 340,
+        minHeight:  isDashboard ? 520 : 560,
+        frame:      false,
+        resizable:  isDashboard,
+        movable:    true,
+        skipTaskbar: true,
+        alwaysOnTop: true,
+        backgroundColor: "#090c10",
+        show: false,
+        webPreferences: {
+          nodeIntegration: true,
+          contextIsolation: false,
+        },
+      });
+
+      const htmlPath = path.join(__dirname, "../../src/renderer/index.html");
+      void this.win.loadFile(htmlPath);
+
+      this.win.once("ready-to-show", () => {
+        if (!this.win || this.win.isDestroyed()) return;
+        this.positionWindow(isDashboard);
+        this.win.show();
+      });
+
+      this.win.on("blur", () => {
+        if (!this.isPinned && this.win && !this.win.isDestroyed()) this.win.hide();
+      });
+
+      this.win.on("closed", () => { this.win = null; });
+
+      this._onRefreshRequest = onRefreshRequest;
     });
-
-    const htmlPath = path.join(__dirname, "../../src/renderer/index.html");
-    void this.win.loadFile(htmlPath);
-
-    this.win.once("ready-to-show", () => {
-      if (!this.win || this.win.isDestroyed()) return;
-      this.positionNearTray();
-      this.win.show();
-    });
-
-    this.win.on("blur", () => {
-      if (!this.isPinned && this.win && !this.win.isDestroyed()) this.win.hide();
-    });
-
-    this.win.on("closed", () => {
-      this.win = null;
-    });
-
-    this._onRefreshRequest = onRefreshRequest;
   }
 
   hide(): void {
@@ -90,47 +93,51 @@ export class DetailsWindowController {
     });
   }
 
-  private positionNearTray(): void {
+  private positionWindow(isDashboard = false): void {
     if (!this.win || this.win.isDestroyed()) return;
-    const tray = this.getTray();
     const [winW, winH] = this.win.getSize();
 
+    if (isDashboard) {
+      const { workArea } = screen.getPrimaryDisplay();
+      this.win.setPosition(
+        Math.round(workArea.x + (workArea.width  - winW) / 2),
+        Math.round(workArea.y + (workArea.height - winH) / 2),
+        false,
+      );
+      return;
+    }
+
+    const tray = this.getTray();
     if (tray) {
       try {
         const tb = tray.getBounds();
         const display = screen.getDisplayNearestPoint({ x: tb.x, y: tb.y });
         const wa = display.workArea;
-
         let x = Math.round(tb.x + tb.width / 2 - winW / 2);
         let y = Math.round(tb.y - winH - 8);
-
-        // Keep within work area
-        x = Math.max(wa.x, Math.min(x, wa.x + wa.width - winW));
+        x = Math.max(wa.x, Math.min(x, wa.x + wa.width  - winW));
         y = Math.max(wa.y, Math.min(y, wa.y + wa.height - winH));
-
         this.win.setPosition(x, y, false);
         return;
-      } catch {
-        // fall through to center
-      }
+      } catch { /* fall through */ }
     }
-
-    // Fallback: center on primary display
     const { workArea } = screen.getPrimaryDisplay();
     this.win.setPosition(
-      Math.round(workArea.x + (workArea.width - winW) / 2),
+      Math.round(workArea.x + (workArea.width  - winW) / 2),
       Math.round(workArea.y + (workArea.height - winH) / 2),
-      false
+      false,
     );
   }
 
   private _onRefreshRequest: (() => void) | null = null;
 
   private registerIpcHandlers(): void {
-    ipcMain.on("quota:ready", () => {
+    ipcMain.on("quota:ready", async () => {
       log.debug("Dashboard window ready, pushing current data");
       this.pushUpdate();
       this.win?.webContents.send("window:pin-state", this.isPinned);
+      const settings = await loadSettings();
+      this.win?.webContents.send("quota:ready-ack", { viewMode: settings.viewMode });
     });
 
     ipcMain.on("window:toggle-pin", () => {
@@ -235,6 +242,9 @@ export class DetailsWindowController {
       const settings = await loadSettings();
       await saveSettings({ ...settings, viewMode: mode as ViewMode });
       log.info(`View mode changed to ${mode}`);
+      if (this.win && !this.win.isDestroyed()) {
+        this.win.close();
+      }
     });
   }
 }
