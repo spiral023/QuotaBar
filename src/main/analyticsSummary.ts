@@ -102,3 +102,99 @@ function getLast7Days(): string[] {
   }
   return days;
 }
+
+export interface AnalyticsData extends AnalyticsSummary {
+  dailyBuckets: {
+    date: string;
+    claudeUSD: number;
+    codexUSD: number;
+    claudeQuotaPct: number | null;
+    codexQuotaPct: number | null;
+  }[];
+  sessionStats: {
+    count: number;
+    avgMinutes: number;
+    totalHours: number;
+    sessionsPerActiveDay: number;
+  };
+  totalTokens: {
+    claude: { input: number; output: number; cacheRead: number; cacheCreate: number };
+    codex:  { input: number; output: number; cached: number };
+  };
+}
+
+export function buildDailyBuckets(
+  claudeRows: ReportRow[],
+  codexRows: ReportRow[],
+  windowDays: number,
+): { date: string; claudeUSD: number; codexUSD: number; claudeQuotaPct: null; codexQuotaPct: null }[] {
+  const days = getLastNDays(windowDays);
+  const claudeByDate = new Map(claudeRows.map(r => [r.bucket, r.costUSD]));
+  const codexByDate  = new Map(codexRows.map(r  => [r.bucket, r.costUSD]));
+  return days.map(date => ({
+    date,
+    claudeUSD:      claudeByDate.get(date) ?? 0,
+    codexUSD:       codexByDate.get(date)  ?? 0,
+    claudeQuotaPct: null,
+    codexQuotaPct:  null,
+  }));
+}
+
+export function buildSessionStats(
+  entries: ClaudeUsageEntry[],
+  activeDays: number,
+): { count: number; avgMinutes: number; totalHours: number; sessionsPerActiveDay: number } {
+  const sessions = new Map<string, { min: number; max: number }>();
+  for (const e of entries) {
+    const ts  = new Date(e.timestamp).getTime();
+    const key = `${e.project}\0${e.session}`;
+    const ex  = sessions.get(key);
+    if (!ex) {
+      sessions.set(key, { min: ts, max: ts });
+    } else {
+      if (ts < ex.min) ex.min = ts;
+      if (ts > ex.max) ex.max = ts;
+    }
+  }
+  const count = sessions.size;
+  if (count === 0) return { count: 0, avgMinutes: 0, totalHours: 0, sessionsPerActiveDay: 0 };
+  let totalMs = 0;
+  for (const { min, max } of sessions.values()) totalMs += max - min;
+  return {
+    count,
+    avgMinutes:          Math.round(totalMs / count / 60_000),
+    totalHours:          Math.round(totalMs / 3_600_000 * 10) / 10,
+    sessionsPerActiveDay: activeDays > 0 ? Math.round(count / activeDays * 10) / 10 : 0,
+  };
+}
+
+export function buildTotalTokens(
+  claudeRows: ReportRow[],
+  codexRows:  ReportRow[],
+): { claude: { input: number; output: number; cacheRead: number; cacheCreate: number }; codex: { input: number; output: number; cached: number } } {
+  let cIn = 0, cOut = 0, cRead = 0, cCreate = 0;
+  for (const r of claudeRows) {
+    cIn     += r.inputTokens;
+    cOut    += r.outputTokens;
+    cRead   += r.cacheReadTokens;
+    cCreate += r.cacheCreationTokens;
+  }
+  let dIn = 0, dOut = 0, dCached = 0;
+  for (const r of codexRows) {
+    dIn     += r.inputTokens;
+    dOut    += r.outputTokens;
+    dCached += r.cacheReadTokens;
+  }
+  return {
+    claude: { input: cIn, output: cOut, cacheRead: cRead, cacheCreate: cCreate },
+    codex:  { input: dIn, output: dOut, cached: dCached },
+  };
+}
+
+function getLastNDays(n: number): string[] {
+  const days: string[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    days.push(new Date(Date.now() - i * 24 * 3600 * 1000).toISOString().slice(0, 10));
+  }
+  return days;
+}
