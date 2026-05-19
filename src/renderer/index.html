@@ -382,64 +382,6 @@
     .card-status-row { display: flex; align-items: center; justify-content: space-between; }
     .status-lbl { font-size: 12px; color: var(--t200); line-height: 1.4; text-wrap: pretty; }
 
-    /* ── Tabs / reports ────────────────────────────────────── */
-    .tabs {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 5px;
-      padding: 6px 6px 0;
-      background: var(--bg-base);
-    }
-    .tab-btn {
-      height: 30px;
-      border: 1px solid var(--border);
-      border-radius: var(--r-btn);
-      background: var(--bg-card);
-      color: var(--t300);
-      font-size: 11px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .tab-btn.active { color: var(--green); border-color: rgba(82,208,23,0.28); background: rgba(82,208,23,0.08); }
-    .panel[hidden] { display: none; }
-    .report-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    .report-toolbar {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 5px;
-      padding: 6px;
-      border-bottom: 1px solid var(--border);
-    }
-    .report-toolbar select,
-    .report-toolbar input {
-      min-width: 0;
-      height: 28px;
-      border: 1px solid var(--border);
-      border-radius: var(--r-btn);
-      background: var(--bg-card);
-      color: var(--t200);
-      font: 10px 'IBM Plex Mono', monospace;
-      padding: 0 7px;
-      outline: none;
-    }
-    .report-toolbar .wide { grid-column: span 2; }
-    .report-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; padding: 0 6px 6px; }
-    .report-action {
-      height: 29px;
-      border-radius: var(--r-btn);
-      border: 1px solid rgba(82,208,23,0.22);
-      background: rgba(82,208,23,0.08);
-      color: var(--green);
-      font-size: 11px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .report-table { width: 100%; border-collapse: collapse; font: 10px 'IBM Plex Mono', monospace; color: var(--t200); }
-    .report-table th, .report-table td { padding: 5px 4px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
-    .report-table th:first-child, .report-table td:first-child,
-    .report-table th:nth-child(2), .report-table td:nth-child(2) { text-align: left; }
-    .report-summary { font: 10px 'IBM Plex Mono', monospace; color: var(--t300); padding: 6px 8px; border-bottom: 1px solid var(--border); }
-
     /* ── TIP card ───────────────────────────────────────────── */
     .tip-body-wrap {
       display: flex;
@@ -643,6 +585,9 @@
       color: var(--t300);
     }
     .footer-btns { display: flex; align-items: center; gap: 1px; }
+
+    /* Default: insights panel hidden until body class is set */
+    .insights-panel { display: none; }
 
     /* ══ DASHBOARD 2-SPALTEN ═══════════════════════════════════════ */
     .view-dashboard #view-dashboard {
@@ -1123,12 +1068,13 @@
       if (!data.length) { container.innerHTML = ''; return; }
       const maxVal = Math.max(...data.map(d => d.claudeUSD + d.codexUSD), 0.01);
       container.innerHTML = data.map(d => {
-        const total  = d.claudeUSD + d.codexUSD;
-        const cPct   = Math.round((d.claudeUSD / maxVal) * 100);
-        const dPct   = Math.round((d.codexUSD  / maxVal) * 100);
+        const total = d.claudeUSD + d.codexUSD;
+        const totalPx = Math.round((total / maxVal) * 24);
+        const cPx = Math.round((d.claudeUSD / maxVal) * 24);
+        const dPx = totalPx - cPx;
         return `<div class="sparkline-bar-wrap" title="${d.date}: $${total.toFixed(2)}">
-          <div class="sparkline-bar" style="height:${cPct}%;background:var(--claude-col)"></div>
-          <div class="sparkline-bar" style="height:${dPct}%;background:var(--codex-col)"></div>
+          <div class="sparkline-bar" style="height:${cPx}px;background:var(--claude-col)"></div>
+          <div class="sparkline-bar" style="height:${dPx}px;background:var(--codex-col)"></div>
         </div>`;
       }).join('');
     }
@@ -1148,6 +1094,7 @@
         btn.classList.add('active');
         const s = await QB.ipc.invoke('settings:get');
         await QB.ipc.invoke('settings:save', { ...s, costWindow: btn.dataset.win });
+        loadAnalyticsSummary();
       });
     });
 
