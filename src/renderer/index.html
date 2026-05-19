@@ -643,6 +643,131 @@
       color: var(--t300);
     }
     .footer-btns { display: flex; align-items: center; gap: 1px; }
+
+    /* ══ DASHBOARD 2-SPALTEN ═══════════════════════════════════════ */
+    .view-dashboard #view-dashboard {
+      display: grid;
+      grid-template-columns: 1fr 360px;
+      grid-template-rows: 1fr;
+      min-height: 0;
+    }
+    .view-dashboard .content {
+      grid-column: 1;
+      border-right: 1px solid var(--border);
+    }
+    .view-dashboard #right-panel {
+      grid-column: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      overflow-y: auto;
+      padding: 8px 10px;
+    }
+    .view-compact #right-panel { display: none; }
+
+    /* Quick Stats Kacheln */
+    .qs-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px;
+      margin-bottom: 8px;
+    }
+    .qs-tile {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--r-card);
+      padding: 9px 11px;
+    }
+    .qs-tile-lbl {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--t400); margin-bottom: 4px;
+    }
+    .qs-tile-val {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 18px; font-weight: 500;
+      font-variant-numeric: tabular-nums; line-height: 1;
+    }
+
+    /* Top Models Tabelle */
+    .top-models-table {
+      width: 100%; border-collapse: collapse;
+      font-size: 10.5px; margin-bottom: 8px;
+    }
+    .top-models-table th {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--t400);
+      padding: 4px 6px; text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .top-models-table td {
+      padding: 5px 6px; color: var(--t200);
+      font-family: 'IBM Plex Mono', monospace;
+      font-variant-numeric: tabular-nums;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .top-models-table tr:last-child td { border-bottom: none; }
+    .top-models-table .model-name {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      font-size: 10px; max-width: 130px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* Right Panel Section Header */
+    .rp-section { margin-bottom: 8px; }
+    .rp-section-title {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--t400);
+      padding: 4px 3px 6px; border-bottom: 1px solid var(--border);
+      margin-bottom: 7px;
+    }
+
+    /* ══ COMPACT INSIGHTS ═══════════════════════════════════════════ */
+    .view-compact .insights-panel {
+      margin: 4px 6px 0;
+      border: 1px solid var(--border);
+      border-radius: var(--r-card);
+      background: var(--bg-card);
+      overflow: hidden;
+    }
+    .view-dashboard .insights-panel { display: none; }
+
+    .insights-toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 11px; cursor: pointer;
+      font-size: 9px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--t400);
+    }
+    .insights-toggle:hover { color: var(--t200); }
+    .insights-toggle-icon { font-size: 12px; transition: transform 120ms; }
+    .insights-panel.open .insights-toggle-icon { transform: rotate(180deg); }
+
+    .insights-body {
+      display: none;
+      padding: 0 11px 10px;
+    }
+    .insights-panel.open .insights-body { display: block; }
+
+    .insights-row1 {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; font-variant-numeric: tabular-nums;
+      color: var(--t100); margin-bottom: 3px;
+    }
+    .insights-row2 {
+      font-size: 10px; color: var(--t300); margin-bottom: 7px;
+    }
+    .insights-sparkline {
+      display: flex; align-items: flex-end; gap: 3px;
+      height: 24px; margin-bottom: 3px;
+    }
+    .sparkline-bar-wrap { flex: 1; display: flex; flex-direction: column; gap: 1px; align-items: stretch; }
+    .sparkline-bar {
+      border-radius: 2px 2px 0 0;
+      min-height: 2px;
+      transition: height 300ms;
+    }
+    .sparkline-label {
+      font-size: 8px; color: var(--t400); text-align: right;
+    }
   </style>
   <script src="shared/ipc.js"></script>
   <script src="shared/format.js"></script>
@@ -700,65 +825,51 @@
 
   <!-- ── Dashboard View ─────────────────────────────────── -->
   <div class="view" id="view-dashboard">
-    <div class="tabs">
-      <button class="tab-btn active" id="tab-live">Live</button>
-      <button class="tab-btn" id="tab-reports">Reports</button>
+    <div class="content" id="content">
+      <div class="empty">
+        <div class="spinner"></div>
+        <span>Loading…</span>
+      </div>
     </div>
-    <div class="panel view" id="panel-live">
-      <div class="content" id="content">
-        <div class="empty">
-          <div class="spinner"></div>
-          <span>Loading…</span>
+    <!-- Rechtes Panel (nur Dashboard-Modus) -->
+    <div id="right-panel">
+      <div class="rp-section">
+        <div class="rp-section-title">Quick Stats</div>
+        <div class="qs-grid" id="qs-grid">
+          <div class="qs-tile"><div class="qs-tile-lbl">API-Äq. (30d)</div><div class="qs-tile-val" id="qs-api-cost">—</div></div>
+          <div class="qs-tile"><div class="qs-tile-lbl">Abo ROI</div><div class="qs-tile-val" id="qs-roi">—</div></div>
+          <div class="qs-tile"><div class="qs-tile-lbl">Aktive Tage</div><div class="qs-tile-val" id="qs-active-days">—</div></div>
+          <div class="qs-tile"><div class="qs-tile-lbl">Ø Session</div><div class="qs-tile-val" id="qs-session">—</div></div>
+        </div>
+      </div>
+      <div class="rp-section">
+        <div class="rp-section-title">Top Models (30d)</div>
+        <table class="top-models-table" id="top-models-table">
+          <thead><tr><th>Modell</th><th>Kosten</th><th>%</th></tr></thead>
+          <tbody id="top-models-body"><tr><td colspan="3" style="color:var(--t400);text-align:center">Lädt…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="rp-section">
+        <div class="rp-section-title">Cost Window</div>
+        <div class="pill-grid-3" id="window-pill-grid">
+          <button class="pill" data-win="7d">7 Tage</button>
+          <button class="pill" data-win="30d">30 Tage</button>
+          <button class="pill active" data-win="billing">Abrechn.</button>
         </div>
       </div>
     </div>
-    <div class="panel report-wrap" id="panel-reports" hidden>
-      <div class="report-toolbar">
-        <select id="rep-provider">
-          <option value="all">All</option>
-          <option value="claude">Claude</option>
-          <option value="codex">Codex</option>
-        </select>
-        <select id="rep-type">
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-          <option value="session">Session</option>
-        </select>
-        <input id="rep-since" type="date" title="Since">
-        <input id="rep-until" type="date" title="Until">
-        <input id="rep-timezone" class="wide" type="text" title="Timezone" placeholder="Timezone">
-        <input id="rep-project" class="wide" type="text" title="Project / instance filter" placeholder="Project / instance filter">
-        <select id="rep-cost-mode">
-          <option value="auto">Cost auto</option>
-          <option value="calculate">Calculate</option>
-          <option value="display">Display</option>
-        </select>
-        <select id="rep-speed">
-          <option value="auto">Speed auto</option>
-          <option value="standard">Standard</option>
-          <option value="fast">Fast</option>
-        </select>
-        <select id="rep-order">
-          <option value="desc">Newest</option>
-          <option value="asc">Oldest</option>
-        </select>
-        <select id="rep-instances">
-          <option value="false">Combined</option>
-          <option value="true">Instances</option>
-        </select>
-        <select id="rep-breakdown" class="wide">
-          <option value="false">Compact rows</option>
-          <option value="true">Model breakdown in JSON</option>
-        </select>
-      </div>
-      <div class="report-actions">
-        <button class="report-action" id="btn-report-run">Run Report</button>
-        <button class="report-action" id="btn-report-copy">Copy JSON</button>
-      </div>
-      <div class="content" id="report-content">
-        <div class="empty"><span>Select report filters</span></div>
-      </div>
+  </div>
+
+  <!-- Compact Insights (nur Compact-Modus) -->
+  <div class="insights-panel" id="insights-panel">
+    <div class="insights-toggle" id="insights-toggle">
+      INSIGHTS <span class="insights-toggle-icon">∨</span>
+    </div>
+    <div class="insights-body">
+      <div class="insights-row1" id="ins-cost-roi">—</div>
+      <div class="insights-row2" id="ins-days-session">—</div>
+      <div class="insights-sparkline" id="ins-sparkline"></div>
+      <div class="sparkline-label" id="ins-sparkline-label">7-Tage Kosten</div>
     </div>
   </div>
 
@@ -792,15 +903,6 @@
               <input class="cost-field" id="cost-codex" type="number" min="0" step="1" placeholder="10">
             </div>
           </div>
-        </div>
-      </div>
-
-      <div class="s-section">
-        <div class="s-section-title">Cost Window</div>
-        <div class="pill-grid-3" id="window-pill-grid">
-          <button class="pill" data-win="7d">7 Tage</button>
-          <button class="pill" data-win="30d">30 Tage</button>
-          <button class="pill active" data-win="billing">Abrechn.</button>
         </div>
       </div>
 
@@ -841,24 +943,32 @@
     let lastRefreshedAt = null;
     let footerTimer     = null;
     let activePillVal    = 60;
-    let activeCostWindow = 'billing';
     let inSettings       = false;
-    let activePanel       = 'live';
-    let lastReport        = null;
 
     // ── IPC ──────────────────────────────────────────────────────
 
     QB.ipc.on('quota:update', (_, data) => {
       lastRefreshedAt = data.lastRefreshedAt ? new Date(data.lastRefreshedAt) : new Date();
-      if (activePanel === 'live') render(data.snapshots);
+      render(data.snapshots);
+      loadAnalyticsSummary();
       startFooterTimer();
     });
 
     QB.ipc.send('quota:ready');
 
-    QB.ipc.on('quota:ready-ack', (_, data) => {
+    QB.ipc.on('quota:ready-ack', async (_, data) => {
       document.body.classList.toggle('view-dashboard', data.viewMode === 'dashboard');
       document.body.classList.toggle('view-compact',   data.viewMode !== 'dashboard');
+      const s = await QB.ipc.invoke('settings:get');
+      // Cost Window initialisieren
+      const activeCostWindow = s.costWindow ?? 'billing';
+      document.querySelectorAll('#window-pill-grid .pill').forEach(p => {
+        p.classList.toggle('active', p.dataset.win === activeCostWindow);
+      });
+      // Insights-Panel Zustand
+      if (s.insightsPanelOpen) document.getElementById('insights-panel').classList.add('open');
+      // Analytics sofort laden
+      loadAnalyticsSummary();
     });
 
     QB.ipc.on('window:pin-state', (_, pinned) => {
@@ -897,27 +1007,6 @@
       if (inSettings) loadSettingsUI();
     });
 
-    document.getElementById('tab-live').addEventListener('click', () => setPanel('live'));
-    document.getElementById('tab-reports').addEventListener('click', () => setPanel('reports'));
-    document.getElementById('btn-report-run').addEventListener('click', () => loadReport());
-    document.getElementById('btn-report-copy').addEventListener('click', async () => {
-      const btn = document.getElementById('btn-report-copy');
-      btn.textContent = 'Copying…';
-      try {
-        if (!lastReport) lastReport = await QB.ipc.invoke('reports:get', reportRequest());
-        await navigator.clipboard.writeText(JSON.stringify(lastReport, null, 2));
-        btn.textContent = 'Copied';
-      } catch {
-        try {
-          await QB.ipc.invoke('reports:copy-json', reportRequest());
-          btn.textContent = 'Copied';
-        } catch {
-          btn.textContent = 'Copy failed';
-        }
-      }
-      setTimeout(() => { btn.textContent = 'Copy JSON'; }, 1400);
-    });
-
     // ── Interval pills ───────────────────────────────────────────
 
     document.querySelectorAll('#pill-grid .pill').forEach(btn => {
@@ -928,37 +1017,21 @@
       });
     });
 
-    // ── Cost Window pills ────────────────────────────────────────
-
-    document.querySelectorAll('#window-pill-grid .pill').forEach(btn => {
-      btn.addEventListener('click', () => {
-        activeCostWindow = btn.dataset.win;
-        document.querySelectorAll('#window-pill-grid .pill').forEach(p => p.classList.remove('active'));
-        btn.classList.add('active');
-      });
-    });
-
     // ── Settings: load ───────────────────────────────────────────
 
     async function loadSettingsUI() {
       try {
         const s = await QB.ipc.invoke('settings:get');
-        document.getElementById('cost-claude').value  = s.subscriptionCosts?.claude ?? 20;
-        document.getElementById('cost-codex').value   = s.subscriptionCosts?.codex  ?? 10;
+        document.getElementById('cost-claude').value   = s.subscriptionCosts?.claude ?? 20;
+        document.getElementById('cost-codex').value    = s.subscriptionCosts?.codex  ?? 10;
         document.getElementById('tog-offline').checked = !!s.pricingOfflineMode;
 
         activePillVal = s.pollIntervalSeconds ?? 60;
         const stdVals = [30, 60, 120, 300];
         const closest = stdVals.reduce((a, b) =>
-          Math.abs(b - activePillVal) < Math.abs(a - activePillVal) ? b : a
-        );
+          Math.abs(b - activePillVal) < Math.abs(a - activePillVal) ? b : a);
         document.querySelectorAll('#pill-grid .pill').forEach(p => {
           p.classList.toggle('active', parseInt(p.dataset.val, 10) === closest);
-        });
-
-        activeCostWindow = s.costWindow ?? 'billing';
-        document.querySelectorAll('#window-pill-grid .pill').forEach(p => {
-          p.classList.toggle('active', p.dataset.win === activeCostWindow);
         });
       } catch (e) {
         console.error('Failed to load settings', e);
@@ -979,7 +1052,6 @@
           codex:  parseFloat(document.getElementById('cost-codex').value)  || 10,
         },
         pricingOfflineMode: document.getElementById('tog-offline').checked,
-        costWindow: activeCostWindow,
       };
 
       try {
@@ -997,68 +1069,87 @@
       QB.renderLive(snapshots);
     }
 
-    function setPanel(panel) {
-      activePanel = panel;
-      document.getElementById('tab-live').classList.toggle('active', panel === 'live');
-      document.getElementById('tab-reports').classList.toggle('active', panel === 'reports');
-      document.getElementById('panel-live').hidden = panel !== 'live';
-      document.getElementById('panel-reports').hidden = panel !== 'reports';
-      if (panel === 'reports' && !document.getElementById('rep-timezone').value) {
-        document.getElementById('rep-timezone').value = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      }
-      if (panel === 'reports') loadReport();
-    }
+    // ── Analytics Summary laden ──────────────────────────────────────
 
-    function reportRequest() {
-      const text = id => document.getElementById(id).value.trim();
-      return {
-        provider: text('rep-provider'),
-        type: text('rep-type'),
-        since: text('rep-since') || undefined,
-        until: text('rep-until') || undefined,
-        timezone: text('rep-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone,
-        project: text('rep-project') || undefined,
-        instances: text('rep-instances') === 'true',
-        costMode: text('rep-cost-mode'),
-        codexSpeed: text('rep-speed'),
-        order: text('rep-order'),
-        breakdown: text('rep-breakdown') === 'true',
-      };
-    }
-
-    async function loadReport() {
-      const el = document.getElementById('report-content');
-      el.innerHTML = '<div class="empty"><div class="spinner"></div><span>Loading report…</span></div>';
+    async function loadAnalyticsSummary() {
       try {
-        lastReport = await QB.ipc.invoke('reports:get', reportRequest());
-        renderReport(lastReport);
+        const s = await QB.ipc.invoke('analytics:summary');
+        updateQuickStats(s);
+        updateTopModels(s);
+        updateInsights(s);
       } catch (e) {
-        el.innerHTML = `<div class="empty"><span>${QB.esc(e?.message || 'Report failed')}</span></div>`;
+        console.error('analytics:summary failed', e);
       }
     }
 
-    function renderReport(report) {
-      const el = document.getElementById('report-content');
-      const total = report.totals || {};
-      const summary = `<div class="report-summary">${report.rows.length} rows · ${QB.fmtTokens(total.totalTokens || 0)} tokens · $${(total.costUSD || 0).toFixed(2)}</div>`;
-      if (!report.rows.length) {
-        el.innerHTML = summary + '<div class="empty"><span>No report data</span></div>';
+    function updateQuickStats(s) {
+      const roi = s.roiFactor?.combined ?? 0;
+      document.getElementById('qs-api-cost').textContent    = `$${(s.apiCostUSD?.total ?? 0).toFixed(0)}`;
+      document.getElementById('qs-roi').textContent         = `${roi.toFixed(1)}×`;
+      document.getElementById('qs-roi').style.color         = QB.roiColor(roi);
+      document.getElementById('qs-active-days').textContent = `${s.activeDays ?? 0}/${s.windowDays ?? 30}`;
+      document.getElementById('qs-session').textContent     = `${s.avgSessionMinutes ?? 0} min`;
+    }
+
+    function updateTopModels(s) {
+      const tbody = document.getElementById('top-models-body');
+      if (!s.topModels?.length) {
+        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--t400);text-align:center">Keine Daten</td></tr>';
         return;
       }
-      const rows = report.rows.map(row => `<tr>
-        <td>${QB.esc(row.bucket)}</td>
-        <td>${QB.esc(row.provider)}${row.project ? `/${QB.esc(row.project)}` : row.directory ? `/${QB.esc(row.directory)}` : ''}</td>
-        <td>${QB.fmtTokens(row.inputTokens)}</td>
-        <td>${QB.fmtTokens(row.outputTokens)}</td>
-        <td>${QB.fmtTokens(row.cacheReadTokens + row.cacheCreationTokens)}</td>
-        <td>${QB.fmtTokens(row.totalTokens)}</td>
-        <td>$${(row.costUSD || 0).toFixed(2)}</td>
-      </tr>`).join('');
-      el.innerHTML = summary + `<table class="report-table">
-        <thead><tr><th>Bucket</th><th>Source</th><th>In</th><th>Out</th><th>Cache</th><th>Total</th><th>Cost</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      tbody.innerHTML = s.topModels.map(m =>
+        `<tr>
+          <td class="model-name" title="${QB.esc(m.model)}">${QB.esc(m.model.replace(/^claude-|^gpt-/,''))}</td>
+          <td>$${(m.costUSD).toFixed(2)}</td>
+          <td>${(m.pctOfTotal * 100).toFixed(0)}%</td>
+        </tr>`
+      ).join('');
     }
+
+    function updateInsights(s) {
+      const roi  = s.roiFactor?.combined ?? 0;
+      const cost = s.apiCostUSD?.total ?? 0;
+      const sub  = s.subscriptionCostUSD?.total ?? 0;
+      document.getElementById('ins-cost-roi').textContent =
+        `$${cost.toFixed(0)} API-Äq.  vs $${sub.toFixed(0)} Abo  ${roi.toFixed(1)}×`;
+      document.getElementById('ins-cost-roi').style.color = QB.roiColor(roi);
+      document.getElementById('ins-days-session').textContent =
+        `${s.activeDays ?? 0}/${s.windowDays ?? 30} Tage aktiv · Ø ${s.avgSessionMinutes ?? 0} min/Ses`;
+      renderSparkline(s.sparkline7d ?? []);
+    }
+
+    function renderSparkline(data) {
+      const container = document.getElementById('ins-sparkline');
+      if (!data.length) { container.innerHTML = ''; return; }
+      const maxVal = Math.max(...data.map(d => d.claudeUSD + d.codexUSD), 0.01);
+      container.innerHTML = data.map(d => {
+        const total  = d.claudeUSD + d.codexUSD;
+        const cPct   = Math.round((d.claudeUSD / maxVal) * 100);
+        const dPct   = Math.round((d.codexUSD  / maxVal) * 100);
+        return `<div class="sparkline-bar-wrap" title="${d.date}: $${total.toFixed(2)}">
+          <div class="sparkline-bar" style="height:${cPct}%;background:var(--claude-col)"></div>
+          <div class="sparkline-bar" style="height:${dPct}%;background:var(--codex-col)"></div>
+        </div>`;
+      }).join('');
+    }
+
+    // Insights-Panel Toggle
+    document.getElementById('insights-toggle').addEventListener('click', async () => {
+      const panel = document.getElementById('insights-panel');
+      const isOpen = panel.classList.toggle('open');
+      const s = await QB.ipc.invoke('settings:get');
+      await QB.ipc.invoke('settings:save', { ...s, insightsPanelOpen: isOpen });
+    });
+
+    // Cost-Window-Pills im rechten Panel
+    document.querySelectorAll('#window-pill-grid .pill').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        document.querySelectorAll('#window-pill-grid .pill').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        const s = await QB.ipc.invoke('settings:get');
+        await QB.ipc.invoke('settings:save', { ...s, costWindow: btn.dataset.win });
+      });
+    });
 
     // ── Footer ────────────────────────────────────────────────────
 
