@@ -70,7 +70,7 @@ export class DetailsWindowController {
       this.win.on("closed", () => { this.win = null; });
 
       this._onRefreshRequest = onRefreshRequest;
-    });
+    }).catch(err => log.error(`Failed to open window: ${err}`));
   }
 
   hide(): void {

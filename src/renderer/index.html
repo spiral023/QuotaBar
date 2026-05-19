@@ -887,7 +887,6 @@
       const settings = await QB.ipc.invoke('settings:get');
       const newMode = settings.viewMode === 'dashboard' ? 'compact' : 'dashboard';
       await QB.ipc.invoke('window:set-view', newMode);
-      QB.ipc.send('window:close');
     });
 
     document.getElementById('btn-settings').addEventListener('click', () => {
