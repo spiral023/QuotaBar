@@ -258,6 +258,14 @@ describe("buildWeeklySummary", () => {
     expect(result[0].codexEvents).toBe(2);
   });
 
+  it("sums codexTokens from codexRows", () => {
+    const rows = [
+      { ...makeRow("2026-05-04", 0), totalTokens: 400 } as ReportRow,
+    ];
+    const result = buildWeeklySummary([], rows, [], []);
+    expect(result[0].codexTokens).toBe(400);
+  });
+
   it("returns weeks sorted oldest first", () => {
     const rows = [makeRow("2026-05-11", 0), makeRow("2026-05-04", 0)];
     const result = buildWeeklySummary(rows, [], [], []);

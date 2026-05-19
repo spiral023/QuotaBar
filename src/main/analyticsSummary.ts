@@ -317,7 +317,7 @@ export function buildWeeklySummary(
 export interface CostEfficiency {
   costPer1kOutputTokens: number;
   costPerActiveHour: number;
-  roiByTier: { tier: string; price: number; roi: number }[];
+  roiByTier: { tier: string; price: number; roi: number }[]; // roi = apiCostUSD / tierPrice (how many times the plan price you've spent)
 }
 
 export function buildCostEfficiency(
