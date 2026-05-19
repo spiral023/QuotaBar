@@ -12,10 +12,10 @@ function cssRule(content: string, selector: string): string {
 
 describe("dashboard provider logos", () => {
   it("references the transparent provider logo assets", () => {
-    const html = fs.readFileSync(path.join(repoRoot, "src", "renderer", "index.html"), "utf8");
+    const liveJs = fs.readFileSync(path.join(repoRoot, "src", "renderer", "tabs", "live.js"), "utf8");
 
-    expect(html).toContain("../../logos/claude.png");
-    expect(html).toContain("../../logos/codex.png");
+    expect(liveJs).toContain("../../logos/claude.png");
+    expect(liveJs).toContain("../../logos/codex.png");
   });
 
   it("includes the logo folder in packaged builds", () => {
