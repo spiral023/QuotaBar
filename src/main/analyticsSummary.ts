@@ -187,6 +187,49 @@ export function buildTotalTokens(
   };
 }
 
+const WEEKDAY_LABELS = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+
+export function buildHourHeatmap(
+  entries: ClaudeUsageEntry[],
+): { hour: number; count: number; pct: number }[] {
+  const counts = new Array(24).fill(0) as number[];
+  for (const e of entries) {
+    counts[new Date(e.timestamp).getUTCHours()]++;
+  }
+  const peak = Math.max(...counts, 1);
+  return counts.map((count, hour) => ({ hour, count, pct: count / peak }));
+}
+
+export function buildWeekdayDistribution(
+  entries: ClaudeUsageEntry[],
+): { day: number; label: string; count: number; pct: number }[] {
+  const counts = new Array(7).fill(0) as number[];
+  for (const e of entries) {
+    counts[new Date(e.timestamp).getUTCDay()]++;
+  }
+  const total = counts.reduce((s, c) => s + c, 0) || 1;
+  return counts.map((count, day) => ({
+    day, label: WEEKDAY_LABELS[day], count, pct: count / total,
+  }));
+}
+
+export function buildTopActiveDays(
+  entries: ClaudeUsageEntry[],
+  claudeRows: ReportRow[],
+  limit: number,
+): { date: string; count: number; outputTokens: number }[] {
+  const countByDate = new Map<string, number>();
+  for (const e of entries) {
+    const d = e.timestamp.slice(0, 10);
+    countByDate.set(d, (countByDate.get(d) ?? 0) + 1);
+  }
+  const outputByDate = new Map(claudeRows.map(r => [r.bucket, r.outputTokens]));
+  return Array.from(countByDate.entries())
+    .map(([date, count]) => ({ date, count, outputTokens: outputByDate.get(date) ?? 0 }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
 function getLastNDays(n: number): string[] {
   const days: string[] = [];
   for (let i = n - 1; i >= 0; i--) {
