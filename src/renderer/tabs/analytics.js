@@ -181,13 +181,18 @@ function _buildStats(data) {
   const totalOut  = (data.totalTokens?.claude?.output ?? 0) + (data.totalTokens?.codex?.output ?? 0);
   const roi       = data.roiFactor?.combined ?? 0;
 
+  const sessions = data.sessionStats ?? {};
+
   const tiles = [
-    { lbl: 'Aktive Tage',   val: `${data.activeDays ?? 0}/${data.windowDays ?? 30}` },
-    { lbl: 'Cache-Hit',     val: `${(cacheAvg * 100).toFixed(1)}%` },
-    { lbl: 'Ø Session',     val: `${data.avgSessionMinutes ?? 0} min` },
-    { lbl: 'API-Kosten',    val: `$${(data.apiCostUSD?.total ?? 0).toFixed(0)}`,      color: 'var(--t100)' },
-    { lbl: 'ROI',           val: `${roi.toFixed(1)}×`,                                color: QB.roiColor(roi) },
-    { lbl: 'Tokens',        val: QB.fmtTokens(totalIn + totalOut) },
+    { lbl: 'Aktive Tage',      val: `${data.activeDays ?? 0}/${data.windowDays ?? 30}` },
+    { lbl: 'Cache-Hit',        val: `${(cacheAvg * 100).toFixed(1)}%` },
+    { lbl: 'Ø Session',        val: `${sessions.avgMinutes ?? data.avgSessionMinutes ?? 0} min` },
+    { lbl: 'Sitzungen',        val: `${sessions.count ?? 0}` },
+    { lbl: 'Ses/Tag',          val: `${sessions.sessionsPerActiveDay ?? 0}` },
+    { lbl: 'Gesamtstunden',    val: `${sessions.totalHours ?? 0} h` },
+    { lbl: 'API-Kosten',       val: `$${(data.apiCostUSD?.total ?? 0).toFixed(0)}`,   color: 'var(--t100)' },
+    { lbl: 'ROI',              val: `${roi.toFixed(1)}×`,                             color: QB.roiColor(roi) },
+    { lbl: 'Tokens',           val: QB.fmtTokens(totalIn + totalOut) },
   ];
 
   grid.innerHTML = tiles.map(t => `
