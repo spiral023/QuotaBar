@@ -618,7 +618,7 @@ git commit -m "feat(analytics): add analytics:summary IPC handler with session a
 
 Keine automatisierten Tests — diese Dateien sind Browser-JS. Verifikation durch die App in Task 5.
 
-- [ ] **Step 1: `src/renderer/shared/format.js` anlegen**
+- [x] **Step 1: `src/renderer/shared/format.js` anlegen**
 
 ```javascript
 /* global require */
@@ -662,7 +662,7 @@ QB.fmtUSD = function fmtUSD(n) {
 };
 ```
 
-- [ ] **Step 2: `src/renderer/shared/colors.js` anlegen**
+- [x] **Step 2: `src/renderer/shared/colors.js` anlegen**
 
 ```javascript
 'use strict';
@@ -696,7 +696,7 @@ QB.roiColor = function roiColor(factor) {
 };
 ```
 
-- [ ] **Step 3: `src/renderer/shared/ipc.js` anlegen**
+- [x] **Step 3: `src/renderer/shared/ipc.js` anlegen**
 
 ```javascript
 /* global require */
@@ -713,7 +713,7 @@ QB.ipc = {
 };
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```
 git add src/renderer/shared/
@@ -730,7 +730,7 @@ git commit -m "feat(renderer): add shared utility modules (format, colors, ipc)"
 
 Keine automatisierten Tests. Verifikation: App öffnen, Daten erscheinen wie vorher.
 
-- [ ] **Step 1: `src/renderer/tabs/live.js` anlegen**
+- [x] **Step 1: `src/renderer/tabs/live.js` anlegen**
 
 Alle Render-Funktionen aus `index.html` extrahieren und mit `QB.`-Namespace versehen. Die Funktionen `render`, `renderCard`, `renderStandard`, `renderGemini`, `renderOverview`, `renderTip`, `tokenDetailHtml`, `costBadgeHtml`, `providerIconHtml`, `startCd`, `stopCd`, `paceClass`, `paceLabel` kommen alle hierher.
 
@@ -972,7 +972,7 @@ QB.renderLive = function renderLive(snapshots) {
 };
 ```
 
-- [ ] **Step 2: `index.html` zur Shell umbauen**
+- [x] **Step 2: `index.html` zur Shell umbauen**
 
 Im `<head>` nach dem schließenden `</style>` folgende `<script>`-Tags einfügen (vor dem `</head>`):
 
@@ -996,14 +996,14 @@ function render(snapshots) {
 
 - Den `ipcRenderer`-Import am Anfang des `<script>`-Blocks entfernen (jetzt in shared/ipc.js). Alle `ipcRenderer.invoke/on/send` durch `QB.ipc.invoke/on/send` ersetzen.
 
-- [ ] **Step 3: App manuell testen**
+- [x] **Step 3: App manuell testen**
 
 ```
 npx electron .
 ```
 Prüfen: Dashboard öffnet sich, Provider-Karten erscheinen, Bars aktualisieren sich, keine Konsolen-Errors.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```
 git add src/renderer/tabs/live.js src/renderer/index.html
@@ -1018,7 +1018,7 @@ git commit -m "refactor(renderer): extract live.js and shared utilities from ind
 - Modify: `src/main/detailsWindow.ts`
 - Modify: `src/renderer/index.html`
 
-- [ ] **Step 1: `detailsWindow.ts` — Window-Sizing nach viewMode**
+- [x] **Step 1: `detailsWindow.ts` — Window-Sizing nach viewMode**
 
 Die `open()`-Methode anpassen. Ersetze den `BrowserWindow`-Konstruktoraufruf:
 
@@ -1130,7 +1130,7 @@ Im IPC-Handler `window:set-view` (bereits in Task 3 hinzugefügt) nach dem `save
     });
 ```
 
-- [ ] **Step 2: View-Switcher-Button zu `index.html` hinzufügen**
+- [x] **Step 2: View-Switcher-Button zu `index.html` hinzufügen**
 
 In der Titelleiste, nach dem Pin-Button und vor dem Close-Button, einfügen:
 
@@ -1157,7 +1157,7 @@ document.getElementById('btn-view-switch').addEventListener('click', async () =>
 });
 ```
 
-- [ ] **Step 3: `viewMode` als CSS-Klasse auf `<body>` setzen**
+- [x] **Step 3: `viewMode` als CSS-Klasse auf `<body>` setzen**
 
 Im `quota:ready` IPC-Handler im `<script>`-Block:
 
@@ -1180,14 +1180,14 @@ Im Main-Prozess `quota:ready` Handler in `detailsWindow.ts` erweitern:
     });
 ```
 
-- [ ] **Step 4: App manuell testen**
+- [x] **Step 4: App manuell testen**
 
 ```
 npx electron .
 ```
 Prüfen: View-Switch-Button erscheint, Klick schließt Fenster (öffnet sich nach Tray-Klick neu in anderem Modus).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```
 git add src/main/detailsWindow.ts src/renderer/index.html
@@ -1201,7 +1201,7 @@ git commit -m "feat(window): dashboard/compact view switcher with dynamic sizing
 **Files:**
 - Modify: `src/renderer/index.html`
 
-- [ ] **Step 1: CSS für 2-Spalten-Dashboard hinzufügen**
+- [x] **Step 1: CSS für 2-Spalten-Dashboard hinzufügen**
 
 Im `<style>`-Block am Ende (vor `</style>`) einfügen:
 
@@ -1332,7 +1332,7 @@ Im `<style>`-Block am Ende (vor `</style>`) einfügen:
     }
 ```
 
-- [ ] **Step 2: Rechtes Panel und Insights-Panel zum HTML hinzufügen**
+- [x] **Step 2: Rechtes Panel und Insights-Panel zum HTML hinzufügen**
 
 Im Dashboard-View `<div class="view" id="view-dashboard">` die Struktur erweitern:
 
@@ -1395,7 +1395,7 @@ Die bestehenden Cost Window Pills aus dem Settings-Panel **entfernen** (die gesa
 
 Im Settings-Panel den `costWindow`-Handler entfernen. In `loadSettingsUI` die `activeCostWindow`-Zeilen entfernen. Im `btn-save`-Handler `costWindow: activeCostWindow` entfernen — Cost Window wird jetzt separat über das rechte Panel gespeichert.
 
-- [ ] **Step 3: JS für rechtes Panel und Insights**
+- [x] **Step 3: JS für rechtes Panel und Insights**
 
 Im `<script>`-Block in `index.html` einfügen:
 
@@ -1486,7 +1486,7 @@ Im `<script>`-Block in `index.html` einfügen:
     });
 ```
 
-- [ ] **Step 4: `loadSettingsUI` und `quota:update` anpassen**
+- [x] **Step 4: `loadSettingsUI` und `quota:update` anpassen**
 
 In `loadSettingsUI` ergänzen (für Insights-Panel-Zustand und Cost-Window-Pills im rechten Panel):
 
@@ -1541,7 +1541,7 @@ Im `btn-save`-Handler `costWindow`-Feld entfernen (wird jetzt per Pill direkt ge
       };
 ```
 
-- [ ] **Step 5: App manuell testen im Dashboard-Modus**
+- [x] **Step 5: App manuell testen im Dashboard-Modus**
 
 ```
 npx electron .
@@ -1552,14 +1552,14 @@ Prüfen:
 - Cost Window Pills funktionieren und speichern sofort
 - Compact-Modus zeigt nur linke Spalte
 
-- [ ] **Step 6: Tests laufen**
+- [x] **Step 6: Tests laufen**
 
 ```
 npx vitest run
 ```
 Erwartet: Nur pre-existing colors.test.ts-Fail.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```
 git add src/renderer/index.html
@@ -1575,7 +1575,7 @@ git commit -m "feat(ui): 2-column dashboard layout with Quick Stats, Top Models,
 
 Das HTML und CSS für die Insights-Leiste wurde bereits in Task 7 eingefügt. Dieser Task stellt sicher dass der Initialisierungsfluss korrekt ist und die Leiste beim App-Start korrekt geladen wird.
 
-- [ ] **Step 1: Initialisierung beim App-Start sicherstellen**
+- [x] **Step 1: Initialisierung beim App-Start sicherstellen**
 
 Im `quota:ready-ack`-Handler in `index.html` (den wir in Task 6 hinzugefügt haben) `loadAnalyticsSummary()` aufrufen:
 
@@ -1596,7 +1596,7 @@ Im `quota:ready-ack`-Handler in `index.html` (den wir in Task 6 hinzugefügt hab
     });
 ```
 
-- [ ] **Step 2: App manuell testen im Compact-Modus**
+- [x] **Step 2: App manuell testen im Compact-Modus**
 
 ```
 npx electron .
@@ -1608,14 +1608,14 @@ Dann View-Switcher auf Compact klicken. Prüfen:
 - Sparkline zeigt 7 Balken in Claude-Orange und Codex-Grün
 - State wird über App-Neustart hinaus gespeichert
 
-- [ ] **Step 3: Alle Tests laufen**
+- [x] **Step 3: Alle Tests laufen**
 
 ```
 npx vitest run
 ```
 Erwartet: 129+ Tests grün, nur pre-existing `colors.test.ts`-Fail.
 
-- [ ] **Step 4: Final Commit**
+- [x] **Step 4: Final Commit**
 
 ```
 git add src/renderer/index.html
