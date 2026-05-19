@@ -11,7 +11,8 @@ import type { ViewMode } from "../config/settings";
 import {
   computeActiveDays, buildSparkline7d, buildTopModels,
   computeAvgSessionMinutes, computeCacheHitRate,
-  type AnalyticsSummary,
+  buildDailyBuckets, buildSessionStats, buildTotalTokens,
+  type AnalyticsSummary, type AnalyticsData,
 } from "./analyticsSummary";
 
 export class DetailsWindowController {
@@ -235,6 +236,55 @@ export class DetailsWindowController {
       })();
 
       return this.analyticsSummaryCache;
+    });
+
+    ipcMain.handle("analytics:get", async () => {
+      const settings = await loadSettings();
+      const windowDays = 30;
+      const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+      const [claudeReport, codexReport] = await Promise.all([
+        generateUsageReport({ type: "daily", provider: "claude", since, order: "asc", breakdown: true }, { settings }),
+        generateUsageReport({ type: "daily", provider: "codex",  since, order: "asc", breakdown: true }, { settings }),
+      ]);
+
+      const claudeEntries = await readClaudeUsageEntriesForPeriod(
+        getClaudeProjectsDirs(),
+        new Date(Date.now() - windowDays * 24 * 3600 * 1000),
+      );
+
+      const activeDays        = computeActiveDays(claudeReport.rows, codexReport.rows);
+      const sparkline7d       = buildSparkline7d(claudeReport.rows, codexReport.rows);
+      const topModels         = buildTopModels(claudeReport.rows, codexReport.rows, 5);
+      const avgSessionMinutes = computeAvgSessionMinutes(claudeEntries);
+      const cacheHitRate      = computeCacheHitRate(this.lastSnapshots);
+      const dailyBuckets      = buildDailyBuckets(claudeReport.rows, codexReport.rows, windowDays);
+      const sessionStats      = buildSessionStats(claudeEntries, activeDays);
+      const totalTokens       = buildTotalTokens(claudeReport.rows, codexReport.rows);
+
+      const claudeCost = claudeReport.totals.costUSD;
+      const codexCost  = codexReport.totals.costUSD;
+      const claudeSub  = settings.subscriptionCosts.claude;
+      const codexSub   = settings.subscriptionCosts.codex;
+
+      return {
+        apiCostUSD:          { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },
+        subscriptionCostUSD: { claude: claudeSub,  codex: codexSub,  total: claudeSub  + codexSub  },
+        roiFactor: {
+          claude:   claudeSub  > 0 ? claudeCost  / claudeSub  : 0,
+          codex:    codexSub   > 0 ? codexCost   / codexSub   : 0,
+          combined: (claudeSub + codexSub) > 0 ? (claudeCost + codexCost) / (claudeSub + codexSub) : 0,
+        },
+        activeDays,
+        avgSessionMinutes,
+        cacheHitRate,
+        sparkline7d,
+        topModels,
+        windowDays,
+        dailyBuckets,
+        sessionStats,
+        totalTokens,
+      } satisfies AnalyticsData;
     });
 
     ipcMain.handle("window:set-view", async (_, mode: string) => {
