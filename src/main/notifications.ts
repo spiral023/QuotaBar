@@ -1,44 +1,57 @@
 import { Notification } from "electron";
-import type { UsageSnapshot, UsageWindow } from "../providers/types";
-import { detectResets, ResetEvent } from "../usage/resetDetection";
+import type { UsageSnapshot } from "../providers/types";
+import type { NotificationSettings } from "../config/settings";
+import { NotificationEngine, NotificationStateStore } from "./notificationEngine";
+import type { NotificationEvent } from "./notificationEngine";
+import { NotificationHistory } from "./notificationHistory";
 
-const WINDOW_LABELS: Record<UsageWindow["name"], string> = {
-  fiveHour: "Five-hour",
-  weekly: "Weekly",
-  monthly: "Monthly",
-  credits: "Credits",
-  session: "Session",
-};
+export { NotificationEvent };
 
 export class NotificationService {
-  private readonly previous = new Map<string, UsageSnapshot>();
+  private readonly engine  = new NotificationEngine();
+  private readonly state   = new NotificationStateStore();
+  readonly history         = new NotificationHistory();
+
+  private previous: UsageSnapshot[] = [];
+  private settings: NotificationSettings;
+
+  constructor(settings: NotificationSettings) {
+    this.settings = settings;
+  }
+
+  updateSettings(settings: NotificationSettings): void {
+    this.settings = settings;
+  }
 
   onRefresh(snapshots: UsageSnapshot[]): void {
-    for (const next of snapshots) {
-      const prev = this.previous.get(next.provider);
-      const resets = detectResets(prev, next);
-      for (const reset of resets) {
-        this.notify(reset);
-      }
-      this.previous.set(next.provider, next);
+    const events = this.engine.evaluate({
+      current: snapshots,
+      previous: this.previous,
+      settings: this.settings,
+    }, this.state);
+
+    this.previous = snapshots;
+
+    for (const event of events) {
+      this.show(event);
+    }
+
+    if (events.length > 0) {
+      this.history.add(events);
     }
   }
 
-  private notify(event: ResetEvent): void {
+  sendTest(): void {
     new Notification({
       title: "QuotaBar",
-      body: buildBody(event),
+      body: "Testbenachrichtigung – Benachrichtigungen funktionieren.",
     }).show();
   }
-}
 
-function buildBody(event: ResetEvent): string {
-  const providerLabel = capitalize(event.provider);
-  const windowLabel = WINDOW_LABELS[event.windowName] ?? event.windowName;
-  return `${providerLabel} limit reset: ${windowLabel} usage is back at 0%.`;
-}
-
-function capitalize(value: string): string {
-  if (!value) return value;
-  return value[0].toUpperCase() + value.slice(1);
+  private show(event: NotificationEvent): void {
+    new Notification({
+      title: "QuotaBar",
+      body: event.body,
+    }).show();
+  }
 }

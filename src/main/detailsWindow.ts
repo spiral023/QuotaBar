@@ -2,13 +2,14 @@ import path from "path";
 import { Worker } from "node:worker_threads";
 import { BrowserWindow, ipcMain, screen, Tray, clipboard } from "electron";
 import { UsageSnapshot } from "../providers/types";
-import { loadSettings, saveSettings } from "../config/settings";
+import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { log } from "./logging";
 import { generateUsageReport } from "../reports/reportService";
 import type { ReportRequest } from "../reports/types";
 import { getClaudeProjectsDirs, getCodexSessionsDirs } from "../config/paths";
 import type { ViewMode } from "../config/settings";
 import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
+import type { NotificationService } from "./notifications";
 
 function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -30,9 +31,14 @@ export class DetailsWindowController {
   private lastRefreshedAt: Date | null = null;
   private isPinned = false;
   private analyticsSummaryCache: Promise<AnalyticsSummary> | null = null;
+  private notificationService: NotificationService | null = null;
 
   constructor(private readonly getTray: () => Tray | null) {
     this.registerIpcHandlers();
+  }
+
+  setNotificationService(svc: NotificationService): void {
+    this.notificationService = svc;
   }
 
   open(onRefreshRequest: () => void): void {
@@ -248,6 +254,31 @@ export class DetailsWindowController {
         });
         this.win.close();
       }
+    });
+
+    ipcMain.handle("notification:history", () => {
+      return this.notificationService?.history.getRecent(20) ?? [];
+    });
+
+    ipcMain.handle("notification:test", () => {
+      this.notificationService?.sendTest();
+      return { ok: true };
+    });
+
+    ipcMain.handle("notification:settings:save", async (_, partial: Record<string, unknown>) => {
+      const current = await loadSettings();
+      const merged = normalizeNotificationSettings({
+        ...current.notifications,
+        ...(partial as object),
+        rules: {
+          ...current.notifications.rules,
+          ...((partial.rules as object) ?? {}),
+        },
+      });
+      await saveSettings({ ...current, notifications: merged });
+      this.notificationService?.updateSettings(merged);
+      log.info("Notification settings saved via dashboard");
+      return { ok: true };
     });
   }
 }

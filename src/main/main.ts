@@ -44,7 +44,8 @@ if (!app.requestSingleInstanceLock()) {
       const detailsWindow = new DetailsWindowController(() => tray.getTray());
       tray.setDetailsWindow(detailsWindow);
       await tray.rebuildMenu();
-      const notificationService = new NotificationService();
+      const notificationService = new NotificationService(settings.notifications);
+      detailsWindow.setNotificationService(notificationService);
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
         detailsWindow.notifyUpdate(snapshots);

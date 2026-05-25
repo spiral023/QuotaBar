@@ -902,6 +902,95 @@
     .sparkline-label {
       font-size: 8px; color: var(--t400); text-align: right;
     }
+
+    /* ══ NOTIFICATIONS TAB ══════════════════════════════════════ */
+    .notif-wrap {
+      flex: 1; overflow-y: auto; padding: 8px 10px 10px;
+    }
+    .notif-wrap::-webkit-scrollbar { width: 3px; }
+    .notif-wrap::-webkit-scrollbar-track { background: transparent; }
+    .notif-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+    .notif-global-section, .notif-rules-section, .notif-history-section {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--r-card); padding: 10px 12px; margin-bottom: 6px;
+    }
+    .notif-section-title {
+      font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--t400);
+      padding: 0 0 6px; border-bottom: 1px solid var(--border); margin-bottom: 8px;
+    }
+    .notif-row-group { margin-top: 6px; }
+    .notif-time-row {
+      display: flex; align-items: center; gap: 8px; padding: 4px 0;
+    }
+    .notif-time-field { width: 80px; }
+    .notif-gap-pills { margin-top: 4px; grid-template-columns: repeat(4, 1fr); }
+    .notif-test-btn {
+      margin-top: 8px; padding: 6px 12px;
+      background: var(--bg-input); border: 1px solid var(--border-mid);
+      border-radius: var(--r-btn); color: var(--t200); cursor: pointer; font-size: 11px;
+    }
+    .notif-test-btn:hover { border-color: var(--border-focus); color: var(--t100); }
+
+    .notif-rule-group { margin-bottom: 8px; }
+    .notif-group-label {
+      font-size: 8.5px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--t400); padding: 4px 0 5px;
+    }
+    .notif-rule-card {
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: var(--r-inner); padding: 7px 10px; margin-bottom: 4px;
+    }
+    .notif-rule-header {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .notif-rule-tgl { flex-shrink: 0; }
+    .notif-rule-info { flex: 1; display: flex; align-items: center; gap: 5px; }
+    .notif-rule-name { font-size: 11px; color: var(--t200); }
+    .notif-rule-tip {
+      font-size: 9px; width: 14px; height: 14px; border-radius: 50%;
+      background: var(--bg-input); border: 1px solid var(--border);
+      color: var(--t400); display: flex; align-items: center; justify-content: center;
+      cursor: help; flex-shrink: 0;
+    }
+    .notif-cooldown-label {
+      display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+      font-size: 10px; color: var(--t400);
+    }
+    .notif-cooldown-field { width: 52px; text-align: right; }
+    .notif-cooldown-unit { font-size: 10px; color: var(--t400); }
+    .notif-extras {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; padding-top: 6px;
+      border-top: 1px solid var(--border);
+    }
+    .notif-extra-label {
+      display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--t400);
+    }
+    .notif-extra-field { width: 72px; text-align: right; }
+
+    .notif-save-row {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 6px;
+    }
+    .notif-hist-entry {
+      padding: 6px 0; border-bottom: 1px solid var(--border);
+    }
+    .notif-hist-entry:last-child { border-bottom: none; }
+    .notif-hist-meta {
+      display: flex; gap: 6px; align-items: center; margin-bottom: 2px;
+    }
+    .notif-hist-time  { font-size: 9px; color: var(--t400); font-family: 'IBM Plex Mono', monospace; }
+    .notif-hist-provider { font-size: 9px; color: var(--green); }
+    .notif-hist-window { font-size: 9px; color: var(--t400); }
+    .notif-hist-body   { font-size: 11px; color: var(--t200); }
+    .notif-hist-reason { font-size: 9px; color: var(--t400); font-family: 'IBM Plex Mono', monospace; margin-top: 1px; }
+
+    /* Toggle shared with settings */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 5px 0;
+    }
+    .toggle-label { font-size: 11px; color: var(--t200); }
   </style>
   <script src="../../assets/vendor/chart.min.js"></script>
   <script src="shared/ipc.js"></script>
@@ -910,6 +999,7 @@
   <script src="shared/charts.js"></script>
   <script src="tabs/live.js"></script>
   <script src="tabs/analytics.js"></script>
+  <script src="tabs/notifications.js"></script>
 </head>
 <body>
 
@@ -924,8 +1014,9 @@
       <span class="logo-name">QuotaBar</span>
     </div>
     <nav class="tab-nav">
-      <button class="tab-btn active" id="tab-live"      data-tab="live">Live</button>
-      <button class="tab-btn"        id="tab-analytics" data-tab="analytics">Analytics</button>
+      <button class="tab-btn active" id="tab-live"          data-tab="live">Live</button>
+      <button class="tab-btn"        id="tab-analytics"    data-tab="analytics">Analytics</button>
+      <button class="tab-btn"        id="tab-notifications" data-tab="notifications">Alerts</button>
     </nav>
     <div class="titlebar-btns">
       <button class="tbtn" id="btn-refresh" title="Refresh now">
@@ -1021,6 +1112,13 @@
     </div>
   </div>
 
+  <!-- ── Notifications View ──────────────────────────────── -->
+  <div class="view" id="view-notifications" hidden>
+    <div class="notif-wrap" id="notifications-content">
+      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+    </div>
+  </div>
+
   <!-- ── Settings View ──────────────────────────────────── -->
   <div class="view" id="view-settings" hidden>
     <div class="settings-wrap">
@@ -1102,16 +1200,19 @@
         document.getElementById('btn-settings').classList.remove('active');
       }
       activeTab = tab;
-      document.getElementById('view-dashboard').hidden  = tab !== 'live';
-      document.getElementById('view-analytics').hidden  = tab !== 'analytics';
+      document.getElementById('view-dashboard').hidden     = tab !== 'live';
+      document.getElementById('view-analytics').hidden     = tab !== 'analytics';
+      document.getElementById('view-notifications').hidden = tab !== 'notifications';
       document.querySelectorAll('.tab-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.tab === tab)
       );
-      if (tab === 'analytics') QB.renderAnalytics();
+      if (tab === 'analytics')     QB.renderAnalytics();
+      if (tab === 'notifications') QB.renderNotifications();
     }
 
-    document.getElementById('tab-live').addEventListener('click',      () => switchTab('live'));
-    document.getElementById('tab-analytics').addEventListener('click', () => switchTab('analytics'));
+    document.getElementById('tab-live').addEventListener('click',          () => switchTab('live'));
+    document.getElementById('tab-analytics').addEventListener('click',     () => switchTab('analytics'));
+    document.getElementById('tab-notifications').addEventListener('click', () => switchTab('notifications'));
 
     // ── IPC ──────────────────────────────────────────────────────
 
@@ -1169,9 +1270,10 @@
 
     document.getElementById('btn-settings').addEventListener('click', () => {
       inSettings = !inSettings;
-      document.getElementById('view-dashboard').hidden  = inSettings || activeTab !== 'live';
-      document.getElementById('view-analytics').hidden  = inSettings || activeTab !== 'analytics';
-      document.getElementById('view-settings').hidden   = !inSettings;
+      document.getElementById('view-dashboard').hidden     = inSettings || activeTab !== 'live';
+      document.getElementById('view-analytics').hidden     = inSettings || activeTab !== 'analytics';
+      document.getElementById('view-notifications').hidden = inSettings || activeTab !== 'notifications';
+      document.getElementById('view-settings').hidden      = !inSettings;
       document.getElementById('btn-settings').classList.toggle('active', inSettings);
       if (inSettings) loadSettingsUI();
     });
