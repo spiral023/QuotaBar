@@ -11,7 +11,7 @@ let _timeWindow   = '30d';
 QB.renderAnalytics = async function renderAnalytics() {
   const container = document.getElementById('analytics-content');
   if (!container) return;
-  container.innerHTML = '<div class="empty"><div class="spinner"></div><span>Lädt…</span></div>';
+  container.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
 
   try {
     _currentData = await QB.ipc.invoke('analytics:get');
