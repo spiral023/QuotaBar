@@ -10,6 +10,10 @@ export interface SubscriptionCosts {
   codex: number;
 }
 
+export interface DebugLogSettings {
+  enabled: boolean;
+}
+
 // ── Notification settings ────────────────────────────────────────────────────
 
 export interface NotificationRuleBase {
@@ -83,6 +87,7 @@ export interface Settings {
   costWindow: CostWindow;
   viewMode: ViewMode;
   insightsPanelOpen: boolean;
+  debugLog: DebugLogSettings;
   notifications: NotificationSettings;
 }
 
@@ -94,6 +99,7 @@ export const defaultSettings: Settings = {
   costWindow: "billing",
   viewMode: "dashboard",
   insightsPanelOpen: false,
+  debugLog: { enabled: true },
   notifications: defaultNotificationSettings,
 };
 
@@ -133,6 +139,7 @@ export function normalizeSettings(settings: Settings): Settings {
     costWindow,
     viewMode,
     insightsPanelOpen: Boolean(settings.insightsPanelOpen),
+    debugLog: { enabled: settings.debugLog?.enabled !== false },
     notifications: normalizeNotificationSettings(settings.notifications),
   };
 }

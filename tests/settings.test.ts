@@ -44,3 +44,24 @@ describe("normalizeSettings viewMode", () => {
     expect(result.insightsPanelOpen).toBe(false);
   });
 });
+
+describe("debugLog settings", () => {
+  it("defaults debugLog.enabled to true", () => {
+    expect(defaultSettings.debugLog).toEqual({ enabled: true });
+  });
+
+  it("normalizes missing debugLog block to default", () => {
+    const out = normalizeSettings({ ...defaultSettings, debugLog: undefined as never });
+    expect(out.debugLog).toEqual({ enabled: true });
+  });
+
+  it("coerces non-boolean enabled values", () => {
+    const out = normalizeSettings({ ...defaultSettings, debugLog: { enabled: "no" as unknown as boolean } });
+    expect(out.debugLog).toEqual({ enabled: true }); // any truthy non-bool becomes true
+  });
+
+  it("respects explicit false", () => {
+    const out = normalizeSettings({ ...defaultSettings, debugLog: { enabled: false } });
+    expect(out.debugLog).toEqual({ enabled: false });
+  });
+});
