@@ -7,6 +7,9 @@ import {
   getCodexConfigPaths,
   getCodexHomes,
   getCodexSessionsDirs,
+  getDebugLogDir,
+  getDebugLogPath,
+  getDebugBackfillPath,
 } from "../src/config/paths";
 
 const tmpRoot = path.join(os.tmpdir(), `quotabar-paths-${process.pid}`);
@@ -55,5 +58,26 @@ describe("data path resolution", () => {
       path.join(homeA, "config.toml"),
       path.join(homeB, "config.toml"),
     ]);
+  });
+});
+
+describe("debug log paths", () => {
+  it("returns debug subdir under app config dir", () => {
+    expect(getDebugLogDir()).toMatch(/[\\/]\.quotabar-win[\\/]debug$/);
+  });
+
+  it("returns YYYY-MM-DD.jsonl filename for a given date", () => {
+    const d = new Date(Date.UTC(2026, 4, 26, 14, 23, 0));
+    expect(getDebugLogPath(d)).toMatch(/[\\/]debug[\\/]2026-05-26\.jsonl$/);
+  });
+
+  it("returns YYYY-MM-DD.backfill.jsonl filename for a given date", () => {
+    const d = new Date(Date.UTC(2026, 4, 26, 14, 23, 0));
+    expect(getDebugBackfillPath(d)).toMatch(/[\\/]debug[\\/]2026-05-26\.backfill\.jsonl$/);
+  });
+
+  it("uses UTC day boundary, not local", () => {
+    const d = new Date(Date.UTC(2026, 4, 26, 23, 30, 0));
+    expect(getDebugLogPath(d)).toMatch(/2026-05-26\.jsonl$/);
   });
 });

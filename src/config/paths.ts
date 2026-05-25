@@ -77,6 +77,25 @@ function firstCodexHome(): string {
   return getCodexHomes()[0] ?? path.join(getHomeDir(), ".codex");
 }
 
+export function getDebugLogDir(): string {
+  return path.join(getAppConfigDir(), "debug");
+}
+
+export function getDebugLogPath(date: Date): string {
+  return path.join(getDebugLogDir(), `${utcDateKey(date)}.jsonl`);
+}
+
+export function getDebugBackfillPath(date: Date): string {
+  return path.join(getDebugLogDir(), `${utcDateKey(date)}.backfill.jsonl`);
+}
+
+function utcDateKey(date: Date): string {
+  const yyyy = date.getUTCFullYear();
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function parsePathList(value: string): string[] {
   return value
     .split(",")
