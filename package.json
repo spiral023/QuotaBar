@@ -5,7 +5,7 @@
   "main": "dist/main/main.js",
   "type": "commonjs",
   "scripts": {
-    "dev": "npm run build && electron . --no-window --debug",
+    "dev": "npm run build && electron . --no-window --log-debug",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "package": "npm run build && electron-builder --win --publish never"

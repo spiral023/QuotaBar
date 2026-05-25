@@ -1,23 +1,28 @@
 import path from "path";
+import { Worker } from "node:worker_threads";
 import { BrowserWindow, ipcMain, screen, Tray, clipboard } from "electron";
 import { UsageSnapshot } from "../providers/types";
 import { loadSettings, saveSettings } from "../config/settings";
 import { log } from "./logging";
 import { generateUsageReport } from "../reports/reportService";
 import type { ReportRequest } from "../reports/types";
-import { readClaudeUsageEntriesForPeriod } from "../pricing/jsonl-reader";
-import { getClaudeProjectsDirs } from "../config/paths";
+import { getClaudeProjectsDirs, getCodexSessionsDirs } from "../config/paths";
 import type { ViewMode } from "../config/settings";
-import {
-  computeActiveDays, buildSparkline7d, buildTopModels,
-  computeAvgSessionMinutes, computeCacheHitRate,
-  buildDailyBuckets, buildSessionStats, buildTotalTokens,
-  buildHourHeatmap, buildWeekdayDistribution, buildTopActiveDays,
-  buildFiveHourPeak, buildWeeklySummary, buildCostEfficiency,
-  type AnalyticsSummary, type AnalyticsData,
-} from "./analyticsSummary";
-import { readCodexTokensForPeriod } from "../pricing/codex-log-reader";
-import { getCodexSessionsDirs } from "../config/paths";
+import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
+
+function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, "analyticsWorker.js"), { workerData: data });
+    worker.once("message", (msg: { ok: boolean; result?: unknown; error?: string }) => {
+      if (msg.ok) resolve(msg.result);
+      else reject(new Error(msg.error ?? "Analytics worker failed"));
+    });
+    worker.once("error", reject);
+    worker.once("exit", code => {
+      if (code !== 0) reject(new Error(`Analytics worker exited with code ${code}`));
+    });
+  });
+}
 
 export class DetailsWindowController {
   private win: BrowserWindow | null = null;
@@ -139,8 +144,13 @@ export class DetailsWindowController {
   private registerIpcHandlers(): void {
     ipcMain.on("quota:ready", async () => {
       log.debug("Dashboard window ready, pushing current data");
-      this.pushUpdate();
-      this.win?.webContents.send("window:pin-state", this.isPinned);
+      if (this.win && !this.win.isDestroyed()) {
+        this.win.webContents.send("quota:update", {
+          snapshots: this.lastSnapshots,
+          lastRefreshedAt: this.lastRefreshedAt?.toISOString() ?? null,
+        });
+        this.win.webContents.send("window:pin-state", this.isPinned);
+      }
       const settings = await loadSettings();
       this.win?.webContents.send("quota:ready-ack", { viewMode: settings.viewMode });
     });
@@ -196,102 +206,35 @@ export class DetailsWindowController {
     ipcMain.handle("analytics:summary", async () => {
       if (this.analyticsSummaryCache) return this.analyticsSummaryCache;
 
-      this.analyticsSummaryCache = (async () => {
-        const settings = await loadSettings();
-        const windowDays = settings.costWindow === "7d" ? 7 : 30;
-        const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
-        const periodStart = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
+      const settings    = await loadSettings();
+      const windowDays  = settings.costWindow === "7d" ? 7 : 30;
+      const since       = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const periodStartMs = Date.now() - windowDays * 24 * 3600 * 1000;
+      const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
-        const claudeEntries = await readClaudeUsageEntriesForPeriod(getClaudeProjectsDirs(), periodStart);
-
-        const [claudeReport, codexReport] = await Promise.all([
-          generateUsageReport({ type: "daily", provider: "claude", since, order: "asc", breakdown: true }, { settings, claudeEntries }),
-          generateUsageReport({ type: "daily", provider: "codex",  since, order: "asc", breakdown: true }, { settings }),
-        ]);
-
-        const activeDays        = computeActiveDays(claudeReport.rows, codexReport.rows);
-        const sparkline7d       = buildSparkline7d(claudeReport.rows, codexReport.rows);
-        const topModels         = buildTopModels(claudeReport.rows, codexReport.rows, 5);
-        const avgSessionMinutes = computeAvgSessionMinutes(claudeEntries);
-        const cacheHitRate      = computeCacheHitRate(this.lastSnapshots);
-
-        const claudeCost = claudeReport.totals.costUSD;
-        const codexCost  = codexReport.totals.costUSD;
-        const claudeSub  = settings.subscriptionCosts.claude;
-        const codexSub   = settings.subscriptionCosts.codex;
-
-        return {
-          apiCostUSD:          { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },
-          subscriptionCostUSD: { claude: claudeSub,  codex: codexSub,  total: claudeSub  + codexSub  },
-          roiFactor: {
-            claude:   claudeSub  > 0 ? claudeCost  / claudeSub  : 0,
-            codex:    codexSub   > 0 ? codexCost   / codexSub   : 0,
-            combined: (claudeSub + codexSub) > 0 ? (claudeCost + codexCost) / (claudeSub + codexSub) : 0,
-          },
-          activeDays,
-          avgSessionMinutes,
-          cacheHitRate,
-          sparkline7d,
-          topModels,
-          windowDays,
-        } satisfies AnalyticsSummary;
-      })();
+      this.analyticsSummaryCache = runAnalyticsWorker({
+        task: "summary",
+        claudeProjectsDirs: getClaudeProjectsDirs(),
+        codexSessionsDirs:  getCodexSessionsDirs(),
+        periodStartMs, windowDays, since, settings, cacheHitRate,
+      }) as Promise<AnalyticsSummary>;
 
       return this.analyticsSummaryCache;
     });
 
     ipcMain.handle("analytics:get", async () => {
-      const settings = await loadSettings();
-      const windowDays = 30;
-      const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
-      const periodStart = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
+      const settings     = await loadSettings();
+      const windowDays   = 30;
+      const since        = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const periodStartMs = Date.now() - windowDays * 24 * 3600 * 1000;
+      const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
-      const [claudeEntries, codexEvents] = await Promise.all([
-        readClaudeUsageEntriesForPeriod(getClaudeProjectsDirs(), periodStart),
-        readCodexTokensForPeriod(getCodexSessionsDirs(), periodStart),
-      ]);
-
-      const [claudeReport, codexReport] = await Promise.all([
-        generateUsageReport({ type: "daily", provider: "claude", since, order: "asc", breakdown: true }, { settings, claudeEntries }),
-        generateUsageReport({ type: "daily", provider: "codex",  since, order: "asc", breakdown: true }, { settings, codexEvents }),
-      ]);
-
-      const activeDays        = computeActiveDays(claudeReport.rows, codexReport.rows);
-      const sparkline7d       = buildSparkline7d(claudeReport.rows, codexReport.rows);
-      const topModels         = buildTopModels(claudeReport.rows, codexReport.rows, 5);
-      const avgSessionMinutes = computeAvgSessionMinutes(claudeEntries);
-      const cacheHitRate      = computeCacheHitRate(this.lastSnapshots);
-      const dailyBuckets      = buildDailyBuckets(claudeReport.rows, codexReport.rows, windowDays);
-      const sessionStats      = buildSessionStats(claudeEntries, activeDays);
-      const totalTokens       = buildTotalTokens(claudeReport.rows, codexReport.rows);
-      const hourHeatmap       = buildHourHeatmap(claudeEntries);
-      const weekdayDistribution = buildWeekdayDistribution(claudeEntries);
-      const topActiveDays     = buildTopActiveDays(claudeEntries, claudeReport.rows, 5);
-      const fiveHourPeak      = buildFiveHourPeak(claudeEntries);
-      const weeklySummary     = buildWeeklySummary(claudeReport.rows, codexReport.rows, claudeEntries, codexEvents);
-      const costEfficiency    = buildCostEfficiency(
-        claudeReport.totals.costUSD,
-        totalTokens.claude.output,
-        sessionStats.totalHours,
-      );
-
-      const claudeCost = claudeReport.totals.costUSD;
-      const codexCost  = codexReport.totals.costUSD;
-      const claudeSub  = settings.subscriptionCosts.claude;
-      const codexSub   = settings.subscriptionCosts.codex;
-
-      return {
-        apiCostUSD:          { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },
-        subscriptionCostUSD: { claude: claudeSub,  codex: codexSub,  total: claudeSub  + codexSub  },
-        roiFactor: {
-          claude:   claudeSub  > 0 ? claudeCost  / claudeSub  : 0,
-          codex:    codexSub   > 0 ? codexCost   / codexSub   : 0,
-          combined: (claudeSub + codexSub) > 0 ? (claudeCost + codexCost) / (claudeSub + codexSub) : 0,
-        },
-        activeDays, avgSessionMinutes, cacheHitRate, sparkline7d, topModels, windowDays,
-        dailyBuckets, sessionStats, totalTokens,
-        hourHeatmap, weekdayDistribution, topActiveDays, fiveHourPeak, weeklySummary, costEfficiency,
-      } satisfies AnalyticsData;
+      return runAnalyticsWorker({
+        task: "get",
+        claudeProjectsDirs: getClaudeProjectsDirs(),
+        codexSessionsDirs:  getCodexSessionsDirs(),
+        periodStartMs, windowDays, since, settings, cacheHitRate,
+      }) as Promise<AnalyticsData>;
     });
 
     ipcMain.handle("window:set-view", async (_, mode: string) => {
@@ -300,6 +243,9 @@ export class DetailsWindowController {
       await saveSettings({ ...settings, viewMode: mode as ViewMode });
       log.info(`View mode changed to ${mode}`);
       if (this.win && !this.win.isDestroyed()) {
+        this.win.once("closed", () => {
+          if (this._onRefreshRequest) this.open(this._onRefreshRequest);
+        });
         this.win.close();
       }
     });

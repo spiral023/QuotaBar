@@ -67,7 +67,7 @@ function parseCliArgs(args: string[]): CliOptions {
   const options: CliOptions = { debug: false, noWindow: false, startupAction: null };
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    if (arg === "--debug") options.debug = true;
+    if (arg === "--log-debug" || arg === "--debug") options.debug = true;
     else if (arg === "--no-window") options.noWindow = true;
     else if (arg === "--install-startup") options.startupAction = "install";
     else if (arg === "--uninstall-startup") options.startupAction = "uninstall";
