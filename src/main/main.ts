@@ -11,6 +11,8 @@ import { TrayController } from "./tray";
 import { DetailsWindowController } from "./detailsWindow";
 import { initializeUpdater } from "./updater";
 import { NotificationService } from "./notifications";
+import { DebugRecorder } from "./debugRecorder";
+import { getDebugLogDir } from "../config/paths";
 
 interface CliOptions {
   debug: boolean;
@@ -36,12 +38,23 @@ if (!app.requestSingleInstanceLock()) {
 
       await runFirstRunPrompt();
       const settings = await loadSettings(cli.pollIntervalSeconds ? { pollIntervalSeconds: cli.pollIntervalSeconds } : {});
+      const recorder = new DebugRecorder({
+        enabled: settings.debugLog.enabled,
+        logDir: getDebugLogDir(),
+      });
+      recorder.write({
+        kind: "app.start",
+        version: app.getVersion(),
+        pollIntervalSeconds: settings.pollIntervalSeconds,
+        noWindow: cli.noWindow,
+        platform: process.platform,
+      });
       const providers = createProviderRegistry(settings.providerTimeoutMs);
       const store = new UsageStore();
       const pricingEngine = new PricingEngine(settings);
-      const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine);
+      const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder);
       const tray = new TrayController(providers, refreshLoop);
-      const detailsWindow = new DetailsWindowController(() => tray.getTray());
+      const detailsWindow = new DetailsWindowController(() => tray.getTray(), recorder);
       tray.setDetailsWindow(detailsWindow);
       await tray.rebuildMenu();
       const notificationService = new NotificationService(settings.notifications);
@@ -51,6 +64,10 @@ if (!app.requestSingleInstanceLock()) {
         detailsWindow.notifyUpdate(snapshots);
       });
       refreshLoop.start();
+      app.on("before-quit", () => {
+        recorder.write({ kind: "app.exit", reason: "user-quit" });
+        void recorder.flush();
+      });
       await initializeUpdater();
       log.info(`QuotaBar started; poll interval ${settings.pollIntervalSeconds}s; noWindow=${cli.noWindow}`);
     })

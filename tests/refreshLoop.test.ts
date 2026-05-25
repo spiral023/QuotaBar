@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { RateLimitError } from "../src/shared/errors";
 import type { UsageProvider, UsageSnapshot } from "../src/providers/types";
 import { RefreshLoop } from "../src/usage/refreshLoop";
 import { UsageStore } from "../src/usage/usageStore";
+import { DebugRecorder } from "../src/main/debugRecorder";
 
 function okSnap(provider: string): UsageSnapshot {
   return {
@@ -150,5 +154,46 @@ describe("RefreshLoop backoff", () => {
     await loop.refreshNow(); // claude in backoff, codex still fetched
     expect(claudeCalls).toBe(1);
     expect(codexCalls).toBe(2);
+  });
+});
+
+describe("RefreshLoop debug recording", () => {
+  let tmpDir: string;
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "qb-rl-rec-"));
+    vi.useRealTimers();
+  });
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("emits refresh.start and one snapshot event per provider", async () => {
+    const store = new UsageStore();
+    const recorder = new DebugRecorder({ enabled: true, logDir: tmpDir });
+    const provider = makeProvider("claude", async () => okSnap("claude"));
+    const loop = new RefreshLoop([provider], store, 60, 10_000, undefined, recorder);
+    await loop.refreshNow();
+    await recorder.flush();
+    const files = await fs.readdir(tmpDir);
+    const content = await fs.readFile(path.join(tmpDir, files[0]), "utf8");
+    const events = content.trim().split("\n").map((l) => JSON.parse(l));
+    expect(events.some((e) => e.kind === "refresh.start")).toBe(true);
+    const snapshots = events.filter((e) => e.kind === "snapshot");
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0].provider).toBe("claude");
+  });
+
+  it("emits refresh.skipped when a provider is in backoff", async () => {
+    const store = new UsageStore();
+    const recorder = new DebugRecorder({ enabled: true, logDir: tmpDir });
+    const provider = makeProvider("claude", async () => { throw new RateLimitError(60_000); });
+    const loop = new RefreshLoop([provider], store, 60, 10_000, undefined, recorder);
+    await loop.refreshNow(); // triggers backoff
+    await loop.refreshNow(); // should skip
+    await recorder.flush();
+    const files = await fs.readdir(tmpDir);
+    const content = await fs.readFile(path.join(tmpDir, files[0]), "utf8");
+    const events = content.trim().split("\n").map((l) => JSON.parse(l));
+    expect(events.some((e) => e.kind === "refresh.skipped" && e.provider === "claude")).toBe(true);
   });
 });

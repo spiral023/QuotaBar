@@ -10,6 +10,7 @@ import { getClaudeProjectsDirs, getCodexSessionsDirs } from "../config/paths";
 import type { ViewMode } from "../config/settings";
 import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
 import type { NotificationService } from "./notifications";
+import type { DebugRecorder } from "./debugRecorder";
 
 function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -33,7 +34,10 @@ export class DetailsWindowController {
   private analyticsSummaryCache: Promise<AnalyticsSummary> | null = null;
   private notificationService: NotificationService | null = null;
 
-  constructor(private readonly getTray: () => Tray | null) {
+  constructor(
+    private readonly getTray: () => Tray | null,
+    private readonly recorder?: DebugRecorder
+  ) {
     this.registerIpcHandlers();
   }
 
@@ -51,6 +55,7 @@ export class DetailsWindowController {
     }
 
     void loadSettings().then(settings => {
+      this.recorder?.write({ kind: "dashboard.open" });
       const isDashboard = settings.viewMode !== "compact";
       this.win = new BrowserWindow({
         width:      isDashboard ? 900 : 340,
@@ -83,7 +88,10 @@ export class DetailsWindowController {
         if (!this.isPinned && this.win && !this.win.isDestroyed()) this.win.hide();
       });
 
-      this.win.on("closed", () => { this.win = null; });
+      this.win.on("closed", () => {
+        this.recorder?.write({ kind: "dashboard.close" });
+        this.win = null;
+      });
 
       this._onRefreshRequest = onRefreshRequest;
     }).catch(err => log.error(`Failed to open window: ${err}`));
@@ -171,6 +179,7 @@ export class DetailsWindowController {
 
     ipcMain.on("quota:refresh", () => {
       log.debug("Dashboard window requested refresh");
+      this.recorder?.write({ kind: "dashboard.refreshRequested" });
       this._onRefreshRequest?.();
     });
 

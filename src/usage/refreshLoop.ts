@@ -4,6 +4,8 @@ import { log } from "../main/logging";
 import { UsageStore } from "./usageStore";
 import { computeLinearPace, toRateWindow } from "./usagePace";
 import type { PricingEngine } from "../pricing/subscription-factor";
+import type { DebugRecorder } from "../main/debugRecorder";
+import { snapshotEvent } from "../main/debugEvents";
 
 export type RefreshListener = (snapshots: UsageSnapshot[]) => void;
 
@@ -18,7 +20,8 @@ export class RefreshLoop {
     private readonly store: UsageStore,
     private readonly intervalSeconds: number,
     private readonly timeoutMs: number,
-    private readonly pricingEngine?: PricingEngine
+    private readonly pricingEngine?: PricingEngine,
+    private readonly recorder?: DebugRecorder
   ) {}
 
   onRefresh(listener: RefreshListener): () => void {
@@ -47,9 +50,12 @@ export class RefreshLoop {
       const active = this.providers.filter((p) => {
         const until = this.backoff.get(p.id);
         if (until === undefined || nowMs >= until) return true;
-        log.info(`${p.id} rate-limited, skipping refresh (${Math.ceil((until - nowMs) / 1000)}s remaining)`);
+        const remainingSeconds = Math.ceil((until - nowMs) / 1000);
+        log.info(`${p.id} rate-limited, skipping refresh (${remainingSeconds}s remaining)`);
+        this.recorder?.write({ kind: "refresh.skipped", provider: p.id, reason: "rate-limited", remainingSeconds });
         return false;
       });
+      this.recorder?.write({ kind: "refresh.start", providers: active.map((p) => p.id), trigger: "interval" });
       const snapshots = await Promise.all(active.map((provider) => this.fetchWithTimeout(provider)));
       const now = new Date();
       for (const snapshot of snapshots) {
@@ -61,6 +67,7 @@ export class RefreshLoop {
         if (this.pricingEngine) {
           snapshot.costFactor = await this.pricingEngine.calculateFactor(snapshot);
         }
+        this.recorder?.write(snapshotEvent(snapshot));
       }
       const merged = this.store.update(snapshots);
       for (const listener of this.listeners) listener(merged);
