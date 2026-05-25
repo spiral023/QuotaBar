@@ -27,7 +27,7 @@ function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
 
 export class DetailsWindowController {
   private win: BrowserWindow | null = null;
-  private lastSnapshots: UsageSnapshot[] = [];
+  private lastSnapshots: UsageSnapshot[] | null = null;
   private lastRefreshedAt: Date | null = null;
   private isPinned = false;
   private analyticsSummaryCache: Promise<AnalyticsSummary> | null = null;

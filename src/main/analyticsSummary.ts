@@ -82,7 +82,8 @@ export function computeAvgSessionMinutes(entries: ClaudeUsageEntry[]): number {
   return Math.round(totalMs / sessionMap.size / 60_000);
 }
 
-export function computeCacheHitRate(snapshots: UsageSnapshot[]): { claude: number; codex: number } {
+export function computeCacheHitRate(snapshots: UsageSnapshot[] | null): { claude: number; codex: number } {
+  if (!snapshots) return { claude: 0, codex: 0 };
   let cRead = 0, cFresh = 0, dCached = 0, dFresh = 0;
   for (const snap of snapshots) {
     const t = snap.costFactor?.tokenUsage;
