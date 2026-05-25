@@ -37,3 +37,6 @@ coverage/
 # Electron cache artifacts
 *.asar
 *.blockmap
+
+# Git worktrees
+.worktrees/
