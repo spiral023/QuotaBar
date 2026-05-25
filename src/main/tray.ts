@@ -43,12 +43,12 @@ export class TrayController {
   async rebuildMenu(): Promise<void> {
     this.tray.setContextMenu(await buildContextMenu(this.snapshots, this.providers, {
       refreshNow: async () => {
-        this.snapshots = await this.refreshLoop.refreshNow();
+        this.snapshots = await this.refreshLoop.refreshNow("manual");
         await this.update();
       },
       rebuildMenu: () => void this.rebuildMenu(),
       openDashboard: () => {
-        this.detailsWindow?.open(() => void this.refreshLoop.refreshNow());
+        this.detailsWindow?.open(() => void this.refreshLoop.refreshNow("dashboard"));
       },
     }));
   }

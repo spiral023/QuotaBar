@@ -183,6 +183,20 @@ describe("RefreshLoop debug recording", () => {
     expect(snapshots[0].provider).toBe("claude");
   });
 
+  it("respects the trigger argument", async () => {
+    const store = new UsageStore();
+    const recorder = new DebugRecorder({ enabled: true, logDir: tmpDir });
+    const provider = makeProvider("claude", async () => okSnap("claude"));
+    const loop = new RefreshLoop([provider], store, 60, 10_000, undefined, recorder);
+    await loop.refreshNow("manual");
+    await recorder.flush();
+    const files = await fs.readdir(tmpDir);
+    const content = await fs.readFile(path.join(tmpDir, files[0]), "utf8");
+    const events = content.trim().split("\n").map((l) => JSON.parse(l));
+    const start = events.find((e) => e.kind === "refresh.start");
+    expect(start.trigger).toBe("manual");
+  });
+
   it("emits refresh.skipped when a provider is in backoff", async () => {
     const store = new UsageStore();
     const recorder = new DebugRecorder({ enabled: true, logDir: tmpDir });

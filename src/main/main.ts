@@ -64,9 +64,15 @@ if (!app.requestSingleInstanceLock()) {
         detailsWindow.notifyUpdate(snapshots);
       });
       refreshLoop.start();
-      app.on("before-quit", () => {
+      let flushed = false;
+      app.on("before-quit", (event) => {
+        if (flushed) return;
+        event.preventDefault();
         recorder.write({ kind: "app.exit", reason: "user-quit" });
-        void recorder.flush();
+        void recorder.flush().finally(() => {
+          flushed = true;
+          app.quit();
+        });
       });
       await initializeUpdater();
       log.info(`QuotaBar started; poll interval ${settings.pollIntervalSeconds}s; noWindow=${cli.noWindow}`);

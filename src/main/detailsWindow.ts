@@ -155,6 +155,11 @@ export class DetailsWindowController {
 
   private _onRefreshRequest: (() => void) | null = null;
 
+  private handleDashboardRefresh(onRefreshRequest: () => void): void {
+    this.recorder?.write({ kind: "dashboard.refreshRequested" });
+    onRefreshRequest();
+  }
+
   private registerIpcHandlers(): void {
     ipcMain.on("quota:ready", async () => {
       log.debug("Dashboard window ready, pushing current data");
@@ -179,8 +184,7 @@ export class DetailsWindowController {
 
     ipcMain.on("quota:refresh", () => {
       log.debug("Dashboard window requested refresh");
-      this.recorder?.write({ kind: "dashboard.refreshRequested" });
-      this._onRefreshRequest?.();
+      this.handleDashboardRefresh(this._onRefreshRequest ?? (() => {}));
     });
 
     ipcMain.on("window:close", () => {

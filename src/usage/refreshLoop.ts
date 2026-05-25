@@ -30,8 +30,8 @@ export class RefreshLoop {
   }
 
   start(): void {
-    void this.refreshNow();
-    this.timer = setInterval(() => void this.refreshNow(), this.intervalSeconds * 1000);
+    void this.refreshNow("interval");
+    this.timer = setInterval(() => void this.refreshNow("interval"), this.intervalSeconds * 1000);
   }
 
   stop(): void {
@@ -39,7 +39,7 @@ export class RefreshLoop {
     this.timer = null;
   }
 
-  async refreshNow(): Promise<UsageSnapshot[]> {
+  async refreshNow(trigger: "interval" | "manual" | "dashboard" = "interval"): Promise<UsageSnapshot[]> {
     if (this.isRefreshing) {
       return this.store.getAll();
     }
@@ -55,7 +55,7 @@ export class RefreshLoop {
         this.recorder?.write({ kind: "refresh.skipped", provider: p.id, reason: "rate-limited", remainingSeconds });
         return false;
       });
-      this.recorder?.write({ kind: "refresh.start", providers: active.map((p) => p.id), trigger: "interval" });
+      this.recorder?.write({ kind: "refresh.start", providers: active.map((p) => p.id), trigger });
       const snapshots = await Promise.all(active.map((provider) => this.fetchWithTimeout(provider)));
       const now = new Date();
       for (const snapshot of snapshots) {
