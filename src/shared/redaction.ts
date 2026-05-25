@@ -20,3 +20,19 @@ export function redactObject(value: unknown): string {
     return redactSecrets(String(value));
   }
 }
+
+const PII_KEYS = new Set(["email", "account_id", "accountId", "user_id", "userId"]);
+
+export function redactPII<T>(value: T): T {
+  return walk(value) as T;
+}
+
+function walk(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(walk);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = PII_KEYS.has(k) ? "<redacted>" : walk(v);
+  }
+  return out;
+}
