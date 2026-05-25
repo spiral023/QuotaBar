@@ -90,4 +90,8 @@ describe("computeCacheHitRate", () => {
     }];
     expect(computeCacheHitRate(snaps).claude).toBeCloseTo(0.9, 5);
   });
+
+  it("returns zero rates when snapshots is null", () => {
+    expect(computeCacheHitRate(null)).toEqual({ claude: 0, codex: 0 });
+  });
 });

@@ -223,6 +223,10 @@ QB.renderLive = function renderLive(snapshots) {
   const el = document.getElementById('content');
   stopCd();
   _countdowns = [];
+  if (snapshots === null) {
+    el.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
+    return;
+  }
   if (!snapshots || snapshots.length === 0) {
     el.innerHTML = '<div class="empty"><span>No provider data</span></div>';
     return;
