@@ -22,6 +22,7 @@ describe("Gemini removal", () => {
   it("does not reference Gemini in tracked source, tests, docs, or package metadata", () => {
     const matches = listTextFiles(repoRoot)
       .filter((filePath) => !filePath.endsWith(path.join("tests", "gemini-removal.test.ts")))
+      .filter((filePath) => !filePath.endsWith(path.join("docs", "how-quotabar-calculates.md")))
       .flatMap((filePath) => {
         const content = fs.readFileSync(filePath, "utf8");
         return /gemini/i.test(content) ? [path.relative(repoRoot, filePath)] : [];

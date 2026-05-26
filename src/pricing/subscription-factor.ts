@@ -126,7 +126,7 @@ export class PricingEngine {
       windowLabel,
       label: formatLabel(apiCostUSD, factor, false),
       tokenUsage: {
-        inputTokens,
+        inputTokens: Math.max(0, inputTokens - cacheReadTokens), // uncached only, consistent with Claude
         outputTokens,
         cacheCreationTokens: 0,
         cacheReadTokens,

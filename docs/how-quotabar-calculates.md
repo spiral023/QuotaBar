@@ -117,17 +117,18 @@ Codex schreibt entweder kumulative Gesamtzahlen (`total_token_usage`) oder Zahle
 
 | UI-Feld | Bedeutung |
 |---|---|
-| INPUT | `input_tokens` — **alle** Prompt-Tokens inkl. Cache-Anteil |
-| CACHE ▷ | `cached_input_tokens` — der gecachte Anteil von INPUT (Teilmenge, nicht additiv) |
+| INPUT | Ungecachte Prompt-Tokens (`input_tokens − cached_input_tokens`) — konsistent mit Claude |
+| CACHE ▷ | `cached_input_tokens` — der gecachte Anteil der Prompt-Tokens |
 | OUTPUT | `output_tokens` |
-| TOTAL | `total_tokens` aus dem JSONL (= INPUT + OUTPUT + Reasoning) |
+| TOTAL | `total_tokens` aus dem JSONL (= alle Prompt-Tokens + OUTPUT + Reasoning) |
 
-> **Wichtig:** Bei Codex ist `cached_input_tokens` eine **Teilmenge** von `input_tokens` — beide zusammen addieren würde Cache-Tokens doppelt zählen. QuotaBar zeigt `CACHE ▷` zur Information an, rechnet es aber nicht nochmals zum Total.
->
-> ```
-> TOTAL = INPUT + OUTPUT + reasoning_output_tokens
->       ≠ INPUT + CACHE▷ + OUTPUT   (das wäre doppelt gezählt)
-> ```
+Das Codex-JSONL speichert `input_tokens` als Gesamtsumme aller Prompt-Tokens (inkl. Cache). QuotaBar zieht davon intern `cached_input_tokens` ab, bevor es „INPUT" anzeigt — damit bedeutet das Feld bei beiden Providern dasselbe: *frische, ungecachte Tokens*.
+
+```
+Angezeigtes INPUT = input_tokens − cached_input_tokens   (ungecacht)
+CACHE ▷           = cached_input_tokens                  (gecacht)
+TOTAL             = input_tokens + output_tokens + reasoning  (aus JSONL)
+```
 
 ### Modell-Erkennung
 
