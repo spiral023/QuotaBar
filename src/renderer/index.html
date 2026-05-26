@@ -1160,7 +1160,7 @@
             <span class="cost-label">Codex</span>
             <div class="cost-wrap">
               <span class="cost-sym">$</span>
-              <input class="cost-field" id="cost-codex" type="number" min="0" step="1" placeholder="10">
+              <input class="cost-field" id="cost-codex" type="number" min="0" step="1" placeholder="20">
             </div>
           </div>
         </div>
@@ -1308,7 +1308,7 @@
       try {
         const s = await QB.ipc.invoke('settings:get');
         document.getElementById('cost-claude').value   = s.subscriptionCosts?.claude ?? 20;
-        document.getElementById('cost-codex').value    = s.subscriptionCosts?.codex  ?? 10;
+        document.getElementById('cost-codex').value    = s.subscriptionCosts?.codex  ?? 20;
         document.getElementById('tog-offline').checked = !!s.pricingOfflineMode;
 
         activePillVal = s.pollIntervalSeconds ?? 60;
@@ -1334,7 +1334,7 @@
         pollIntervalSeconds: activePillVal,
         subscriptionCosts: {
           claude: parseFloat(document.getElementById('cost-claude').value) || 20,
-          codex:  parseFloat(document.getElementById('cost-codex').value)  || 10,
+          codex:  parseFloat(document.getElementById('cost-codex').value)  || 20,
         },
         pricingOfflineMode: document.getElementById('tog-offline').checked,
       };

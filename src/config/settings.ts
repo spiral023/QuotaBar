@@ -94,7 +94,7 @@ export interface Settings {
 export const defaultSettings: Settings = {
   pollIntervalSeconds: 60,
   providerTimeoutMs: 10_000,
-  subscriptionCosts: { claude: 20, codex: 10 },
+  subscriptionCosts: { claude: 20, codex: 20 },
   pricingOfflineMode: false,
   costWindow: "billing",
   viewMode: "dashboard",
