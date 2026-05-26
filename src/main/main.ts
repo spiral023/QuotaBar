@@ -12,7 +12,8 @@ import { DetailsWindowController } from "./detailsWindow";
 import { initializeUpdater } from "./updater";
 import { NotificationService } from "./notifications";
 import { DebugRecorder } from "./debugRecorder";
-import { getDebugLogDir } from "../config/paths";
+import { runBackfill } from "./debugBackfill";
+import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs } from "../config/paths";
 
 interface CliOptions {
   debug: boolean;
@@ -62,6 +63,14 @@ if (!app.requestSingleInstanceLock()) {
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
         detailsWindow.notifyUpdate(snapshots);
+      });
+      void runBackfill({
+        recorder,
+        logDir: getDebugLogDir(),
+        claudeProjectsDirs: getClaudeProjectsDirs(),
+        codexSessionsDirs: getCodexSessionsDirs(),
+      }).catch((err: unknown) => {
+        log.warn(`Backfill failed: ${err instanceof Error ? err.message : String(err)}`);
       });
       refreshLoop.start();
       let flushed = false;
