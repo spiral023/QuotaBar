@@ -6,21 +6,53 @@ window.QB = window.QB || {};
 let _lineChart    = null;
 let _donutChart   = null;
 let _currentData  = null;
+let _dataPromise  = null;
 let _timeWindow   = '30d';
 
 QB.renderAnalytics = async function renderAnalytics() {
   const container = document.getElementById('analytics-content');
   if (!container) return;
+
+  if (_currentData) {
+    _renderUI(_currentData);
+    return;
+  }
+
   container.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
 
   try {
-    _currentData = await QB.ipc.invoke('analytics:get');
+    _currentData = await _loadAnalyticsData();
     _renderUI(_currentData);
   } catch (e) {
     console.error('analytics:get failed', e);
     container.innerHTML = '<div class="empty"><span>Fehler beim Laden</span></div>';
   }
 };
+
+QB.prefetchAnalytics = function prefetchAnalytics() {
+  void _loadAnalyticsData().catch(e => console.error('analytics prefetch failed', e));
+};
+
+QB.clearAnalyticsCache = function clearAnalyticsCache() {
+  _currentData = null;
+  _dataPromise = null;
+};
+
+function _loadAnalyticsData() {
+  if (_currentData) return Promise.resolve(_currentData);
+  if (!_dataPromise) {
+    _dataPromise = QB.ipc.invoke('analytics:get')
+      .then(data => {
+        _currentData = data;
+        return data;
+      })
+      .catch(error => {
+        _dataPromise = null;
+        throw error;
+      });
+  }
+  return _dataPromise;
+}
 
 function _renderUI(data) {
   const container = document.getElementById('analytics-content');

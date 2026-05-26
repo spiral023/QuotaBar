@@ -1363,6 +1363,7 @@
 
     QB.ipc.on('quota:update', (_, data) => {
       lastRefreshedAt = data.lastRefreshedAt ? new Date(data.lastRefreshedAt) : new Date();
+      clearDashboardDataCache();
       render(data.snapshots);
       loadAnalyticsSummary();
       startFooterTimer();
@@ -1382,7 +1383,9 @@
       // Insights-Panel Zustand
       if (s.insightsPanelOpen) document.getElementById('insights-panel').classList.add('open');
       // Analytics sofort laden
-      loadAnalyticsSummary();
+      void loadAnalyticsSummary(activeCostWindow).finally(() => {
+        void prefetchDashboardData(activeCostWindow);
+      });
     });
 
     QB.ipc.on('window:pin-state', (_, pinned) => {
@@ -1473,6 +1476,8 @@
 
       try {
         await QB.ipc.invoke('settings:save', payload);
+        clearDashboardDataCache();
+        if (QB.clearAnalyticsCache) QB.clearAnalyticsCache();
         btn.textContent = '✓ Saved';
         setTimeout(() => { btn.textContent = 'Save Settings'; btn.disabled = false; }, 1800);
       } catch {
@@ -1488,15 +1493,44 @@
 
     // ── Analytics Summary laden ──────────────────────────────────────
 
-    async function loadAnalyticsSummary() {
+    const analyticsSummaryCache = new Map();
+
+    async function loadAnalyticsSummary(costWindow) {
+      const win = costWindow ?? document.querySelector('#window-pill-grid .pill.active')?.dataset.win ?? 'billing';
       try {
-        const s = await QB.ipc.invoke('analytics:summary');
+        const s = await loadAnalyticsSummaryForWindow(win);
         updateQuickStats(s);
         updateTopModels(s);
         updateInsights(s);
       } catch (e) {
         console.error('analytics:summary failed', e);
       }
+    }
+
+    function loadAnalyticsSummaryForWindow(costWindow) {
+      if (!analyticsSummaryCache.has(costWindow)) {
+        analyticsSummaryCache.set(
+          costWindow,
+          QB.ipc.invoke('analytics:summary', { costWindow }).catch(error => {
+            analyticsSummaryCache.delete(costWindow);
+            throw error;
+          })
+        );
+      }
+      return analyticsSummaryCache.get(costWindow);
+    }
+
+    async function prefetchDashboardData(activeCostWindow) {
+      if (QB.prefetchAnalytics) QB.prefetchAnalytics();
+      for (const win of ['7d', '30d', 'billing', 'all']
+        .filter(win => win !== activeCostWindow)
+      ) {
+        await loadAnalyticsSummaryForWindow(win).catch(e => console.error('analytics summary prefetch failed', e));
+      }
+    }
+
+    function clearDashboardDataCache() {
+      analyticsSummaryCache.clear();
     }
 
     function updateQuickStats(s) {
@@ -1566,7 +1600,7 @@
         btn.classList.add('active');
         const s = await QB.ipc.invoke('settings:get');
         await QB.ipc.invoke('settings:save', { ...s, costWindow: btn.dataset.win });
-        loadAnalyticsSummary();
+        loadAnalyticsSummary(btn.dataset.win);
       });
     });
 

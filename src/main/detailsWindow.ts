@@ -7,10 +7,11 @@ import { log } from "./logging";
 import { generateUsageReport } from "../reports/reportService";
 import type { ReportRequest } from "../reports/types";
 import { getClaudeProjectsDirs, getCodexSessionsDirs } from "../config/paths";
-import type { ViewMode } from "../config/settings";
+import type { CostWindow, ViewMode } from "../config/settings";
 import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
 import type { NotificationService } from "./notifications";
 import type { DebugRecorder } from "./debugRecorder";
+import { AsyncResultCache } from "./asyncResultCache";
 
 function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -31,7 +32,8 @@ export class DetailsWindowController {
   private lastSnapshots: UsageSnapshot[] | null = null;
   private lastRefreshedAt: Date | null = null;
   private isPinned = false;
-  private analyticsSummaryCache: Promise<AnalyticsSummary> | null = null;
+  private readonly analyticsSummaryCache = new AsyncResultCache<AnalyticsSummary>();
+  private readonly analyticsDataCache = new AsyncResultCache<AnalyticsData>();
   private notificationService: NotificationService | null = null;
 
   constructor(
@@ -105,8 +107,13 @@ export class DetailsWindowController {
   notifyUpdate(snapshots: UsageSnapshot[]): void {
     this.lastSnapshots = snapshots;
     this.lastRefreshedAt = new Date();
-    this.analyticsSummaryCache = null;
+    this.clearAnalyticsCaches();
     this.pushUpdate();
+  }
+
+  private clearAnalyticsCaches(): void {
+    this.analyticsSummaryCache.clear();
+    this.analyticsDataCache.clear();
   }
 
   private pushUpdate(): void {
@@ -207,7 +214,7 @@ export class DetailsWindowController {
       };
       await saveSettings(merged);
       log.info("Settings saved via dashboard");
-      this.analyticsSummaryCache = null;
+      this.clearAnalyticsCaches();
     });
 
     ipcMain.handle("reports:get", async (_, request: ReportRequest) => {
@@ -222,28 +229,23 @@ export class DetailsWindowController {
       return { ok: true };
     });
 
-    ipcMain.handle("analytics:summary", async () => {
-      if (this.analyticsSummaryCache) return this.analyticsSummaryCache;
-
-      const settings    = await loadSettings();
-      const periodStartMs = settings.costWindow === "7d"  ? Date.now() - 7  * 24 * 3600 * 1000
-                          : settings.costWindow === "30d" ? Date.now() - 30 * 24 * 3600 * 1000
-                          : settings.costWindow === "all" ? 0
-                          : Date.now() - 30 * 24 * 3600 * 1000; // "billing" → 30d approximation
-      // windowDays = 0 is a sentinel meaning "all time" — frontend omits the denominator
-      const windowDays  = settings.costWindow === "all" ? 0
-                        : Math.ceil((Date.now() - periodStartMs) / (24 * 3600 * 1000));
-      const since       = new Date(periodStartMs).toISOString().slice(0, 10);
+    ipcMain.handle("analytics:summary", async (_, request?: { costWindow?: string }) => {
+      const settings = await loadSettings();
+      const costWindow = normalizeCostWindow(request?.costWindow) ?? settings.costWindow;
+      const workerWindow = resolveAnalyticsWindow(costWindow);
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
+      const cacheKey = `summary:${costWindow}`;
 
-      this.analyticsSummaryCache = runAnalyticsWorker({
+      return this.analyticsSummaryCache.get(cacheKey, () => runAnalyticsWorker({
         task: "summary",
         claudeProjectsDirs: getClaudeProjectsDirs(),
         codexSessionsDirs:  getCodexSessionsDirs(),
-        periodStartMs, windowDays, since, settings, cacheHitRate,
-      }) as Promise<AnalyticsSummary>;
-
-      return this.analyticsSummaryCache;
+        periodStartMs: workerWindow.periodStartMs,
+        windowDays: workerWindow.windowDays,
+        since: workerWindow.since,
+        settings: { ...settings, costWindow },
+        cacheHitRate,
+      }) as Promise<AnalyticsSummary>);
     });
 
     ipcMain.handle("analytics:get", async () => {
@@ -253,12 +255,12 @@ export class DetailsWindowController {
       const periodStartMs = Date.now() - windowDays * 24 * 3600 * 1000;
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
-      return runAnalyticsWorker({
+      return this.analyticsDataCache.get("get:30d", () => runAnalyticsWorker({
         task: "get",
         claudeProjectsDirs: getClaudeProjectsDirs(),
         codexSessionsDirs:  getCodexSessionsDirs(),
         periodStartMs, windowDays, since, settings, cacheHitRate,
-      }) as Promise<AnalyticsData>;
+      }) as Promise<AnalyticsData>);
     });
 
     ipcMain.handle("window:set-view", async (_, mode: string) => {
@@ -299,4 +301,21 @@ export class DetailsWindowController {
       return { ok: true };
     });
   }
+}
+
+function normalizeCostWindow(value: unknown): CostWindow | null {
+  return value === "7d" || value === "30d" || value === "billing" || value === "all"
+    ? value
+    : null;
+}
+
+function resolveAnalyticsWindow(costWindow: CostWindow): { periodStartMs: number; windowDays: number; since: string } {
+  const now = Date.now();
+  const periodStartMs = costWindow === "7d"  ? now - 7  * 24 * 3600 * 1000
+                      : costWindow === "30d" ? now - 30 * 24 * 3600 * 1000
+                      : costWindow === "all" ? 0
+                      : now - 30 * 24 * 3600 * 1000;
+  const windowDays = costWindow === "all" ? 0 : Math.ceil((now - periodStartMs) / (24 * 3600 * 1000));
+  const since = new Date(periodStartMs).toISOString().slice(0, 10);
+  return { periodStartMs, windowDays, since };
 }
