@@ -54,7 +54,17 @@ if (!app.requestSingleInstanceLock()) {
       const store = new UsageStore();
       const pricingEngine = new PricingEngine(settings);
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder);
-      const tray = new TrayController(providers, refreshLoop);
+      const tray = new TrayController(providers, refreshLoop, async () => {
+        await runBackfill({
+          recorder,
+          logDir: getDebugLogDir(),
+          claudeProjectsDirs: getClaudeProjectsDirs(),
+          codexSessionsDirs: getCodexSessionsDirs(),
+          force: true,
+        }).catch((err: unknown) => {
+          log.warn(`Backfill regenerate failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      });
       const detailsWindow = new DetailsWindowController(() => tray.getTray(), recorder);
       tray.setDetailsWindow(detailsWindow);
       await tray.rebuildMenu();

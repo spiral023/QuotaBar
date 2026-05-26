@@ -10,6 +10,7 @@ export interface MenuActions {
   refreshNow(): Promise<void>;
   rebuildMenu(): void;
   openDashboard(): void;
+  regenerateBackfill(): Promise<void>;
 }
 
 export async function buildContextMenu(
@@ -50,6 +51,7 @@ export async function buildContextMenu(
       }
     },
     { label: "Open Log", click: () => void shell.openPath(getLogPath()) },
+    { label: "Regenerate Debug Backfill", click: () => void actions.regenerateBackfill() },
     { label: "Open Config Folder", click: () => void shell.openPath(getAppConfigDir()) },
     { type: "separator" },
     { label: "Exit", click: () => app.quit() }

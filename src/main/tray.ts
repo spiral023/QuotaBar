@@ -13,7 +13,8 @@ export class TrayController {
 
   constructor(
     private readonly providers: UsageProvider[],
-    private readonly refreshLoop: RefreshLoop
+    private readonly refreshLoop: RefreshLoop,
+    private readonly onRegenerateBackfill: () => Promise<void>
   ) {
     this.tray = new Tray(renderTrayIcon({ hasError: false }));
     this.tray.setToolTip("QuotaBar");
@@ -50,6 +51,7 @@ export class TrayController {
       openDashboard: () => {
         this.detailsWindow?.open(() => void this.refreshLoop.refreshNow("dashboard"));
       },
+      regenerateBackfill: this.onRegenerateBackfill,
     }));
   }
 
