@@ -212,6 +212,7 @@ function normalizeRequest(request: ReportRequest) {
     codexSpeed: request.codexSpeed ?? "auto",
     order: request.order ?? "desc",
     breakdown: Boolean(request.breakdown),
+    source: request.source ?? "live",
   } as const;
 }
 

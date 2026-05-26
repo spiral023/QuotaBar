@@ -16,6 +16,7 @@ export interface ReportRequest {
   codexSpeed?: CodexSpeed;
   order?: ReportOrder;
   breakdown?: boolean;
+  source?: "live" | "backfill";
 }
 
 export interface ModelBreakdown {
@@ -54,4 +55,27 @@ export interface ReportResult {
   rows: ReportRow[];
   totals: ReportTotals;
   generatedAt: string;
+}
+
+export interface BackfillPerModelEntry {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  costUSD: number;
+}
+
+export interface BackfillDayRecord {
+  date: string; // YYYY-MM-DD UTC
+  provider: "claude" | "codex";
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  sessionCount: number;
+  models: string[];
+  perModel: Record<string, BackfillPerModelEntry>;
 }
