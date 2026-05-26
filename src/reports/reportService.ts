@@ -1,4 +1,4 @@
-import { getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs } from "../config/paths";
+import { getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs, getDebugLogDir } from "../config/paths";
 import type { Settings } from "../config/settings";
 import { defaultSettings } from "../config/settings";
 import { calculateCodexApiCost, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
@@ -6,6 +6,8 @@ import { readCodexTokensForPeriod, type CodexTokenEvent } from "../pricing/codex
 import { calculateCostFromTokens } from "../pricing/cost-calculator";
 import { readClaudeUsageEntriesForPeriod, type ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
+import { readBackfillDayRecords } from "./backfill-reader";
+import type { BackfillDayRecord, BackfillPerModelEntry } from "./types";
 import type { CostMode, ModelBreakdown, ReportRequest, ReportResult, ReportRow, ReportTotals } from "./types";
 
 export type { CostMode, CodexSpeed, ModelBreakdown, ReportRequest, ReportResult, ReportRow, ReportTotals, ReportType } from "./types";
@@ -17,6 +19,8 @@ export interface ReportDeps {
   codexConfigPaths?: string[];
   claudeEntries?: ClaudeUsageEntry[];
   codexEvents?: CodexTokenEvent[];
+  backfillLogDir?: string;
+  backfillRecords?: BackfillDayRecord[];
 }
 
 const ZERO_TOTALS: ReportTotals = {
@@ -30,6 +34,27 @@ const ZERO_TOTALS: ReportTotals = {
 
 export async function generateUsageReport(request: ReportRequest, deps: ReportDeps = {}): Promise<ReportResult> {
   const normalized = normalizeRequest(request);
+
+  const useBackfill = normalized.source === "backfill"
+    && normalized.type !== "session"
+    && !normalized.project
+    && !normalized.instances;
+
+  if (useBackfill) {
+    const sinceDate = normalized.since ? new Date(`${normalized.since}T00:00:00.000Z`) : undefined;
+    const records = deps.backfillRecords
+      ?? await readBackfillDayRecords(deps.backfillLogDir ?? getDebugLogDir(), sinceDate);
+    const rows = buildRowsFromBackfill(records, normalized).sort(
+      (a, b) => normalized.order === "asc" ? a.bucket.localeCompare(b.bucket) : b.bucket.localeCompare(a.bucket),
+    );
+    return {
+      request: normalized,
+      rows,
+      totals: sumRows(rows),
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
   const settings = deps.settings ?? defaultSettings;
   const fetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
   const rows: ReportRow[] = [];
@@ -140,6 +165,82 @@ async function buildCodexRows(
       isFallback: list.some((entry) => entry.isFallback),
       ...(request.breakdown ? { modelBreakdowns: breakdowns } : {}),
     });
+  }
+  return rows;
+}
+
+function buildRowsFromBackfill(
+  records: BackfillDayRecord[],
+  request: ReturnType<typeof normalizeRequest>,
+): ReportRow[] {
+  const filtered = records.filter((r) => {
+    if (request.provider !== "all" && r.provider !== request.provider) return false;
+    if (request.until && r.date > request.until) return false;
+    return true;
+  });
+
+  const buckets = new Map<string, BackfillDayRecord[]>();
+  for (const r of filtered) {
+    const timestamp = `${r.date}T12:00:00.000Z`;
+    const bucket = bucketFor(timestamp, request.type, request.timezone);
+    const key = `${r.provider}\0${bucket}`;
+    const list = buckets.get(key) ?? [];
+    list.push(r);
+    buckets.set(key, list);
+  }
+
+  const rows: ReportRow[] = [];
+  for (const [key, list] of buckets) {
+    const [provider, bucket] = key.split("\0") as ["claude" | "codex", string];
+    const totals = list.reduce(
+      (acc, r) => ({
+        inputTokens: acc.inputTokens + r.inputTokens,
+        outputTokens: acc.outputTokens + r.outputTokens,
+        cacheCreationTokens: acc.cacheCreationTokens + r.cacheCreationTokens,
+        cacheReadTokens: acc.cacheReadTokens + r.cacheReadTokens,
+        totalTokens: acc.totalTokens + r.totalTokens,
+        costUSD: acc.costUSD + r.costUSD,
+      }),
+      { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0 },
+    );
+
+    const modelSet = new Set<string>();
+    const modelAgg = new Map<string, BackfillPerModelEntry>();
+    for (const r of list) {
+      r.models.forEach((m) => modelSet.add(m));
+      for (const [model, pm] of Object.entries(r.perModel)) {
+        const acc = modelAgg.get(model) ?? { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0 };
+        modelAgg.set(model, {
+          inputTokens: acc.inputTokens + pm.inputTokens,
+          outputTokens: acc.outputTokens + pm.outputTokens,
+          cacheCreationTokens: acc.cacheCreationTokens + pm.cacheCreationTokens,
+          cacheReadTokens: acc.cacheReadTokens + pm.cacheReadTokens,
+          totalTokens: acc.totalTokens + pm.totalTokens,
+          costUSD: acc.costUSD + pm.costUSD,
+        });
+      }
+    }
+
+    const row: ReportRow = {
+      bucket,
+      provider,
+      ...totals,
+      models: Array.from(modelSet),
+    };
+
+    if (request.breakdown) {
+      row.modelBreakdowns = Array.from(modelAgg.entries()).map(([model, pm]) => ({
+        model,
+        inputTokens: pm.inputTokens,
+        outputTokens: pm.outputTokens,
+        cacheCreationTokens: pm.cacheCreationTokens,
+        cacheReadTokens: pm.cacheReadTokens,
+        totalTokens: pm.totalTokens,
+        costUSD: pm.costUSD,
+      }));
+    }
+
+    rows.push(row);
   }
   return rows;
 }
