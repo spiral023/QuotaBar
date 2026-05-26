@@ -175,6 +175,7 @@ function buildRowsFromBackfill(
 ): ReportRow[] {
   const filtered = records.filter((r) => {
     if (request.provider !== "all" && r.provider !== request.provider) return false;
+    if (request.since && r.date < request.since) return false;
     if (request.until && r.date > request.until) return false;
     return true;
   });
