@@ -1005,6 +1005,124 @@
       padding: 5px 0;
     }
     .toggle-label { font-size: 11px; color: var(--t200); }
+
+    /* ══ HISTORY TAB ════════════════════════════════════════════ */
+    .hr-wrap {
+      flex: 1; overflow-y: auto; padding: 8px 10px 10px;
+    }
+    .hr-wrap::-webkit-scrollbar { width: 3px; }
+    .hr-wrap::-webkit-scrollbar-track { background: transparent; }
+    .hr-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+    .hr-controls {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--r-card); padding: 8px 12px; margin-bottom: 6px;
+    }
+    .hr-date-label {
+      font-size: 9px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--t400);
+    }
+    .hr-date-input {
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: var(--r-inner); color: var(--t100);
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+      padding: 4px 8px; outline: none;
+      transition-property: border-color, box-shadow; transition-duration: 120ms;
+      color-scheme: dark;
+    }
+    .hr-date-input:focus { border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(82,208,23,0.1); }
+    .hr-pill-group { display: flex; gap: 3px; }
+    .hr-pill-group .pill { padding: 4px 10px; font-size: 10px; }
+    .hr-load-btn {
+      margin-left: auto; padding: 5px 14px;
+      background: rgba(82,208,23,0.08); border: 1px solid rgba(82,208,23,0.22);
+      border-radius: var(--r-btn); color: var(--green);
+      font-family: 'DM Sans', system-ui, sans-serif; font-size: 11px; font-weight: 600;
+      cursor: pointer; outline: none;
+      transition-property: background, scale; transition-duration: 120ms;
+    }
+    .hr-load-btn:hover { background: rgba(82,208,23,0.14); }
+    .hr-load-btn:active { scale: 0.97; }
+    .hr-load-btn:disabled { opacity: 0.5; cursor: default; }
+
+    .hr-summary-row {
+      display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px;
+    }
+    .hr-kpi {
+      flex: 1; min-width: 80px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--r-card); padding: 9px 12px;
+    }
+    .hr-kpi-provider {
+      border-color: color-mix(in srgb, var(--prov-col) 30%, var(--border));
+    }
+    .hr-kpi-lbl {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--t400); margin-bottom: 4px;
+    }
+    .hr-kpi-val {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 16px; font-weight: 500;
+      font-variant-numeric: tabular-nums; line-height: 1;
+    }
+
+    .hr-chart-section, .hr-table-section {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--r-card); padding: 10px 12px; margin-bottom: 6px;
+    }
+    .hr-section-head {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+    }
+    .hr-section-title {
+      font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--t400);
+    }
+    .hr-chart-legend { display: flex; align-items: center; gap: 10px; }
+    .hr-chart-legend span { font-size: 10px; color: var(--t300); }
+    .hr-legend-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+    .hr-chart-wrap { height: 160px; position: relative; }
+    .hr-row-count { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--t400); }
+
+    .hr-table-scroll { overflow-x: auto; }
+    .hr-table {
+      width: 100%; border-collapse: collapse; font-size: 10.5px;
+    }
+    .hr-table th {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
+      text-transform: uppercase; color: var(--t400);
+      padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .hr-table th.num { text-align: right; }
+    .hr-table td {
+      padding: 5px 6px; color: var(--t200);
+      border-bottom: 1px solid rgba(255,255,255,0.035); font-size: 10px;
+      white-space: nowrap;
+    }
+    .hr-table td.num {
+      font-family: 'IBM Plex Mono', monospace;
+      font-variant-numeric: tabular-nums; text-align: right;
+    }
+    .hr-table td.dim { color: var(--t400); }
+    .hr-table td.cost-cell { color: var(--t100); }
+    .hr-table tr:last-child td { border-bottom: none; }
+    .hr-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .hr-prov-pip {
+      display: inline-block; width: 6px; height: 6px;
+      border-radius: 50%; margin-right: 4px; vertical-align: middle;
+    }
+    .hr-table td.bucket-cell {
+      font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: var(--t300);
+    }
+
+    .hr-empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 40px 16px; gap: 8px;
+    }
+    .hr-empty-icon { color: var(--t400); opacity: 0.5; }
+    .hr-empty-text { font-size: 12px; color: var(--t300); font-weight: 500; }
+    .hr-empty-sub  { font-size: 10px; color: var(--t400); }
   </style>
   <script src="../../assets/vendor/chart.min.js"></script>
   <script src="shared/ipc.js"></script>
@@ -1014,6 +1132,7 @@
   <script src="tabs/live.js"></script>
   <script src="tabs/analytics.js"></script>
   <script src="tabs/notifications.js"></script>
+  <script src="tabs/history.js"></script>
 </head>
 <body>
 
@@ -1031,6 +1150,7 @@
       <button class="tab-btn active" id="tab-live"          data-tab="live">Live</button>
       <button class="tab-btn"        id="tab-analytics"    data-tab="analytics">Analytics</button>
       <button class="tab-btn"        id="tab-notifications" data-tab="notifications">Alerts</button>
+      <button class="tab-btn"        id="tab-history"      data-tab="history">History</button>
     </nav>
     <div class="titlebar-btns">
       <button class="tbtn" id="btn-refresh" title="Refresh now">
@@ -1097,10 +1217,11 @@
       </div>
       <div class="rp-section">
         <div class="rp-section-title">Cost Window</div>
-        <div class="pill-grid-3" id="window-pill-grid">
+        <div class="pill-grid" id="window-pill-grid">
           <button class="pill" data-win="7d">7 Tage</button>
           <button class="pill" data-win="30d">30 Tage</button>
           <button class="pill active" data-win="billing">Abrechn.</button>
+          <button class="pill" data-win="all">Gesamt</button>
         </div>
       </div>
     </div>
@@ -1122,6 +1243,13 @@
   <!-- ── Analytics View ────────────────────────────────── -->
   <div class="view" id="view-analytics" hidden>
     <div class="analytics-wrap" id="analytics-content">
+      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+    </div>
+  </div>
+
+  <!-- ── History View ─────────────────────────────────────── -->
+  <div class="view" id="view-history" hidden>
+    <div class="hr-wrap" id="history-content">
       <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
     </div>
   </div>
@@ -1217,16 +1345,19 @@
       document.getElementById('view-dashboard').hidden     = tab !== 'live';
       document.getElementById('view-analytics').hidden     = tab !== 'analytics';
       document.getElementById('view-notifications').hidden = tab !== 'notifications';
+      document.getElementById('view-history').hidden       = tab !== 'history';
       document.querySelectorAll('.tab-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.tab === tab)
       );
       if (tab === 'analytics')     QB.renderAnalytics();
       if (tab === 'notifications') QB.renderNotifications();
+      if (tab === 'history')       QB.renderHistory();
     }
 
     document.getElementById('tab-live').addEventListener('click',          () => switchTab('live'));
     document.getElementById('tab-analytics').addEventListener('click',     () => switchTab('analytics'));
     document.getElementById('tab-notifications').addEventListener('click', () => switchTab('notifications'));
+    document.getElementById('tab-history').addEventListener('click',       () => switchTab('history'));
 
     // ── IPC ──────────────────────────────────────────────────────
 
@@ -1287,6 +1418,7 @@
       document.getElementById('view-dashboard').hidden     = inSettings || activeTab !== 'live';
       document.getElementById('view-analytics').hidden     = inSettings || activeTab !== 'analytics';
       document.getElementById('view-notifications').hidden = inSettings || activeTab !== 'notifications';
+      document.getElementById('view-history').hidden       = inSettings || activeTab !== 'history';
       document.getElementById('view-settings').hidden      = !inSettings;
       document.getElementById('btn-settings').classList.toggle('active', inSettings);
       if (inSettings) loadSettingsUI();

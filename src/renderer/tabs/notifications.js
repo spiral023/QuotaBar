@@ -57,7 +57,7 @@ function buildNotificationsHTML(ns, rules) {
           <span class="toggle-label">Mindestabstand zwischen Meldungen</span>
           <div class="pill-grid notif-gap-pills">
             ${[0, 5, 15, 30].map(v =>
-              `<button class="pill${(ns.minimumGapMinutes ?? 15) === v ? ' active' : ''}" data-gap="${v}">
+              `<button class="pill${(ns.minimumGapMinutes ?? 0) === v ? ' active' : ''}" data-gap="${v}">
                 ${v === 0 ? 'Aus' : v + ' min'}
               </button>`
             ).join('')}

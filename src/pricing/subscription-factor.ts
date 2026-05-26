@@ -149,6 +149,9 @@ function resolveBillingStart(
   if (costWindow === "30d") {
     return { billingStart: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), windowLabel: "30d" };
   }
+  if (costWindow === "all") {
+    return { billingStart: new Date(0), windowLabel: "all" };
+  }
   // "billing" — provider-native period
   if (provider === "claude") {
     return { billingStart: getClaudeBillingStart(snapshot), windowLabel: "billing" };

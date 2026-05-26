@@ -49,6 +49,15 @@ async function run(): Promise<void> {
   const avgSessionMinutes = computeAvgSessionMinutes(claudeEntries);
   const { cacheHitRate }  = input;
 
+  // When windowDays === 0 (sentinel for "all time"), derive span from actual data
+  let windowDays = input.windowDays;
+  if (windowDays === 0) {
+    const buckets = [...claudeReport.rows, ...codexReport.rows].map(r => r.bucket).sort();
+    windowDays = buckets.length > 0
+      ? Math.ceil((Date.now() - new Date(buckets[0]).getTime()) / (24 * 3600 * 1000)) + 1
+      : 30;
+  }
+
   const claudeCost = claudeReport.totals.costUSD;
   const codexCost  = codexReport.totals.costUSD;
   const claudeSub  = input.settings.subscriptionCosts.claude;
@@ -66,7 +75,7 @@ async function run(): Promise<void> {
       subscriptionCostUSD: { claude: claudeSub,  codex: codexSub,  total: claudeSub  + codexSub  },
       roiFactor,
       activeDays, avgSessionMinutes, cacheHitRate, sparkline7d, topModels,
-      windowDays: input.windowDays,
+      windowDays,
     };
     parentPort!.postMessage({ ok: true, result });
     return;
@@ -87,7 +96,7 @@ async function run(): Promise<void> {
     subscriptionCostUSD: { claude: claudeSub,  codex: codexSub,  total: claudeSub  + codexSub  },
     roiFactor,
     activeDays, avgSessionMinutes, cacheHitRate, sparkline7d, topModels,
-    windowDays: input.windowDays,
+    windowDays,
     dailyBuckets, sessionStats, totalTokens,
     hourHeatmap, weekdayDistribution, topActiveDays, fiveHourPeak, weeklySummary, costEfficiency,
   };

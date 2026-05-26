@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import { ensureConfigDir } from "../main/logging";
 import { getSettingsPath } from "./paths";
 
-export type CostWindow = "7d" | "30d" | "billing";
+export type CostWindow = "7d" | "30d" | "billing" | "all";
 export type ViewMode = "dashboard" | "compact";
 
 export interface SubscriptionCosts {
@@ -73,7 +73,7 @@ export const defaultNotificationRules: NotificationRules = {
 export const defaultNotificationSettings: NotificationSettings = {
   enabled: true,
   quietHours: { enabled: false, start: "22:30", end: "08:00" },
-  minimumGapMinutes: 15,
+  minimumGapMinutes: 0,
   rules: defaultNotificationRules,
 };
 
@@ -120,7 +120,7 @@ export async function saveSettings(settings: Settings): Promise<void> {
 
 export function normalizeSettings(settings: Settings): Settings {
   const sub = (settings.subscriptionCosts ?? {}) as Partial<SubscriptionCosts>;
-  const validWindows: CostWindow[] = ["7d", "30d", "billing"];
+  const validWindows: CostWindow[] = ["7d", "30d", "billing", "all"];
   const costWindow: CostWindow = validWindows.includes(settings.costWindow as CostWindow)
     ? (settings.costWindow as CostWindow)
     : "billing";

@@ -207,7 +207,7 @@ export class DetailsWindowController {
       };
       await saveSettings(merged);
       log.info("Settings saved via dashboard");
-      this._onRefreshRequest?.();
+      this.analyticsSummaryCache = null;
     });
 
     ipcMain.handle("reports:get", async (_, request: ReportRequest) => {
@@ -226,9 +226,14 @@ export class DetailsWindowController {
       if (this.analyticsSummaryCache) return this.analyticsSummaryCache;
 
       const settings    = await loadSettings();
-      const windowDays  = settings.costWindow === "7d" ? 7 : 30;
-      const since       = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
-      const periodStartMs = Date.now() - windowDays * 24 * 3600 * 1000;
+      const periodStartMs = settings.costWindow === "7d"  ? Date.now() - 7  * 24 * 3600 * 1000
+                          : settings.costWindow === "30d" ? Date.now() - 30 * 24 * 3600 * 1000
+                          : settings.costWindow === "all" ? 0
+                          : Date.now() - 30 * 24 * 3600 * 1000; // "billing" → 30d approximation
+      // windowDays = 0 is a sentinel meaning "all time" — frontend omits the denominator
+      const windowDays  = settings.costWindow === "all" ? 0
+                        : Math.ceil((Date.now() - periodStartMs) / (24 * 3600 * 1000));
+      const since       = new Date(periodStartMs).toISOString().slice(0, 10);
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
       this.analyticsSummaryCache = runAnalyticsWorker({
