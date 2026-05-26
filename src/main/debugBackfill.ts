@@ -2,6 +2,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readClaudeUsageEntriesForPeriod, type ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import { readCodexTokensForPeriod, type CodexTokenEvent } from "../pricing/codex-log-reader";
+import { calculateCodexApiCost, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
+import { calculateCostFromTokens } from "../pricing/cost-calculator";
+import type { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import type { DebugRecorder } from "./debugRecorder";
 import type { TokensDaySummaryEvent, TokensUsageEvent } from "./debugEvents";
 import { log } from "./logging";
@@ -12,6 +15,8 @@ export interface BackfillOptions {
   claudeProjectsDirs: string[];
   codexSessionsDirs: string[];
   force?: boolean;
+  fetcher?: LiteLLMFetcher;
+  codexConfigPaths?: string[];
 }
 
 export interface BackfillResult {
@@ -60,6 +65,10 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   let skipped = 0;
   const sortedDays = [...byDay.keys()].sort();
 
+  const speedTier = opts.fetcher && opts.codexConfigPaths?.length
+    ? await readCodexSpeedTierFromPaths(opts.codexConfigPaths)
+    : "standard";
+
   opts.recorder.write({ kind: "backfill.start", days: sortedDays });
 
   for (const day of sortedDays) {
@@ -91,8 +100,8 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
       };
       opts.recorder.writeBackfill(day, event);
     }
-    if (bucket.claude.length > 0) opts.recorder.writeBackfill(day, summarizeClaude(day, bucket.claude));
-    if (bucket.codex.length > 0) opts.recorder.writeBackfill(day, summarizeCodex(day, bucket.codex));
+    if (bucket.claude.length > 0) opts.recorder.writeBackfill(day, await summarizeClaude(day, bucket.claude, opts.fetcher));
+    if (bucket.codex.length > 0) opts.recorder.writeBackfill(day, await summarizeCodex(day, bucket.codex, opts.fetcher, speedTier));
     written++;
   }
 
@@ -101,8 +110,9 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   return { daysWritten: written, daysSkipped: skipped, durationMs, errors };
 }
 
-function summarizeClaude(date: string, entries: ClaudeUsageEntry[]): TokensDaySummaryEvent {
+async function summarizeClaude(date: string, entries: ClaudeUsageEntry[], fetcher?: LiteLLMFetcher): Promise<TokensDaySummaryEvent> {
   const perModel: TokensDaySummaryEvent["perModel"] = {};
+  const perModelNoSourceCost: Record<string, { input: number; output: number; cacheCreation: number; cacheRead: number }> = {};
   const sessions = new Set<string>();
   let input = 0, output = 0, cacheCreation = 0, cacheRead = 0, totalCostUSD = 0;
   for (const e of entries) {
@@ -116,6 +126,24 @@ function summarizeClaude(date: string, entries: ClaudeUsageEntry[]): TokensDaySu
     pm.cacheRead = (pm.cacheRead ?? 0) + e.cacheReadTokens;
     pm.costUSD += e.costUSD ?? 0;
     perModel[e.model] = pm;
+    if (fetcher && e.costUSD === undefined) {
+      const nc = perModelNoSourceCost[e.model] ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
+      nc.input += e.inputTokens; nc.output += e.outputTokens;
+      nc.cacheCreation += e.cacheCreationTokens; nc.cacheRead += e.cacheReadTokens;
+      perModelNoSourceCost[e.model] = nc;
+    }
+  }
+  if (fetcher) {
+    for (const [model, nc] of Object.entries(perModelNoSourceCost)) {
+      const pricing = await fetcher.getModelPricing(model);
+      if (!pricing) continue;
+      const cost = calculateCostFromTokens({
+        input_tokens: nc.input, output_tokens: nc.output,
+        cache_creation_input_tokens: nc.cacheCreation, cache_read_input_tokens: nc.cacheRead,
+      }, pricing);
+      totalCostUSD += cost;
+      perModel[model].costUSD += cost;
+    }
   }
   return {
     kind: "tokens.daySummary", provider: "claude", date,
@@ -126,8 +154,9 @@ function summarizeClaude(date: string, entries: ClaudeUsageEntry[]): TokensDaySu
   };
 }
 
-function summarizeCodex(date: string, events: CodexTokenEvent[]): TokensDaySummaryEvent {
+async function summarizeCodex(date: string, events: CodexTokenEvent[], fetcher?: LiteLLMFetcher, speedTier: "standard" | "fast" = "standard"): Promise<TokensDaySummaryEvent> {
   const perModel: TokensDaySummaryEvent["perModel"] = {};
+  const byModel = new Map<string, CodexTokenEvent[]>();
   const sessions = new Set<string>();
   let input = 0, output = 0, cachedInput = 0, reasoningOutput = 0;
   for (const e of events) {
@@ -139,12 +168,25 @@ function summarizeCodex(date: string, events: CodexTokenEvent[]): TokensDaySumma
     pm.cachedInput = (pm.cachedInput ?? 0) + e.cachedInputTokens;
     pm.reasoningOutput = (pm.reasoningOutput ?? 0) + e.reasoningOutputTokens;
     perModel[e.model] = pm;
+    if (fetcher) {
+      const list = byModel.get(e.model) ?? [];
+      list.push(e);
+      byModel.set(e.model, list);
+    }
+  }
+  let totalCostUSD = 0;
+  if (fetcher) {
+    for (const [model, modelEvents] of byModel) {
+      const cost = await calculateCodexApiCost(modelEvents, fetcher, speedTier);
+      perModel[model].costUSD = cost;
+      totalCostUSD += cost;
+    }
   }
   return {
     kind: "tokens.daySummary", provider: "codex", date,
     input, output, cachedInput, reasoningOutput,
     totalTokens: input + output + reasoningOutput, // cachedInput is a subset of input, not additive
-    totalCostUSD: 0, sessionCount: sessions.size,
+    totalCostUSD, sessionCount: sessions.size,
     models: Object.keys(perModel), perModel,
   };
 }

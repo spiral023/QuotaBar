@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DebugRecorder } from "../src/main/debugRecorder";
 import { runBackfill } from "../src/main/debugBackfill";
+import { LiteLLMFetcher } from "../src/pricing/litellm-fetcher";
 
 let tmpDir: string;
 let claudeDir: string;
@@ -110,6 +111,34 @@ describe("runBackfill", () => {
     expect(summary.cachedInput).toBe(800);
     expect(summary.output).toBe(100);
     expect(summary.totalTokens).toBe(1100); // must NOT be 1900
+  });
+
+  it("berechnet totalCostUSD wenn fetcher übergeben wird", async () => {
+    // claude-sonnet-4-5 ist in den Fallback-Preisen: input=3e-6, output=15e-6, cacheRead=3e-7
+    await writeClaudeJsonl(path.join(claudeDir, "proj", "session.jsonl"), [
+      { type: "assistant", timestamp: "2026-05-20T14:00:00Z",
+        message: { id: "m1", model: "claude-sonnet-4-5",
+          usage: { input_tokens: 1000, output_tokens: 500,
+                   cache_creation_input_tokens: 0, cache_read_input_tokens: 2000 } } },
+    ]);
+    const logDir = path.join(tmpDir, "debug");
+    const recorder = new DebugRecorder({ enabled: true, logDir });
+
+    await runBackfill({
+      recorder, logDir,
+      claudeProjectsDirs: [claudeDir],
+      codexSessionsDirs: [codexDir],
+      fetcher: new LiteLLMFetcher(true), // offline mode — verwendet Fallback-Preise
+    });
+    await recorder.flush();
+
+    const lines = (await fs.readFile(path.join(logDir, "2026-05-20.backfill.jsonl"), "utf8"))
+      .trim().split("\n").map((l) => JSON.parse(l));
+    const summary = lines.find((e: { kind: string; provider: string }) => e.kind === "tokens.daySummary" && e.provider === "claude");
+    expect(summary).toBeDefined();
+    // 1000 * 3e-6 + 500 * 15e-6 + 2000 * 3e-7 = 0.003 + 0.0075 + 0.0006 = 0.0111
+    expect(summary.totalCostUSD).toBeCloseTo(0.0111, 6);
+    expect(summary.perModel["claude-sonnet-4-5"].costUSD).toBeCloseTo(0.0111, 6);
   });
 
   it("force=true regenerates existing backfill files", async () => {

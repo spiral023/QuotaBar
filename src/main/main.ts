@@ -13,7 +13,8 @@ import { initializeUpdater } from "./updater";
 import { NotificationService } from "./notifications";
 import { DebugRecorder } from "./debugRecorder";
 import { runBackfill } from "./debugBackfill";
-import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs } from "../config/paths";
+import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths } from "../config/paths";
+import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 
 interface CliOptions {
   debug: boolean;
@@ -54,12 +55,15 @@ if (!app.requestSingleInstanceLock()) {
       const store = new UsageStore();
       const pricingEngine = new PricingEngine(settings);
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder);
+      const backfillFetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
       const tray = new TrayController(providers, refreshLoop, async () => {
         await runBackfill({
           recorder,
           logDir: getDebugLogDir(),
           claudeProjectsDirs: getClaudeProjectsDirs(),
           codexSessionsDirs: getCodexSessionsDirs(),
+          codexConfigPaths: getCodexConfigPaths(),
+          fetcher: backfillFetcher,
           force: true,
         }).catch((err: unknown) => {
           log.warn(`Backfill regenerate failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -79,6 +83,8 @@ if (!app.requestSingleInstanceLock()) {
         logDir: getDebugLogDir(),
         claudeProjectsDirs: getClaudeProjectsDirs(),
         codexSessionsDirs: getCodexSessionsDirs(),
+        codexConfigPaths: getCodexConfigPaths(),
+        fetcher: backfillFetcher,
       }).catch((err: unknown) => {
         log.warn(`Backfill failed: ${err instanceof Error ? err.message : String(err)}`);
       });
