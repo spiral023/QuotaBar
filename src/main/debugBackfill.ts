@@ -143,7 +143,7 @@ function summarizeCodex(date: string, events: CodexTokenEvent[]): TokensDaySumma
   return {
     kind: "tokens.daySummary", provider: "codex", date,
     input, output, cachedInput, reasoningOutput,
-    totalTokens: input + output + cachedInput + reasoningOutput,
+    totalTokens: input + output + reasoningOutput, // cachedInput is a subset of input, not additive
     totalCostUSD: 0, sessionCount: sessions.size,
     models: Object.keys(perModel), perModel,
   };

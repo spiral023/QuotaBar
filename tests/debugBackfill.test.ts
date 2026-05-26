@@ -14,6 +14,11 @@ async function writeClaudeJsonl(file: string, lines: object[]): Promise<void> {
   await fs.writeFile(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
 }
 
+async function writeCodexJsonl(file: string, lines: object[]): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
+}
+
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "qb-backfill-"));
   claudeDir = path.join(tmpDir, "claude", "projects");
@@ -77,6 +82,34 @@ describe("runBackfill", () => {
     expect(first.daysWritten).toBeGreaterThan(0);
     expect(second.daysWritten).toBe(0);
     expect(second.daysSkipped).toBeGreaterThan(0);
+  });
+
+  it("Codex totalTokens does not double-count cachedInput", async () => {
+    // input_tokens=1000 already includes cached_input_tokens=800.
+    // totalTokens must be input+output+reasoning = 1000+100+0 = 1100, not 1000+800+100 = 1900.
+    await writeCodexJsonl(path.join(codexDir, "session-cx.jsonl"), [
+      { type: "turn_context", payload: { model: "gpt-5.5" } },
+      { type: "event_msg", timestamp: "2026-05-20T14:00:00Z", payload: {
+        type: "token_count", info: {
+          last_token_usage: { input_tokens: 1000, cached_input_tokens: 800, output_tokens: 100,
+                              reasoning_output_tokens: 0, total_tokens: 1100 },
+        },
+      }},
+    ]);
+    const logDir = path.join(tmpDir, "debug");
+    const recorder = new DebugRecorder({ enabled: true, logDir });
+
+    await runBackfill({ recorder, logDir, claudeProjectsDirs: [claudeDir], codexSessionsDirs: [codexDir] });
+    await recorder.flush();
+
+    const lines = (await fs.readFile(path.join(logDir, "2026-05-20.backfill.jsonl"), "utf8"))
+      .trim().split("\n").map((l) => JSON.parse(l));
+    const summary = lines.find((e) => e.kind === "tokens.daySummary" && e.provider === "codex");
+    expect(summary).toBeDefined();
+    expect(summary.input).toBe(1000);
+    expect(summary.cachedInput).toBe(800);
+    expect(summary.output).toBe(100);
+    expect(summary.totalTokens).toBe(1100); // must NOT be 1900
   });
 
   it("force=true regenerates existing backfill files", async () => {
