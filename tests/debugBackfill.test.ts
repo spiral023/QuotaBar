@@ -48,6 +48,7 @@ describe("runBackfill", () => {
     await recorder.flush();
 
     expect(result.daysWritten).toBeGreaterThanOrEqual(2);
+    expect(result.errors).toEqual([]);
     const files = await fs.readdir(logDir);
     expect(files).toContain("2026-05-20.backfill.jsonl");
     expect(files).toContain("2026-05-21.backfill.jsonl");

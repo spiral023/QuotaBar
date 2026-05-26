@@ -4,6 +4,7 @@ import { readClaudeUsageEntriesForPeriod, type ClaudeUsageEntry } from "../prici
 import { readCodexTokensForPeriod, type CodexTokenEvent } from "../pricing/codex-log-reader";
 import type { DebugRecorder } from "./debugRecorder";
 import type { TokensDaySummaryEvent, TokensUsageEvent } from "./debugEvents";
+import { log } from "./logging";
 
 export interface BackfillOptions {
   recorder: DebugRecorder;
@@ -17,15 +18,27 @@ export interface BackfillResult {
   daysWritten: number;
   daysSkipped: number;
   durationMs: number;
+  errors: string[];
 }
 
 export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult> {
   const startedAt = Date.now();
   const epoch = new Date(0);
-  const [claudeEntries, codexEvents] = await Promise.all([
-    readClaudeUsageEntriesForPeriod(opts.claudeProjectsDirs, epoch).catch(() => [] as ClaudeUsageEntry[]),
-    readCodexTokensForPeriod(opts.codexSessionsDirs, epoch).catch(() => [] as CodexTokenEvent[]),
-  ]);
+  const errors: string[] = [];
+  const claudeEntries = await readClaudeUsageEntriesForPeriod(opts.claudeProjectsDirs, epoch)
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`Backfill: Claude reader failed: ${msg}`);
+      errors.push(`claude: ${msg}`);
+      return [] as ClaudeUsageEntry[];
+    });
+  const codexEvents = await readCodexTokensForPeriod(opts.codexSessionsDirs, epoch)
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`Backfill: Codex reader failed: ${msg}`);
+      errors.push(`codex: ${msg}`);
+      return [] as CodexTokenEvent[];
+    });
 
   const byDay = new Map<string, { claude: ClaudeUsageEntry[]; codex: CodexTokenEvent[] }>();
   for (const entry of claudeEntries) {
@@ -85,7 +98,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
 
   const durationMs = Date.now() - startedAt;
   opts.recorder.write({ kind: "backfill.done", daysWritten: written, daysSkipped: skipped, durationMs });
-  return { daysWritten: written, daysSkipped: skipped, durationMs };
+  return { daysWritten: written, daysSkipped: skipped, durationMs, errors };
 }
 
 function summarizeClaude(date: string, entries: ClaudeUsageEntry[]): TokensDaySummaryEvent {
