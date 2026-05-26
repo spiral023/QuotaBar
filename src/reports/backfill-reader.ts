@@ -4,6 +4,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { BackfillDayRecord, BackfillPerModelEntry } from "./types";
 
+/**
+ * Reads and parses all backfill day records from JSONL files in the given directory.
+ * @param logDir - Directory containing .backfill.jsonl files
+ * @param since - Optional inclusive lower bound for filtering records by date.
+ *                Records whose date equals or is after `since` are included.
+ * @returns Array of parsed BackfillDayRecord entries, sorted by date
+ */
 export async function readBackfillDayRecords(
   logDir: string,
   since?: Date,
