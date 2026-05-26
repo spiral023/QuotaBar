@@ -23,6 +23,10 @@ export function getSettingsPath(): string {
   return path.join(getAppConfigDir(), "settings.json");
 }
 
+export function getUsageSnapshotCachePath(): string {
+  return path.join(getAppConfigDir(), "cache", "usage-snapshots.json");
+}
+
 export function getInstalledMarkerPath(): string {
   return path.join(getAppConfigDir(), ".installed");
 }

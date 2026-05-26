@@ -2,6 +2,7 @@ import { createInterface } from "node:readline";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { FileParseCache } from "./file-parse-cache";
 
 export interface CodexTokenEvent {
   timestamp: string;
@@ -23,6 +24,8 @@ type TokenTotals = {
   reasoning_output_tokens: number;
   total_tokens: number;
 };
+
+const codexFileCache = new FileParseCache<CodexTokenEvent[]>();
 
 export async function readCodexTokensForPeriod(
   sessionsDir: string | string[],
@@ -53,7 +56,8 @@ async function readCodexTokensFromDir(
 
   const events: CodexTokenEvent[] = [];
   for (const file of files) {
-    events.push(...(await parseCodexJsonlFile(file, sessionsDir, billingStart)));
+    const parsed = await codexFileCache.get(file, () => parseCodexJsonlFile(file, sessionsDir));
+    events.push(...parsed.filter((event) => new Date(event.timestamp) >= billingStart));
   }
   return events;
 }
@@ -61,7 +65,6 @@ async function readCodexTokensFromDir(
 async function parseCodexJsonlFile(
   filePath: string,
   sessionsDir: string,
-  billingStart: Date,
 ): Promise<CodexTokenEvent[]> {
   const events: CodexTokenEvent[] = [];
   let currentModel: string | null = null;
@@ -112,7 +115,7 @@ async function parseCodexJsonlFile(
       }
 
       const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : null;
-      if (!timestamp || new Date(timestamp) < billingStart) continue;
+      if (!timestamp) continue;
 
       let delta: TokenTotals;
       if (lastUsage) {

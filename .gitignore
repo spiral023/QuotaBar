@@ -40,3 +40,7 @@ coverage/
 
 # Git worktrees
 .worktrees/
+
+# Local agent/tool state
+.claude/
+.superpowers/

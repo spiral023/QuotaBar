@@ -13,8 +13,9 @@ import { initializeUpdater } from "./updater";
 import { NotificationService } from "./notifications";
 import { DebugRecorder } from "./debugRecorder";
 import { runBackfill } from "./debugBackfill";
-import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths } from "../config/paths";
+import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath } from "../config/paths";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
+import { loadCachedSnapshots, markSnapshotsFromCache, saveCachedSnapshots } from "../usage/snapshotCache";
 
 interface CliOptions {
   debug: boolean;
@@ -52,7 +53,9 @@ if (!app.requestSingleInstanceLock()) {
         platform: process.platform,
       });
       const providers = createProviderRegistry(settings.providerTimeoutMs);
-      const store = new UsageStore();
+      const usageSnapshotCachePath = getUsageSnapshotCachePath();
+      const cachedSnapshots = markSnapshotsFromCache(await loadCachedSnapshots(usageSnapshotCachePath));
+      const store = new UsageStore(cachedSnapshots);
       const pricingEngine = new PricingEngine(settings);
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder);
       const backfillFetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
@@ -71,24 +74,34 @@ if (!app.requestSingleInstanceLock()) {
       });
       const detailsWindow = new DetailsWindowController(() => tray.getTray(), recorder);
       tray.setDetailsWindow(detailsWindow);
+      if (cachedSnapshots.length > 0) {
+        tray.setSnapshots(cachedSnapshots);
+        detailsWindow.notifyUpdate(cachedSnapshots);
+      }
       await tray.rebuildMenu();
       const notificationService = new NotificationService(settings.notifications);
       detailsWindow.setNotificationService(notificationService);
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
         detailsWindow.notifyUpdate(snapshots);
-      });
-      void runBackfill({
-        recorder,
-        logDir: getDebugLogDir(),
-        claudeProjectsDirs: getClaudeProjectsDirs(),
-        codexSessionsDirs: getCodexSessionsDirs(),
-        codexConfigPaths: getCodexConfigPaths(),
-        fetcher: backfillFetcher,
-      }).catch((err: unknown) => {
-        log.warn(`Backfill failed: ${err instanceof Error ? err.message : String(err)}`);
+        void saveCachedSnapshots(usageSnapshotCachePath, snapshots).catch((err: unknown) => {
+          log.warn(`Usage snapshot cache save failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
       });
       refreshLoop.start();
+      const backfillTimer = setTimeout(() => {
+        void runBackfill({
+          recorder,
+          logDir: getDebugLogDir(),
+          claudeProjectsDirs: getClaudeProjectsDirs(),
+          codexSessionsDirs: getCodexSessionsDirs(),
+          codexConfigPaths: getCodexConfigPaths(),
+          fetcher: backfillFetcher,
+        }).catch((err: unknown) => {
+          log.warn(`Backfill failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }, 15_000);
+      backfillTimer.unref();
       let flushed = false;
       app.on("before-quit", (event) => {
         if (flushed) return;

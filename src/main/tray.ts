@@ -31,6 +31,12 @@ export class TrayController {
     return this.tray;
   }
 
+  setSnapshots(snapshots: UsageSnapshot[]): void {
+    this.snapshots = snapshots;
+    this.tray.setImage(renderTrayIcon(buildIconState(this.snapshots)));
+    this.tray.setToolTip(buildTooltip(this.snapshots));
+  }
+
   setDetailsWindow(dw: DetailsWindowController): void {
     this.detailsWindow = dw;
   }

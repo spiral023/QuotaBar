@@ -45,7 +45,7 @@ describe("normalizeNotificationSettings", () => {
   it("returns defaults for undefined input", () => {
     const result = normalizeNotificationSettings(undefined);
     expect(result.enabled).toBe(true);
-    expect(result.minimumGapMinutes).toBe(15);
+    expect(result.minimumGapMinutes).toBe(0);
     expect(result.rules.highUsage.thresholdPercent).toBe(80);
   });
 

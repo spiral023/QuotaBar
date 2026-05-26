@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(__dirname, "..");
-const ignoredDirs = new Set([".git", "node_modules", "dist", "release", "package-output"]);
+const ignoredDirs = new Set([".git", ".claude", ".superpowers", ".vscode", ".worktrees", "node_modules", "dist", "release", "package-output"]);
 const textExtensions = new Set([".json", ".md", ".ts", ".html", ".yml", ".yaml"]);
 
 function listTextFiles(dir: string): string[] {

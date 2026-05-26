@@ -2,6 +2,7 @@ import { createInterface } from "node:readline";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { FileParseCache } from "./file-parse-cache";
 
 export interface ModelTokens {
   inputTokens: number;
@@ -29,6 +30,12 @@ export interface ClaudeUsageEntry extends ModelTokens {
   session: string;
   costUSD?: number;
 }
+
+interface ParsedClaudeUsageEntry extends ClaudeUsageEntry {
+  messageId?: string;
+}
+
+const claudeFileCache = new FileParseCache<ParsedClaudeUsageEntry[]>();
 
 const EMPTY: Omit<AggregatedTokens, "modelNames" | "perModel"> = {
   inputTokens: 0,
@@ -105,7 +112,16 @@ async function readClaudeEntriesFromDir(
   const result: ClaudeUsageEntry[] = [];
 
   for (const file of files) {
-    result.push(...(await processJsonlFile(file, projectsDir, billingStart, seenMessageIds)));
+    const parsed = await claudeFileCache.get(file, () => processJsonlFile(file, projectsDir));
+    for (const entry of parsed) {
+      if (new Date(entry.timestamp) < billingStart) continue;
+      if (entry.messageId) {
+        if (seenMessageIds.has(entry.messageId)) continue;
+        seenMessageIds.add(entry.messageId);
+      }
+      const { messageId: _messageId, ...publicEntry } = entry;
+      result.push(publicEntry);
+    }
   }
 
   return result;
@@ -114,10 +130,8 @@ async function readClaudeEntriesFromDir(
 async function processJsonlFile(
   filePath: string,
   projectsDir: string,
-  billingStart: Date,
-  seenMessageIds: Set<string>,
-): Promise<ClaudeUsageEntry[]> {
-  const result: ClaudeUsageEntry[] = [];
+): Promise<ParsedClaudeUsageEntry[]> {
+  const result: ParsedClaudeUsageEntry[] = [];
   try {
     const rl = createInterface({
       input: createReadStream(filePath, { encoding: "utf8" }),
@@ -128,7 +142,7 @@ async function processJsonlFile(
       if (!trimmed) continue;
       try {
         const entry = JSON.parse(trimmed) as Record<string, unknown>;
-        const parsed = processEntry(entry, filePath, projectsDir, billingStart, seenMessageIds);
+        const parsed = processEntry(entry, filePath, projectsDir);
         if (parsed) result.push(parsed);
       } catch {
         // skip invalid lines
@@ -144,12 +158,9 @@ function processEntry(
   entry: Record<string, unknown>,
   filePath: string,
   projectsDir: string,
-  billingStart: Date,
-  seenMessageIds: Set<string>,
-): ClaudeUsageEntry | null {
+): ParsedClaudeUsageEntry | null {
   const ts = typeof entry.timestamp === "string" ? entry.timestamp : null;
   if (!ts) return null;
-  if (new Date(ts) < billingStart) return null;
 
   const msg = entry.message;
   if (!msg || typeof msg !== "object" || Array.isArray(msg)) return null;
@@ -158,13 +169,7 @@ function processEntry(
   const usage = message.usage;
   if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
 
-  // Claude Code logs multiple streaming snapshots of the same API response.
-  // Deduplicate by message.id so each API call is counted exactly once.
   const msgId = typeof message.id === "string" ? message.id : null;
-  if (msgId) {
-    if (seenMessageIds.has(msgId)) return null;
-    seenMessageIds.add(msgId);
-  }
 
   const model = typeof message.model === "string" ? message.model : "unknown";
 
@@ -190,6 +195,7 @@ function processEntry(
     outputTokens: output,
     cacheCreationTokens: cacheCreate,
     cacheReadTokens: cacheRead,
+    ...(msgId ? { messageId: msgId } : {}),
     ...(cost > 0 ? { costUSD: cost } : {}),
   };
 }

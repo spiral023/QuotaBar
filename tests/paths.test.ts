@@ -10,6 +10,7 @@ import {
   getDebugLogDir,
   getDebugLogPath,
   getDebugBackfillPath,
+  getUsageSnapshotCachePath,
 } from "../src/config/paths";
 
 const tmpRoot = path.join(os.tmpdir(), `quotabar-paths-${process.pid}`);
@@ -64,6 +65,10 @@ describe("data path resolution", () => {
 describe("debug log paths", () => {
   it("returns debug subdir under app config dir", () => {
     expect(getDebugLogDir()).toMatch(/[\\/]\.quotabar-win[\\/]debug$/);
+  });
+
+  it("returns usage snapshot cache path under app cache dir", () => {
+    expect(getUsageSnapshotCachePath()).toMatch(/[\\/]\.quotabar-win[\\/]cache[\\/]usage-snapshots\.json$/);
   });
 
   it("returns YYYY-MM-DD.jsonl filename for a given date", () => {

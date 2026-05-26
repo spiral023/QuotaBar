@@ -3,6 +3,12 @@ import { UsageSnapshot } from "../providers/types";
 export class UsageStore {
   private readonly snapshots = new Map<string, UsageSnapshot>();
 
+  constructor(initialSnapshots: UsageSnapshot[] = []) {
+    for (const snapshot of initialSnapshots) {
+      this.snapshots.set(snapshot.provider, snapshot);
+    }
+  }
+
   update(nextSnapshots: UsageSnapshot[]): UsageSnapshot[] {
     for (const next of nextSnapshots) {
       const previous = this.snapshots.get(next.provider);
