@@ -33,7 +33,7 @@ export class PricingEngine {
   }
 
   private async calculateClaudeFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const { billingStart, windowLabel } = resolveBillingStart(this.settings.costWindow, snapshot, "claude");
+    const { billingStart, windowLabel, windowDays } = resolveBillingStart(this.settings.costWindow, snapshot, "claude");
     const entries = await readClaudeUsageEntriesForPeriod(this.claudeProjectsDir, billingStart);
     const tokens = aggregateClaudeEntries(entries);
 
@@ -71,13 +71,18 @@ export class PricingEngine {
     }
 
     const subscriptionCostUSD = this.settings.subscriptionCosts.claude;
-    const factor = subscriptionCostUSD > 0 ? apiCostUSD / subscriptionCostUSD : 0;
+    const effectiveDays = windowDays > 0
+      ? windowDays
+      : computeActualDaysFromEntries(entries.map(e => e.timestamp));
+    const periodSubCost = subscriptionCostUSD * effectiveDays / 30;
+    const factor = periodSubCost > 0 ? apiCostUSD / periodSubCost : 0;
     return {
       apiCostUSD,
       subscriptionCostUSD,
       factor,
       isEstimate: false,
       windowLabel,
+      windowDays: effectiveDays,
       label: formatLabel(apiCostUSD, factor, false),
       tokenUsage: {
         inputTokens: tokens.inputTokens,
@@ -91,7 +96,7 @@ export class PricingEngine {
   }
 
   private async calculateCodexFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const { billingStart, windowLabel } = resolveBillingStart(this.settings.costWindow, snapshot, "codex");
+    const { billingStart, windowLabel, windowDays } = resolveBillingStart(this.settings.costWindow, snapshot, "codex");
     const events = await readCodexTokensForPeriod(this.codexSessionsDir, billingStart);
     if (events.length === 0) {
       return {
@@ -100,13 +105,18 @@ export class PricingEngine {
         factor: null,
         isEstimate: true,
         windowLabel,
+        windowDays,
         label: "Keine Logs verfügbar",
       };
     }
     const speedTier = await readCodexSpeedTierFromPaths(Array.isArray(this.codexConfigPath) ? this.codexConfigPath : [this.codexConfigPath]);
     const apiCostUSD = await calculateCodexApiCost(events, this.fetcher, speedTier);
     const subscriptionCostUSD = this.settings.subscriptionCosts.codex;
-    const factor = subscriptionCostUSD > 0 ? apiCostUSD / subscriptionCostUSD : 0;
+    const effectiveDays = windowDays > 0
+      ? windowDays
+      : computeActualDaysFromEntries(events.map(e => e.timestamp));
+    const periodSubCost = subscriptionCostUSD * effectiveDays / 30;
+    const factor = periodSubCost > 0 ? apiCostUSD / periodSubCost : 0;
 
     let inputTokens = 0, cacheReadTokens = 0, outputTokens = 0, totalTokens = 0;
     const modelSet = new Set<string>();
@@ -124,6 +134,7 @@ export class PricingEngine {
       factor,
       isEstimate: false,
       windowLabel,
+      windowDays: effectiveDays,
       label: formatLabel(apiCostUSD, factor, false),
       tokenUsage: {
         inputTokens: Math.max(0, inputTokens - cacheReadTokens), // uncached only, consistent with Claude
@@ -140,46 +151,25 @@ export class PricingEngine {
 
 function resolveBillingStart(
   costWindow: CostWindow,
-  snapshot: UsageSnapshot,
-  provider: "claude" | "codex",
-): { billingStart: Date; windowLabel: string } {
+  _snapshot: UsageSnapshot,
+  _provider: "claude" | "codex",
+): { billingStart: Date; windowLabel: string; windowDays: number } {
   if (costWindow === "7d") {
-    return { billingStart: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), windowLabel: "7d" };
+    return { billingStart: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), windowLabel: "7d", windowDays: 7 };
   }
   if (costWindow === "30d") {
-    return { billingStart: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), windowLabel: "30d" };
+    return { billingStart: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), windowLabel: "30d", windowDays: 30 };
   }
-  if (costWindow === "all") {
-    return { billingStart: new Date(0), windowLabel: "all" };
-  }
-  // "billing" — provider-native period
-  if (provider === "claude") {
-    return { billingStart: getClaudeBillingStart(snapshot), windowLabel: "billing" };
-  }
-  return { billingStart: getCodexBillingStart(snapshot), windowLabel: "billing" };
+  // "all" — epoch start; windowDays will be computed after data is fetched
+  return { billingStart: new Date(0), windowLabel: "all", windowDays: 0 };
 }
 
-function getClaudeBillingStart(snapshot: UsageSnapshot): Date {
-  const creditsWindow = snapshot.windows.find(
-    (w: UsageWindow) => w.name === "credits" && w.resetsAt,
-  );
-  if (creditsWindow?.resetsAt) {
-    const date = new Date(creditsWindow.resetsAt);
-    if (!isNaN(date.getTime())) return date;
-  }
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-}
-
-function getCodexBillingStart(snapshot: UsageSnapshot): Date {
-  const weekly = snapshot.windows.find((w: UsageWindow) => w.name === "weekly" && w.resetsAt);
-  if (weekly?.resetsAt) {
-    const resetsAt = new Date(weekly.resetsAt);
-    if (!isNaN(resetsAt.getTime())) {
-      return new Date(resetsAt.getTime() - 7 * 24 * 60 * 60 * 1000);
-    }
-  }
-  return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+function computeActualDaysFromEntries(timestamps: string[]): number {
+  if (timestamps.length === 0) return 30;
+  const ms = timestamps.map(t => new Date(t).getTime()).filter(n => !isNaN(n));
+  if (ms.length === 0) return 30;
+  const spanDays = Math.ceil((Date.now() - Math.min(...ms)) / (24 * 3600 * 1000));
+  return Math.max(1, spanDays);
 }
 
 function formatLabel(apiCostUSD: number, factor: number, isEstimate: boolean): string {

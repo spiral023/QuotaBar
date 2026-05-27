@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import { ensureConfigDir } from "../main/logging";
 import { getSettingsPath } from "./paths";
 
-export type CostWindow = "7d" | "30d" | "billing" | "all";
+export type CostWindow = "7d" | "30d" | "all";
 export type ViewMode = "dashboard" | "compact";
 
 export interface SubscriptionCosts {
@@ -96,7 +96,7 @@ export const defaultSettings: Settings = {
   providerTimeoutMs: 10_000,
   subscriptionCosts: { claude: 20, codex: 20 },
   pricingOfflineMode: false,
-  costWindow: "billing",
+  costWindow: "30d",
   viewMode: "dashboard",
   insightsPanelOpen: false,
   debugLog: { enabled: true },
@@ -120,10 +120,10 @@ export async function saveSettings(settings: Settings): Promise<void> {
 
 export function normalizeSettings(settings: Settings): Settings {
   const sub = (settings.subscriptionCosts ?? {}) as Partial<SubscriptionCosts>;
-  const validWindows: CostWindow[] = ["7d", "30d", "billing", "all"];
+  const validWindows: CostWindow[] = ["7d", "30d", "all"];
   const costWindow: CostWindow = validWindows.includes(settings.costWindow as CostWindow)
     ? (settings.costWindow as CostWindow)
-    : "billing";
+    : "30d";
   const validViewModes: ViewMode[] = ["dashboard", "compact"];
   const viewMode: ViewMode = validViewModes.includes(settings.viewMode as ViewMode)
     ? (settings.viewMode as ViewMode)

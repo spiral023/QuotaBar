@@ -304,7 +304,7 @@ export class DetailsWindowController {
 }
 
 function normalizeCostWindow(value: unknown): CostWindow | null {
-  return value === "7d" || value === "30d" || value === "billing" || value === "all"
+  return value === "7d" || value === "30d" || value === "all"
     ? value
     : null;
 }

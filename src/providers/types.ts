@@ -16,6 +16,7 @@ export interface CostFactorResult {
   isEstimate: boolean;
   label: string;
   windowLabel?: string;
+  windowDays?: number;
   tokenUsage?: TokenUsageDetail;
 }
 

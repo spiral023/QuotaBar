@@ -87,14 +87,20 @@ function tokenDetailHtml(cf) {
 
 function costBadgeHtml(cf) {
   if (!cf) return '';
-  const winSuffix = cf.windowLabel && cf.windowLabel !== 'billing' ? ` · ${cf.windowLabel}` : '';
+  const winSuffix = cf.windowLabel ? ` · ${cf.windowLabel}` : '';
+  const roiTip = cf.factor !== null
+    ? `API-Kosten ÷ anteiliger Abo-Preis\nfür ${cf.windowLabel || 'dieses Fenster'} (${cf.windowDays ?? '?'}d).\n1× = Abo-äquivalent.`
+    : '';
+  const infoIcon = roiTip
+    ? `<i class="info-icon" data-tip="${roiTip}" style="display:inline-flex;margin-left:3px">i</i>`
+    : '';
   if (cf.factor === null) return `<span class="badge b-cost">${QB.esc(cf.label || 'Keine Logs')}</span>`;
   const pre = cf.isEstimate ? '~' : '';
   const factorPart = `${pre}${cf.factor.toFixed(2)}× sub`;
   if (cf.apiCostUSD >= 0.005) {
-    return `<span class="badge b-cost">$${cf.apiCostUSD.toFixed(2)}${winSuffix} (${factorPart})</span>`;
+    return `<span class="badge b-cost" style="display:inline-flex;align-items:center">$${cf.apiCostUSD.toFixed(2)}${winSuffix} (${factorPart})${infoIcon}</span>`;
   }
-  return `<span class="badge b-cost">${factorPart}${winSuffix}</span>`;
+  return `<span class="badge b-cost" style="display:inline-flex;align-items:center">${factorPart}${winSuffix}${infoIcon}</span>`;
 }
 
 // ── Overview card ─────────────────────────────────────────────────────

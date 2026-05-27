@@ -63,10 +63,16 @@ async function run(): Promise<void> {
   const claudeSub  = input.settings.subscriptionCosts.claude;
   const codexSub   = input.settings.subscriptionCosts.codex;
 
+  // Normalize ROI to the actual window duration so all windows are comparable.
+  // periodSubCost = monthlySubCost × windowDays/30
+  const claudePeriodSub  = claudeSub  * windowDays / 30;
+  const codexPeriodSub   = codexSub   * windowDays / 30;
+  const combinedPeriodSub = claudePeriodSub + codexPeriodSub;
+
   const roiFactor = {
-    claude:   claudeSub  > 0 ? claudeCost  / claudeSub  : 0,
-    codex:    codexSub   > 0 ? codexCost   / codexSub   : 0,
-    combined: (claudeSub + codexSub) > 0 ? (claudeCost + codexCost) / (claudeSub + codexSub) : 0,
+    claude:   claudePeriodSub  > 0 ? claudeCost  / claudePeriodSub  : 0,
+    codex:    codexPeriodSub   > 0 ? codexCost   / codexPeriodSub   : 0,
+    combined: combinedPeriodSub > 0 ? (claudeCost + codexCost) / combinedPeriodSub : 0,
   };
 
   if (input.task === "summary") {
