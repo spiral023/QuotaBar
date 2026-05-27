@@ -34,6 +34,27 @@ function paceLabel(stage) {
   })[stage] || stage;
 }
 
+function timeProgressPct(w) {
+  if (!w?.resetsAt || !w?.windowSeconds) return null;
+  const ms = new Date(w.resetsAt).getTime() - Date.now();
+  const duration = w.windowSeconds;
+  if (ms <= 0 || ms > duration * 1000) return null;
+  const elapsed = duration - ms / 1000;
+  return Math.min(100, Math.max(0, (elapsed / duration) * 100));
+}
+
+function markerCls(actual, expected) {
+  const delta = actual - expected;
+  if (Math.abs(delta) <= 2) return 'm-ok';
+  return delta > 0 ? 'm-warn' : 'm-bad';
+}
+
+function timeMarkerHtml(actual, expected) {
+  if (expected === null || expected === undefined) return '';
+  const cls = markerCls(actual, expected);
+  return `<div class="bar-time-marker ${cls}" style="left:${expected.toFixed(1)}%" title="Zeitfortschritt: ${Math.round(expected)}%"></div>`;
+}
+
 function providerIconHtml(provider) {
   const cls = `prov-icon icon-${provider}`;
   const logos = { claude: '../../logos/claude.png', codex: '../../logos/codex.png', gemini: '../../logos/gemini.webp' };
@@ -158,10 +179,12 @@ function renderStandard(snap, name, delay) {
   if (weekly?.resetsAt) _countdowns.push({ id: wkId, resetsAt: weekly.resetsAt });
   const fhCd = fiveH?.resetsAt  ? QB.formatCountdown(fiveH.resetsAt)  : '';
   const wkCd = weekly?.resetsAt ? QB.formatCountdown(weekly.resetsAt) : '';
-  let bars = `<div class="bar-group"><div class="bar-meta"><span class="bar-tag">5-Hour</span><span class="bar-cd" id="${fhId}">${fhCd}</span></div><div class="bar-track thick"><div class="bar-fill c-${color}" style="width:${clamp(pct,0,100)}%"></div></div></div>`;
+  const fhExpected = timeProgressPct(fiveH);
+  let bars = `<div class="bar-group"><div class="bar-meta"><span class="bar-tag">5-Hour</span><span class="bar-cd" id="${fhId}">${fhCd}</span></div><div class="bar-track thick"><div class="bar-fill c-${color}" style="width:${clamp(pct,0,100)}%"></div>${timeMarkerHtml(pct, fhExpected)}</div></div>`;
   if (weekly && typeof weekly.usedPercent === 'number') {
     const wc = QB.usageColor(weekly.usedPercent);
-    bars += `<div class="bar-group"><div class="bar-meta"><span class="bar-tag">Weekly</span><span class="bar-cd" id="${wkId}">${wkCd}</span></div><div class="bar-track"><div class="bar-fill c-${wc}" style="width:${clamp(weekly.usedPercent,0,100)}%"></div></div></div>`;
+    const wkExpected = weekly.pace?.expectedUsedPercent ?? timeProgressPct(weekly);
+    bars += `<div class="bar-group"><div class="bar-meta"><span class="bar-tag">Weekly</span><span class="bar-cd" id="${wkId}">${wkCd}</span></div><div class="bar-track"><div class="bar-fill c-${wc}" style="width:${clamp(weekly.usedPercent,0,100)}%"></div>${timeMarkerHtml(weekly.usedPercent, wkExpected)}</div></div>`;
   }
   const bdgs = [];
   if (snap.status === 'stale') bdgs.push(`<span class="badge b-stale">Stale</span>`);

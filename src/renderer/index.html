@@ -368,9 +368,24 @@
       height: 5px;
       background: rgba(255,255,255,0.07);
       border-radius: 3px;
-      overflow: hidden;
+      position: relative;
+      overflow: visible;
     }
     .bar-track.thick { height: 6px; }
+    .bar-time-marker {
+      position: absolute;
+      top: -3px;
+      bottom: -3px;
+      width: 2px;
+      transform: translateX(-50%);
+      border-radius: 1px;
+      pointer-events: none;
+      z-index: 2;
+      transition: left 480ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .bar-time-marker.m-ok   { background: rgba(255,255,255,0.4); }
+    .bar-time-marker.m-warn { background: rgba(255,215,0,0.9); box-shadow: 0 0 5px rgba(255,215,0,0.65); }
+    .bar-time-marker.m-bad  { background: rgba(255,68,68,0.9);  box-shadow: 0 0 5px rgba(255,68,68,0.65); }
     .bar-fill {
       height: 100%;
       border-radius: 3px;
