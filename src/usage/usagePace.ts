@@ -96,3 +96,15 @@ function stageFor(delta: number): PaceStage {
   if (abs <= 12) return delta >= 0 ? "ahead" : "behind";
   return delta >= 0 ? "farAhead" : "farBehind";
 }
+
+export function computeSafetyGap(
+  resetsAt: string,
+  pace: UsagePace,
+  now: Date = new Date()
+): number | null {
+  const timeToReset = (new Date(resetsAt).getTime() - now.getTime()) / 1000;
+  if (timeToReset <= 0) return null;
+  if (pace.willLastToReset) return timeToReset;
+  if (pace.etaSeconds !== null) return timeToReset - pace.etaSeconds;
+  return null;
+}
