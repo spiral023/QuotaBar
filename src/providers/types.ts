@@ -38,6 +38,8 @@ export interface UsageWindow {
   windowSeconds?: number;
   label?: string;
   pace?: UsagePace | null;
+  burnRatePctPerHour?: number | null;
+  safetyGapSeconds?: number | null;
 }
 
 export interface UsageSnapshot {
