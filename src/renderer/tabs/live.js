@@ -21,6 +21,57 @@ function stopCd() {
 // ── Helpers ──────────────────────────────────────────────────────────
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
+function fmtDuration(seconds) {
+  const s = Math.abs(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}min`;
+}
+
+function windowInsightHtml(win) {
+  if (!win) return '';
+  const pace = win.pace;
+  const burnRate = win.burnRatePctPerHour;
+  const burnStr = (burnRate !== null && burnRate !== undefined)
+    ? `${burnRate >= 0 ? '+' : ''}${burnRate.toFixed(1)} %/h`
+    : null;
+  const burnTip = 'Ø Verbrauchsrate aus den letzten Messungen.\nBasis: Δ% ÷ Δt (bis zu 5 Snapshots).';
+  const burnHtml = burnStr
+    ? `<span class="burn-rate" title="${QB.esc(burnTip)}">${QB.esc(burnStr)}</span>`
+    : '';
+
+  if (!pace || pace.willLastToReset || pace.etaSeconds === null) {
+    return burnHtml ? `<div class="bar-sub-row">${burnHtml}</div>` : '';
+  }
+
+  // Limit will be hit before the reset
+  const etaMin = Math.round(pace.etaSeconds / 60);
+  const isCritical = pace.etaSeconds <= 900;   // ≤ 15 min
+  const isWarn     = pace.etaSeconds <= 1800;  // ≤ 30 min
+  if (!isCritical && !isWarn) {
+    // > 30 min: informational only, just show burn rate
+    return burnHtml ? `<div class="bar-sub-row">${burnHtml}</div>` : '';
+  }
+
+  const cls = isCritical ? 'gap-critical' : 'gap-warn';
+  let blockInfo = '';
+  let tip = `Hochrechnung: bei aktuellem Tempo wird das Fenster in ~${etaMin}min voll.`;
+  if (win.safetyGapSeconds !== null && win.safetyGapSeconds !== undefined) {
+    const blockMin = Math.round(win.safetyGapSeconds / 60);
+    if (blockMin > 0) {
+      blockInfo = ` · Reset in ${fmtDuration(win.safetyGapSeconds + pace.etaSeconds)}`;
+      tip += `\nDann noch ~${blockMin}min bis zum nächsten Reset.`;
+    }
+  }
+  if (burnStr) tip += `\nAktuelles Tempo: ${burnStr}.`;
+  const label = `⚠ Limit ~${etaMin}min${blockInfo}`;
+  return `<div class="bar-sub-row">
+    <span class="safety-gap ${cls}" title="${QB.esc(tip)}">${QB.esc(label)}</span>
+    ${burnHtml}
+  </div>`;
+}
+
 function paceClass(stage) {
   if (stage === 'onTrack') return 'b-ok';
   if (['slightlyAhead', 'ahead', 'farAhead'].includes(stage)) return 'b-warn';
@@ -63,7 +114,7 @@ function providerIconHtml(provider) {
   return `<div class="${cls}"><img class="prov-logo" src="${src}" alt="" aria-hidden="true" draggable="false"></div>`;
 }
 
-function tokenDetailHtml(cf) {
+function tokenDetailInnerHtml(cf) {
   if (!cf?.tokenUsage) return '';
   const t = cf.tokenUsage;
   const cells = [
@@ -83,6 +134,25 @@ function tokenDetailHtml(cf) {
   const modelsHtml = t.models?.length > 0
     ? `<div class="token-models">${QB.esc(t.models.join(', '))}</div>` : '';
   return `<div class="token-section"><div class="token-grid">${cellsHtml}</div>${modelsHtml}</div>`;
+}
+
+function tokenCollapseHtml(cf, provider) {
+  const inner = tokenDetailInnerHtml(cf);
+  if (!inner) return '';
+  const id = `tc-${QB.esc(provider)}`;
+  let isOpen = false;
+  try { isOpen = localStorage.getItem('tokenDetailsOpen') === '1'; } catch {}
+  return `<div class="token-collapse${isOpen ? ' open' : ''}" id="${QB.esc(id)}">
+    <button class="token-toggle" aria-expanded="${isOpen}"
+            onclick="QB.toggleTokenSection('${QB.esc(id)}')">
+      <svg class="toggle-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none">
+        <path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Token Details
+    </button>
+    <div class="token-body">${inner}</div>
+  </div>`;
 }
 
 function costBadgeHtml(cf) {
@@ -186,26 +256,57 @@ function renderStandard(snap, name, delay) {
   const fhCd = fiveH?.resetsAt  ? QB.formatCountdown(fiveH.resetsAt)  : '';
   const wkCd = weekly?.resetsAt ? QB.formatCountdown(weekly.resetsAt) : '';
   const fhExpected = timeProgressPct(fiveH);
-  let bars = `<div class="bar-group"><div class="bar-meta"><span class="bar-tag">5-Hour</span><span class="bar-cd" id="${fhId}">${fhCd}</span></div><div class="bar-track thick"><div class="bar-fill c-${color}" style="width:${clamp(pct,0,100)}%"></div>${timeMarkerHtml(pct, fhExpected)}</div></div>`;
+  const fhInsight  = windowInsightHtml(fiveH);
+
+  let bars = `<div class="bar-group">
+    <div class="bar-meta">
+      <span class="bar-tag">5-Hour</span>
+      <span class="bar-cd" id="${fhId}">${fhCd}</span>
+    </div>
+    <div class="bar-track thick">
+      <div class="bar-fill c-${color}" style="width:${clamp(pct,0,100)}%"></div>
+      ${timeMarkerHtml(pct, fhExpected)}
+    </div>
+    ${fhInsight}
+  </div>`;
+
   if (weekly && typeof weekly.usedPercent === 'number') {
     const wc = QB.usageColor(weekly.usedPercent);
     const wkExpected = weekly.pace?.expectedUsedPercent ?? timeProgressPct(weekly);
-    bars += `<div class="bar-group"><div class="bar-meta"><span class="bar-tag">Weekly</span><span class="bar-cd" id="${wkId}">${wkCd}</span></div><div class="bar-track"><div class="bar-fill c-${wc}" style="width:${clamp(weekly.usedPercent,0,100)}%"></div>${timeMarkerHtml(weekly.usedPercent, wkExpected)}</div></div>`;
+    bars += `<div class="bar-group">
+      <div class="bar-meta">
+        <span class="bar-tag">Weekly</span>
+        <span class="bar-cd" id="${wkId}">${wkCd}</span>
+      </div>
+      <div class="bar-track">
+        <div class="bar-fill c-${wc}" style="width:${clamp(weekly.usedPercent,0,100)}%"></div>
+        ${timeMarkerHtml(weekly.usedPercent, wkExpected)}
+      </div>
+    </div>`;
   }
+
   const bdgs = [];
   if (snap.status === 'stale') bdgs.push(`<span class="badge b-stale">Stale</span>`);
   if (weekly?.pace) bdgs.push(`<span class="badge ${paceClass(weekly.pace.stage)}">${paceLabel(weekly.pace.stage)}</span>`);
   const costHtml = costBadgeHtml(snap.costFactor);
   if (costHtml) bdgs.push(costHtml);
   const accent = QB.accentVar(hasPct ? pct : null);
+  const tokenHtml = tokenCollapseHtml(snap.costFactor, snap.provider);
+
   return `<div class="card has-accent" style="--card-accent:${accent};${delay}">
     <div class="card-body">
       ${providerIconHtml(snap.provider)}
       <div class="card-info">
-        <div class="card-head"><span class="prov-name">${QB.esc(name)}</span><div class="card-right"><span class="prov-pct" style="color:var(--${color})">${pctTxt}</span><span class="card-chevron">›</span></div></div>
+        <div class="card-head">
+          <span class="prov-name">${QB.esc(name)}</span>
+          <div class="card-right">
+            <span class="prov-pct" style="color:var(--${color})">${pctTxt}</span>
+            <span class="card-chevron">›</span>
+          </div>
+        </div>
         ${bars}
         ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
-        ${tokenDetailHtml(snap.costFactor)}
+        ${tokenHtml}
       </div>
     </div>
   </div>`;
@@ -225,7 +326,7 @@ function renderGemini(snap, name, delay) {
         <div class="card-head"><span class="prov-name">${QB.esc(name)}</span><span class="card-chevron">›</span></div>
         <div class="gemini-lbl">${QB.esc(label)}</div>
         ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
-        ${tokenDetailHtml(snap.costFactor)}
+        ${tokenDetailInnerHtml(snap.costFactor)}
       </div>
     </div>
   </div>`;
@@ -247,6 +348,15 @@ function renderCard(snap, idx) {
 
 // ── Main render ───────────────────────────────────────────────────────
 window.QB = window.QB || {};
+
+QB.toggleTokenSection = function toggleTokenSection(id) {
+  const container = document.getElementById(id);
+  if (!container) return;
+  const isOpen = container.classList.toggle('open');
+  const btn = container.querySelector('.token-toggle');
+  if (btn) btn.setAttribute('aria-expanded', String(isOpen));
+  try { localStorage.setItem('tokenDetailsOpen', isOpen ? '1' : '0'); } catch {}
+};
 
 QB.renderLive = function renderLive(snapshots) {
   const el = document.getElementById('content');
