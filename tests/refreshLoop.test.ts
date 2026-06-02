@@ -211,3 +211,55 @@ describe("RefreshLoop debug recording", () => {
     expect(events.some((e) => e.kind === "refresh.skipped" && e.provider === "claude")).toBe(true);
   });
 });
+
+describe("RefreshLoop window intelligence", () => {
+  it("attaches pace to fiveHour window (not just weekly)", async () => {
+    const store = new UsageStore();
+    const resetsAt = new Date(Date.now() + 2 * 3600 * 1000).toISOString(); // 2h from now
+    const provider = makeProvider("claude", async () => ({
+      provider: "claude",
+      status: "ok" as const,
+      windows: [{ name: "fiveHour" as const, usedPercent: 20, windowSeconds: 18000, resetsAt }],
+      updatedAt: new Date().toISOString(),
+    }));
+    const loop = new RefreshLoop([provider], store, 60, 10_000);
+    await loop.refreshNow();
+    const win = store.get("claude")?.windows.find(w => w.name === "fiveHour");
+    expect(win?.pace).not.toBeUndefined();
+    expect(win?.pace).not.toBeNull();
+  });
+
+  it("burnRatePctPerHour is null after first refresh (insufficient history)", async () => {
+    const store = new UsageStore();
+    const resetsAt = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+    const provider = makeProvider("claude", async () => ({
+      provider: "claude",
+      status: "ok" as const,
+      windows: [{ name: "fiveHour" as const, usedPercent: 30, windowSeconds: 18000, resetsAt }],
+      updatedAt: new Date().toISOString(),
+    }));
+    const loop = new RefreshLoop([provider], store, 60, 10_000);
+    await loop.refreshNow();
+    const win = store.get("claude")?.windows.find(w => w.name === "fiveHour");
+    // Only 1 recorded point → not enough for burn rate
+    expect(win?.burnRatePctPerHour).toBeNull();
+  });
+
+  it("safetyGapSeconds is set when pace resolves willLastToReset", async () => {
+    const store = new UsageStore();
+    // 20% used, 2h left in a 5h window → pace will compute willLastToReset
+    const resetsAt = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+    const provider = makeProvider("claude", async () => ({
+      provider: "claude",
+      status: "ok" as const,
+      windows: [{ name: "fiveHour" as const, usedPercent: 20, windowSeconds: 18000, resetsAt }],
+      updatedAt: new Date().toISOString(),
+    }));
+    const loop = new RefreshLoop([provider], store, 60, 10_000);
+    await loop.refreshNow();
+    const win = store.get("claude")?.windows.find(w => w.name === "fiveHour");
+    expect(win?.safetyGapSeconds).not.toBeNull();
+    // willLastToReset case → safetyGapSeconds ≈ timeToReset ≈ 7200s
+    expect(win?.safetyGapSeconds).toBeGreaterThan(7000);
+  });
+});

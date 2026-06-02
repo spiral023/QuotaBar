@@ -2,7 +2,8 @@ import { UsageProvider, UsageSnapshot, errorSnapshot } from "../providers/types"
 import { RateLimitError, toErrorMessage } from "../shared/errors";
 import { log } from "../main/logging";
 import { UsageStore } from "./usageStore";
-import { computeLinearPace, toRateWindow } from "./usagePace";
+import { computeLinearPace, toRateWindow, computeSafetyGap } from "./usagePace";
+import { BurnRateTracker } from "./burnRateTracker";
 import type { PricingEngine } from "../pricing/subscription-factor";
 import type { DebugRecorder } from "../main/debugRecorder";
 import { snapshotEvent } from "../main/debugEvents";
@@ -14,6 +15,7 @@ export class RefreshLoop {
   private isRefreshing = false;
   private readonly listeners = new Set<RefreshListener>();
   private readonly backoff = new Map<string, number>(); // provider.id → expiry timestamp (ms)
+  private readonly burnRateTracker = new BurnRateTracker();
 
   constructor(
     private readonly providers: UsageProvider[],
@@ -60,8 +62,15 @@ export class RefreshLoop {
       const now = new Date();
       for (const snapshot of snapshots) {
         for (const window of snapshot.windows) {
-          if (window.name === "weekly") {
+          if (window.name === "weekly" || window.name === "fiveHour") {
             window.pace = computeLinearPace(toRateWindow(window), now);
+          }
+          if (typeof window.usedPercent === "number" && window.resetsAt) {
+            this.burnRateTracker.record(snapshot.provider, window.name, window.usedPercent, now);
+            window.burnRatePctPerHour = this.burnRateTracker.getBurnRate(snapshot.provider, window.name);
+          }
+          if (window.pace && window.resetsAt) {
+            window.safetyGapSeconds = computeSafetyGap(window.resetsAt, window.pace, now);
           }
         }
         if (this.pricingEngine) {
