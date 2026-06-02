@@ -1,26 +1,56 @@
-# QuotaBar for Windows
+<p align="center">
+  <img src="assets/icon.ico" width="72" height="72" alt="QuotaBar icon">
+</p>
 
-[![Platform](https://img.shields.io/badge/platform-Windows-0078D4)](#requirements)
-[![Electron](https://img.shields.io/badge/Electron-30-47848F)](https://www.electronjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/tests-Vitest-6E9F18)](https://vitest.dev/)
-[![License](https://img.shields.io/badge/license-MIT-green)](#license)
+<h1 align="center">QuotaBar for Windows</h1>
 
-QuotaBar is a Windows tray app for monitoring AI coding quota usage and local API-equivalent costs for Claude and Codex.
+<p align="center">
+  A Windows tray app for monitoring AI coding quota usage and local API-equivalent costs for Claude and Codex.
+</p>
 
-It runs quietly in the system tray, reads credentials and usage logs from known local CLI locations, and keeps quota windows, usage history, cost analytics, and reset notifications one click away. It does not scan your disk for credentials.
+<p align="center">
+  <a href="#requirements"><img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4"></a>
+  <a href="https://www.electronjs.org/"><img alt="Electron 30" src="https://img.shields.io/badge/Electron-30-47848F"></a>
+  <a href="https://www.typescriptlang.org/"><img alt="TypeScript 5.8" src="https://img.shields.io/badge/TypeScript-5.8-3178C6"></a>
+  <a href="https://vitest.dev/"><img alt="Vitest" src="https://img.shields.io/badge/tests-Vitest-6E9F18"></a>
+  <a href="#license"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a>
+  &middot;
+  <a href="#provider-data">Provider Data</a>
+  &middot;
+  <a href="#cost-tracking">Cost Tracking</a>
+  &middot;
+  <a href="#development">Development</a>
+  &middot;
+  <a href="#security-and-privacy">Security</a>
+</p>
+
+QuotaBar runs quietly in the Windows system tray, reads credentials and usage logs from known local CLI locations, and keeps quota windows, usage history, cost analytics, and reset notifications one click away.
+
+> QuotaBar does not scan your disk for credentials. It reads only known provider paths and redacts sensitive values before logging.
 
 ## Highlights
 
-| Area | What QuotaBar provides |
-| --- | --- |
-| Tray-first UI | Stacked per-provider progress bars in the Windows system tray |
-| Live quota | 5-hour and weekly quota windows where provider data is available |
-| Providers | Claude and Codex |
-| Cost analytics | API-equivalent USD costs, token totals, cache usage, and subscription factor |
-| Reports | Daily, weekly, monthly, and session-level usage reports |
-| Notifications | Configurable warnings for high usage, resets, burn-rate changes, stale data, and more |
-| Privacy | Known-path credential reads only, with sensitive values redacted before logging |
+| Tray-first monitoring | Usage analytics | Privacy-aware by design |
+| --- | --- | --- |
+| Stacked per-provider progress bars in the Windows tray. | Daily, weekly, monthly, and session-level reports. | Known-path credential reads only, with redacted logs. |
+| 5-hour and weekly quota windows where provider data is available. | API-equivalent USD costs, token totals, cache usage, and subscription factor. | Unofficial provider endpoints are isolated and handled defensively. |
+
+## How It Works
+
+```mermaid
+flowchart LR
+  A[Claude CLI] --> D[QuotaBar]
+  B[Codex CLI] --> D
+  C[Local JSONL logs] --> D
+  D --> E[Tray progress bars]
+  D --> F[Dashboard and reports]
+  D --> G[Notifications]
+  H[LiteLLM pricing] -. online .-> D
+```
 
 ## Requirements
 
@@ -60,8 +90,8 @@ QuotaBar reads credentials only from known provider paths:
 
 | Provider | Credential path |
 | --- | --- |
-| Claude | `~/.claude/.credentials.json` |
-| Codex | `${CODEX_HOME:-~/.codex}/auth.json` |
+| <img src="logos/claude.png" width="18" alt="Claude logo"> Claude | `~/.claude/.credentials.json` |
+| <img src="logos/codex.png" width="18" alt="Codex logo"> Codex | `${CODEX_HOME:-~/.codex}/auth.json` |
 
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` may contain comma-separated roots. QuotaBar deduplicates existing roots and combines usage data from them.
 
@@ -69,21 +99,21 @@ QuotaBar reads credentials only from known provider paths:
 
 | Provider | Live quota source | Historical cost/report source |
 | --- | --- | --- |
-| Claude | `~/.claude/.credentials.json` plus OAuth usage endpoint | `~/.config/claude/projects/**/*.jsonl`, `~/.claude/projects/**/*.jsonl` |
-| Codex | `${CODEX_HOME:-~/.codex}/auth.json` plus usage endpoint | `${CODEX_HOME:-~/.codex}/sessions/**/*.jsonl` |
+| <img src="logos/claude.png" width="18" alt="Claude logo"> Claude | `~/.claude/.credentials.json` plus OAuth usage endpoint | `~/.config/claude/projects/**/*.jsonl`, `~/.claude/projects/**/*.jsonl` |
+| <img src="logos/codex.png" width="18" alt="Codex logo"> Codex | `${CODEX_HOME:-~/.codex}/auth.json` plus usage endpoint | `${CODEX_HOME:-~/.codex}/sessions/**/*.jsonl` |
 
 Claude and Codex quota windows are fetched through unofficial provider endpoints. Those integrations are isolated in provider/auth modules and are treated as best-effort data sources.
 
 ## Dashboard And Reports
 
-The dashboard includes live quota, usage history, analytics, and notification settings. Reports support:
-
-- Provider filtering for all providers, Claude, or Codex.
-- Daily, weekly, monthly, and session-level report types.
-- Since/until date filters, timezone selection, project/instance filtering, sort order, and instance grouping.
-- Claude cost modes: `auto`, `calculate`, and `display`.
-- Codex speed modes: `auto`, `standard`, and `fast`.
-- Copyable JSON output for programmatic analysis.
+| Capability | Details |
+| --- | --- |
+| Provider filtering | All providers, Claude, or Codex |
+| Report types | Daily, weekly, monthly, and session-level reports |
+| Report controls | Since/until filters, timezone selection, project/instance filtering, sort order, and instance grouping |
+| Claude cost modes | `auto`, `calculate`, `display` |
+| Codex speed modes | `auto`, `standard`, `fast` |
+| Export | Copyable JSON output for programmatic analysis |
 
 Weekly reports use Monday as the week start. JSON field names are stable English names.
 
@@ -96,6 +126,13 @@ subscription factor = API cost (USD) / (subscription cost (USD) x window_days / 
 ```
 
 The factor is normalized to the selected cost window, so windows remain comparable. `1x` means API-equivalent cost matches the subscription cost for that period. `10x` means API-equivalent cost is ten times the subscription cost.
+
+| Cost setting | Supported values |
+| --- | --- |
+| Claude cost mode | `auto`, `calculate`, `display` |
+| Codex speed mode | `auto`, `standard`, `fast` |
+| Cost window | `7d`, `30d`, `all` |
+| Pricing mode | Online LiteLLM pricing or offline mode |
 
 Claude cost modes:
 
@@ -120,7 +157,7 @@ Settings are stored in `%APPDATA%\quotabar-win\settings.json`:
 }
 ```
 
-Supported cost windows are `7d`, `30d`, and `all`. Older settings files may contain extra provider keys; QuotaBar ignores unsupported providers and writes only supported providers on save.
+Older settings files may contain extra provider keys. QuotaBar ignores unsupported providers and writes only supported providers on save.
 
 For the full calculation model, see [docs/how-quotabar-calculates.md](docs/how-quotabar-calculates.md).
 
@@ -150,11 +187,12 @@ src/
 
 ## Security And Privacy
 
-- Tokens, cookies, authorization headers, and JWTs are not printed in UI output.
-- Logs pass through redaction helpers before sensitive values are written.
-- Credentials are read only from known provider paths.
-- QuotaBar does not scan the disk for auth files.
-- Unofficial provider endpoints are kept inside provider/auth modules and handled defensively.
+| Protection | Implementation |
+| --- | --- |
+| Credential scope | Credentials are read only from known provider paths |
+| Log safety | Tokens, cookies, authorization headers, and JWTs are redacted before logging |
+| Disk access | QuotaBar does not scan the disk for auth files |
+| Provider isolation | Unofficial endpoints are kept inside provider/auth modules and handled defensively |
 
 ## Status
 
