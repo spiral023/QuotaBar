@@ -1,4 +1,7 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { Notification } from "electron";
+import type { NotificationConstructorOptions } from "electron";
 import type { UsageSnapshot } from "../providers/types";
 import type { NotificationSettings } from "../config/settings";
 import { NotificationEngine, NotificationStateStore } from "./notificationEngine";
@@ -6,6 +9,11 @@ import type { NotificationEvent } from "./notificationEngine";
 import { NotificationHistory } from "./notificationHistory";
 
 export { NotificationEvent };
+
+const PROVIDER_LOGO_FILES: Record<string, string> = {
+  claude: "claude.png",
+  codex: "codex.png",
+};
 
 export class NotificationService {
   private readonly engine  = new NotificationEngine();
@@ -49,9 +57,23 @@ export class NotificationService {
   }
 
   private show(event: NotificationEvent): void {
-    new Notification({
-      title: "QuotaBar",
-      body: event.body,
-    }).show();
+    new Notification(buildNotificationOptions(event)).show();
   }
+}
+
+export function buildNotificationOptions(event: NotificationEvent): NotificationConstructorOptions {
+  const icon = getProviderLogoPath(event.provider);
+  return {
+    title: event.title,
+    body: event.body,
+    ...(icon ? { icon } : {}),
+  };
+}
+
+function getProviderLogoPath(provider: string): string | undefined {
+  const logoFile = PROVIDER_LOGO_FILES[provider.toLowerCase()];
+  if (!logoFile) return undefined;
+
+  const logoPath = path.resolve(__dirname, "..", "..", "logos", logoFile);
+  return existsSync(logoPath) ? logoPath : undefined;
 }
