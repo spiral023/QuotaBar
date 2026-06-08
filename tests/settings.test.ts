@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import { normalizeSettings, defaultSettings } from "../src/config/settings";
 
 describe("normalizeSettings costWindow", () => {
-  it("defaults to 'billing'", () => {
+  it("defaults to '30d'", () => {
     const result = normalizeSettings({ ...defaultSettings });
-    expect(result.costWindow).toBe("billing");
+    expect(result.costWindow).toBe("30d");
   });
 
   it("accepts '7d'", () => {
@@ -17,9 +17,9 @@ describe("normalizeSettings costWindow", () => {
     expect(result.costWindow).toBe("30d");
   });
 
-  it("rejects unknown value, falls back to 'billing'", () => {
+  it("rejects unknown value, falls back to '30d'", () => {
     const result = normalizeSettings({ ...defaultSettings, costWindow: "bogus" as never });
-    expect(result.costWindow).toBe("billing");
+    expect(result.costWindow).toBe("30d");
   });
 });
 
