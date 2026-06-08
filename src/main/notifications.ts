@@ -7,6 +7,7 @@ import type { NotificationSettings } from "../config/settings";
 import { NotificationEngine, NotificationStateStore } from "./notificationEngine";
 import type { NotificationEvent } from "./notificationEngine";
 import { NotificationHistory } from "./notificationHistory";
+import { NotificationLog } from "./notificationLog";
 
 export { NotificationEvent };
 
@@ -19,6 +20,7 @@ export class NotificationService {
   private readonly engine  = new NotificationEngine();
   private readonly state   = new NotificationStateStore();
   readonly history         = new NotificationHistory();
+  private readonly notifLog = new NotificationLog();
 
   private previous: UsageSnapshot[] = [];
   private settings: NotificationSettings;
@@ -41,6 +43,7 @@ export class NotificationService {
     this.previous = snapshots;
 
     for (const event of events) {
+      this.notifLog.write(event);
       this.show(event);
     }
 

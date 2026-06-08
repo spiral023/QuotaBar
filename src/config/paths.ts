@@ -19,6 +19,10 @@ export function getLogPath(): string {
   return path.join(getAppConfigDir(), "quotabar.log");
 }
 
+export function getNotificationLogPath(): string {
+  return path.join(getAppConfigDir(), "notifications.log");
+}
+
 export function getSettingsPath(): string {
   return path.join(getAppConfigDir(), "settings.json");
 }
