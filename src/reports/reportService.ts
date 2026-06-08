@@ -285,7 +285,9 @@ async function costCodexBreakdowns(events: CodexTokenEvent[], fetcher: LiteLLMFe
   const breakdowns: ModelBreakdown[] = [];
   for (const [model, list] of byModel) {
     const totals = list.reduce((acc, event) => ({
-      inputTokens: acc.inputTokens + event.inputTokens,
+      // INPUT shows uncached tokens only (input − cached), consistent with the
+      // Claude reader and the live-tab path in subscription-factor.ts.
+      inputTokens: acc.inputTokens + Math.max(0, event.inputTokens - event.cachedInputTokens),
       outputTokens: acc.outputTokens + event.outputTokens,
       cacheCreationTokens: acc.cacheCreationTokens,
       cacheReadTokens: acc.cacheReadTokens + event.cachedInputTokens,

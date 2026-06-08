@@ -76,14 +76,18 @@ function parseDaySummary(
     for (const [model, pm] of Object.entries(perModelRaw as Record<string, unknown>)) {
       if (!pm || typeof pm !== "object" || Array.isArray(pm)) continue;
       const p = pm as Record<string, unknown>;
-      const inputTokens = num(p.input);
       const outputTokens = num(p.output);
       const cacheCreationTokens = num(p.cacheCreation);
       const cacheReadTokens = num(p.cacheRead ?? p.cachedInput);
       const reasoningOutput = num(p.reasoningOutput);
+      // Codex stores `input` including cached tokens; show uncached only (input − cached),
+      // consistent with the Claude reader and the live report path.
+      const inputTokens = provider === "codex"
+        ? Math.max(0, num(p.input) - cacheReadTokens)
+        : num(p.input);
       const totalTokens = provider === "claude"
         ? inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
-        : inputTokens + outputTokens + reasoningOutput;
+        : inputTokens + cacheReadTokens + outputTokens + reasoningOutput;
       perModel[model] = {
         inputTokens,
         outputTokens,
@@ -95,13 +99,15 @@ function parseDaySummary(
     }
   }
 
+  const topCacheRead = num(event.cacheRead ?? event.cachedInput);
   return {
     date,
     provider,
-    inputTokens: num(event.input),
+    // Codex `input` includes cached tokens; show uncached only, consistent with the live path.
+    inputTokens: provider === "codex" ? Math.max(0, num(event.input) - topCacheRead) : num(event.input),
     outputTokens: num(event.output),
     cacheCreationTokens: num(event.cacheCreation),
-    cacheReadTokens: num(event.cacheRead ?? event.cachedInput),
+    cacheReadTokens: topCacheRead,
     totalTokens: num(event.totalTokens),
     costUSD: num(event.totalCostUSD),
     sessionCount: num(event.sessionCount),

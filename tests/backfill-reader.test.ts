@@ -86,12 +86,14 @@ describe("readBackfillDayRecords", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       date: "2026-05-21", provider: "codex",
-      inputTokens: 50000, outputTokens: 800,
+      inputTokens: 3000, outputTokens: 800,   // 50000 − 47000 cached = ungecacht
       cacheReadTokens: 47000,   // cachedInput landet hier
       cacheCreationTokens: 0,
       totalTokens: 51000, costUSD: 1.23,
     });
-    expect(records[0].perModel["gpt-5.5"].cacheReadTokens).toBe(47000);
+    expect(records[0].perModel["gpt-5.5"]).toMatchObject({
+      inputTokens: 3000, cacheReadTokens: 47000, totalTokens: 51000,
+    });
   });
 
   it("filtert nach since-Datum", async () => {

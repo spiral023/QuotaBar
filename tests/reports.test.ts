@@ -128,7 +128,7 @@ describe("usage reports", () => {
     expect(report.rows[0]).toMatchObject({
       provider: "codex",
       session: "session-abc12345",
-      inputTokens: 1000,
+      inputTokens: 900,
       cacheReadTokens: 100,
       outputTokens: 50,
       totalTokens: 1050,
