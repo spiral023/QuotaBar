@@ -250,9 +250,7 @@ export class DetailsWindowController {
 
     ipcMain.handle("analytics:get", async () => {
       const settings     = await loadSettings();
-      const windowDays   = 30;
-      const since        = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
-      const periodStartMs = Date.now() - windowDays * 24 * 3600 * 1000;
+      const { periodStartMs, windowDays, since } = calendarWindow(30);
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
       return this.analyticsDataCache.get("get:30d", () => runAnalyticsWorker({
@@ -310,12 +308,25 @@ function normalizeCostWindow(value: unknown): CostWindow | null {
 }
 
 function resolveAnalyticsWindow(costWindow: CostWindow): { periodStartMs: number; windowDays: number; since: string } {
-  const now = Date.now();
-  const periodStartMs = costWindow === "7d"  ? now - 7  * 24 * 3600 * 1000
-                      : costWindow === "30d" ? now - 30 * 24 * 3600 * 1000
-                      : costWindow === "all" ? 0
-                      : now - 30 * 24 * 3600 * 1000;
-  const windowDays = costWindow === "all" ? 0 : Math.ceil((now - periodStartMs) / (24 * 3600 * 1000));
-  const since = new Date(periodStartMs).toISOString().slice(0, 10);
-  return { periodStartMs, windowDays, since };
+  if (costWindow === "all") {
+    return { periodStartMs: 0, windowDays: 0, since: new Date(0).toISOString().slice(0, 10) };
+  }
+  const windowDays = costWindow === "7d" ? 7 : 30;
+  return calendarWindow(windowDays);
+}
+
+// Align the window to whole local calendar days: it covers exactly `windowDays`
+// days (today plus the previous windowDays-1), starting at local midnight. This
+// keeps the distinct active-day count from ever exceeding windowDays (e.g. 8/7),
+// which a rolling now-minus-N×24h start would otherwise allow at day boundaries.
+function calendarWindow(windowDays: number): { periodStartMs: number; windowDays: number; since: string } {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (windowDays - 1));
+  return { periodStartMs: start.getTime(), windowDays, since: localDateKey(start) };
+}
+
+function localDateKey(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }

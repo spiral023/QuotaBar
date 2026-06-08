@@ -354,9 +354,15 @@ function getWeekStart(dateStr: string): string {
 }
 
 function getLastNDays(n: number): string[] {
+  // Local calendar days to match the local-timezone bucket keys produced by the
+  // report layer; UTC slicing would shift cells by a day off-UTC.
+  const pad = (v: number) => String(v).padStart(2, "0");
   const days: string[] = [];
   for (let i = n - 1; i >= 0; i--) {
-    days.push(new Date(Date.now() - i * 24 * 3600 * 1000).toISOString().slice(0, 10));
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - i);
+    days.push(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
   }
   return days;
 }
