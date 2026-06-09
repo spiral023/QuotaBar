@@ -5,7 +5,7 @@
 <h1 align="center">QuotaBar for Windows</h1>
 
 <p align="center">
-  A Windows tray app for monitoring AI coding quota usage and local API-equivalent costs for Claude and Codex.
+  Know your AI spend at a glance — quota progress bars, API-equivalent costs, and usage history for Claude and Codex, right in the Windows tray.
 </p>
 
 <p align="center">
@@ -21,6 +21,8 @@
   &middot;
   <a href="#provider-data">Provider Data</a>
   &middot;
+  <a href="#dashboard-and-reports">Dashboard</a>
+  &middot;
   <a href="#cost-tracking">Cost Tracking</a>
   &middot;
   <a href="#development">Development</a>
@@ -28,7 +30,7 @@
   <a href="#security-and-privacy">Security</a>
 </p>
 
-QuotaBar runs quietly in the Windows system tray, reads credentials and usage logs from known local CLI locations, and keeps quota windows, usage history, cost analytics, and reset notifications one click away.
+QuotaBar sits in the Windows system tray, reads credentials and usage logs from known local CLI paths, and surfaces quota windows, cost analytics, usage history, and reset notifications without leaving your workflow.
 
 > QuotaBar does not scan your disk for credentials. It reads only known provider paths and redacts sensitive values before logging.
 
@@ -36,7 +38,7 @@ QuotaBar runs quietly in the Windows system tray, reads credentials and usage lo
 
 | Tray-first monitoring | Usage analytics | Privacy-aware by design |
 | --- | --- | --- |
-| Stacked per-provider progress bars in the Windows tray. | Daily, weekly, monthly, and session-level reports. | Known-path credential reads only, with redacted logs. |
+| Stacked per-provider progress bars in the Windows tray. | Daily, weekly, monthly, and session-level reports. | Credentials read only from known provider paths; sensitive values redacted from logs. |
 | 5-hour and weekly quota windows where provider data is available. | API-equivalent USD costs, token totals, cache usage, and subscription factor. | Unofficial provider endpoints are isolated and handled defensively. |
 
 ## How It Works
@@ -59,23 +61,23 @@ flowchart LR
 - Claude CLI login, Codex CLI login, or both
 - Local provider usage logs for historical cost and report data
 
-QuotaBar is an early Windows MVP. Provider quota data depends on unofficial endpoints that may change without notice; the app handles failures defensively and keeps stale data visible when live refreshes fail.
+> **Early MVP:** Provider quota data depends on unofficial endpoints that may change without notice. QuotaBar handles failures defensively and keeps stale data visible when live refreshes fail.
 
 ## Quick Start
 
 ```powershell
 npm install
 npm run build
-npm run dev
+npm run dev          # Electron opens with a tray icon in the system tray
 ```
 
-To create Windows installer and portable artifacts:
+To create a Windows installer and portable artifacts:
 
 ```powershell
-npm run package
+npm run package      # Output written to package-output/
 ```
 
-Build output is written to `dist/`; packaged artifacts are written to `package-output/`.
+Build output (compiled JS) is written to `dist/`.
 
 ## Authentication
 
@@ -104,7 +106,7 @@ QuotaBar reads credentials only from known provider paths:
 
 Claude and Codex quota windows are fetched through unofficial provider endpoints. Those integrations are isolated in provider/auth modules and are treated as best-effort data sources.
 
-## Dashboard And Reports
+## Dashboard and Reports
 
 | Capability | Details |
 | --- | --- |
@@ -188,7 +190,7 @@ src/
 `- shared/     Redaction and shared error types
 ```
 
-## Security And Privacy
+## Security and Privacy
 
 | Protection | Implementation |
 | --- | --- |
@@ -196,10 +198,6 @@ src/
 | Log safety | Tokens, cookies, authorization headers, and JWTs are redacted before logging |
 | Disk access | QuotaBar does not scan the disk for auth files |
 | Provider isolation | Unofficial endpoints are kept inside provider/auth modules and handled defensively |
-
-## Status
-
-QuotaBar is under active development as a Windows-first MVP. Cost tracking requires local JSONL logs. LiteLLM pricing refreshes require network access unless `pricingOfflineMode` is enabled.
 
 ## License
 
