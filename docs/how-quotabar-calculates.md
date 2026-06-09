@@ -58,6 +58,8 @@ Claude Code schreibt bei Streaming-Antworten mehrere Snapshots derselben Nachric
 TOTAL = INPUT + OUTPUT + CACHE+ + CACHE▷
 ```
 
+Wichtig: `input_tokens` in Claude-JSONL enthält **nur** den frischen, ungecachten Anteil. Cache-Reads kommen ausschließlich in `cache_read_input_tokens`.
+
 ### Zeitfenster-Filter
 
 Bevor Token-Daten aufsummiert werden, filtert QuotaBar nach dem konfigurierten Kostenfenster (siehe [Kostenfenster](#kostenfenster)). Einträge mit `timestamp < billingStart` werden ignoriert.
@@ -72,16 +74,18 @@ Kosten werden in zwei Schritten berechnet:
 Neuere Claude-Code-Versionen schreiben einen `costUSD`-Wert direkt in jede JSONL-Zeile. Diese Werte werden direkt summiert.
 
 **Schritt 2 – Einträge ohne `costUSD`:**
-Für ältere Einträge ohne `costUSD` holt QuotaBar die Modellpreise von der [LiteLLM-Preistabelle](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json) (oder aus dem lokalen Cache bei Offline-Modus) und rechnet:
+Für ältere Einträge ohne `costUSD` holt QuotaBar die Modellpreise von der [LiteLLM-Preistabelle](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json) (oder aus dem lokalen Cache bei Offline-Modus) und rechnet pro Modell:
 
 ```
-Kosten = INPUT × input_cost_per_token
+Kosten = INPUT  × input_cost_per_token
        + OUTPUT × output_cost_per_token
        + CACHE+ × cache_creation_input_token_cost
        + CACHE▷ × cache_read_input_token_cost
 ```
 
-Beide Teilsummen werden addiert.
+Da `input_tokens` in Claude-JSONL bereits nur den ungecachten Anteil enthält, wird kein weiterer Abzug vorgenommen. CACHE+ und CACHE▷ werden mit ihren eigenen (günstigeren) Preisen multipliziert — beide tragen zur Gesamtsumme bei.
+
+Beide Teilsummen (Schritt 1 + Schritt 2) werden addiert. Gibt es für einen Eintrag ohne `costUSD` kein Modell-Feld, wird das erste bekannte Modell oder `claude-sonnet-4-5` als Fallback verwendet.
 
 ---
 
@@ -115,20 +119,22 @@ Codex schreibt entweder kumulative Gesamtzahlen (`total_token_usage`) oder Zahle
 
 ### Token-Felder
 
-| UI-Feld | Bedeutung |
-|---|---|
-| INPUT | Ungecachte Prompt-Tokens (`input_tokens − cached_input_tokens`) — konsistent mit Claude |
-| CACHE ▷ | `cached_input_tokens` — der gecachte Anteil der Prompt-Tokens |
-| OUTPUT | `output_tokens` |
-| TOTAL | `total_tokens` aus dem JSONL (= alle Prompt-Tokens + OUTPUT + Reasoning) |
+Im Codex-JSONL enthält `input_tokens` die **Gesamtsumme** aller Prompt-Tokens — also inklusive des gecachten Anteils. QuotaBar rechnet das intern um:
 
-Das Codex-JSONL speichert `input_tokens` als Gesamtsumme aller Prompt-Tokens (inkl. Cache). QuotaBar zieht davon intern `cached_input_tokens` ab, bevor es „INPUT" anzeigt — damit bedeutet das Feld bei beiden Providern dasselbe: *frische, ungecachte Tokens*.
+| UI-Feld | Berechnung | Bedeutung |
+|---|---|---|
+| INPUT | `input_tokens − cached_input_tokens` | Frischer, ungecachter Prompt-Anteil |
+| CACHE ▷ | `cached_input_tokens` | Gecachter Prompt-Anteil |
+| OUTPUT | `output_tokens` | Generierte Antwort-Tokens |
+| TOTAL | `total_tokens` aus dem JSONL | Alle Tokens (Prompt inkl. Cache + Output + Reasoning) |
 
 ```
 Angezeigtes INPUT = input_tokens − cached_input_tokens   (ungecacht)
 CACHE ▷           = cached_input_tokens                  (gecacht)
 TOTAL             = input_tokens + output_tokens + reasoning  (aus JSONL)
 ```
+
+Damit bedeutet das Feld INPUT bei beiden Providern dasselbe: *frische, ungecachte Tokens*.
 
 ### Modell-Erkennung
 
@@ -143,14 +149,17 @@ Codex schreibt keine doppelten Events. Jeder Token-Count-Event entspricht einem 
 ## Codex: Kostenberechnung
 
 ```
-Kosten = (INPUT − CACHE▷) × input_cost_per_token
-       + CACHE▷ × cache_read_input_token_cost
+Kosten = INPUT  × input_cost_per_token
+       + CACHE▷ × cache_read_input_token_cost  (Fallback: input_cost_per_token)
        + OUTPUT × output_cost_per_token
 ```
 
-Der ungecachte Anteil (`INPUT − CACHE▷`) wird zum vollen Input-Preis berechnet, der gecachte Anteil (`CACHE▷`) zum günstigeren Cache-Read-Preis.
+Wobei INPUT und CACHE▷ die oben berechneten UI-Werte sind:
 
-**Speed Tier:** Liest QuotaBar aus `~/.codex/config` den Eintrag `service_tier = priority` (oder `fast`), werden alle Kosten mit dem Faktor aus der LiteLLM-Tabelle multipliziert (typisch 2×).
+- **INPUT** = `input_tokens − cached_input_tokens` (ungecachter Anteil zum vollen Preis)
+- **CACHE▷** = `cached_input_tokens` (gecachter Anteil zum günstigeren Cache-Read-Preis, falls das Modell einen solchen ausweist — sonst zum normalen Input-Preis)
+
+**Speed Tier:** Liest QuotaBar aus `~/.codex/config` den Eintrag `service_tier = priority` (oder `fast`), wird das Ergebnis mit dem Fast-Faktor aus der LiteLLM-Tabelle multipliziert (typisch 2×, modellabhängig).
 
 **Modell-Aliase:** Interne Codex-Modellnamen werden vor der Preisabfrage gemappt:
 
@@ -165,27 +174,43 @@ Der ungecachte Anteil (`INPUT − CACHE▷`) wird zum vollen Input-Preis berechn
 
 QuotaBar filtert Token-Daten auf einen konfigurierbaren Zeitraum. Die Einstellung `costWindow` in den App-Settings steuert den Startpunkt:
 
-| Modus | Startpunkt |
+| Modus | Startpunkt | `windowDays` |
+|---|---|---|
+| `7d` | Jetzt − 7 Tage | 7 (fest) |
+| `30d` | Jetzt − 30 Tage | 30 (fest) |
+| `all` | Epoch (1970-01-01) | Tatsächliche Spanne aus den Daten |
+
+Im Modus `all` wird `windowDays` nicht vorab gesetzt, sondern nach dem Einlesen der Daten berechnet: Differenz zwischen jüngstem Eintrag und heute in Tagen (mindestens 1). Dieser Modus heißt intern `calculationMode: "actual-span"`, die festen Modi heißen `"fixed"`.
+
+Das Fenster wird in der UI als Badge angezeigt (z. B. `30d` oder `14d (all)`). Tooltips erklären den Modus (`festes Fenster` vs. `tatsächlicher Zeitraum`).
+
+---
+
+## Token-Details in der Live-Ansicht
+
+Die aufklappbare Sektion **Token Details** unterhalb jeder Provider-Karte zeigt die akkumulierten Tokens und API-Kosten für das aktuell konfigurierte Kostenfenster — **nicht** all-time.
+
+Der Zeitraum ist im Toggle-Label sichtbar, z. B. `Token Details · 30d`.
+
+| Feld | Inhalt |
 |---|---|
-| `billing` | Nativer Abrechnungszeitraum des Providers (Standard) |
-| `30d` | Jetzt − 30 Tage |
-| `7d` | Jetzt − 7 Tage |
+| Input | INPUT-Tokens des Fensters |
+| Output | OUTPUT-Tokens des Fensters |
+| Cache + | CACHE+-Tokens (nur Claude) |
+| Cache ▷ | CACHE▷-Tokens des Fensters |
+| Total | Summe aller vier Felder |
+| Cost | Berechnete API-Kosten in USD für dieses Fenster |
 
-### Billing-Modus: Claude
+---
 
-QuotaBar sucht im aktuellen Snapshot nach einem `credits`-Window mit `resetsAt`. Das ist der nächste Abrechnungsstichtag; als Startpunkt wird dieser direkt verwendet (die Credits-Period beginnt am Reset-Datum).
+## History-Tab: Kosten- und Token-Diagramm
 
-Fehlt das `credits`-Window, fällt QuotaBar auf den ersten UTC-Tag des laufenden Kalendermonats zurück.
+Der History-Tab zeigt ein gestapeltes Balkendiagramm (Claude + Codex) pro Periode. Über den Toggle **Kosten / Tokens** wird zwischen zwei Ansichten gewechselt:
 
-### Billing-Modus: Codex
+- **Kosten:** API-Kosten in USD pro Periode
+- **Tokens:** Token-Menge pro Periode — wählbar zwischen Gesamt, Input, Output, Cache (= CACHE+ + CACHE▷)
 
-Codex hat ein wöchentliches Quota-Window. QuotaBar liest `weekly.resetsAt` aus dem Snapshot und berechnet:
-
-```
-billingStart = weekly.resetsAt − 7 Tage
-```
-
-Das ergibt den Beginn der laufenden Woche.
+Die Y-Achse und Tooltips passen sich automatisch an (USD vs. Token-Einheiten).
 
 ---
 
@@ -194,8 +219,10 @@ Das ergibt den Beginn der laufenden Woche.
 Der Abo-Faktor (`N× sub`) zeigt, wie viel die tatsächliche API-Nutzung im Verhältnis zum monatlichen Abo-Preis gekostet hätte:
 
 ```
-factor = apiCostUSD / subscriptionCostUSD
+factor = apiCostUSD / (subscriptionCostUSD × windowDays / 30)
 ```
+
+Die Normalisierung auf `windowDays / 30` macht Fenster unterschiedlicher Länge vergleichbar.
 
 Standardwerte (konfigurierbar in den App-Settings):
 
@@ -232,7 +259,7 @@ Der Backfill wird beim App-Start einmalig ausgeführt und überspringt Tage, fü
 | Codex Token-Zählung | Übereinstimmend (< 1 % Abweichung) | Übereinstimmend |
 | Gemini / OpenCode | Nicht unterstützt | Unterstützt |
 | Kosten-Anzeige | API-Kosten + Abo-Faktor | API-Kosten in USD |
-| Zeitfenster | billing / 30d / 7d wählbar | Fest nach Kalendermonat/-woche |
+| Zeitfenster | 7d / 30d / all wählbar | Fest nach Kalendermonat/-woche |
 
 ---
 

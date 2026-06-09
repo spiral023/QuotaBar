@@ -114,6 +114,7 @@ Claude and Codex quota windows are fetched through unofficial provider endpoints
 | Claude cost modes | `auto`, `calculate`, `display` |
 | Codex speed modes | `auto`, `standard`, `fast` |
 | Export | Copyable JSON output for programmatic analysis |
+| History chart toggle | Switch the per-period chart between USD costs and token volumes (total, input, output, or cache) |
 
 Weekly reports use Monday as the week start. JSON field names are stable English names.
 
@@ -122,10 +123,12 @@ Weekly reports use Monday as the week start. JSON field names are stable English
 QuotaBar reads local JSONL logs, fetches current model pricing from LiteLLM when online, and calculates API-equivalent costs in USD.
 
 ```text
-subscription factor = API cost (USD) / (subscription cost (USD) x window_days / 30)
+subscription factor = API cost (USD) / (subscription cost (USD) × window_days / 30)
 ```
 
 The factor is normalized to the selected cost window, so windows remain comparable. `1x` means API-equivalent cost matches the subscription cost for that period. `10x` means API-equivalent cost is ten times the subscription cost.
+
+Token details (input, output, cache creation, cache read, total) are shown per provider in the live view, scoped to the active cost window. The window label is visible directly in the Token Details toggle (e.g. `Token Details · 30d`).
 
 | Cost setting | Supported values |
 | --- | --- |
@@ -142,7 +145,9 @@ Claude cost modes:
 | `calculate` | Calculate all entries from tokens and current pricing |
 | `display` | Show only `costUSD` values already present in logs |
 
-Codex cached input uses cache-read pricing when available and falls back to input pricing when a model lacks a cache-read price.
+For Claude, all four token types contribute to cost: input (uncached), output, cache creation, and cache read — each at their own per-token price. For Codex, cached and uncached input are billed separately (cache-read pricing where available, input pricing as fallback).
+
+For the full calculation model, see [docs/how-quotabar-calculates.md](docs/how-quotabar-calculates.md).
 
 Settings are stored in `%APPDATA%\quotabar-win\settings.json`:
 
@@ -158,8 +163,6 @@ Settings are stored in `%APPDATA%\quotabar-win\settings.json`:
 ```
 
 Older settings files may contain extra provider keys. QuotaBar ignores unsupported providers and writes only supported providers on save.
-
-For the full calculation model, see [docs/how-quotabar-calculates.md](docs/how-quotabar-calculates.md).
 
 ## Development
 
