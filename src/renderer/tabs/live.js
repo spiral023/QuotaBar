@@ -155,9 +155,17 @@ function tokenCollapseHtml(cf, provider) {
   </div>`;
 }
 
+function windowBadgeHtml(cf) {
+  if (!cf || !cf.windowLabel) return '';
+  const days = cf.windowDays ?? '?';
+  const mode = cf.calculationMode === 'actual-span' ? 'tatsächlicher Zeitraum' : 'festes Fenster';
+  const text = cf.calculationMode === 'actual-span' ? `${days}d (all)` : cf.windowLabel;
+  const tip = `Kostenfenster: ${cf.windowLabel}\nTage: ${days}\nModus: ${mode}`;
+  return `<span class="badge b-window" data-tip="${QB.esc(tip)}">${QB.esc(text)}</span>`;
+}
+
 function costBadgeHtml(cf) {
   if (!cf) return '';
-  const winSuffix = cf.windowLabel ? ` · ${cf.windowLabel}` : '';
   const roiTip = cf.factor !== null
     ? `API-Kosten ÷ anteiliger Abo-Preis\nfür ${cf.windowLabel || 'dieses Fenster'} (${cf.windowDays ?? '?'}d).\n1× = Abo-äquivalent.`
     : '';
@@ -168,9 +176,9 @@ function costBadgeHtml(cf) {
   const pre = cf.isEstimate ? '~' : '';
   const factorPart = `${pre}${cf.factor.toFixed(2)}× sub`;
   if (cf.apiCostUSD >= 0.005) {
-    return `<span class="badge b-cost" style="display:inline-flex;align-items:center">$${cf.apiCostUSD.toFixed(2)}${winSuffix} (${factorPart})${infoIcon}</span>`;
+    return `<span class="badge b-cost" style="display:inline-flex;align-items:center">$${cf.apiCostUSD.toFixed(2)} (${factorPart})${infoIcon}</span>`;
   }
-  return `<span class="badge b-cost" style="display:inline-flex;align-items:center">${factorPart}${winSuffix}${infoIcon}</span>`;
+  return `<span class="badge b-cost" style="display:inline-flex;align-items:center">${factorPart}${infoIcon}</span>`;
 }
 
 // ── Overview card ─────────────────────────────────────────────────────
@@ -290,6 +298,8 @@ function renderStandard(snap, name, delay) {
   if (weekly?.pace) bdgs.push(`<span class="badge ${paceClass(weekly.pace.stage)}">${paceLabel(weekly.pace.stage)}</span>`);
   const costHtml = costBadgeHtml(snap.costFactor);
   if (costHtml) bdgs.push(costHtml);
+  const winHtml = windowBadgeHtml(snap.costFactor);
+  if (winHtml) bdgs.push(winHtml);
   const accent = QB.accentVar(hasPct ? pct : null);
   const tokenHtml = tokenCollapseHtml(snap.costFactor, snap.provider);
 
@@ -319,6 +329,8 @@ function renderGemini(snap, name, delay) {
   if (snap.status === 'error') bdgs.push(`<span class="badge b-error">Error</span>`);
   const costHtml = costBadgeHtml(snap.costFactor);
   if (costHtml) bdgs.push(costHtml);
+  const winHtml = windowBadgeHtml(snap.costFactor);
+  if (winHtml) bdgs.push(winHtml);
   return `<div class="card has-accent" style="--card-accent:var(--gray);${delay}">
     <div class="card-body">
       ${providerIconHtml('gemini')}
