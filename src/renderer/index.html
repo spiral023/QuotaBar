@@ -1686,13 +1686,28 @@
       analyticsSummaryCache.clear();
     }
 
+    function setQuickStatsLoading() {
+      const ids = ['qs-api-cost', 'qs-roi', 'qs-active-days', 'qs-session'];
+      ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.textContent = '…'; el.style.color = ''; el.style.opacity = '0.45'; }
+      });
+    }
+
     function updateQuickStats(s) {
       const roi = s.roiFactor?.combined ?? 0;
-      document.getElementById('qs-api-cost').textContent    = `$${(s.apiCostUSD?.total ?? 0).toFixed(0)}`;
-      document.getElementById('qs-roi').textContent         = `${roi.toFixed(1)}×`;
-      document.getElementById('qs-roi').style.color         = QB.roiColor(roi);
-      document.getElementById('qs-active-days').textContent = `${s.activeDays ?? 0}/${s.windowDays ?? 30}`;
-      document.getElementById('qs-session').textContent     = `${s.avgSessionMinutes ?? 0} min`;
+      const vals = {
+        'qs-api-cost':    `$${(s.apiCostUSD?.total ?? 0).toFixed(0)}`,
+        'qs-roi':         `${roi.toFixed(1)}×`,
+        'qs-active-days': `${s.activeDays ?? 0}/${s.windowDays ?? 30}`,
+        'qs-session':     `${s.avgSessionMinutes ?? 0} min`,
+      };
+      for (const [id, val] of Object.entries(vals)) {
+        const el = document.getElementById(id);
+        if (el) { el.textContent = val; el.style.opacity = ''; }
+      }
+      const roiEl = document.getElementById('qs-roi');
+      if (roiEl) roiEl.style.color = QB.roiColor(roi);
     }
 
     function updateTopModels(s) {
@@ -1748,13 +1763,14 @@
 
     // Cost-Window-Pills im rechten Panel
     document.querySelectorAll('#window-pill-grid .pill').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => {
         document.querySelectorAll('#window-pill-grid .pill').forEach(p => p.classList.remove('active'));
         btn.classList.add('active');
-        const s = await QB.ipc.invoke('settings:get');
-        await QB.ipc.invoke('settings:save', { ...s, costWindow: btn.dataset.win });
-        loadAnalyticsSummary(btn.dataset.win);
+        const win = btn.dataset.win;
+        setQuickStatsLoading();
+        loadAnalyticsSummary(win);
         QB.ipc.send('quota:refresh');
+        QB.ipc.invoke('settings:save', { costWindow: win });
       });
     });
 
