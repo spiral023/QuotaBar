@@ -27,39 +27,45 @@ type TokenTotals = {
 
 const codexFileCache = new FileParseCache<CodexTokenEvent[]>();
 
+export interface CodexSourceFileRef {
+  file: string;     // absoluter Pfad zur .jsonl-Datei
+  baseDir: string;  // sessionsDir, aus dem die Datei stammt
+}
+
+/** Lists every Codex session .jsonl source file across the given session dirs. */
+export async function listCodexSourceFiles(sessionsDir: string | string[]): Promise<CodexSourceFileRef[]> {
+  const dirs = Array.isArray(sessionsDir) ? sessionsDir : [sessionsDir];
+  const refs: CodexSourceFileRef[] = [];
+  for (const dir of dirs) {
+    let entries: string[];
+    try {
+      entries = (await fs.readdir(dir, { recursive: true })) as string[];
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (e.endsWith(".jsonl")) refs.push({ file: path.join(dir, e), baseDir: dir });
+    }
+  }
+  return refs;
+}
+
+/** Parses the given Codex source files. If billingStart is passed, older events are filtered out. */
+export async function readCodexTokensFromFiles(refs: CodexSourceFileRef[], billingStart?: Date): Promise<CodexTokenEvent[]> {
+  const events: CodexTokenEvent[] = [];
+  for (const ref of refs) {
+    const parsed = await codexFileCache.get(ref.file, () => parseCodexJsonlFile(ref.file, ref.baseDir));
+    events.push(...(billingStart ? parsed.filter((event) => new Date(event.timestamp) >= billingStart) : parsed));
+  }
+  return events;
+}
+
 export async function readCodexTokensForPeriod(
   sessionsDir: string | string[],
   billingStart: Date,
 ): Promise<CodexTokenEvent[]> {
-  const dirs = Array.isArray(sessionsDir) ? sessionsDir : [sessionsDir];
-  const result: CodexTokenEvent[] = [];
-  for (const dir of dirs) {
-    result.push(...(await readCodexTokensFromDir(dir, billingStart)));
-  }
-  return result;
-}
-
-async function readCodexTokensFromDir(
-  sessionsDir: string,
-  billingStart: Date,
-): Promise<CodexTokenEvent[]> {
-  let entries: string[];
-  try {
-    entries = (await fs.readdir(sessionsDir, { recursive: true })) as string[];
-  } catch {
-    return [];
-  }
-
-  const files = entries
-    .filter((e) => e.endsWith(".jsonl"))
-    .map((e) => path.join(sessionsDir, e));
-
-  const events: CodexTokenEvent[] = [];
-  for (const file of files) {
-    const parsed = await codexFileCache.get(file, () => parseCodexJsonlFile(file, sessionsDir));
-    events.push(...parsed.filter((event) => new Date(event.timestamp) >= billingStart));
-  }
-  return events;
+  const refs = await listCodexSourceFiles(sessionsDir);
+  return readCodexTokensFromFiles(refs, billingStart);
 }
 
 async function parseCodexJsonlFile(
