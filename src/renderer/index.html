@@ -1186,6 +1186,8 @@
     .hr-date-input:focus { border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(82,208,23,0.1); }
     .hr-pill-group { display: flex; gap: 3px; }
     .hr-pill-group .pill { padding: 4px 10px; font-size: 10px; }
+    .hr-chart-pills.pill-group, .hr-chart-pills { gap: 3px; }
+    .hr-chart-pills .pill { padding: 2px 7px; font-size: 9px; }
     .hr-load-btn {
       margin-left: auto; padding: 5px 14px;
       background: rgba(82,208,23,0.08); border: 1px solid rgba(82,208,23,0.22);
@@ -1752,6 +1754,7 @@
         const s = await QB.ipc.invoke('settings:get');
         await QB.ipc.invoke('settings:save', { ...s, costWindow: btn.dataset.win });
         loadAnalyticsSummary(btn.dataset.win);
+        QB.ipc.send('quota:refresh');
       });
     });
 

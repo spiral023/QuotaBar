@@ -142,6 +142,7 @@ function tokenCollapseHtml(cf, provider) {
   const id = `tc-${QB.esc(provider)}`;
   let isOpen = false;
   try { isOpen = localStorage.getItem('tokenDetailsOpen') === '1'; } catch {}
+  const periodSuffix = cf?.windowLabel ? ` · ${QB.esc(cf.windowLabel)}` : '';
   return `<div class="token-collapse${isOpen ? ' open' : ''}" id="${QB.esc(id)}">
     <button class="token-toggle" aria-expanded="${isOpen}"
             onclick="QB.toggleTokenSection('${QB.esc(id)}')">
@@ -149,7 +150,7 @@ function tokenCollapseHtml(cf, provider) {
         <path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.5"
               stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      Token Details
+      Token Details${periodSuffix}
     </button>
     <div class="token-body">${inner}</div>
   </div>`;

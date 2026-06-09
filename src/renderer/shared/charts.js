@@ -53,7 +53,14 @@ QB.charts.createLine = function(ctx, labels, datasets) {
   });
 };
 
-QB.charts.createStackedBar = function(ctx, labels, datasets) {
+QB.charts.createStackedBar = function(ctx, labels, datasets, opts) {
+  const isTokens = opts?.yFormat === 'tokens';
+  const yFmt  = isTokens
+    ? (v) => QB.fmtTokens(v)
+    : (v) => '$' + (v < 0.01 ? Number(v).toFixed(3) : Number(v).toFixed(2));
+  const tipFmt = isTokens
+    ? (item) => ` ${item.dataset.label}: ${QB.fmtTokens(item.parsed.y)}`
+    : (item) => ` ${item.dataset.label}: $${item.parsed.y < 0.01 ? item.parsed.y.toFixed(4) : item.parsed.y.toFixed(3)}`;
   return new Chart(ctx, {
     type: 'bar',
     data: { labels, datasets },
@@ -70,9 +77,7 @@ QB.charts.createStackedBar = function(ctx, labels, datasets) {
           titleColor: '#b4c8d8',
           bodyColor: '#8298aa',
           padding: 8,
-          callbacks: {
-            label: (item) => ` ${item.dataset.label}: $${item.parsed.y < 0.01 ? item.parsed.y.toFixed(4) : item.parsed.y.toFixed(3)}`,
-          },
+          callbacks: { label: tipFmt },
         },
       },
       scales: {
@@ -96,7 +101,7 @@ QB.charts.createStackedBar = function(ctx, labels, datasets) {
           ticks: {
             color: '#506070',
             font: { family: "'IBM Plex Mono', monospace", size: 9 },
-            callback: (v) => '$' + (v < 0.01 ? Number(v).toFixed(3) : Number(v).toFixed(2)),
+            callback: yFmt,
           },
         },
       },

@@ -3,8 +3,11 @@
 
 window.QB = window.QB || {};
 
-let _barChart   = null;
+let _barChart    = null;
 let _initialized = false;
+let _lastRows    = [];
+let _chartMode   = 'cost';   // 'cost' | 'tokens'
+let _tokenMode   = 'total';  // 'total' | 'input' | 'output' | 'cache'
 
 QB.renderHistory = async function renderHistory() {
   const container = document.getElementById('history-content');
@@ -112,11 +115,71 @@ async function _loadAndRender() {
   }
 }
 
+function _renderChart() {
+  if (_barChart) { _barChart.destroy(); _barChart = null; }
+  const ctx = document.getElementById('hr-bar-canvas');
+  if (!ctx || typeof Chart === 'undefined') return;
+
+  const bucketMap = {};
+  for (const r of _lastRows) {
+    if (!bucketMap[r.bucket]) bucketMap[r.bucket] = { claude: 0, codex: 0 };
+    let val;
+    if (_chartMode === 'cost') {
+      val = r.costUSD;
+    } else if (_tokenMode === 'input') {
+      val = r.inputTokens ?? 0;
+    } else if (_tokenMode === 'output') {
+      val = r.outputTokens ?? 0;
+    } else if (_tokenMode === 'cache') {
+      val = (r.cacheReadTokens ?? 0) + (r.cacheCreationTokens ?? 0);
+    } else {
+      val = r.totalTokens ?? 0;
+    }
+    bucketMap[r.bucket][r.provider] = (bucketMap[r.bucket][r.provider] ?? 0) + val;
+  }
+  const labels     = Object.keys(bucketMap).sort();
+  const claudeData = labels.map(b => bucketMap[b].claude ?? 0);
+  const codexData  = labels.map(b => bucketMap[b].codex  ?? 0);
+
+  const titleMap = { total: 'GESAMT-TOKENS', input: 'INPUT-TOKENS', output: 'OUTPUT-TOKENS', cache: 'CACHE-TOKENS' };
+  const titleEl = document.getElementById('hr-chart-title');
+  if (titleEl) titleEl.textContent = _chartMode === 'cost' ? 'KOSTEN PRO PERIODE' : `${titleMap[_tokenMode]} PRO PERIODE`;
+
+  _barChart = QB.charts.createStackedBar(ctx, labels, [
+    { label: 'Claude', data: claudeData, backgroundColor: 'rgba(245,152,48,0.80)', borderRadius: 2 },
+    { label: 'Codex',  data: codexData,  backgroundColor: 'rgba(82,208,23,0.70)',  borderRadius: 2 },
+  ], { yFormat: _chartMode === 'tokens' ? 'tokens' : 'cost' });
+}
+
+function _bindChartToggles() {
+  const ctypePills = document.querySelectorAll('#hr-chart-type-pills .pill');
+  ctypePills.forEach(btn => {
+    btn.addEventListener('click', () => {
+      ctypePills.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _chartMode = btn.dataset.ctype;
+      const tokenRow = document.getElementById('hr-token-type-row');
+      if (tokenRow) tokenRow.style.display = _chartMode === 'tokens' ? 'flex' : 'none';
+      _renderChart();
+    });
+  });
+
+  document.querySelectorAll('#hr-token-type-row .pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#hr-token-type-row .pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _tokenMode = btn.dataset.ttype;
+      _renderChart();
+    });
+  });
+}
+
 function _renderResults(report) {
   const results = document.getElementById('hr-results');
   if (!results) return;
 
-  const rows   = report.rows   ?? [];
+  _lastRows = report.rows ?? [];
+  const rows   = _lastRows;
   const totals = report.totals ?? {};
 
   if (!rows.length) {
@@ -136,18 +199,17 @@ function _renderResults(report) {
     return;
   }
 
-  // Group by bucket for chart
-  const bucketMap = {};
-  for (const r of rows) {
-    if (!bucketMap[r.bucket]) bucketMap[r.bucket] = { claude: 0, codex: 0 };
-    bucketMap[r.bucket][r.provider] = (bucketMap[r.bucket][r.provider] ?? 0) + r.costUSD;
-  }
-  const labels     = Object.keys(bucketMap).sort();
-  const claudeData = labels.map(b => bucketMap[b].claude ?? 0);
-  const codexData  = labels.map(b => bucketMap[b].codex  ?? 0);
-
   const claudeCost = rows.filter(r => r.provider === 'claude').reduce((s, r) => s + r.costUSD, 0);
   const codexCost  = rows.filter(r => r.provider === 'codex' ).reduce((s, r) => s + r.costUSD, 0);
+  const periodCount = [...new Set(rows.map(r => r.bucket))].length;
+
+  const tTypeLabels = { total: 'Gesamt', input: 'Input', output: 'Output', cache: 'Cache' };
+  const tokenTypePillsHtml = Object.keys(tTypeLabels).map(t =>
+    `<button class="pill${_tokenMode === t ? ' active' : ''}" data-ttype="${t}">${tTypeLabels[t]}</button>`
+  ).join('');
+
+  const titleMap = { total: 'GESAMT-TOKENS', input: 'INPUT-TOKENS', output: 'OUTPUT-TOKENS', cache: 'CACHE-TOKENS' };
+  const chartTitle = _chartMode === 'cost' ? 'KOSTEN PRO PERIODE' : `${titleMap[_tokenMode]} PRO PERIODE`;
 
   results.innerHTML = `
     <div class="hr-summary-row">
@@ -169,17 +231,27 @@ function _renderResults(report) {
       </div>
       <div class="hr-kpi">
         <div class="hr-kpi-lbl">Perioden</div>
-        <div class="hr-kpi-val">${labels.length}</div>
+        <div class="hr-kpi-val">${periodCount}</div>
       </div>
     </div>
 
     <div class="hr-chart-section">
       <div class="hr-section-head">
-        <span class="hr-section-title">KOSTEN PRO PERIODE</span>
-        <div class="hr-chart-legend">
-          <span class="hr-legend-dot" style="background:var(--claude-col)"></span><span>Claude</span>
-          <span class="hr-legend-dot" style="background:var(--codex-col)"></span><span>Codex</span>
+        <span class="hr-section-title" id="hr-chart-title">${chartTitle}</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <div class="hr-pill-group hr-chart-pills" id="hr-chart-type-pills">
+            <button class="pill${_chartMode === 'cost' ? ' active' : ''}" data-ctype="cost">Kosten</button>
+            <button class="pill${_chartMode === 'tokens' ? ' active' : ''}" data-ctype="tokens">Tokens</button>
+          </div>
+          <div class="hr-chart-legend">
+            <span class="hr-legend-dot" style="background:var(--claude-col)"></span><span>Claude</span>
+            <span class="hr-legend-dot" style="background:var(--codex-col)"></span><span>Codex</span>
+          </div>
         </div>
+      </div>
+      <div class="hr-pill-group hr-chart-pills" id="hr-token-type-row"
+           style="display:${_chartMode === 'tokens' ? 'flex' : 'none'};margin-bottom:6px">
+        ${tokenTypePillsHtml}
       </div>
       <div class="hr-chart-wrap">
         <canvas id="hr-bar-canvas"></canvas>
@@ -229,12 +301,6 @@ function _renderResults(report) {
     </div>
   `;
 
-  if (_barChart) { _barChart.destroy(); _barChart = null; }
-  const ctx = document.getElementById('hr-bar-canvas');
-  if (ctx && typeof Chart !== 'undefined') {
-    _barChart = QB.charts.createStackedBar(ctx, labels, [
-      { label: 'Claude', data: claudeData, backgroundColor: 'rgba(245,152,48,0.80)', borderRadius: 2 },
-      { label: 'Codex',  data: codexData,  backgroundColor: 'rgba(82,208,23,0.70)',  borderRadius: 2 },
-    ]);
-  }
+  _renderChart();
+  _bindChartToggles();
 }

@@ -1,5 +1,6 @@
 import { getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs } from "../config/paths";
 import type { CostWindow, Settings } from "../config/settings";
+import { loadSettings } from "../config/settings";
 import type { CostFactorResult, UsageSnapshot, UsageWindow } from "../providers/types";
 import { calculateCodexApiCost, readCodexSpeedTierFromPaths } from "./codex-cost-calculator";
 import { readCodexTokensForPeriod } from "./codex-log-reader";
@@ -33,7 +34,8 @@ export class PricingEngine {
   }
 
   private async calculateClaudeFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(this.settings.costWindow, snapshot, "claude");
+    const currentSettings = await loadSettings();
+    const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(currentSettings.costWindow, snapshot, "claude");
     const entries = await readClaudeUsageEntriesForPeriod(this.claudeProjectsDir, billingStart);
     const tokens = aggregateClaudeEntries(entries);
 
@@ -70,7 +72,7 @@ export class PricingEngine {
       }
     }
 
-    const subscriptionCostUSD = this.settings.subscriptionCosts.claude;
+    const subscriptionCostUSD = currentSettings.subscriptionCosts.claude;
     const effectiveDays = windowDays > 0
       ? windowDays
       : computeActualDaysFromEntries(entries.map(e => e.timestamp));
@@ -97,7 +99,8 @@ export class PricingEngine {
   }
 
   private async calculateCodexFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(this.settings.costWindow, snapshot, "codex");
+    const currentSettings = await loadSettings();
+    const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(currentSettings.costWindow, snapshot, "codex");
     const events = await readCodexTokensForPeriod(this.codexSessionsDir, billingStart);
     if (events.length === 0) {
       return {
@@ -113,7 +116,7 @@ export class PricingEngine {
     }
     const speedTier = await readCodexSpeedTierFromPaths(Array.isArray(this.codexConfigPath) ? this.codexConfigPath : [this.codexConfigPath]);
     const apiCostUSD = await calculateCodexApiCost(events, this.fetcher, speedTier);
-    const subscriptionCostUSD = this.settings.subscriptionCosts.codex;
+    const subscriptionCostUSD = currentSettings.subscriptionCosts.codex;
     const effectiveDays = windowDays > 0
       ? windowDays
       : computeActualDaysFromEntries(events.map(e => e.timestamp));
