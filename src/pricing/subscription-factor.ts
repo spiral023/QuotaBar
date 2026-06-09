@@ -33,7 +33,7 @@ export class PricingEngine {
   }
 
   private async calculateClaudeFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const { billingStart, windowLabel, windowDays } = resolveBillingStart(this.settings.costWindow, snapshot, "claude");
+    const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(this.settings.costWindow, snapshot, "claude");
     const entries = await readClaudeUsageEntriesForPeriod(this.claudeProjectsDir, billingStart);
     const tokens = aggregateClaudeEntries(entries);
 
@@ -83,6 +83,7 @@ export class PricingEngine {
       isEstimate: false,
       windowLabel,
       windowDays: effectiveDays,
+      calculationMode,
       label: formatLabel(apiCostUSD, factor, false),
       tokenUsage: {
         inputTokens: tokens.inputTokens,
@@ -96,7 +97,7 @@ export class PricingEngine {
   }
 
   private async calculateCodexFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const { billingStart, windowLabel, windowDays } = resolveBillingStart(this.settings.costWindow, snapshot, "codex");
+    const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(this.settings.costWindow, snapshot, "codex");
     const events = await readCodexTokensForPeriod(this.codexSessionsDir, billingStart);
     if (events.length === 0) {
       return {
@@ -106,6 +107,7 @@ export class PricingEngine {
         isEstimate: true,
         windowLabel,
         windowDays,
+        calculationMode,
         label: "Keine Logs verfügbar",
       };
     }
@@ -135,6 +137,7 @@ export class PricingEngine {
       isEstimate: false,
       windowLabel,
       windowDays: effectiveDays,
+      calculationMode,
       label: formatLabel(apiCostUSD, factor, false),
       tokenUsage: {
         inputTokens: Math.max(0, inputTokens - cacheReadTokens), // uncached only, consistent with Claude
@@ -153,15 +156,15 @@ function resolveBillingStart(
   costWindow: CostWindow,
   _snapshot: UsageSnapshot,
   _provider: "claude" | "codex",
-): { billingStart: Date; windowLabel: string; windowDays: number } {
+): { billingStart: Date; windowLabel: string; windowDays: number; calculationMode: "fixed" | "actual-span" } {
   if (costWindow === "7d") {
-    return { billingStart: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), windowLabel: "7d", windowDays: 7 };
+    return { billingStart: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), windowLabel: "7d", windowDays: 7, calculationMode: "fixed" };
   }
   if (costWindow === "30d") {
-    return { billingStart: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), windowLabel: "30d", windowDays: 30 };
+    return { billingStart: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), windowLabel: "30d", windowDays: 30, calculationMode: "fixed" };
   }
   // "all" — epoch start; windowDays will be computed after data is fetched
-  return { billingStart: new Date(0), windowLabel: "all", windowDays: 0 };
+  return { billingStart: new Date(0), windowLabel: "all", windowDays: 0, calculationMode: "actual-span" };
 }
 
 function computeActualDaysFromEntries(timestamps: string[]): number {

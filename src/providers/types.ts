@@ -17,6 +17,7 @@ export interface CostFactorResult {
   label: string;
   windowLabel?: string;
   windowDays?: number;
+  calculationMode?: "fixed" | "actual-span";
   tokenUsage?: TokenUsageDetail;
 }
 
