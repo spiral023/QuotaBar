@@ -7,6 +7,8 @@ import { BurnRateTracker } from "./burnRateTracker";
 import type { PricingEngine } from "../pricing/subscription-factor";
 import type { DebugRecorder } from "../main/debugRecorder";
 import { snapshotEvent } from "../main/debugEvents";
+import { computeBackoffMs } from "./backoff";
+import { classifyFetchError } from "./fetchErrorClassifier";
 
 export type RefreshListener = (snapshots: UsageSnapshot[]) => void;
 
@@ -16,6 +18,9 @@ export class RefreshLoop {
   private readonly listeners = new Set<RefreshListener>();
   private readonly backoff = new Map<string, number>(); // provider.id → expiry timestamp (ms)
   private readonly burnRateTracker = new BurnRateTracker();
+  private readonly consecutiveRateLimits = new Map<string, number>();
+  private offline = false;
+  private lastCostWindow: string | undefined;
 
   constructor(
     private readonly providers: UsageProvider[],
@@ -75,6 +80,14 @@ export class RefreshLoop {
         }
         if (this.pricingEngine) {
           snapshot.costFactor = await this.pricingEngine.calculateFactor(snapshot);
+          const win = snapshot.costFactor?.windowLabel;
+          if (win) {
+            if (this.lastCostWindow !== undefined && this.lastCostWindow !== win) {
+              this.recorder?.write({ kind: "cost.window.changed", from: this.lastCostWindow, to: win, reason: "settings" });
+              log.info(`cost window changed from ${this.lastCostWindow} to ${win}`);
+            }
+            this.lastCostWindow = win;
+          }
         }
         this.recorder?.write(snapshotEvent(snapshot));
       }
@@ -88,12 +101,30 @@ export class RefreshLoop {
 
   private async fetchWithTimeout(provider: UsageProvider): Promise<UsageSnapshot> {
     try {
-      return await withTimeout(provider.fetchUsage(), this.timeoutMs, `${provider.displayName} timed out`);
+      const snapshot = await withTimeout(provider.fetchUsage(), this.timeoutMs, `${provider.displayName} timed out`);
+      this.consecutiveRateLimits.delete(provider.id);
+      if (this.offline) {
+        this.offline = false;
+        this.recorder?.write({ kind: "network.recovered" });
+        log.info("network recovered");
+      }
+      return snapshot;
     } catch (error) {
       if (error instanceof RateLimitError) {
-        this.backoff.set(provider.id, Date.now() + error.retryAfterMs);
-        log.warn(`${provider.id} rate-limited, backing off for ${Math.round(error.retryAfterMs / 1000)}s`);
+        const consecutive = (this.consecutiveRateLimits.get(provider.id) ?? 0) + 1;
+        this.consecutiveRateLimits.set(provider.id, consecutive);
+        const backoffMs = computeBackoffMs(error.retryAfterMs, consecutive);
+        this.backoff.set(provider.id, Date.now() + backoffMs);
+        log.warn(`${provider.id} rate-limited (#${consecutive}), backing off for ${Math.round(backoffMs / 1000)}s`);
         return errorSnapshot(provider.id, toErrorMessage(error), "error");
+      }
+      const cls = classifyFetchError(error);
+      if (cls.kind === "dns") {
+        this.offline = true;
+        this.recorder?.write({ kind: "dns.lookup.failed", provider: provider.id, code: cls.code });
+      } else if (cls.kind === "network") {
+        this.offline = true;
+        this.recorder?.write({ kind: "network.check.failed", provider: provider.id, code: cls.code });
       }
       log.warn(`${provider.id} refresh failed: ${toErrorMessage(error)}`);
       return errorSnapshot(provider.id, toErrorMessage(error), "error");

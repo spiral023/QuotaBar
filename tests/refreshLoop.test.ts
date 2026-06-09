@@ -30,9 +30,11 @@ function makeProvider(id: string, fetchFn: () => Promise<UsageSnapshot>): UsageP
 describe("RefreshLoop backoff", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -261,5 +263,53 @@ describe("RefreshLoop window intelligence", () => {
     expect(win?.safetyGapSeconds).not.toBeNull();
     // willLastToReset case → safetyGapSeconds ≈ timeToReset ≈ 7200s
     expect(win?.safetyGapSeconds).toBeGreaterThan(7000);
+  });
+});
+
+describe("RefreshLoop robustness", () => {
+  it("escalates backoff on consecutive rate limits and resets after success", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0); // kein Jitter für deterministische Assertions
+    const store = new UsageStore();
+    let call = 0;
+    const provider = makeProvider("claude", async () => {
+      call++;
+      if (call <= 2) throw new RateLimitError(0); // server says 0 → muss auf MIN_RETRY_MS gehoben werden
+      return { provider: "claude", status: "ok" as const, windows: [], updatedAt: new Date().toISOString() };
+    });
+    const events: any[] = [];
+    const recorder = { write: (e: any) => events.push(e) } as any;
+    const loop = new RefreshLoop([provider], store, 60, 10_000, undefined, recorder);
+
+    await loop.refreshNow(); // call 1 → 429, backoff = MIN_RETRY_MS = 5000ms
+    // sofortiger Retry muss geblockt sein (noch im Backoff-Fenster)
+    await loop.refreshNow();
+    expect(events.some(e => e.kind === "refresh.skipped" && e.provider === "claude")).toBe(true);
+
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("emits dns.lookup.failed and network.recovered around a DNS outage", async () => {
+    const store = new UsageStore();
+    let call = 0;
+    const provider = makeProvider("claude", async () => {
+      call++;
+      if (call === 1) {
+        const err = new Error("fetch failed");
+        (err as any).cause = Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" });
+        throw err;
+      }
+      return { provider: "claude", status: "ok" as const, windows: [], updatedAt: new Date().toISOString() };
+    });
+    const events: any[] = [];
+    const recorder = { write: (e: any) => events.push(e) } as any;
+    const loop = new RefreshLoop([provider], store, 60, 10_000, undefined, recorder);
+
+    await loop.refreshNow();
+    expect(events.some(e => e.kind === "dns.lookup.failed" && e.provider === "claude")).toBe(true);
+
+    await loop.refreshNow();
+    expect(events.some(e => e.kind === "network.recovered")).toBe(true);
   });
 });
