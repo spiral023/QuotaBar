@@ -229,6 +229,3 @@ function utcDayKey(iso: string): string | null {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-async function exists(p: string): Promise<boolean> {
-  try { await fs.access(p); return true; } catch { return false; }
-}
