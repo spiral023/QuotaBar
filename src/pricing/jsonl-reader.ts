@@ -58,11 +58,51 @@ export async function readClaudeUsageEntriesForPeriod(
   projectsDir: string | string[],
   billingStart: Date,
 ): Promise<ClaudeUsageEntry[]> {
+  const refs = await listClaudeSourceFiles(projectsDir);
+  return readClaudeUsageEntriesFromFiles(refs, billingStart);
+}
+
+export interface SourceFileRef {
+  file: string;     // absoluter Pfad zur .jsonl-Datei
+  baseDir: string;  // projectsDir, aus dem die Datei stammt
+}
+
+/** Lists every Claude usage .jsonl source file across the given project dirs. */
+export async function listClaudeSourceFiles(projectsDir: string | string[]): Promise<SourceFileRef[]> {
   const dirs = Array.isArray(projectsDir) ? projectsDir : [projectsDir];
+  const refs: SourceFileRef[] = [];
+  for (const dir of dirs) {
+    let entries: string[];
+    try {
+      entries = (await fs.readdir(dir, { recursive: true })) as string[];
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (e.endsWith(".jsonl")) refs.push({ file: path.join(dir, e), baseDir: dir });
+    }
+  }
+  return refs;
+}
+
+/**
+ * Parses the given source files with messageId de-duplication.
+ * billingStart filter is applied BEFORE dedup — same order as readClaudeEntriesFromDir.
+ */
+export async function readClaudeUsageEntriesFromFiles(refs: SourceFileRef[], billingStart?: Date): Promise<ClaudeUsageEntry[]> {
   const result: ClaudeUsageEntry[] = [];
   const seenMessageIds = new Set<string>();
-  for (const dir of dirs) {
-    result.push(...(await readClaudeEntriesFromDir(dir, billingStart, seenMessageIds)));
+  for (const ref of refs) {
+    const parsed = await claudeFileCache.get(ref.file, () => processJsonlFile(ref.file, ref.baseDir));
+    for (const entry of parsed) {
+      if (billingStart && new Date(entry.timestamp) < billingStart) continue;
+      if (entry.messageId) {
+        if (seenMessageIds.has(entry.messageId)) continue;
+        seenMessageIds.add(entry.messageId);
+      }
+      const { messageId: _messageId, ...publicEntry } = entry;
+      result.push(publicEntry);
+    }
   }
   return result;
 }
@@ -96,36 +136,6 @@ export function aggregateClaudeEntries(entries: ClaudeUsageEntry[]): AggregatedT
   return { ...totals, modelNames: Array.from(modelSet), perModel, costUSD, hasCostUSD };
 }
 
-async function readClaudeEntriesFromDir(
-  projectsDir: string,
-  billingStart: Date,
-  seenMessageIds: Set<string>,
-): Promise<ClaudeUsageEntry[]> {
-  let entries: string[];
-  try {
-    entries = (await fs.readdir(projectsDir, { recursive: true })) as string[];
-  } catch {
-    return [];
-  }
-
-  const files = entries.filter((e) => e.endsWith(".jsonl")).map((e) => path.join(projectsDir, e));
-  const result: ClaudeUsageEntry[] = [];
-
-  for (const file of files) {
-    const parsed = await claudeFileCache.get(file, () => processJsonlFile(file, projectsDir));
-    for (const entry of parsed) {
-      if (new Date(entry.timestamp) < billingStart) continue;
-      if (entry.messageId) {
-        if (seenMessageIds.has(entry.messageId)) continue;
-        seenMessageIds.add(entry.messageId);
-      }
-      const { messageId: _messageId, ...publicEntry } = entry;
-      result.push(publicEntry);
-    }
-  }
-
-  return result;
-}
 
 async function processJsonlFile(
   filePath: string,
