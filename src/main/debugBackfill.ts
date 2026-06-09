@@ -1,13 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { readClaudeUsageEntriesForPeriod, type ClaudeUsageEntry } from "../pricing/jsonl-reader";
-import { readCodexTokensForPeriod, type CodexTokenEvent } from "../pricing/codex-log-reader";
+import { listClaudeSourceFiles, readClaudeUsageEntriesFromFiles, type ClaudeUsageEntry, type SourceFileRef } from "../pricing/jsonl-reader";
+import { listCodexSourceFiles, readCodexTokensFromFiles, type CodexTokenEvent, type CodexSourceFileRef } from "../pricing/codex-log-reader";
 import { calculateCodexApiCost, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
 import { calculateCostFromTokens } from "../pricing/cost-calculator";
 import type { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import type { DebugRecorder } from "./debugRecorder";
 import type { TokensDaySummaryEvent, TokensUsageEvent } from "./debugEvents";
 import { log } from "./logging";
+import { loadManifest, saveManifest, fileSignature, diffSources, type BackfillManifest } from "./backfillManifest";
 
 export interface BackfillOptions {
   recorder: DebugRecorder;
@@ -28,22 +29,48 @@ export interface BackfillResult {
 
 export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult> {
   const startedAt = Date.now();
-  const epoch = new Date(0);
   const errors: string[] = [];
-  const claudeEntries = await readClaudeUsageEntriesForPeriod(opts.claudeProjectsDirs, epoch)
-    .catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`Backfill: Claude reader failed: ${msg}`);
-      errors.push(`claude: ${msg}`);
-      return [] as ClaudeUsageEntry[];
-    });
-  const codexEvents = await readCodexTokensForPeriod(opts.codexSessionsDirs, epoch)
-    .catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`Backfill: Codex reader failed: ${msg}`);
-      errors.push(`codex: ${msg}`);
-      return [] as CodexTokenEvent[];
-    });
+
+  const claudeRefs = await listClaudeSourceFiles(opts.claudeProjectsDirs).catch(() => [] as SourceFileRef[]);
+  const codexRefs = await listCodexSourceFiles(opts.codexSessionsDirs).catch(() => [] as CodexSourceFileRef[]);
+
+  // Aktuelle Signaturen aller Quelldateien berechnen.
+  const currentSources: Record<string, string> = {};
+  for (const ref of [...claudeRefs, ...codexRefs]) {
+    const sig = await fileSignature(ref.file);
+    if (sig !== null) currentSources[ref.file] = sig;
+  }
+
+  const manifest: BackfillManifest = opts.force
+    ? { version: 1, sources: {}, lastRunAt: new Date(0).toISOString() }
+    : await loadManifest(opts.logDir);
+  const { changed, unchanged } = diffSources(manifest.sources, currentSources);
+
+  if (!opts.force && changed.length === 0) {
+    opts.recorder.write({ kind: "backfill.skipped", unchangedSources: unchanged.length });
+    await saveManifest(opts.logDir, { version: 1, sources: currentSources, lastRunAt: new Date().toISOString() });
+    const durationMs = Date.now() - startedAt;
+    opts.recorder.write({ kind: "backfill.done", daysWritten: 0, daysSkipped: 0, durationMs, sourcesScanned: Object.keys(currentSources).length, sourcesChanged: 0 });
+    return { daysWritten: 0, daysSkipped: 0, durationMs, errors };
+  }
+
+  // Nur geänderte/neue Dateien parsen (bzw. bei force: alle).
+  const changedSet = new Set(opts.force ? Object.keys(currentSources) : changed);
+  const claudeToRead = claudeRefs.filter((r) => changedSet.has(r.file));
+  const codexToRead = codexRefs.filter((r) => changedSet.has(r.file));
+
+  const claudeEntries = await readClaudeUsageEntriesFromFiles(claudeToRead).catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`Backfill: Claude reader failed: ${msg}`);
+    errors.push(`claude: ${msg}`);
+    return [] as ClaudeUsageEntry[];
+  });
+  const codexEvents = await readCodexTokensFromFiles(codexToRead).catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`Backfill: Codex reader failed: ${msg}`);
+    errors.push(`codex: ${msg}`);
+    return [] as CodexTokenEvent[];
+  });
 
   const byDay = new Map<string, { claude: ClaudeUsageEntry[]; codex: CodexTokenEvent[] }>();
   for (const entry of claudeEntries) {
@@ -62,7 +89,6 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   }
 
   let written = 0;
-  let skipped = 0;
   const sortedDays = [...byDay.keys()].sort();
 
   const speedTier = opts.fetcher && opts.codexConfigPaths?.length
@@ -73,13 +99,8 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
 
   for (const day of sortedDays) {
     const filePath = path.join(opts.logDir, `${day}.backfill.jsonl`);
-    if (!opts.force && (await exists(filePath))) {
-      skipped++;
-      continue;
-    }
-    if (opts.force) {
-      await fs.rm(filePath, { force: true });
-    }
+    // Betroffener Tag wird immer neu geschrieben (Quelldatei hat sich geändert).
+    await fs.rm(filePath, { force: true });
     const bucket = byDay.get(day)!;
     for (const entry of bucket.claude) {
       const event: TokensUsageEvent = {
@@ -105,9 +126,17 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
     written++;
   }
 
+  await saveManifest(opts.logDir, { version: 1, sources: currentSources, lastRunAt: new Date().toISOString() });
   const durationMs = Date.now() - startedAt;
-  opts.recorder.write({ kind: "backfill.done", daysWritten: written, daysSkipped: skipped, durationMs });
-  return { daysWritten: written, daysSkipped: skipped, durationMs, errors };
+  opts.recorder.write({
+    kind: "backfill.done",
+    daysWritten: written,
+    daysSkipped: 0,
+    durationMs,
+    sourcesScanned: Object.keys(currentSources).length,
+    sourcesChanged: changedSet.size,
+  });
+  return { daysWritten: written, daysSkipped: 0, durationMs, errors };
 }
 
 async function summarizeClaude(date: string, entries: ClaudeUsageEntry[], fetcher?: LiteLLMFetcher): Promise<TokensDaySummaryEvent> {

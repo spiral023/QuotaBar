@@ -65,7 +65,7 @@ describe("runBackfill", () => {
     expect(day20.some((e) => e.kind === "tokens.daySummary" && e.provider === "claude" && e.input === 100)).toBe(true);
   });
 
-  it("is idempotent — skips days whose .backfill.jsonl already exists", async () => {
+  it("skips the whole run when no source file changed since last run", async () => {
     await writeClaudeJsonl(path.join(claudeDir, "proj", "session.jsonl"), [
       { type: "assistant", timestamp: "2026-05-20T14:00:00Z",
         message: { id: "m1", model: "claude-sonnet-4-6",
@@ -81,8 +81,11 @@ describe("runBackfill", () => {
     await recorder.flush();
 
     expect(first.daysWritten).toBeGreaterThan(0);
+    // Zweiter Lauf: Quelldatei unverändert → kompletter Skip via Manifest.
     expect(second.daysWritten).toBe(0);
-    expect(second.daysSkipped).toBeGreaterThan(0);
+    // Manifest wurde geschrieben.
+    const files = await fs.readdir(logDir);
+    expect(files).toContain("backfill-manifest.json");
   });
 
   it("Codex totalTokens does not double-count cachedInput", async () => {
