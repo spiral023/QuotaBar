@@ -14,7 +14,16 @@ export type DebugEvent =
   | TokensUsageEvent
   | TokensDaySummaryEvent
   | BackfillStartEvent
-  | BackfillDoneEvent;
+  | BackfillSkippedEvent
+  | BackfillDoneEvent
+  | SystemSuspendEvent
+  | SystemResumeEvent
+  | SystemLockEvent
+  | SystemUnlockEvent
+  | NetworkCheckFailedEvent
+  | DnsLookupFailedEvent
+  | NetworkRecoveredEvent
+  | CostWindowChangedEvent;
 
 export interface AppStartEvent { kind: "app.start"; version: string; pollIntervalSeconds: number; noWindow: boolean; platform: string; }
 export interface AppExitEvent { kind: "app.exit"; reason: string; }
@@ -70,7 +79,23 @@ export interface TokensDaySummaryEvent {
 }
 
 export interface BackfillStartEvent { kind: "backfill.start"; days: string[]; }
-export interface BackfillDoneEvent { kind: "backfill.done"; daysWritten: number; daysSkipped: number; durationMs: number; }
+export interface BackfillDoneEvent {
+  kind: "backfill.done";
+  daysWritten: number;
+  daysSkipped: number;
+  durationMs: number;
+  sourcesScanned?: number;
+  sourcesChanged?: number;
+}
+export interface BackfillSkippedEvent { kind: "backfill.skipped"; unchangedSources: number; }
+export interface SystemSuspendEvent { kind: "system.suspend"; }
+export interface SystemResumeEvent { kind: "system.resume"; sleepSeconds: number; }
+export interface SystemLockEvent { kind: "system.lock"; }
+export interface SystemUnlockEvent { kind: "system.unlock"; }
+export interface NetworkCheckFailedEvent { kind: "network.check.failed"; provider: string; code: string; }
+export interface DnsLookupFailedEvent { kind: "dns.lookup.failed"; provider: string; code: string; }
+export interface NetworkRecoveredEvent { kind: "network.recovered"; }
+export interface CostWindowChangedEvent { kind: "cost.window.changed"; from: string; to: string; reason: string; }
 
 /**
  * Snapshot event factory — converts a UsageSnapshot to its event form.
