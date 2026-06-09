@@ -16,6 +16,7 @@ import { runBackfill } from "./debugBackfill";
 import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath } from "../config/paths";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { loadCachedSnapshots, markSnapshotsFromCache, saveCachedSnapshots } from "../usage/snapshotCache";
+import { registerLifecycleEvents } from "./lifecycleEvents";
 
 interface CliOptions {
   debug: boolean;
@@ -89,6 +90,14 @@ if (!app.requestSingleInstanceLock()) {
         });
       });
       refreshLoop.start();
+      registerLifecycleEvents({
+        recorder,
+        onResume: () => {
+          void refreshLoop.refreshNow("interval").catch((err: unknown) => {
+            log.warn(`Resume refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        },
+      });
       const backfillTimer = setTimeout(() => {
         void runBackfill({
           recorder,
