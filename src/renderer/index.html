@@ -1012,6 +1012,65 @@
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
 
+    /* ── Cost-Window Loading State ──────────────────────────────────── */
+    .qs-grid,
+    .top-models-table {
+      transition: filter 220ms ease, opacity 220ms ease;
+    }
+    .qs-grid.cw-loading,
+    .top-models-table.cw-loading {
+      filter: blur(2.5px);
+      opacity: 0.38;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .rp-section { position: relative; }
+
+    /* Shimmer scan line over blurred content */
+    .rp-section.cw-loading::after {
+      content: '';
+      position: absolute;
+      inset: 18px 0 0; /* skip section title */
+      background: linear-gradient(
+        108deg,
+        transparent 30%,
+        rgba(82, 208, 23, 0.055) 50%,
+        transparent 70%
+      );
+      background-size: 250% 100%;
+      animation: cw-scan 1.7s ease-in-out infinite;
+      pointer-events: none;
+      border-radius: var(--r-card);
+    }
+    @keyframes cw-scan {
+      0%   { background-position: -100% 0; }
+      100% { background-position: 210% 0; }
+    }
+
+    /* Pulsing dot in section title */
+    .cw-dot {
+      display: inline-block;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--codex-col);
+      margin-left: 5px;
+      vertical-align: middle;
+      opacity: 0;
+      transform: scale(0.4);
+      transition: opacity 180ms ease, transform 180ms ease;
+      flex-shrink: 0;
+    }
+    .rp-section.cw-loading .cw-dot {
+      opacity: 1;
+      transform: scale(1);
+      animation: cw-dot-pulse 1.1s ease-in-out infinite;
+    }
+    @keyframes cw-dot-pulse {
+      0%, 100% { opacity: 0.3; transform: scale(0.6); }
+      50%       { opacity: 1;   transform: scale(1); }
+    }
+
     /* Right Panel Section Header */
     .rp-section { margin-bottom: 8px; }
     .rp-section-title {
@@ -1354,7 +1413,7 @@
     <!-- Rechtes Panel (nur Dashboard-Modus) -->
     <div id="right-panel">
       <div class="rp-section">
-        <div class="rp-section-title">Quick Stats</div>
+        <div class="rp-section-title">Quick Stats<span class="cw-dot"></span></div>
         <div class="qs-grid" id="qs-grid">
           <div class="qs-tile"><div class="qs-tile-lbl">API-Äq. (30d)<i class="info-icon tip-right" data-tip="Hochgerechnete API-Kosten für die letzten 30 Tage – unabhängig vom gewählten Kostenfenster.">i</i></div><div class="qs-tile-val" id="qs-api-cost">—</div></div>
           <div class="qs-tile"><div class="qs-tile-lbl">Abo ROI<i class="info-icon" data-tip="API-Kosten ÷ anteiliger Abo-Preis für das gewählte Fenster.&#10;&#10;1× = Kosten entsprechen dem Abo. 10× = API wäre 10× so teuer wie das Abo.">i</i></div><div class="qs-tile-val" id="qs-roi">—</div></div>
@@ -1363,7 +1422,7 @@
         </div>
       </div>
       <div class="rp-section">
-        <div class="rp-section-title">Top Models (30d)</div>
+        <div class="rp-section-title">Top Models<span class="cw-dot"></span></div>
         <table class="top-models-table" id="top-models-table">
           <thead><tr><th>Modell</th><th>Kosten</th><th>%</th></tr></thead>
           <tbody id="top-models-body"><tr><td colspan="3" style="color:var(--t400);text-align:center">Lädt…</td></tr></tbody>
@@ -1665,6 +1724,8 @@
         updateInsights(s);
       } catch (e) {
         console.error('analytics:summary failed', e);
+      } finally {
+        clearStatsLoading();
       }
     }
 
@@ -1699,11 +1760,17 @@
     }
 
     function setQuickStatsLoading() {
-      const ids = ['qs-api-cost', 'qs-roi', 'qs-active-days', 'qs-session'];
-      ids.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) { el.textContent = '…'; el.style.color = ''; el.style.opacity = '0.45'; }
-      });
+      document.getElementById('qs-grid')?.classList.add('cw-loading');
+      document.getElementById('top-models-table')?.classList.add('cw-loading');
+      document.getElementById('qs-grid')?.closest('.rp-section')?.classList.add('cw-loading');
+      document.getElementById('top-models-table')?.closest('.rp-section')?.classList.add('cw-loading');
+    }
+
+    function clearStatsLoading() {
+      document.getElementById('qs-grid')?.classList.remove('cw-loading');
+      document.getElementById('top-models-table')?.classList.remove('cw-loading');
+      document.getElementById('qs-grid')?.closest('.rp-section')?.classList.remove('cw-loading');
+      document.getElementById('top-models-table')?.closest('.rp-section')?.classList.remove('cw-loading');
     }
 
     function updateQuickStats(s) {
@@ -1716,7 +1783,7 @@
       };
       for (const [id, val] of Object.entries(vals)) {
         const el = document.getElementById(id);
-        if (el) { el.textContent = val; el.style.opacity = ''; }
+        if (el) { el.textContent = val; }
       }
       const roiEl = document.getElementById('qs-roi');
       if (roiEl) roiEl.style.color = QB.roiColor(roi);
