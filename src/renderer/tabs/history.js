@@ -174,6 +174,29 @@ function _bindChartToggles() {
   });
 }
 
+function _sumRows(rs) {
+  return {
+    costUSD:         rs.reduce((s, r) => s + (r.costUSD         ?? 0), 0),
+    totalTokens:     rs.reduce((s, r) => s + (r.totalTokens     ?? 0), 0),
+    inputTokens:     rs.reduce((s, r) => s + (r.inputTokens     ?? 0), 0),
+    outputTokens:    rs.reduce((s, r) => s + (r.outputTokens    ?? 0), 0),
+    cacheReadTokens: rs.reduce((s, r) => s + (r.cacheReadTokens ?? 0), 0),
+  };
+}
+
+function _footRow(label, color, t, cls) {
+  const pip = color ? `<span class="hr-prov-pip" style="background:${color}"></span>` : '';
+  return `
+    <tr class="${cls}">
+      <td colspan="2">${pip}${label}</td>
+      <td class="num cost-cell">$${t.costUSD.toFixed(3)}</td>
+      <td class="num">${QB.fmtTokens(t.totalTokens)}</td>
+      <td class="num dim">${QB.fmtTokens(t.inputTokens)}</td>
+      <td class="num dim">${QB.fmtTokens(t.outputTokens)}</td>
+      <td class="num dim">${QB.fmtTokens(t.cacheReadTokens)}</td>
+    </tr>`;
+}
+
 function _renderResults(report) {
   const results = document.getElementById('hr-results');
   if (!results) return;
@@ -199,8 +222,14 @@ function _renderResults(report) {
     return;
   }
 
-  const claudeCost = rows.filter(r => r.provider === 'claude').reduce((s, r) => s + r.costUSD, 0);
-  const codexCost  = rows.filter(r => r.provider === 'codex' ).reduce((s, r) => s + r.costUSD, 0);
+  const claudeRows = rows.filter(r => r.provider === 'claude');
+  const codexRows  = rows.filter(r => r.provider === 'codex');
+  const claudeSums = claudeRows.length ? _sumRows(claudeRows) : null;
+  const codexSums  = codexRows.length  ? _sumRows(codexRows)  : null;
+  const grandSums  = _sumRows(rows);
+
+  const claudeCost  = claudeSums?.costUSD  ?? 0;
+  const codexCost   = codexSums?.costUSD   ?? 0;
   const periodCount = [...new Set(rows.map(r => r.bucket))].length;
 
   const tTypeLabels = { total: 'Gesamt', input: 'Input', output: 'Output', cache: 'Cache' };
@@ -296,6 +325,11 @@ function _renderResults(report) {
               `;
             }).join('')}
           </tbody>
+          <tfoot>
+            ${claudeSums ? _footRow('Claude', 'var(--claude-col)', claudeSums, 'hr-foot-sub') : ''}
+            ${codexSums  ? _footRow('Codex',  'var(--codex-col)',  codexSums,  'hr-foot-sub') : ''}
+            ${_footRow('Gesamt', '', grandSums, 'hr-foot-total')}
+          </tfoot>
         </table>
       </div>
     </div>
