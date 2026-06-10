@@ -67,7 +67,10 @@ export class TrayController {
       },
       rebuildMenu: () => void this.rebuildMenu(),
       openDashboard: () => {
-        this.detailsWindow?.open(() => void this.refreshLoop.refreshNow("dashboard"));
+        this.detailsWindow?.open(
+          () => void this.refreshLoop.refreshNow("dashboard"),
+          () => void this.refreshLoop.recomputeCost(),
+        );
       },
       regenerateBackfill: this.onRegenerateBackfill,
     }));

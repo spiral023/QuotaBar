@@ -47,6 +47,24 @@ export class RefreshLoop {
     this.timer = null;
   }
 
+  async recomputeCost(): Promise<void> {
+    if (!this.pricingEngine) return;
+    const snapshots = this.store.getAll();
+    for (const snapshot of snapshots) {
+      if (snapshot.status !== "ok" && snapshot.status !== "stale") continue;
+      snapshot.costFactor = await this.pricingEngine.calculateFactor(snapshot);
+      const win = snapshot.costFactor?.windowLabel;
+      if (win) {
+        if (this.lastCostWindow !== undefined && this.lastCostWindow !== win) {
+          this.recorder?.write({ kind: "cost.window.changed", from: this.lastCostWindow, to: win, reason: "settings" });
+          log.info(`cost window changed from ${this.lastCostWindow} to ${win}`);
+        }
+        this.lastCostWindow = win;
+      }
+    }
+    for (const listener of this.listeners) listener(this.store.getAll());
+  }
+
   async refreshNow(trigger: "interval" | "manual" | "dashboard" = "interval"): Promise<UsageSnapshot[]> {
     if (this.isRefreshing) {
       return this.store.getAll();

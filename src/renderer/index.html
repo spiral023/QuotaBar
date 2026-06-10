@@ -1347,6 +1347,27 @@
     .hr-table td.bucket-cell {
       font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: var(--t300);
     }
+    .hr-table tfoot tr:first-child td { border-top: 1px solid var(--border); }
+    .hr-table tfoot td {
+      padding: 5px 6px; white-space: nowrap;
+      border-bottom: 1px solid rgba(255,255,255,0.035);
+      font-family: 'IBM Plex Mono', monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    .hr-table tfoot tr.hr-foot-sub td {
+      color: var(--t300); font-size: 9.5px;
+    }
+    .hr-table tfoot tr.hr-foot-sub td:first-child {
+      font-family: 'DM Sans', system-ui, sans-serif;
+    }
+    .hr-table tfoot tr.hr-foot-total td {
+      color: var(--t100); font-size: 10px; font-weight: 600;
+      border-top: 1px solid rgba(255,255,255,0.09);
+      border-bottom: none;
+    }
+    .hr-table tfoot tr.hr-foot-total td:first-child {
+      font-family: 'DM Sans', system-ui, sans-serif;
+    }
 
     .hr-empty-state {
       display: flex; flex-direction: column; align-items: center;
@@ -1922,8 +1943,9 @@
         btn.classList.add('active');
         const win = btn.dataset.win;
         void loadAnalyticsSummary(win, { skeleton: true });
-        QB.ipc.send('quota:refresh');
-        QB.ipc.invoke('settings:save', { costWindow: win });
+        void QB.ipc.invoke('settings:save', { costWindow: win }).then(() => {
+          QB.ipc.send('quota:recompute-cost');
+        });
       });
     });
 

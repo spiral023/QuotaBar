@@ -45,7 +45,7 @@ export class DetailsWindowController {
     this.notificationService = svc;
   }
 
-  open(onRefreshRequest: () => void): void {
+  open(onRefreshRequest: () => void, onRecomputeRequest?: () => void): void {
     if (this.win && !this.win.isDestroyed()) {
       this.win.show();
       this.positionWindow();
@@ -94,6 +94,7 @@ export class DetailsWindowController {
       });
 
       this._onRefreshRequest = onRefreshRequest;
+      this._onRecomputeRequest = onRecomputeRequest ?? null;
     }).catch(err => log.error(`Failed to open window: ${err}`));
   }
 
@@ -159,6 +160,7 @@ export class DetailsWindowController {
   }
 
   private _onRefreshRequest: (() => void) | null = null;
+  private _onRecomputeRequest: (() => void) | null = null;
 
   private handleDashboardRefresh(onRefreshRequest: () => void): void {
     this.recorder?.write({ kind: "dashboard.refreshRequested" });
@@ -190,6 +192,11 @@ export class DetailsWindowController {
     ipcMain.on("quota:refresh", () => {
       log.debug("Dashboard window requested refresh");
       this.handleDashboardRefresh(this._onRefreshRequest ?? (() => {}));
+    });
+
+    ipcMain.on("quota:recompute-cost", () => {
+      log.debug("Dashboard window requested cost recompute");
+      (this._onRecomputeRequest ?? (() => {}))();
     });
 
     ipcMain.on("window:close", () => {
@@ -266,7 +273,7 @@ export class DetailsWindowController {
       log.info(`View mode changed to ${mode}`);
       if (this.win && !this.win.isDestroyed()) {
         this.win.once("closed", () => {
-          if (this._onRefreshRequest) this.open(this._onRefreshRequest);
+          if (this._onRefreshRequest) this.open(this._onRefreshRequest, this._onRecomputeRequest ?? undefined);
         });
         this.win.close();
       }
