@@ -1,5 +1,5 @@
 export type ReportProvider = "all" | "claude" | "codex";
-export type ReportType = "daily" | "weekly" | "monthly" | "session";
+export type ReportType = "daily" | "weekly" | "monthly" | "hourly" | "session";
 export type CostMode = "auto" | "calculate" | "display";
 export type ReportOrder = "asc" | "desc";
 export type CodexSpeed = "auto" | "standard" | "fast";
@@ -17,6 +17,7 @@ export interface ReportRequest {
   order?: ReportOrder;
   breakdown?: boolean;
   source?: "live" | "backfill";
+  limit?: number;
 }
 
 export interface ModelBreakdown {

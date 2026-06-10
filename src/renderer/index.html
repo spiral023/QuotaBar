@@ -1245,10 +1245,24 @@
     .hr-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
     .hr-controls {
-      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+      display: flex; flex-direction: column; gap: 6px;
       background: var(--bg-card); border: 1px solid var(--border);
       border-radius: var(--r-card); padding: 8px 12px; margin-bottom: 6px;
     }
+    .hr-preset-row {
+      display: flex; flex-wrap: wrap; gap: 4px;
+      padding-bottom: 6px; border-bottom: 1px solid var(--border);
+    }
+    .hr-preset-btn {
+      padding: 3px 10px; font-size: 10px; font-family: 'DM Sans', system-ui, sans-serif;
+      font-weight: 500; background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: var(--r-pill); color: var(--t300); cursor: pointer; outline: none;
+      transition-property: background, border-color, color, scale; transition-duration: 120ms;
+    }
+    .hr-preset-btn:hover { background: var(--bg-card-hover); color: var(--t100); border-color: var(--border-focus); }
+    .hr-preset-btn:active { scale: 0.96; }
+    .hr-preset-btn.active { background: rgba(82,208,23,0.1); border-color: rgba(82,208,23,0.32); color: var(--green); }
+    .hr-date-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
     .hr-date-label {
       font-size: 9px; font-weight: 600; letter-spacing: 0.1em;
       text-transform: uppercase; color: var(--t400);

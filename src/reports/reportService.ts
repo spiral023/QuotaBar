@@ -44,9 +44,10 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
     const sinceDate = normalized.since ? new Date(`${normalized.since}T00:00:00.000Z`) : undefined;
     const records = deps.backfillRecords
       ?? await readBackfillDayRecords(deps.backfillLogDir ?? getDebugLogDir(), sinceDate);
-    const rows = buildRowsFromBackfill(records, normalized).sort(
+    const sorted = buildRowsFromBackfill(records, normalized).sort(
       (a, b) => normalized.order === "asc" ? a.bucket.localeCompare(b.bucket) : b.bucket.localeCompare(a.bucket),
     );
+    const rows = applyLimit(sorted, normalized.limit, normalized.order);
     return {
       request: normalized,
       rows,
@@ -73,13 +74,14 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
     rows.push(...(await buildCodexRows(events, normalized, fetcher, speed)));
   }
 
-  const filtered = rows
+  const sorted = rows
     .sort((a, b) => normalized.order === "asc" ? a.bucket.localeCompare(b.bucket) : b.bucket.localeCompare(a.bucket));
+  const limited = applyLimit(sorted, normalized.limit, normalized.order);
 
   return {
     request: normalized,
-    rows: filtered,
-    totals: sumRows(filtered),
+    rows: limited,
+    totals: sumRows(limited),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -321,6 +323,7 @@ function normalizeRequest(request: ReportRequest) {
     order: request.order ?? "desc",
     breakdown: Boolean(request.breakdown),
     source: request.source ?? "live",
+    limit: request.limit ? Math.max(1, Math.floor(Number(request.limit))) : undefined,
   } as const;
 }
 
@@ -328,7 +331,35 @@ function bucketFor(timestamp: string, type: string, timezone: string): string {
   const date = new Date(timestamp);
   if (type === "monthly") return localDate(timestamp, timezone).slice(0, 7);
   if (type === "weekly") return isoWeekBucket(date, timezone);
+  if (type === "hourly") return localHour(timestamp, timezone);
   return localDate(timestamp, timezone);
+}
+
+const hourFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function hourFormatterFor(timezone: string): Intl.DateTimeFormat {
+  let fmt = hourFormatters.get(timezone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      hour12: false,
+    });
+    hourFormatters.set(timezone, fmt);
+  }
+  return fmt;
+}
+
+function localHour(timestamp: string, timezone: string): string {
+  const parts = hourFormatterFor(timezone).formatToParts(new Date(timestamp));
+  const y = parts.find(p => p.type === "year")?.value  ?? "0000";
+  const m = parts.find(p => p.type === "month")?.value ?? "01";
+  const d = parts.find(p => p.type === "day")?.value   ?? "01";
+  const h = parts.find(p => p.type === "hour")?.value  ?? "00";
+  return `${y}-${m}-${d} ${pad(Number(h))}:00`;
 }
 
 function localDate(timestamp: string, timezone: string): string {
@@ -415,4 +446,12 @@ function sumRows(rows: ReportRow[]): ReportTotals {
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
+}
+
+function applyLimit(rows: ReportRow[], limit: number | undefined, order: "asc" | "desc"): ReportRow[] {
+  if (!limit) return rows;
+  // rows are already sorted; collect unique buckets and keep the most recent `limit` of them
+  const uniqueBuckets = [...new Set(rows.map(r => r.bucket))].sort();
+  const kept = new Set(uniqueBuckets.slice(-limit));
+  return rows.filter(r => kept.has(r.bucket));
 }

@@ -87,6 +87,7 @@ export interface Settings {
   costWindow: CostWindow;
   viewMode: ViewMode;
   insightsPanelOpen: boolean;
+  pinned: boolean;
   debugLog: DebugLogSettings;
   notifications: NotificationSettings;
 }
@@ -99,6 +100,7 @@ export const defaultSettings: Settings = {
   costWindow: "30d",
   viewMode: "dashboard",
   insightsPanelOpen: false,
+  pinned: true,
   debugLog: { enabled: true },
   notifications: defaultNotificationSettings,
 };
@@ -139,6 +141,7 @@ export function normalizeSettings(settings: Settings): Settings {
     costWindow,
     viewMode,
     insightsPanelOpen: Boolean(settings.insightsPanelOpen),
+    pinned: settings.pinned !== false,
     debugLog: { enabled: settings.debugLog?.enabled !== false },
     notifications: normalizeNotificationSettings(settings.notifications),
   };

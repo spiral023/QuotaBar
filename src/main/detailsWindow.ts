@@ -56,6 +56,7 @@ export class DetailsWindowController {
 
     void loadSettings().then(settings => {
       this.recorder?.write({ kind: "dashboard.open" });
+      this.isPinned = settings.pinned;
       const isDashboard = settings.viewMode !== "compact";
       this.win = new BrowserWindow({
         width:      isDashboard ? 900 : 340,
@@ -82,6 +83,7 @@ export class DetailsWindowController {
         if (!this.win || this.win.isDestroyed()) return;
         this.positionWindow(isDashboard);
         this.win.show();
+        this.win.focus();
       });
 
       this.win.on("blur", () => {
@@ -187,6 +189,7 @@ export class DetailsWindowController {
       if (this.win && !this.win.isDestroyed()) {
         this.win.webContents.send("window:pin-state", this.isPinned);
       }
+      void loadSettings().then(s => saveSettings({ ...s, pinned: this.isPinned }));
     });
 
     ipcMain.on("quota:refresh", () => {
