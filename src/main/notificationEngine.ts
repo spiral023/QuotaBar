@@ -1,6 +1,7 @@
 import type { UsageSnapshot, UsageWindow } from "../providers/types";
 import type { NotificationSettings } from "../config/settings";
 import type { PaceStage } from "../usage/usagePace";
+import { localISOString } from "./logging";
 
 export type NotificationSeverity = "info" | "watch" | "warning" | "critical";
 
@@ -24,6 +25,11 @@ export interface NotificationContext {
 
 // ── State store ───────────────────────────────────────────────────────────────
 
+export interface PersistedNotificationState {
+  lastFired: Record<string, number>;
+  lastGlobalFiredAt: number;
+}
+
 export class NotificationStateStore {
   private readonly lastFired       = new Map<string, number>();
   private readonly lastPercent     = new Map<string, number | undefined>();
@@ -32,6 +38,22 @@ export class NotificationStateStore {
   private readonly staleStartedAt  = new Map<string, number>();
   private readonly resetDetectedAt = new Map<string, number>();
   private lastGlobalFiredAt        = 0;
+
+  loadPersisted(saved: PersistedNotificationState): void {
+    for (const [k, v] of Object.entries(saved.lastFired)) {
+      this.lastFired.set(k, v);
+    }
+    if (typeof saved.lastGlobalFiredAt === "number") {
+      this.lastGlobalFiredAt = saved.lastGlobalFiredAt;
+    }
+  }
+
+  serialize(): PersistedNotificationState {
+    return {
+      lastFired: Object.fromEntries(this.lastFired),
+      lastGlobalFiredAt: this.lastGlobalFiredAt,
+    };
+  }
 
   /** Checks only the per-rule cooldown. Global gap is enforced in the engine after deduplication. */
   canFire(ruleId: string, key: string, cooldownMinutes: number): boolean {
@@ -189,7 +211,7 @@ function evaluateWindowRules(
         severity: "info",
         title: `${cap1(snap.provider)} ${windowLabel(win.name)} zurückgesetzt`,
         body: `Das Kontingent ist zurück auf 0 %.`,
-        firedAt: now.toISOString(),
+        firedAt: localISOString(now),
         reason: `usedPercent ${pPrev?.toFixed(0)}% → ${p.toFixed(0)}%`,
       });
       state.recordFired("confirmedReset", key);
@@ -211,10 +233,10 @@ function evaluateWindowRules(
         ruleId: "unexpectedReset",
         provider: snap.provider, windowName: win.name,
         severity: "watch",
-        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: unerwarteter Reset`,
-        body: `Verbrauch fiel von ${pPrev.toFixed(0)} % auf ${p.toFixed(0)} % – möglicherweise ein frühzeitiger Reset.`,
-        firedAt: now.toISOString(),
-        reason: `usedPercent ${pPrev.toFixed(0)}% → ${p.toFixed(0)}%`,
+        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: außerplanmäßiger Reset`,
+        body: `Verbrauch fiel von ${pPrev.toFixed(0)} % auf ${p.toFixed(0)} % außerhalb des normalen Rücksetzzyklus. Mögliche Ursachen: Promo-Reset (z. B. neues Modell), Planänderung oder API-Wartung.`,
+        firedAt: localISOString(now),
+        reason: `usedPercent ${pPrev.toFixed(0)}% → ${p.toFixed(0)}% (outside scheduled reset)`,
       });
       state.recordFired("unexpectedReset", key);
     }
@@ -232,7 +254,7 @@ function evaluateWindowRules(
           severity: "info",
           title: `${cap1(snap.provider)} ${windowLabel(win.name)} setzt sich bald zurück`,
           body: `Reset in ${Math.ceil(minutesUntilReset)} Minuten.`,
-          firedAt: now.toISOString(),
+          firedAt: localISOString(now),
           reason: `resetsAt in ${minutesUntilReset.toFixed(0)} min`,
         });
         state.recordFired("resetSoon", key);
@@ -250,7 +272,7 @@ function evaluateWindowRules(
         severity: "warning",
         title: `${cap1(snap.provider)} ${windowLabel(win.name)}: ${p.toFixed(0)} % verbraucht`,
         body: `Das Kontingent hat ${cfg4.thresholdPercent} % überschritten.`,
-        firedAt: now.toISOString(),
+        firedAt: localISOString(now),
         reason: `usedPercent crossed ${cfg4.thresholdPercent}%`,
       });
       state.recordFired("highUsage", key);
@@ -267,7 +289,7 @@ function evaluateWindowRules(
         severity: "critical",
         title: `${cap1(snap.provider)} ${windowLabel(win.name)}: ${p.toFixed(0)} % verbraucht`,
         body: `Kritische Schwelle – das Kontingent wird bald erschöpft.`,
-        firedAt: now.toISOString(),
+        firedAt: localISOString(now),
         reason: `usedPercent crossed ${cfg5.thresholdPercent}%`,
       });
       state.recordFired("criticalUsage", key);
@@ -287,7 +309,7 @@ function evaluateWindowRules(
           severity: "warning",
           title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Kontingent läuft ab`,
           body: `Beim aktuellen Tempo erschöpft das Kontingent vor dem Reset.`,
-          firedAt: now.toISOString(),
+          firedAt: localISOString(now),
           reason: `etaSeconds=${win.pace.etaSeconds}, minutesUntilReset=${minutesUntilReset.toFixed(0)}`,
         });
         state.recordFired("projectedDepletion", key);
@@ -316,7 +338,7 @@ function evaluateWindowRules(
         severity: "watch",
         title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Verbrauch deutlich zu hoch`,
         body: `Verbrauchstempo liegt +${delta} % über dem erwarteten Tagesdurchschnitt.`,
-        firedAt: now.toISOString(),
+        firedAt: localISOString(now),
         reason: `pace transitioned to farAhead (delta=${delta}%)`,
       });
       state.recordFired("farAhead", key);
@@ -340,7 +362,7 @@ function evaluateWindowRules(
         severity: "info",
         title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Deutlich mehr Reserve als üblich`,
         body: `Verbrauchstempo liegt −${delta} % unter dem Wochenpfad – noch viel Kontingent verfügbar.`,
-        firedAt: now.toISOString(),
+        firedAt: localISOString(now),
         reason: `pace transitioned to farBehind (delta=-${delta}%)`,
       });
       state.recordFired("farBehind", key);
@@ -377,7 +399,7 @@ function evaluateProviderDataHealth(
           severity: "watch",
           title: `${cap1(snap.provider)}: Daten veraltet`,
           body: `Nutzungsdaten wurden seit mehr als ${cfg.staleMinutes} Minuten nicht aktualisiert.`,
-          firedAt: now.toISOString(),
+          firedAt: localISOString(now),
           reason: `status=${snap.status} for ${staleMinutes.toFixed(0)} min`,
         });
         state.recordFired("providerDataHealth:stale", key);
@@ -391,7 +413,7 @@ function evaluateProviderDataHealth(
         severity: "info",
         title: `${cap1(snap.provider)}: Daten wieder aktuell`,
         body: `Nutzungsdaten sind nach einer Unterbrechung wieder verfügbar.`,
-        firedAt: now.toISOString(),
+        firedAt: localISOString(now),
         reason: `status recovered from ${prevStatus} to ok`,
       });
       state.recordFired("providerDataHealth:recovered", key);

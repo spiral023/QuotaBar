@@ -17,6 +17,7 @@ export class RefreshLoop {
   private isRefreshing = false;
   private readonly listeners = new Set<RefreshListener>();
   private readonly backoff = new Map<string, number>(); // provider.id → expiry timestamp (ms)
+  private readonly skipLoggedUntil = new Map<string, number>(); // provider.id → backoff expiry that was already skip-logged
   private readonly burnRateTracker = new BurnRateTracker();
   private readonly consecutiveRateLimits = new Map<string, number>();
   private offline = false;
@@ -56,10 +57,16 @@ export class RefreshLoop {
       const nowMs = Date.now();
       const active = this.providers.filter((p) => {
         const until = this.backoff.get(p.id);
-        if (until === undefined || nowMs >= until) return true;
-        const remainingSeconds = Math.ceil((until - nowMs) / 1000);
-        log.info(`${p.id} rate-limited, skipping refresh (${remainingSeconds}s remaining)`);
-        this.recorder?.write({ kind: "refresh.skipped", provider: p.id, reason: "rate-limited", remainingSeconds });
+        if (until === undefined || nowMs >= until) {
+          this.skipLoggedUntil.delete(p.id);
+          return true;
+        }
+        if (this.skipLoggedUntil.get(p.id) !== until) {
+          const remainingSeconds = Math.ceil((until - nowMs) / 1000);
+          log.info(`${p.id} rate-limited, skipping refresh (${remainingSeconds}s remaining)`);
+          this.recorder?.write({ kind: "refresh.skipped", provider: p.id, reason: "rate-limited", remainingSeconds });
+          this.skipLoggedUntil.set(p.id, until);
+        }
         return false;
       });
       this.recorder?.write({ kind: "refresh.start", providers: active.map((p) => p.id), trigger });
@@ -115,6 +122,7 @@ export class RefreshLoop {
         this.consecutiveRateLimits.set(provider.id, consecutive);
         const backoffMs = computeBackoffMs(error.retryAfterMs, consecutive);
         this.backoff.set(provider.id, Date.now() + backoffMs);
+        this.skipLoggedUntil.delete(provider.id);
         log.warn(`${provider.id} rate-limited (#${consecutive}), backing off for ${Math.round(backoffMs / 1000)}s`);
         return errorSnapshot(provider.id, toErrorMessage(error), "error");
       }

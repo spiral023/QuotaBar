@@ -6,10 +6,13 @@ import { RefreshLoop } from "../usage/refreshLoop";
 import { buildContextMenu } from "./menu";
 import type { DetailsWindowController } from "./detailsWindow";
 
+const STALE_RESUME_THRESHOLD_S = 300; // 5 Minuten Sleep → Stale-Indikator
+
 export class TrayController {
   private tray: Tray;
   private snapshots: UsageSnapshot[] = [];
   private detailsWindow: DetailsWindowController | null = null;
+  private isStaleAfterResume = false;
 
   constructor(
     private readonly providers: UsageProvider[],
@@ -41,7 +44,16 @@ export class TrayController {
     this.detailsWindow = dw;
   }
 
+  /** Zeigt "Aktualisiere…" im Tooltip nach einem langen Sleep. Wird beim nächsten Refresh automatisch gelöscht. */
+  notifyStaleAfterResume(sleepSeconds: number): void {
+    if (sleepSeconds >= STALE_RESUME_THRESHOLD_S) {
+      this.isStaleAfterResume = true;
+      this.tray.setToolTip("QuotaBar – Aktualisiere…");
+    }
+  }
+
   async update(): Promise<void> {
+    this.isStaleAfterResume = false;
     this.tray.setImage(renderTrayIcon(buildIconState(this.snapshots)));
     this.tray.setToolTip(buildTooltip(this.snapshots));
     await this.rebuildMenu();

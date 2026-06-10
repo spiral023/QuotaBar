@@ -4,7 +4,7 @@ import { log } from "./logging";
 
 export interface LifecycleDeps {
   recorder: DebugRecorder;
-  onResume: () => void;
+  onResume: (sleepSeconds: number) => void;
 }
 
 /**
@@ -26,7 +26,7 @@ export function registerLifecycleEvents(deps: LifecycleDeps): void {
     suspendedAt = null;
     deps.recorder.write({ kind: "system.resume", sleepSeconds });
     log.info(`system resume after ${sleepSeconds}s`);
-    deps.onResume();
+    deps.onResume(sleepSeconds);
   });
 
   powerMonitor.on("lock-screen", () => {

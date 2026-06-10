@@ -1,5 +1,6 @@
 import fsSync from "node:fs";
 import { getNotificationLogPath } from "../config/paths";
+import { localISOString } from "./logging";
 import type { NotificationEvent } from "./notificationEngine";
 
 const MAX_BYTES = 1_000_000;
@@ -9,7 +10,7 @@ export class NotificationLog {
 
   constructor() {
     this.path = getNotificationLogPath();
-    this.append(JSON.stringify({ t: new Date().toISOString(), evt: "start" }));
+    this.append(JSON.stringify({ t: localISOString(new Date()), evt: "start" }));
   }
 
   write(event: NotificationEvent): void {

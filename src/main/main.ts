@@ -92,7 +92,8 @@ if (!app.requestSingleInstanceLock()) {
       refreshLoop.start();
       registerLifecycleEvents({
         recorder,
-        onResume: () => {
+        onResume: (sleepSeconds: number) => {
+          tray.notifyStaleAfterResume(sleepSeconds);
           void refreshLoop.refreshNow("interval").catch((err: unknown) => {
             log.warn(`Resume refresh failed: ${err instanceof Error ? err.message : String(err)}`);
           });

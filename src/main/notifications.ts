@@ -1,13 +1,15 @@
 import { existsSync } from "node:fs";
+import fsSync from "node:fs";
 import path from "node:path";
 import { Notification } from "electron";
 import type { NotificationConstructorOptions } from "electron";
 import type { UsageSnapshot } from "../providers/types";
 import type { NotificationSettings } from "../config/settings";
 import { NotificationEngine, NotificationStateStore } from "./notificationEngine";
-import type { NotificationEvent } from "./notificationEngine";
+import type { NotificationEvent, PersistedNotificationState } from "./notificationEngine";
 import { NotificationHistory } from "./notificationHistory";
 import { NotificationLog } from "./notificationLog";
+import { getNotificationStatePath } from "../config/paths";
 
 export { NotificationEvent };
 
@@ -27,6 +29,25 @@ export class NotificationService {
 
   constructor(settings: NotificationSettings) {
     this.settings = settings;
+    this.loadPersistedState();
+  }
+
+  private loadPersistedState(): void {
+    try {
+      const raw = fsSync.readFileSync(getNotificationStatePath(), "utf8");
+      const parsed = JSON.parse(raw) as PersistedNotificationState;
+      this.state.loadPersisted(parsed);
+    } catch {
+      // File doesn't exist yet or corrupt — start fresh
+    }
+  }
+
+  private savePersistedState(): void {
+    try {
+      fsSync.writeFileSync(getNotificationStatePath(), JSON.stringify(this.state.serialize()), "utf8");
+    } catch {
+      // Best-effort — never crash the app
+    }
   }
 
   updateSettings(settings: NotificationSettings): void {
@@ -49,6 +70,7 @@ export class NotificationService {
 
     if (events.length > 0) {
       this.history.add(events);
+      this.savePersistedState();
     }
   }
 

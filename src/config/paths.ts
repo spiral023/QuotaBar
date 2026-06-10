@@ -23,6 +23,10 @@ export function getNotificationLogPath(): string {
   return path.join(getAppConfigDir(), "notifications.log");
 }
 
+export function getNotificationStatePath(): string {
+  return path.join(getAppConfigDir(), "notification-state.json");
+}
+
 export function getSettingsPath(): string {
   return path.join(getAppConfigDir(), "settings.json");
 }
