@@ -1013,11 +1013,11 @@
     }
 
     /* ── Cost-Window Loading State ──────────────────────────────────── */
-    /* Blur-in uses the transition from the "from" state (no class) → fast.
-       Blur-out uses the transition from the "from" state (.cw-loading) → smooth. */
+    /* Blur-in: instant (base state has transition:none — used as "from" when adding class).
+       Blur-out: smooth (cw-loading state transition — used as "from" when removing class). */
     .qs-grid,
     .top-models-table {
-      transition: filter 30ms ease, opacity 30ms ease;
+      transition: none;
     }
     .qs-grid.cw-loading,
     .top-models-table.cw-loading {
@@ -1729,7 +1729,10 @@
       } catch (e) {
         console.error('analytics:summary failed', e);
       } finally {
-        clearStatsLoading();
+        // Double RAF: even if data resolved from cache in the same microtask
+        // tick (before the browser painted), the blur is guaranteed to be
+        // visible for at least two frames before clearStatsLoading runs.
+        requestAnimationFrame(() => requestAnimationFrame(() => clearStatsLoading()));
       }
     }
 
