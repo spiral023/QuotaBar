@@ -1577,8 +1577,9 @@
       lastRefreshedAt = data.lastRefreshedAt ? new Date(data.lastRefreshedAt) : new Date();
       clearDashboardDataCache();
       render(data.snapshots);
-      // Aktives Window zuerst laden, danach die anderen Windows wieder
-      // vorladen — sonst trifft der nächste Pill-Klick einen kalten Cache.
+      // Show loading state so a concurrent pill-click load and this refresh
+      // both hold the blur until the last one finishes (ref-counted).
+      setQuickStatsLoading();
       void loadAnalyticsSummary().finally(() => {
         void prefetchSummaryWindows(activeCostWindowFromUI());
       });
@@ -1759,7 +1760,13 @@
       analyticsSummaryCache.clear();
     }
 
+    // Reference counter: blur stays as long as at least one load is in-flight.
+    // Prevents a second loadAnalyticsSummary (from quota:update) from updating
+    // the DOM without blur after the pill-click load already cleared it.
+    let _statsLoadingCount = 0;
+
     function setQuickStatsLoading() {
+      _statsLoadingCount++;
       document.getElementById('qs-grid')?.classList.add('cw-loading');
       document.getElementById('top-models-table')?.classList.add('cw-loading');
       document.getElementById('qs-grid')?.closest('.rp-section')?.classList.add('cw-loading');
@@ -1767,6 +1774,8 @@
     }
 
     function clearStatsLoading() {
+      _statsLoadingCount = Math.max(0, _statsLoadingCount - 1);
+      if (_statsLoadingCount > 0) return;
       document.getElementById('qs-grid')?.classList.remove('cw-loading');
       document.getElementById('top-models-table')?.classList.remove('cw-loading');
       document.getElementById('qs-grid')?.closest('.rp-section')?.classList.remove('cw-loading');
