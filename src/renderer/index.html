@@ -1013,9 +1013,11 @@
     }
 
     /* ── Cost-Window Loading State ──────────────────────────────────── */
+    /* Blur-in uses the transition from the "from" state (no class) → fast.
+       Blur-out uses the transition from the "from" state (.cw-loading) → smooth. */
     .qs-grid,
     .top-models-table {
-      transition: filter 220ms ease, opacity 220ms ease;
+      transition: filter 30ms ease, opacity 30ms ease;
     }
     .qs-grid.cw-loading,
     .top-models-table.cw-loading {
@@ -1023,6 +1025,7 @@
       opacity: 0.38;
       pointer-events: none;
       user-select: none;
+      transition: filter 260ms ease, opacity 260ms ease;
     }
 
     .rp-section { position: relative; }
