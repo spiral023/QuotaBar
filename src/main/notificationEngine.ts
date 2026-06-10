@@ -28,6 +28,7 @@ export interface NotificationContext {
 export interface PersistedNotificationState {
   lastFired: Record<string, number>;
   lastGlobalFiredAt: number;
+  lastPercent?: Record<string, number>; // undefined-Werte werden weggelassen
 }
 
 export class NotificationStateStore {
@@ -46,12 +47,22 @@ export class NotificationStateStore {
     if (typeof saved.lastGlobalFiredAt === "number") {
       this.lastGlobalFiredAt = saved.lastGlobalFiredAt;
     }
+    if (saved.lastPercent) {
+      for (const [k, v] of Object.entries(saved.lastPercent)) {
+        this.lastPercent.set(k, v);
+      }
+    }
   }
 
   serialize(): PersistedNotificationState {
+    const lastPercent: Record<string, number> = {};
+    for (const [k, v] of this.lastPercent) {
+      if (typeof v === "number") lastPercent[k] = v;
+    }
     return {
       lastFired: Object.fromEntries(this.lastFired),
       lastGlobalFiredAt: this.lastGlobalFiredAt,
+      lastPercent,
     };
   }
 
@@ -298,10 +309,11 @@ function evaluateWindowRules(
 
   // Rule 6: Projected depletion before reset
   const cfg6 = rules.projectedDepletion;
-  if (cfg6.enabled && win.pace && !win.pace.willLastToReset && win.pace.etaSeconds !== null && win.resetsAt) {
+  if (cfg6.enabled && win.pace && !win.pace.willLastToReset && win.pace.etaSeconds !== null && win.pace.etaSeconds > 0 && win.resetsAt) {
     const minutesUntilReset = (new Date(win.resetsAt).getTime() - now.getTime()) / 60_000;
     const minutesUntilEmpty = win.pace.etaSeconds / 60;
-    if (minutesUntilReset > 0 && minutesUntilEmpty < minutesUntilReset - cfg6.minEarlyMinutes) {
+    // Unterdrücken wenn ETA < 2 min – zu kurz für eine actionable Warnung
+    if (minutesUntilReset > 0 && minutesUntilEmpty >= 2 && minutesUntilEmpty < minutesUntilReset - cfg6.minEarlyMinutes) {
       if (state.canFire("projectedDepletion", key, cfg6.cooldownMinutes)) {
         events.push({
           ruleId: "projectedDepletion",

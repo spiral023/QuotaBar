@@ -94,9 +94,18 @@ if (!app.requestSingleInstanceLock()) {
         recorder,
         onResume: (sleepSeconds: number) => {
           tray.notifyStaleAfterResume(sleepSeconds);
-          void refreshLoop.refreshNow("interval").catch((err: unknown) => {
-            log.warn(`Resume refresh failed: ${err instanceof Error ? err.message : String(err)}`);
-          });
+          const doRefresh = (): void => {
+            void refreshLoop.refreshNow("interval").catch((err: unknown) => {
+              log.warn(`Resume refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+            });
+          };
+          // Nach längerem Sleep braucht das OS etwas Zeit für DNS – kurz warten
+          if (sleepSeconds > 60) {
+            const t = setTimeout(doRefresh, 8_000);
+            t.unref();
+          } else {
+            doRefresh();
+          }
         },
       });
       const backfillTimer = setTimeout(() => {
