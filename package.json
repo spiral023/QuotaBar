@@ -6,7 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "dev": "npm run build && electron . --log-debug",
-    "dev:watch": "concurrently --kill-others \"tsc -p tsconfig.json --watch\" \"nodemon --watch dist --delay 1 --exec \\\"electron . --log-debug\\\"\"",
+    "dev:watch": "concurrently --kill-others \"tsc -p tsconfig.json --watch\" \"nodemon --watch dist --watch src/renderer --delay 1 --exec \\\"electron . --log-debug\\\"\"",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "package": "npm run build && electron-builder --win --publish never"

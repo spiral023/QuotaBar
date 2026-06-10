@@ -167,8 +167,8 @@ function _buildLineChart(data) {
     {
       label: 'Claude',
       data: buckets.map(b => b.claudeUSD),
-      borderColor: '#f59830',
-      backgroundColor: 'rgba(245,152,48,0.08)',
+      borderColor: '#DA785B',
+      backgroundColor: 'rgba(218,120,91,0.08)',
       borderWidth: 1.5,
       pointRadius: 2,
       pointHoverRadius: 4,
@@ -178,8 +178,8 @@ function _buildLineChart(data) {
     {
       label: 'Codex',
       data: buckets.map(b => b.codexUSD),
-      borderColor: '#52d017',
-      backgroundColor: 'rgba(82,208,23,0.06)',
+      borderColor: '#4B55C8',
+      backgroundColor: 'rgba(75,85,200,0.07)',
       borderWidth: 1.5,
       pointRadius: 2,
       pointHoverRadius: 4,
@@ -199,7 +199,7 @@ function _buildDonut(data) {
   const total      = claudeCost + codexCost;
 
   const chartData   = total > 0 ? [claudeCost, codexCost] : [1, 1];
-  const chartColors = ['#f59830', '#52d017'];
+  const chartColors = ['#DA785B', '#4B55C8'];
   const labels      = ['Claude', 'Codex'];
 
   _donutChart = QB.charts.createDoughnut(ctx, labels, chartData, chartColors);
@@ -216,8 +216,8 @@ function _buildDonut(data) {
   const legend = document.getElementById('an-legend');
   if (legend && total > 0) {
     legend.innerHTML = [
-      { label: 'Claude', cost: claudeCost, color: '#f59830' },
-      { label: 'Codex',  cost: codexCost,  color: '#52d017' },
+      { label: 'Claude', cost: claudeCost, color: '#DA785B' },
+      { label: 'Codex',  cost: codexCost,  color: '#4B55C8' },
     ].map(p => `
       <div class="an-legend-row">
         <span class="an-legend-dot" style="background:${p.color}"></span>
