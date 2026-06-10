@@ -28,6 +28,7 @@
     "chart.js": "^4.5.1",
     "electron": "^42.3.3",
     "electron-builder": "^26.15.2",
+    "playwright-core": "^1.60.0",
     "typescript": "^5.8.3",
     "vitest": "^4.1.8"
   }
