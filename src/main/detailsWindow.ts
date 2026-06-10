@@ -12,19 +12,17 @@ import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "
 import type { NotificationService } from "./notifications";
 import type { DebugRecorder } from "./debugRecorder";
 import { AsyncResultCache } from "./asyncResultCache";
+import { PersistentWorkerClient } from "./workerClient";
+
+// One long-lived worker instead of a fresh one per request: its module-level
+// FileParseCaches stay warm, so repeat requests (cost-window switch, poll
+// ticks) only re-stat the JSONL files instead of re-parsing the full history.
+const analyticsWorker = new PersistentWorkerClient(
+  () => new Worker(path.join(__dirname, "analyticsWorker.js"))
+);
 
 function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(path.join(__dirname, "analyticsWorker.js"), { workerData: data });
-    worker.once("message", (msg: { ok: boolean; result?: unknown; error?: string }) => {
-      if (msg.ok) resolve(msg.result);
-      else reject(new Error(msg.error ?? "Analytics worker failed"));
-    });
-    worker.once("error", reject);
-    worker.once("exit", code => {
-      if (code !== 0) reject(new Error(`Analytics worker exited with code ${code}`));
-    });
-  });
+  return analyticsWorker.request(data);
 }
 
 export class DetailsWindowController {

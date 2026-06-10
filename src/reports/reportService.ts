@@ -249,7 +249,9 @@ function buildRowsFromBackfill(
 async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, fetcher: LiteLLMFetcher): Promise<{ totals: ReportTotals; breakdowns: ModelBreakdown[] }> {
   const byModel = new Map<string, ClaudeUsageEntry[]>();
   for (const entry of entries) {
-    byModel.set(entry.model, [...(byModel.get(entry.model) ?? []), entry]);
+    const list = byModel.get(entry.model) ?? [];
+    list.push(entry);
+    byModel.set(entry.model, list);
   }
 
   const breakdowns: ModelBreakdown[] = [];
@@ -280,7 +282,9 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, fe
 async function costCodexBreakdowns(events: CodexTokenEvent[], fetcher: LiteLLMFetcher, speed: "standard" | "fast"): Promise<ModelBreakdown[]> {
   const byModel = new Map<string, CodexTokenEvent[]>();
   for (const event of events) {
-    byModel.set(event.model, [...(byModel.get(event.model) ?? []), event]);
+    const list = byModel.get(event.model) ?? [];
+    list.push(event);
+    byModel.set(event.model, list);
   }
   const breakdowns: ModelBreakdown[] = [];
   for (const [model, list] of byModel) {
@@ -342,13 +346,26 @@ function isoWeekBucket(date: Date, timezone: string): string {
   return `${utc.getUTCFullYear()}-W${pad(week)}`;
 }
 
+// Intl.DateTimeFormat construction costs ~100µs and dateParts runs at least
+// twice per usage entry — memoize per timezone.
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function dateFormatterFor(timezone: string): Intl.DateTimeFormat {
+  let formatter = dateFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    dateFormatters.set(timezone, formatter);
+  }
+  return formatter;
+}
+
 function dateParts(date: Date, timezone: string): { year: number; month: number; day: number } {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
+  const parts = dateFormatterFor(timezone).formatToParts(date);
   return {
     year: Number(parts.find((part) => part.type === "year")?.value),
     month: Number(parts.find((part) => part.type === "month")?.value),

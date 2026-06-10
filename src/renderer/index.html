@@ -1518,7 +1518,11 @@
       lastRefreshedAt = data.lastRefreshedAt ? new Date(data.lastRefreshedAt) : new Date();
       clearDashboardDataCache();
       render(data.snapshots);
-      loadAnalyticsSummary();
+      // Aktives Window zuerst laden, danach die anderen Windows wieder
+      // vorladen — sonst trifft der nächste Pill-Klick einen kalten Cache.
+      void loadAnalyticsSummary().finally(() => {
+        void prefetchSummaryWindows(activeCostWindowFromUI());
+      });
       startFooterTimer();
     });
 
@@ -1648,8 +1652,12 @@
 
     const analyticsSummaryCache = new Map();
 
+    function activeCostWindowFromUI() {
+      return document.querySelector('#window-pill-grid .pill.active')?.dataset.win ?? '30d';
+    }
+
     async function loadAnalyticsSummary(costWindow) {
-      const win = costWindow ?? document.querySelector('#window-pill-grid .pill.active')?.dataset.win ?? '30d';
+      const win = costWindow ?? activeCostWindowFromUI();
       try {
         const s = await loadAnalyticsSummaryForWindow(win);
         updateQuickStats(s);
@@ -1673,13 +1681,17 @@
       return analyticsSummaryCache.get(costWindow);
     }
 
-    async function prefetchDashboardData(activeCostWindow) {
-      if (QB.prefetchAnalytics) QB.prefetchAnalytics();
+    async function prefetchSummaryWindows(activeCostWindow) {
       for (const win of ['7d', '30d', 'all']
         .filter(win => win !== activeCostWindow)
       ) {
         await loadAnalyticsSummaryForWindow(win).catch(e => console.error('analytics summary prefetch failed', e));
       }
+    }
+
+    async function prefetchDashboardData(activeCostWindow) {
+      if (QB.prefetchAnalytics) QB.prefetchAnalytics();
+      await prefetchSummaryWindows(activeCostWindow);
     }
 
     function clearDashboardDataCache() {

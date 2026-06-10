@@ -1,4 +1,4 @@
-import { workerData, parentPort } from "node:worker_threads";
+import { parentPort } from "node:worker_threads";
 import type { Settings } from "../config/settings";
 import { generateUsageReport } from "../reports/reportService";
 import { readClaudeUsageEntriesForPeriod } from "../pricing/jsonl-reader";
@@ -23,8 +23,7 @@ interface WorkerInput {
   cacheHitRate: { claude: number; codex: number };
 }
 
-async function run(): Promise<void> {
-  const input = workerData as WorkerInput;
+async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData> {
   const periodStart = new Date(input.periodStartMs);
 
   const [claudeEntries, codexEvents] = await Promise.all([
@@ -83,8 +82,7 @@ async function run(): Promise<void> {
       activeDays, avgSessionMinutes, cacheHitRate, sparkline7d, topModels,
       windowDays,
     };
-    parentPort!.postMessage({ ok: true, result });
-    return;
+    return result;
   }
 
   const dailyBuckets      = buildDailyBuckets(claudeReport.rows, codexReport.rows, input.windowDays);
@@ -106,9 +104,21 @@ async function run(): Promise<void> {
     dailyBuckets, sessionStats, totalTokens,
     hourHeatmap, weekdayDistribution, topActiveDays, fiveHourPeak, weeklySummary, costEfficiency,
   };
-  parentPort!.postMessage({ ok: true, result });
+  return result;
 }
 
-run().catch(err => {
-  parentPort!.postMessage({ ok: false, error: String(err) });
+// Long-lived worker: requests arrive as messages and are answered by id, so
+// the module-level FileParseCaches in the JSONL readers stay warm between
+// requests (unchanged files are re-stat'ed, not re-parsed).
+async function handleRequest(request: WorkerInput & { id: number }): Promise<void> {
+  try {
+    const result = await run(request);
+    parentPort!.postMessage({ id: request.id, ok: true, result });
+  } catch (err) {
+    parentPort!.postMessage({ id: request.id, ok: false, error: String(err) });
+  }
+}
+
+parentPort!.on("message", (request: WorkerInput & { id: number }) => {
+  void handleRequest(request);
 });
