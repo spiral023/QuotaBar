@@ -403,14 +403,18 @@ function _buildWeeklySummary(data) {
 function _buildCostEfficiency(data) {
   const elTiles = document.getElementById('an-cost-eff');
   const elRoi   = document.getElementById('an-roi-tiers');
-  const eff = data.costEfficiency ?? { costPer1kOutputTokens: 0, costPerActiveHour: 0, roiByTier: [] };
+  const eff = data.costEfficiency ?? { costPer1kOutputTokens: 0, costPerActiveHour: 0, subCostPerActiveHour: 0, roiByTier: [] };
 
   if (elTiles) {
     const tiles = [
-      { lbl: '$/1k Output',   val: `$${eff.costPer1kOutputTokens.toFixed(3)}` },
-      { lbl: '$/Arbeitsstd',  val: `$${eff.costPerActiveHour.toFixed(2)}` },
+      { lbl: '$/1k Output',  val: `$${eff.costPer1kOutputTokens.toFixed(3)}` },
+      { lbl: '$/Std (API)',  val: `$${eff.costPerActiveHour.toFixed(2)}` },
     ];
-    elTiles.innerHTML = `<div class="an-stats-grid" style="grid-template-columns:1fr 1fr">` +
+    if (eff.subCostPerActiveHour > 0) {
+      tiles.push({ lbl: '$/Std (Abo)', val: `$${eff.subCostPerActiveHour.toFixed(2)}` });
+    }
+    const cols = tiles.length === 3 ? '1fr 1fr 1fr' : '1fr 1fr';
+    elTiles.innerHTML = `<div class="an-stats-grid" style="grid-template-columns:${cols}">` +
       tiles.map(t => `
         <div class="an-stat-tile">
           <div class="an-stat-lbl">${QB.esc(t.lbl)}</div>

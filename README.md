@@ -168,12 +168,32 @@ Older settings files may contain extra provider keys. QuotaBar ignores unsupport
 
 ## Development
 
+### Setup
+
+```powershell
+npm install
+```
+
+### Commands
+
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Build and start Electron in debug mode |
-| `npm run build` | Compile TypeScript into `dist/` |
+| `npm run dev:watch` | **Recommended for development** — TypeScript recompiles automatically on save, Electron restarts on changes |
+| `npm run dev` | One-shot: build once and start Electron |
+| `npm run build` | Compile TypeScript into `dist/` (required before running after TS changes) |
 | `npm test` | Run the Vitest test suite |
-| `npm run package` | Build Windows installer and portable artifacts |
+| `npm run package` | Build Windows installer and portable artifacts into `package-output/` |
+
+### What needs a restart?
+
+| Changed file | What to do |
+| --- | --- |
+| `src/renderer/**` (UI, HTML, CSS) | In the open window: **Ctrl+Shift+I** → `location.reload()` — no restart needed |
+| `src/main/**`, `src/pricing/**`, `src/reports/**` (TypeScript) | `npm run build` or use `npm run dev:watch` (auto-restarts) |
+
+### Development workflow
+
+`npm run dev:watch` is the fastest inner loop: it runs `tsc --watch` and `nodemon` in parallel. TypeScript compiles on every save; Electron restarts automatically ~2 seconds after a `.ts` change. For renderer-only changes, skip the restart entirely with `location.reload()` in DevTools.
 
 ## Project Structure
 

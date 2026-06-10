@@ -353,19 +353,23 @@ export function computeActiveHours(entries: ClaudeUsageEntry[]): number {
 export interface CostEfficiency {
   costPer1kOutputTokens: number;
   costPerActiveHour: number;
+  subCostPerActiveHour: number;
   roiByTier: { tier: string; price: number; roi: number }[]; // roi = apiCostUSD / tierPrice (how many times the plan price you've spent)
 }
 
 export function buildCostEfficiency(
   claudeCostUSD: number,
   claudeOutputTokens: number,
-  sessionTotalHours: number,
+  activeHours: number,
+  claudePeriodSubCost = 0,
 ): CostEfficiency {
   return {
     costPer1kOutputTokens: claudeOutputTokens > 0
       ? (claudeCostUSD / claudeOutputTokens) * 1000 : 0,
-    costPerActiveHour: sessionTotalHours > 0
-      ? claudeCostUSD / sessionTotalHours : 0,
+    costPerActiveHour: activeHours > 0
+      ? claudeCostUSD / activeHours : 0,
+    subCostPerActiveHour: activeHours > 0 && claudePeriodSubCost > 0
+      ? claudePeriodSubCost / activeHours : 0,
     roiByTier: [
       { tier: "Claude Pro",      price: 20  },
       { tier: "Claude Max",      price: 100 },

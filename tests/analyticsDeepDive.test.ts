@@ -303,6 +303,24 @@ describe("buildCostEfficiency", () => {
     expect(pro.price).toBe(20);
     expect(pro.roi).toBeCloseTo(10);
   });
+
+  it("computes subCostPerActiveHour from prorated subscription", () => {
+    // $20/mo sub, prorated to 7 days = $20*7/30 ≈ $4.67; 10 active hours → ≈$0.467/h
+    const r = buildCostEfficiency(50, 1_000_000, 10, 20 * 7 / 30);
+    expect(r.subCostPerActiveHour).toBeCloseTo(20 * 7 / 30 / 10);
+  });
+
+  it("returns 0 subCostPerActiveHour when activeHours=0", () => {
+    expect(buildCostEfficiency(10, 100_000, 0, 5).subCostPerActiveHour).toBe(0);
+  });
+
+  it("returns 0 subCostPerActiveHour when no subscription configured", () => {
+    expect(buildCostEfficiency(10, 100_000, 5, 0).subCostPerActiveHour).toBe(0);
+  });
+
+  it("backward-compatible: subCostPerActiveHour=0 when 4th arg omitted", () => {
+    expect(buildCostEfficiency(10, 100_000, 5).subCostPerActiveHour).toBe(0);
+  });
 });
 
 function makeSessionEntry(isoTimestamp: string, session: string, project = "p1"): ClaudeUsageEntry {

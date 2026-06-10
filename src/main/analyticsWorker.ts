@@ -93,7 +93,7 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
   const topActiveDays     = buildTopActiveDays(claudeEntries, claudeReport.rows, 5);
   const fiveHourPeak      = buildFiveHourPeak(claudeEntries);
   const weeklySummary     = buildWeeklySummary(claudeReport.rows, codexReport.rows, claudeEntries, codexEvents);
-  const costEfficiency    = buildCostEfficiency(claudeCost, totalTokens.claude.output, computeActiveHours(claudeEntries));
+  const costEfficiency    = buildCostEfficiency(claudeCost, totalTokens.claude.output, computeActiveHours(claudeEntries), claudePeriodSub);
 
   const result: AnalyticsData = {
     apiCostUSD:          { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },
