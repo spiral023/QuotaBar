@@ -8,7 +8,7 @@ import {
   computeAvgSessionMinutes,
   buildDailyBuckets, buildSessionStats, buildTotalTokens,
   buildHourHeatmap, buildWeekdayDistribution, buildTopActiveDays,
-  buildFiveHourPeak, buildWeeklySummary, buildCostEfficiency,
+  buildFiveHourPeak, buildWeeklySummary, buildCostEfficiency, computeActiveHours,
   type AnalyticsSummary, type AnalyticsData,
 } from "./analyticsSummary";
 
@@ -93,7 +93,7 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
   const topActiveDays     = buildTopActiveDays(claudeEntries, claudeReport.rows, 5);
   const fiveHourPeak      = buildFiveHourPeak(claudeEntries);
   const weeklySummary     = buildWeeklySummary(claudeReport.rows, codexReport.rows, claudeEntries, codexEvents);
-  const costEfficiency    = buildCostEfficiency(claudeCost, totalTokens.claude.output, sessionStats.totalHours);
+  const costEfficiency    = buildCostEfficiency(claudeCost, totalTokens.claude.output, computeActiveHours(claudeEntries));
 
   const result: AnalyticsData = {
     apiCostUSD:          { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },

@@ -9,6 +9,7 @@ import {
   buildFiveHourPeak,
   buildWeeklySummary,
   buildCostEfficiency,
+  computeActiveHours,
 } from "../src/main/analyticsSummary";
 
 function makeEntry(isoTimestamp: string, out = 0): ClaudeUsageEntry {
@@ -301,5 +302,70 @@ describe("buildCostEfficiency", () => {
     const pro = r.roiByTier.find(t => t.tier === "Claude Pro")!;
     expect(pro.price).toBe(20);
     expect(pro.roi).toBeCloseTo(10);
+  });
+});
+
+function makeSessionEntry(isoTimestamp: string, session: string, project = "p1"): ClaudeUsageEntry {
+  return { ...makeEntry(isoTimestamp), session, project };
+}
+
+describe("computeActiveHours", () => {
+  it("returns 0 for empty entries", () => {
+    expect(computeActiveHours([])).toBe(0);
+  });
+
+  it("sums continuous activity within one block", () => {
+    const entries = [
+      makeEntry("2026-05-01T10:00:00.000Z"),
+      makeEntry("2026-05-01T10:10:00.000Z"),
+      makeEntry("2026-05-01T10:20:00.000Z"),
+    ];
+    expect(computeActiveHours(entries)).toBeCloseTo(20 / 60);
+  });
+
+  it("excludes idle gaps longer than 30 minutes", () => {
+    const entries = [
+      makeEntry("2026-05-01T10:00:00.000Z"),
+      makeEntry("2026-05-01T10:10:00.000Z"),
+      // 3h idle — same session, but should not count as work time
+      makeEntry("2026-05-01T13:10:00.000Z"),
+      makeEntry("2026-05-01T13:20:00.000Z"),
+    ];
+    expect(computeActiveHours(entries)).toBeCloseTo(20 / 60);
+  });
+
+  it("does not double-count overlapping parallel sessions", () => {
+    const entries = [
+      makeSessionEntry("2026-05-01T10:00:00.000Z", "s1"),
+      makeSessionEntry("2026-05-01T10:30:00.000Z", "s1"),
+      makeSessionEntry("2026-05-01T11:00:00.000Z", "s1"),
+      makeSessionEntry("2026-05-01T10:00:00.000Z", "s2", "p2"),
+      makeSessionEntry("2026-05-01T10:30:00.000Z", "s2", "p2"),
+      makeSessionEntry("2026-05-01T11:00:00.000Z", "s2", "p2"),
+    ];
+    expect(computeActiveHours(entries)).toBeCloseTo(1);
+  });
+
+  it("credits a minimum of 1 minute per activity block", () => {
+    const entries = [makeEntry("2026-05-01T10:00:00.000Z")];
+    expect(computeActiveHours(entries)).toBeCloseTo(1 / 60);
+  });
+
+  it("handles unsorted input", () => {
+    const entries = [
+      makeEntry("2026-05-01T10:20:00.000Z"),
+      makeEntry("2026-05-01T10:00:00.000Z"),
+      makeEntry("2026-05-01T10:10:00.000Z"),
+    ];
+    expect(computeActiveHours(entries)).toBeCloseTo(20 / 60);
+  });
+
+  it("returns unrounded hours suitable for division", () => {
+    const entries = [
+      makeEntry("2026-05-01T10:00:00.000Z"),
+      makeEntry("2026-05-01T10:03:00.000Z"),
+    ];
+    // 3 minutes = 0.05h — must not collapse to 0 through rounding
+    expect(computeActiveHours(entries)).toBeCloseTo(0.05);
   });
 });

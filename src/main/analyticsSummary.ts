@@ -323,6 +323,33 @@ export function buildWeeklySummary(
   return Array.from(weeks.values()).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
 }
 
+const ACTIVE_GAP_MS = 30 * 60 * 1000;
+const MIN_BLOCK_MS  = 60 * 1000;
+
+// Tatsächliche Arbeitszeit: Union aller Entry-Timestamps über alle Sessions
+// (parallele Sessions zählen nicht doppelt), aufgeteilt in Aktivitätsblöcke —
+// Idle-Lücken > 30 min zählen nicht als Arbeitszeit. Liefert ungerundete Stunden.
+export function computeActiveHours(entries: ClaudeUsageEntry[]): number {
+  if (entries.length === 0) return 0;
+  const timestamps = entries
+    .map(e => new Date(e.timestamp).getTime())
+    .sort((a, b) => a - b);
+
+  let totalMs = 0;
+  let blockStart = timestamps[0];
+  let blockEnd   = timestamps[0];
+  for (let i = 1; i < timestamps.length; i++) {
+    const ts = timestamps[i];
+    if (ts - blockEnd > ACTIVE_GAP_MS) {
+      totalMs += Math.max(blockEnd - blockStart, MIN_BLOCK_MS);
+      blockStart = ts;
+    }
+    blockEnd = ts;
+  }
+  totalMs += Math.max(blockEnd - blockStart, MIN_BLOCK_MS);
+  return totalMs / 3_600_000;
+}
+
 export interface CostEfficiency {
   costPer1kOutputTokens: number;
   costPerActiveHour: number;
