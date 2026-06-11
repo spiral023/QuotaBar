@@ -20,7 +20,7 @@ export async function saveWindowRatioFile(filePath: string, file: WindowRatioFil
 function isWindowRatioFile(value: unknown): value is WindowRatioFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const r = value as Record<string, unknown>;
-  if (r.version !== 1) return false;
+  if (r.version !== 2) return false;
   if (r.seededThrough !== null && typeof r.seededThrough !== "string") return false;
   if (!r.providers || typeof r.providers !== "object" || Array.isArray(r.providers)) return false;
   return Object.values(r.providers as Record<string, unknown>).every(isProviderState);
@@ -37,5 +37,6 @@ function isProviderState(value: unknown): value is ProviderRatioState {
     && isNullOrNumber(r.lastFive)
     && isNullOrNumber(r.lastWeekly)
     && isNullOrString(r.lastFiveResetsAt)
-    && isNullOrString(r.lastPlanType);
+    && isNullOrString(r.lastPlanType)
+    && isNullOrString(r.lastTs);
 }

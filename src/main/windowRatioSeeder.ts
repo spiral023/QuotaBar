@@ -6,6 +6,7 @@ import {
   clearTransients,
   emptyProviderState,
   emptyRatioFile,
+  ratioKey,
   recordObservation,
   type WindowRatioFile,
 } from "../usage/windowRatio";
@@ -61,8 +62,9 @@ async function seedFile(filePath: string, result: WindowRatioFile): Promise<void
       const five = windows.find((w) => w.name === "fiveHour");
       const weekly = windows.find((w) => w.name === "weekly");
       if (typeof five?.usedPercent !== "number" || typeof weekly?.usedPercent !== "number") continue;
-      const prev = result.providers[provider] ?? emptyProviderState();
-      result.providers[provider] = recordObservation(prev, {
+      const key = ratioKey(provider, typeof event.planType === "string" ? event.planType : null);
+      const prev = result.providers[key] ?? emptyProviderState();
+      result.providers[key] = recordObservation(prev, {
         fivePct: five.usedPercent,
         weeklyPct: weekly.usedPercent,
         fiveResetsAt: typeof five.resetsAt === "string" ? five.resetsAt : null,

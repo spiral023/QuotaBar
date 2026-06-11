@@ -46,11 +46,56 @@ describe("windowRatioStore", () => {
     expect(loaded).toEqual(emptyRatioFile());
   });
 
-  it("liefert leeren State bei ungültigem Provider-Eintrag", async () => {
+  it("liefert leeren State bei v1-Datei (erzwingt Re-Seed bei Bestandsnutzern)", async () => {
+    // A v1 file must be rejected so existing users are automatically re-seeded
+    // with the new tier-keyed state on the next app start.
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(
       file,
-      JSON.stringify({ version: 1, seededThrough: null, providers: { claude: { sumFivePct: "bad", sumWeeklyPct: 0, pairCount: 0 } } }),
+      JSON.stringify({ version: 1, seededThrough: "2026-06-10", providers: {} }),
+      "utf8",
+    );
+    const loaded = await loadWindowRatioFile(file);
+    expect(loaded).toEqual(emptyRatioFile());
+  });
+
+  it("liefert leeren State bei ungültigem Provider-Eintrag (lastTs ist Zahl)", async () => {
+    // Ensures the lastTs field in ProviderRatioState is validated as null|string.
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        version: 2,
+        seededThrough: null,
+        providers: {
+          claude: {
+            sumFivePct: 100,
+            sumWeeklyPct: 10,
+            pairCount: 5,
+            lastFive: null,
+            lastWeekly: null,
+            lastFiveResetsAt: null,
+            lastPlanType: null,
+            lastTs: 42,
+          },
+        },
+      }),
+      "utf8",
+    );
+    const loaded = await loadWindowRatioFile(file);
+    expect(loaded).toEqual(emptyRatioFile());
+  });
+
+  it("liefert leeren State bei ungültigem Provider-Eintrag", async () => {
+    // Tests the provider-field guard (sumFivePct type), not the version guard.
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        version: 2,
+        seededThrough: null,
+        providers: { claude: { sumFivePct: "bad", sumWeeklyPct: 0, pairCount: 0 } },
+      }),
       "utf8",
     );
     const loaded = await loadWindowRatioFile(file);
