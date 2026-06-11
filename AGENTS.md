@@ -12,6 +12,7 @@ Dieses Repository enthaelt eine Electron/TypeScript Windows-Tray-App fuer QuotaB
 - Inoffizielle Provider-Endpunkte in Provider-/Auth-Modulen kapseln und defensiv behandeln.
 - Vor Abschluss mindestens `npm test` und `npm run build` ausfuehren, wenn Code geaendert wurde.
 - Build-Artefakte, `node_modules`, `dist`, `release` und `package-output` nicht committen.
+- Deutsche Umlaute in Textdateien korrekt schreiben (`ä`, `ö`, `ü`, `Ä`, `Ö`, `Ü`, `ß`), nicht als `ae`, `oe`, `ue` usw.
 
 ## Hinweise zur Preisdaten-Quelle
 
