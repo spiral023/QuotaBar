@@ -45,4 +45,15 @@ describe("windowRatioStore", () => {
     const loaded = await loadWindowRatioFile(file);
     expect(loaded).toEqual(emptyRatioFile());
   });
+
+  it("liefert leeren State bei ungültigem Provider-Eintrag", async () => {
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(
+      file,
+      JSON.stringify({ version: 1, seededThrough: null, providers: { claude: { sumFivePct: "bad", sumWeeklyPct: 0, pairCount: 0 } } }),
+      "utf8",
+    );
+    const loaded = await loadWindowRatioFile(file);
+    expect(loaded).toEqual(emptyRatioFile());
+  });
 });

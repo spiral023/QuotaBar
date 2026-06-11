@@ -29,7 +29,13 @@ function isWindowRatioFile(value: unknown): value is WindowRatioFile {
 function isProviderState(value: unknown): value is ProviderRatioState {
   if (!value || typeof value !== "object") return false;
   const r = value as Record<string, unknown>;
+  const isNullOrNumber = (v: unknown): boolean => v === null || typeof v === "number";
+  const isNullOrString = (v: unknown): boolean => v === null || typeof v === "string";
   return typeof r.sumFivePct === "number"
     && typeof r.sumWeeklyPct === "number"
-    && typeof r.pairCount === "number";
+    && typeof r.pairCount === "number"
+    && isNullOrNumber(r.lastFive)
+    && isNullOrNumber(r.lastWeekly)
+    && isNullOrString(r.lastFiveResetsAt)
+    && isNullOrString(r.lastPlanType);
 }
