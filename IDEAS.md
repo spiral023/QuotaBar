@@ -25,19 +25,6 @@ Mögliche Funktionen:
 - Benachrichtigungen versenden, wenn ein Nutzungslimit zurückgesetzt wurde
 - E-Mail-Versand optional über Resend
 
-## Default-Benachrichtigungen für neue Nutzer anpassen
-
-Für neue Nutzer der QuotaBar-App sollen folgende Benachrichtigungen zusätzlich standardmäßig deaktiviert sein:
-
-- Erschöpfung vor Reset
-- Deutlich zu schnell
-- Deutlich zu langsam
-
-Weitere Default-Werte:
-
-- Minimum Delta standardmäßig auf 20% setzen
-- Reset in Kürze standardmäßig auf 10 Minuten vor Reset setzen
-
 ## Onboarding beim ersten Start
 
 Beim ersten Start soll es eine kurze Onboarding Experience geben.

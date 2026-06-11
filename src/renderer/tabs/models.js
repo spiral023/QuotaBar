@@ -328,15 +328,15 @@ window.QB = window.QB || {};
         },
         scales: {
           x: {
-            title: { display: true, text: '$ / MTok (effektiv)', color: '#506070', font: { size: 9 } },
+            title: { display: true, text: '$ / MTok (effektiv)', color: '#708090', font: { size: 9 } },
             grid: { color: 'rgba(255,255,255,0.04)' }, border: { display: false },
-            ticks: { color: '#506070', font: { family: "'IBM Plex Mono', monospace", size: 9 },
+            ticks: { color: '#708090', font: { family: "'IBM Plex Mono', monospace", size: 9 },
                      callback: (v) => '$' + Number(v).toFixed(1) },
           },
           y: {
-            title: { display: true, text: 'Intelligence Index', color: '#506070', font: { size: 9 } },
+            title: { display: true, text: 'Intelligence Index', color: '#708090', font: { size: 9 } },
             grid: { color: 'rgba(255,255,255,0.04)' }, border: { display: false },
-            ticks: { color: '#506070', font: { family: "'IBM Plex Mono', monospace", size: 9 } },
+            ticks: { color: '#708090', font: { family: "'IBM Plex Mono', monospace", size: 9 } },
           },
         },
       },

@@ -3,7 +3,7 @@
 
 window.QB = window.QB || {};
 QB.charts = QB.charts || {};
-QB.charts.mutedTextColor = '#6f8294';
+QB.charts.mutedTextColor = '#7e92a4';
 
 QB.charts.createLine = function(ctx, labels, datasets) {
   return new Chart(ctx, {
@@ -178,7 +178,7 @@ QB.charts.createStacked100 = function(ctx, labels, datasets, opts) {
           grid: { display: false },
           border: { display: false },
           ticks: {
-            color: '#506070',
+            color: '#708090',
             font: { family: "'IBM Plex Mono', monospace", size: 9 },
             maxRotation: 0,
             autoSkip: true,
@@ -192,7 +192,7 @@ QB.charts.createStacked100 = function(ctx, labels, datasets, opts) {
           grid: { color: 'rgba(255,255,255,0.04)' },
           border: { display: false },
           ticks: {
-            color: '#506070',
+            color: '#708090',
             font: { family: "'IBM Plex Mono', monospace", size: 9 },
             stepSize: 25,
             callback: (v) => (v === 0 || v === 100 ? '' : v + '%'),
