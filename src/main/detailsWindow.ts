@@ -6,10 +6,11 @@ import { loadSettings, saveSettings, normalizeNotificationSettings } from "../co
 import { log } from "./logging";
 import { generateUsageReport } from "../reports/reportService";
 import type { ReportRequest } from "../reports/types";
-import { getClaudeProjectsDirs, getCodexSessionsDirs } from "../config/paths";
+import { getClaudeProjectsDirs, getCodexSessionsDirs, getDebugLogDir } from "../config/paths";
 import type { CostWindow, ViewMode } from "../config/settings";
 import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
 import type { ModelsData } from "./modelsData";
+import type { WindowBudgetData } from "./analyticsWorker";
 import type { NotificationService } from "./notifications";
 import type { DebugRecorder } from "./debugRecorder";
 import { AsyncResultCache } from "./asyncResultCache";
@@ -35,6 +36,7 @@ export class DetailsWindowController {
   private readonly analyticsSummaryCache = new AsyncResultCache<AnalyticsSummary>();
   private readonly analyticsDataCache = new AsyncResultCache<AnalyticsData>();
   private readonly modelsDataCache = new AsyncResultCache<ModelsData>();
+  private readonly windowBudgetCache = new AsyncResultCache<WindowBudgetData>();
   private notificationService: NotificationService | null = null;
 
   constructor(
@@ -119,6 +121,7 @@ export class DetailsWindowController {
     this.analyticsSummaryCache.clear();
     this.analyticsDataCache.clear();
     this.modelsDataCache.clear();
+    this.windowBudgetCache.clear();
   }
 
   private pushUpdate(): void {
@@ -279,6 +282,33 @@ export class DetailsWindowController {
         task: "models",
         settings,
       }) as Promise<ModelsData>);
+    });
+
+    ipcMain.handle("windowBudget:get", async (): Promise<WindowBudgetData> => {
+      const snapshots = this.lastSnapshots ?? [];
+      const providers = snapshots
+        .filter((s) => s.status === "ok" || s.status === "stale")
+        .flatMap((s) => {
+          const weekly = s.windows.find((w) => w.name === "weekly");
+          if (!weekly || typeof weekly.usedPercent !== "number") return [];
+          if (s.provider !== "claude" && s.provider !== "codex") return [];
+          return [{
+            provider: s.provider,
+            weeklyUsedPercent: weekly.usedPercent,
+            weeklyResetsAt: weekly.resetsAt ?? null,
+            burnRatePctPerHour: weekly.burnRatePctPerHour ?? null,
+            pace: weekly.pace ?? null,
+          }];
+        });
+      if (providers.length === 0) return { perProvider: {} };
+      return this.windowBudgetCache.get("windowBudget", () =>
+        runAnalyticsWorker({
+          task: "windowBudget",
+          logDir: getDebugLogDir(),
+          nowMs: Date.now(),
+          providers,
+        }) as Promise<WindowBudgetData>
+      );
     });
 
     ipcMain.handle("system:get", async () => {

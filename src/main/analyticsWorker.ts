@@ -12,6 +12,10 @@ import {
   type AnalyticsSummary, type AnalyticsData,
 } from "./analyticsSummary";
 import { buildModelsData, type ModelsData } from "./modelsData";
+import { readBackfillDayRecords } from "../reports/backfill-reader";
+import { buildWeeklyProfile, computeWeeklyForecast, type WeeklyForecastResult } from "./weeklyForecast";
+import { readWeeklySeries, type WindowBudgetSeries } from "./windowBudgetSeries";
+import type { UsagePace } from "../usage/usagePace";
 
 interface AnalyticsTaskInput {
   task: "get" | "summary";
@@ -29,11 +33,37 @@ interface ModelsTaskInput {
   settings: Settings;
 }
 
-type WorkerInput = AnalyticsTaskInput | ModelsTaskInput;
+interface WindowBudgetTaskInput {
+  task: "windowBudget";
+  logDir: string;
+  nowMs: number;
+  providers: Array<{
+    provider: "claude" | "codex";
+    weeklyUsedPercent: number;
+    weeklyResetsAt: string | null;
+    burnRatePctPerHour: number | null;
+    pace: UsagePace | null;
+  }>;
+}
 
-async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData | ModelsData> {
+export interface WindowBudgetProviderData {
+  series: WindowBudgetSeries;
+  forecast: WeeklyForecastResult;
+  hasSeriesData: boolean;
+}
+
+export interface WindowBudgetData {
+  perProvider: Record<string, WindowBudgetProviderData>;
+}
+
+type WorkerInput = AnalyticsTaskInput | ModelsTaskInput | WindowBudgetTaskInput;
+
+async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData | ModelsData | WindowBudgetData> {
   if (input.task === "models") {
     return buildModelsData({ settings: input.settings });
+  }
+  if (input.task === "windowBudget") {
+    return buildWindowBudgetData(input);
   }
 
   const periodStart = new Date(input.periodStartMs);
@@ -117,6 +147,36 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     hourHeatmap, weekdayDistribution, topActiveDays, fiveHourPeak, weeklySummary, costEfficiency,
   };
   return result;
+}
+
+const DAY_MS = 24 * 3600 * 1000;
+const WEEK_MS = 7 * DAY_MS;
+
+async function buildWindowBudgetData(input: WindowBudgetTaskInput): Promise<WindowBudgetData> {
+  const now = new Date(input.nowMs);
+  const records = await readBackfillDayRecords(input.logDir, new Date(input.nowMs - 28 * DAY_MS));
+  const perProvider: Record<string, WindowBudgetProviderData> = {};
+  for (const p of input.providers) {
+    const resetMs = p.weeklyResetsAt ? new Date(p.weeklyResetsAt).getTime() : null;
+    const windowStartMs = resetMs !== null && !Number.isNaN(resetMs) ? resetMs - WEEK_MS : input.nowMs - WEEK_MS;
+    const series = await readWeeklySeries(input.logDir, p.provider, windowStartMs, input.nowMs);
+    const profile = buildWeeklyProfile(records, p.provider, now);
+    const windowStartKey = new Date(windowStartMs).toISOString().slice(0, 10);
+    const tokensInCurrentWindow = records
+      .filter((r) => r.provider === p.provider && r.date >= windowStartKey)
+      .reduce((sum, r) => sum + r.totalTokens, 0);
+    const forecast = computeWeeklyForecast({
+      weeklyUsedPercent: p.weeklyUsedPercent,
+      weeklyResetsAt: p.weeklyResetsAt,
+      tokensInCurrentWindow,
+      burnRatePctPerHour: p.burnRatePctPerHour,
+      pace: p.pace,
+      profile,
+      now,
+    });
+    perProvider[p.provider] = { series, forecast, hasSeriesData: series.points.length > 0 };
+  }
+  return { perProvider };
 }
 
 // Long-lived worker: requests arrive as messages and are answered by id, so
