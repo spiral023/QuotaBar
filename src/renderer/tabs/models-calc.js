@@ -54,5 +54,61 @@
     return date.getUTCFullYear() + '-W' + weekStr;
   }
 
-  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek };
+  /**
+   * Stellt Tages- oder Wochendaten für Stacked Bar Charts zusammen.
+   * → { buckets: string[], series: [{ model, provider, values: number[] }], othersGrouped: string[] }
+   * series enthält absolute Werte; die 100%-Normalisierung passiert beim Chart-Aufbau.
+   * othersThreshold: Anteil am Gesamtwert des Fensters, unter dem ein Modell in „Andere" fällt (z.B. 0.01).
+   */
+  function buildStack(days, metric, granularity, othersThreshold) {
+    const bucketOf = granularity === 'weekly' ? (d) => isoWeek(d.date) : (d) => d.date;
+    const buckets = Array.from(new Set(days.map(bucketOf))).sort();
+    const idx = new Map(buckets.map((b, i) => [b, i]));
+
+    const perModel = new Map(); // model → { provider, values[] , sum }
+    let grandTotal = 0;
+    for (const d of days) {
+      const v = metricOf(d, metric);
+      grandTotal += v;
+      let entry = perModel.get(d.model);
+      if (!entry) {
+        entry = { provider: d.provider, values: new Array(buckets.length).fill(0), sum: 0 };
+        perModel.set(d.model, entry);
+      }
+      entry.values[idx.get(bucketOf(d))] += v;
+      entry.sum += v;
+    }
+
+    const series = [];
+    const othersGrouped = [];
+    let others = null;
+    for (const [model, e] of perModel) {
+      if (grandTotal > 0 && e.sum / grandTotal < othersThreshold) {
+        othersGrouped.push(model);
+        if (!others) others = { model: 'Andere', provider: 'other', values: new Array(buckets.length).fill(0) };
+        for (let i = 0; i < e.values.length; i++) others.values[i] += e.values[i];
+      } else {
+        series.push({ model, provider: e.provider, values: e.values });
+      }
+    }
+    series.sort((a, b) => a.model.localeCompare(b.model));
+    if (others) series.push(others);
+    othersGrouped.sort();
+    return { buckets, series, othersGrouped };
+  }
+
+  // Reihenfolge des ERSTEN Auftretens über die GESAMTE Historie — Basis für
+  // stabile Farbzuordnung über Fenster-/Metrikwechsel hinweg.
+  function modelColorOrder(allDays) {
+    const first = new Map();
+    for (const d of allDays) {
+      const cur = first.get(d.model);
+      if (!cur || d.date < cur) first.set(d.model, d.date);
+    }
+    return Array.from(first.entries())
+      .sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]))
+      .map(([model]) => model);
+  }
+
+  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder };
 });
