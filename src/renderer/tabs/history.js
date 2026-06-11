@@ -81,73 +81,101 @@ function _buildControls(container, minDate) {
   const ninetyAgo = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
   const fromDate  = minDate ?? ninetyAgo;
 
-  const presetHtml = PRESETS.map(p =>
-    `<button class="hr-preset-btn${_activePreset === p.id ? ' active' : ''}" data-preset="${p.id}">${p.label}</button>`
+  // Initial range (minDate → heute) entspricht dem Preset "Gesamt"
+  if (_activePreset === null) _activePreset = 'all';
+
+  const presetOptions = PRESETS.map(p =>
+    `<option value="${p.id}"${_activePreset === p.id ? ' selected' : ''}>${p.label}</option>`
   ).join('');
 
   container.innerHTML = `
     <div class="hr-controls">
-      <div class="hr-preset-row">${presetHtml}</div>
-      <div class="hr-date-row">
-        <label class="hr-date-label">Von</label>
-        <input class="hr-date-input" type="date" id="hr-from" value="${fromDate}">
-        <label class="hr-date-label">bis</label>
-        <input class="hr-date-input" type="date" id="hr-to" value="${today}">
-        <div class="hr-pill-group" id="hr-agg-pills">
-          <button class="pill"        data-agg="hourly">Stunde</button>
-          <button class="pill active" data-agg="daily">Tag</button>
-          <button class="pill"        data-agg="weekly">Woche</button>
-          <button class="pill"        data-agg="monthly">Monat</button>
-        </div>
-        <div class="hr-pill-group" id="hr-prov-pills">
-          <button class="pill active" data-prov="all">Alle</button>
-          <button class="pill"        data-prov="claude">Claude</button>
-          <button class="pill"        data-prov="codex">Codex</button>
-        </div>
-        <button class="pill${_showEmpty ? ' active' : ''}" id="hr-empty-toggle" title="Leere Zeiteinheiten einblenden">Lücken</button>
-        <button class="hr-load-btn" id="hr-load-btn">Laden</button>
+      <div class="hr-select-wrap">
+        <select class="hr-preset-select" id="hr-preset" aria-label="Zeitraum" title="Zeitraum wählen">
+          <option value="custom" hidden${_activePreset ? '' : ' selected'}>Eigene Auswahl</option>
+          ${presetOptions}
+        </select>
+        <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
+             stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1.5 3 4 5.5 6.5 3"/>
+        </svg>
       </div>
+      <div class="hr-date-pair">
+        <input class="hr-date-input" type="date" id="hr-from" value="${fromDate}" aria-label="Von" title="Startdatum">
+        <span class="hr-date-sep" aria-hidden="true">–</span>
+        <input class="hr-date-input" type="date" id="hr-to" value="${today}" aria-label="Bis" title="Enddatum">
+      </div>
+      <div class="hr-tb-sep" aria-hidden="true"></div>
+      <div class="hr-seg" id="hr-agg-pills" role="group" aria-label="Auflösung">
+        <button class="hr-seg-btn"        data-agg="hourly"  title="Stündlich">Std</button>
+        <button class="hr-seg-btn active" data-agg="daily"   title="Täglich">Tag</button>
+        <button class="hr-seg-btn"        data-agg="weekly"  title="Wöchentlich">Wo</button>
+        <button class="hr-seg-btn"        data-agg="monthly" title="Monatlich">Mon</button>
+      </div>
+      <div class="hr-tb-sep" aria-hidden="true"></div>
+      <div class="hr-seg" id="hr-prov-pills" role="group" aria-label="Anbieter">
+        <button class="hr-seg-btn active" data-prov="all">Alle</button>
+        <button class="hr-seg-btn hr-seg-claude" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
+        <button class="hr-seg-btn hr-seg-codex"  data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
+      </div>
+      <div class="hr-tb-sep" aria-hidden="true"></div>
+      <button class="hr-tgl${_showEmpty ? ' active' : ''}" id="hr-empty-toggle"
+              title="Leere Zeiteinheiten einblenden" aria-pressed="${_showEmpty}">
+        <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
+             stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+          <path d="M1.5 9.5V5"/><path d="M5.5 9.5V7" stroke-dasharray="1.5 1.5"/><path d="M9.5 9.5V2.5"/>
+        </svg>
+        Lücken
+      </button>
+      <button class="hr-reload" id="hr-load-btn" title="Neu laden" aria-label="Neu laden">
+        <svg width="12" height="12" viewBox="0 0 14 14" fill="none"
+             stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1.5 7a5.5 5.5 0 0 1 9.9-3.3"/>
+          <path d="M12.5 7a5.5 5.5 0 0 1-9.9 3.3"/>
+          <path d="M11 2.2 13 4l-2 1.8"/>
+          <path d="M3 11.8 1 10l2-1.8"/>
+        </svg>
+      </button>
     </div>
     <div id="hr-results"></div>
   `;
 
-  container.querySelectorAll('.hr-preset-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      _activePreset = btn.dataset.preset;
-      const { from, to } = _presetDates(_activePreset);
-      document.getElementById('hr-from').value = from;
-      document.getElementById('hr-to').value   = to;
-      container.querySelectorAll('.hr-preset-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      _loadAndRender();
-    });
+  const presetSelect = document.getElementById('hr-preset');
+  presetSelect?.addEventListener('change', () => {
+    if (presetSelect.value === 'custom') return;
+    _activePreset = presetSelect.value;
+    const { from, to } = _presetDates(_activePreset);
+    document.getElementById('hr-from').value = from;
+    document.getElementById('hr-to').value   = to;
+    _loadAndRender();
   });
 
   ['hr-from', 'hr-to'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', () => {
       _activePreset = null;
-      container.querySelectorAll('.hr-preset-btn').forEach(b => b.classList.remove('active'));
+      if (presetSelect) presetSelect.value = 'custom';
+      _loadAndRender();
     });
   });
 
-  container.querySelectorAll('#hr-agg-pills .pill').forEach(btn => {
-    btn.addEventListener('click', () => {
-      container.querySelectorAll('#hr-agg-pills .pill').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    });
-  });
-
-  container.querySelectorAll('#hr-prov-pills .pill').forEach(btn => {
-    btn.addEventListener('click', () => {
-      container.querySelectorAll('#hr-prov-pills .pill').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
+  ['hr-agg-pills', 'hr-prov-pills'].forEach(groupId => {
+    container.querySelectorAll(`#${groupId} .hr-seg-btn`).forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.classList.contains('active')) return;
+        container.querySelectorAll(`#${groupId} .hr-seg-btn`).forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        _loadAndRender();
+      });
     });
   });
 
   document.getElementById('hr-empty-toggle')?.addEventListener('click', () => {
     _showEmpty = !_showEmpty;
     const btn = document.getElementById('hr-empty-toggle');
-    if (btn) btn.classList.toggle('active', _showEmpty);
+    if (btn) {
+      btn.classList.toggle('active', _showEmpty);
+      btn.setAttribute('aria-pressed', String(_showEmpty));
+    }
     _loadAndRender();
   });
 
@@ -161,11 +189,11 @@ async function _loadAndRender() {
 
   const from = document.getElementById('hr-from')?.value;
   const to   = document.getElementById('hr-to')?.value;
-  const agg  = container.querySelector('#hr-agg-pills .pill.active')?.dataset.agg  ?? 'daily';
-  const prov = container.querySelector('#hr-prov-pills .pill.active')?.dataset.prov ?? 'all';
+  const agg  = container.querySelector('#hr-agg-pills .hr-seg-btn.active')?.dataset.agg  ?? 'daily';
+  const prov = container.querySelector('#hr-prov-pills .hr-seg-btn.active')?.dataset.prov ?? 'all';
 
   const loadBtn = document.getElementById('hr-load-btn');
-  if (loadBtn) { loadBtn.disabled = true; loadBtn.textContent = '…'; }
+  if (loadBtn) { loadBtn.disabled = true; loadBtn.classList.add('loading'); }
 
   results.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
 
@@ -188,7 +216,7 @@ async function _loadAndRender() {
     console.error('history:get failed', e);
     results.innerHTML = '<div class="empty"><span style="color:var(--red)">Fehler beim Laden der Backfill-Daten.</span></div>';
   } finally {
-    if (loadBtn) { loadBtn.disabled = false; loadBtn.textContent = 'Laden'; }
+    if (loadBtn) { loadBtn.disabled = false; loadBtn.classList.remove('loading'); }
   }
 }
 

@@ -50,18 +50,6 @@ Mögliche Inhalte:
 - Größe der erkannten Dateien anzeigen
 - Einstellungen optional in diesen Tab verlagern
 
-## History-Menüleiste kompakter gestalten
-
-In `History` soll die Menüleiste mit Zeitraumwahl (`Letzte 7 Tage`, usw.), Datumswahl, Anbieterfilter und Lücken-Option neu gestaltet werden.
-
-Ziel:
-
-- Alle Controls in eine einzelne Zeile bringen
-- Platz sparen, ohne die Bedienbarkeit zu verschlechtern
-- Gute UI/UX mit klaren Gruppierungen, ausreichenden Hit Areas und lesbaren Labels
-- Frontend-Design bewusst ausarbeiten, nicht nur Controls enger zusammenschieben
-- Zahlen und dynamische Werte stabil darstellen, damit nichts springt
-
 ## Extremwerte in Tabellen dezent hervorheben
 
 In Tabellen könnten Extremwerte visuell hervorgehoben werden, z. B. sehr hohe API-Kosten einer Woche rot und besonders günstige Tage grün.

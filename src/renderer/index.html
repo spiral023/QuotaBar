@@ -1245,52 +1245,118 @@
     .hr-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
     .hr-controls {
-      display: flex; flex-direction: column; gap: 6px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
       background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: var(--r-card); padding: 8px 12px; margin-bottom: 6px;
+      border-radius: var(--r-card); padding: 7px 9px; margin-bottom: 6px;
     }
-    .hr-preset-row {
-      display: flex; flex-wrap: wrap; gap: 4px;
-      padding-bottom: 6px; border-bottom: 1px solid var(--border);
+    .hr-tb-sep {
+      width: 1px; align-self: stretch; margin: 3px 0;
+      background: var(--border); flex-shrink: 0;
     }
-    .hr-preset-btn {
-      padding: 3px 10px; font-size: 10px; font-family: 'DM Sans', system-ui, sans-serif;
-      font-weight: 500; background: var(--bg-input); border: 1px solid var(--border);
-      border-radius: var(--r-pill); color: var(--t300); cursor: pointer; outline: none;
-      transition-property: background, border-color, color, scale; transition-duration: 120ms;
-    }
-    .hr-preset-btn:hover { background: var(--bg-card-hover); color: var(--t100); border-color: var(--border-focus); }
-    .hr-preset-btn:active { scale: 0.96; }
-    .hr-preset-btn.active { background: rgba(82,208,23,0.1); border-color: rgba(82,208,23,0.32); color: var(--green); }
-    .hr-date-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-    .hr-date-label {
-      font-size: 9px; font-weight: 600; letter-spacing: 0.1em;
-      text-transform: uppercase; color: var(--t400);
-    }
-    .hr-date-input {
+
+    /* Zeitraum-Preset als kompaktes Select */
+    .hr-select-wrap { position: relative; flex-shrink: 0; }
+    .hr-preset-select {
+      appearance: none; -webkit-appearance: none;
+      height: 26px; width: 106px; padding: 0 19px 0 8px;
+      text-overflow: ellipsis; white-space: nowrap;
       background: var(--bg-input); border: 1px solid var(--border);
-      border-radius: var(--r-inner); color: var(--t100);
-      font-family: 'IBM Plex Mono', monospace; font-size: 11px;
-      padding: 4px 8px; outline: none;
+      border-radius: var(--r-btn); color: var(--t100);
+      font-family: 'DM Sans', system-ui, sans-serif; font-size: 10px; font-weight: 500;
+      cursor: pointer; outline: none; color-scheme: dark;
+      transition-property: border-color, background, box-shadow; transition-duration: 120ms;
+    }
+    .hr-preset-select:hover { background: var(--bg-card-hover); border-color: rgba(255,255,255,0.14); }
+    .hr-preset-select:focus-visible { border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(82,208,23,0.1); }
+    .hr-select-chevron {
+      position: absolute; right: 8px; top: 50%; translate: 0 -50%;
+      color: var(--t400); pointer-events: none;
+    }
+
+    /* Datumsbereich */
+    .hr-date-pair { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+    .hr-date-sep { color: var(--t400); font-size: 11px; }
+    .hr-date-input {
+      height: 26px; width: 89px; padding: 0 4px;
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: var(--r-btn); color: var(--t100);
+      font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      outline: none; color-scheme: dark;
       transition-property: border-color, box-shadow; transition-duration: 120ms;
-      color-scheme: dark;
     }
     .hr-date-input:focus { border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(82,208,23,0.1); }
+    .hr-date-input::-webkit-calendar-picker-indicator {
+      width: 11px; height: 11px; opacity: 0.45; cursor: pointer;
+      transition-property: opacity; transition-duration: 120ms;
+    }
+    .hr-date-input:hover::-webkit-calendar-picker-indicator { opacity: 0.85; }
+
+    /* Segmented Controls (Auflösung, Anbieter) */
+    .hr-seg {
+      display: flex; align-items: center; gap: 2px;
+      height: 26px; padding: 2px; flex-shrink: 0;
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: var(--r-btn);
+    }
+    .hr-seg-btn {
+      position: relative; height: 20px; padding: 0 6px;
+      display: flex; align-items: center; gap: 4px;
+      background: transparent; border: none; border-radius: 5px;
+      color: var(--t300); font-family: 'DM Sans', system-ui, sans-serif;
+      font-size: 10px; font-weight: 500; cursor: pointer; outline: none;
+      transition-property: background, color, scale; transition-duration: 120ms;
+    }
+    .hr-seg-btn::before { content: ''; position: absolute; inset: -6px 0; }
+    .hr-seg-btn:hover { color: var(--t100); background: rgba(255,255,255,0.05); }
+    .hr-seg-btn:active { scale: 0.96; }
+    .hr-seg-btn:focus-visible { box-shadow: 0 0 0 2px rgba(82,208,23,0.25); }
+    .hr-seg-btn.active { background: rgba(82,208,23,0.12); color: var(--green); }
+    .hr-seg-dot {
+      width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+      background: var(--seg-dot, currentColor); opacity: 0.9;
+    }
+    .hr-seg-claude { --seg-dot: var(--claude-col); }
+    .hr-seg-codex  { --seg-dot: var(--codex-col); }
+    .hr-seg-claude.active { background: color-mix(in srgb, var(--claude-col) 16%, transparent); color: #eda286; }
+    .hr-seg-codex.active  { background: color-mix(in srgb, var(--codex-col) 22%, transparent);  color: #9aa3f0; }
+
+    /* Lücken-Toggle */
+    .hr-tgl {
+      position: relative; height: 26px; padding: 0 8px; flex-shrink: 0;
+      display: flex; align-items: center; gap: 5px;
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: var(--r-btn); color: var(--t300);
+      font-family: 'DM Sans', system-ui, sans-serif; font-size: 10px; font-weight: 500;
+      cursor: pointer; outline: none;
+      transition-property: background, border-color, color, scale; transition-duration: 120ms;
+    }
+    .hr-tgl::before { content: ''; position: absolute; inset: -7px 0; }
+    .hr-tgl:hover { background: var(--bg-card-hover); color: var(--t100); }
+    .hr-tgl:active { scale: 0.96; }
+    .hr-tgl:focus-visible { border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(82,208,23,0.1); }
+    .hr-tgl.active { background: rgba(82,208,23,0.1); border-color: rgba(82,208,23,0.32); color: var(--green); }
+
+    /* Reload */
+    .hr-reload {
+      position: relative; margin-left: auto; width: 26px; height: 26px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(82,208,23,0.08); border: 1px solid rgba(82,208,23,0.22);
+      border-radius: var(--r-btn); color: var(--green); cursor: pointer; outline: none;
+      transition-property: background, scale; transition-duration: 120ms;
+    }
+    .hr-reload::before { content: ''; position: absolute; inset: -7px; }
+    .hr-reload:hover { background: rgba(82,208,23,0.14); }
+    .hr-reload:active { scale: 0.96; }
+    .hr-reload:focus-visible { box-shadow: 0 0 0 2px rgba(82,208,23,0.25); }
+    .hr-reload:disabled { opacity: 0.5; cursor: default; }
+    .hr-reload.loading svg { animation: hr-spin 0.8s linear infinite; }
+    @keyframes hr-spin { to { transform: rotate(360deg); } }
+
     .hr-pill-group { display: flex; gap: 3px; }
     .hr-pill-group .pill { padding: 4px 10px; font-size: 10px; }
     .hr-chart-pills.pill-group, .hr-chart-pills { gap: 3px; }
     .hr-chart-pills .pill { padding: 2px 7px; font-size: 9px; }
-    .hr-load-btn {
-      margin-left: auto; padding: 5px 14px;
-      background: rgba(82,208,23,0.08); border: 1px solid rgba(82,208,23,0.22);
-      border-radius: var(--r-btn); color: var(--green);
-      font-family: 'DM Sans', system-ui, sans-serif; font-size: 11px; font-weight: 600;
-      cursor: pointer; outline: none;
-      transition-property: background, scale; transition-duration: 120ms;
-    }
-    .hr-load-btn:hover { background: rgba(82,208,23,0.14); }
-    .hr-load-btn:active { scale: 0.97; }
-    .hr-load-btn:disabled { opacity: 0.5; cursor: default; }
 
     .hr-summary-row {
       display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px;
