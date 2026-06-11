@@ -23,6 +23,8 @@
   &middot;
   <a href="#dashboard-and-reports">Dashboard</a>
   &middot;
+  <a href="#models-tab">Models</a>
+  &middot;
   <a href="#cost-tracking">Cost Tracking</a>
   &middot;
   <a href="#development">Development</a>
@@ -40,6 +42,7 @@ QuotaBar sits in the Windows system tray, reads credentials and usage logs from 
 | --- | --- | --- |
 | Stacked per-provider progress bars in the Windows tray. | Daily, weekly, monthly, and session-level reports. | Credentials read only from known provider paths; sensitive values redacted from logs. |
 | 5-hour and weekly quota windows where provider data is available. | API-equivalent USD costs, token totals, cache usage, and subscription factor. | Unofficial provider endpoints are isolated and handled defensively. |
+| | Per-model breakdown: cost share, cache efficiency, adoption timeline, and price/intelligence scatter. | |
 
 ## How It Works
 
@@ -119,6 +122,51 @@ Claude and Codex quota windows are fetched through unofficial provider endpoints
 | History chart toggle | Switch the per-period chart between USD costs and token volumes (total, input, output, or cache) |
 
 Weekly reports use Monday as the week start. JSON field names are stable English names.
+
+## Models Tab
+
+The Models tab breaks down token and cost data by individual model across your full history, combining backfill day records with live JSONL data.
+
+### KPI tiles
+
+| Tile | Description |
+| --- | --- |
+| Ø $/MTok effective | Total cost ÷ total tokens (all token types included), with period-over-period delta |
+| Active models | Number of distinct models used in the selected window |
+| Top by cost | Model with the highest USD spend and its share of total cost |
+| Top by output | Model with the most output tokens |
+| Price/performance | Model with the best benchmark score per dollar (requires benchmark data) |
+| Top-3 share | Cost concentration: combined share of the three most expensive models |
+
+### Model distribution chart
+
+100% stacked bar chart showing the relative share of each model over time. Controls:
+
+| Control | Options |
+| --- | --- |
+| Time window | 30D · 90D · All (ISO-week buckets for "All") |
+| Metric | Output · Input · Cache Read · Cache Creation · Total tokens · Cost |
+| Provider filter | All · Claude · Codex |
+
+The provider ribbon below the chart shows the Claude/Codex split per bucket at a glance.
+
+### Price vs. intelligence scatter
+
+Visible when benchmark data is present (`src/config/model-benchmarks.json`). Each model is plotted with effective $/MTok on the x-axis and the Artificial Analysis Intelligence Index score on the y-axis. Bubble size encodes cost share. Good-value models appear in the upper-left quadrant.
+
+### Model detail table
+
+Sortable table with one row per model. Columns: Input, Output, Cache Read, Cache Creation, Total tokens, Cost (USD), Effective $/MTok, Benchmark score, Score/$, Cost share %, Cache-hit rate, First used, Last used. Click any column header to sort.
+
+### Model adoption timeline
+
+Heatmap by month showing when each model was introduced and how its usage evolved. Cell opacity scales with output token volume relative to the model's peak month.
+
+### Cache efficiency panel
+
+Per-model cache-hit rate bar and estimated USD saved through cache reads (requires LiteLLM pricing data).
+
+---
 
 ## Cost Tracking
 
@@ -200,14 +248,19 @@ npm install
 ```text
 src/
 |- main/       Electron lifecycle, tray menu, dashboard, notifications, autostart
+|              └─ modelsData.ts  per-model aggregation (backfill + live-tail merge)
 |- providers/  Claude and Codex live usage providers
 |- auth/       Credential parsing, JWT helpers, token refresh
 |- usage/      Refresh loop, snapshot store, reset detection, formatters, pace
 |- pricing/    JSONL readers, cost calculators, LiteLLM fetcher, subscription factor
 |- reports/    Daily, weekly, monthly, and session report aggregation
-|- icon/       Tray icon progress bars
 |- config/     Paths, settings, first-run prompt
-`- shared/     Redaction and shared error types
+|              └─ model-benchmarks.json  static Artificial Analysis Intelligence Index scores
+|- icon/       Tray icon progress bars
+`- shared/     Redaction, shared error types, model name normalisation
+renderer/tabs/
+|- models-calc.js  pure calc helpers (UMD — runs in browser and vitest)
+`- models.js       Models tab UI
 ```
 
 ## Security and Privacy
