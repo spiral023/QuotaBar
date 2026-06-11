@@ -235,6 +235,22 @@ Standardwerte (konfigurierbar in den App-Settings):
 
 ---
 
+## Fenster-Budget (5h ↔ Weekly)
+
+QuotaBar lernt aus der eigenen Nutzung, wie viele volle 5h-Fenster in ein Weekly-Fenster passen. Bei jedem Poll-Zyklus werden die Prozent-Zuwächse beider Fenster verglichen:
+
+```
+r = Σ ΔWeekly% / Σ Δ5h%        Fenster pro Woche = 1 / r
+```
+
+Verworfen werden Paare mit 5h-Reset (Δ5h ≤ 0 oder `resetsAt`-Wechsel), Weekly-Reset (ΔWeekly < 0) und gesättigtem Weekly (≥ 99,5 %). Das Verhältnis gilt erst ab 200 % beobachteter 5h-Nutzung als belastbar — vorher zeigt die Karte „lernt noch…".
+
+Der State liegt in `%USERPROFILE%\.quotabar-win\window-ratio.json` und wird beim ersten Start einmalig aus den vorhandenen Live-Debug-Logs geseedet. Bei einem `planType`-Wechsel wird neu gelernt; oberhalb von 3000 % Summe werden beide Summen halbiert (exponentielles Vergessen), damit sich Limit-Änderungen der Anbieter durchsetzen.
+
+**Prognose:** Der Termin „Limit erreicht ~…" basiert primär auf dem Wochenprofil (durchschnittliche Token pro Wochentag der letzten 4 Wochen, ab 2 Wochen Historie), sonst auf der linearen Wochen-Durchschnittsrate. Zusätzlich wird die aktuelle Burn-Rate als „Bei aktuellem Tempo: …" angezeigt.
+
+---
+
 ## Debug-Log und Backfill
 
 QuotaBar schreibt optional strukturierte Logs nach `~/.quotabar-win/debug/`:
