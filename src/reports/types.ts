@@ -52,7 +52,7 @@ export interface ReportRow extends ReportTotals {
 }
 
 export interface ReportResult {
-  request: Required<Omit<ReportRequest, "since" | "until" | "project">> & Pick<ReportRequest, "since" | "until" | "project">;
+  request: Required<Omit<ReportRequest, "since" | "until" | "project" | "limit">> & Pick<ReportRequest, "since" | "until" | "project" | "limit">;
   rows: ReportRow[];
   totals: ReportTotals;
   generatedAt: string;
