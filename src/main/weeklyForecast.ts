@@ -56,7 +56,8 @@ export interface WeeklyForecastResult {
 
 export function computeWeeklyForecast(input: WeeklyForecastInput): WeeklyForecastResult {
   const nowMs = input.now.getTime();
-  const resetMs = input.weeklyResetsAt ? new Date(input.weeklyResetsAt).getTime() : null;
+  const parsedReset = input.weeklyResetsAt ? new Date(input.weeklyResetsAt).getTime() : NaN;
+  const resetMs = Number.isNaN(parsedReset) ? null : parsedReset;
 
   // Sekundär: aktuelle Burn-Rate, linear hochgerechnet
   let burnRateAt: string | null = null;
@@ -87,6 +88,10 @@ export function computeWeeklyForecast(input: WeeklyForecastInput): WeeklyForecas
     let pct = input.weeklyUsedPercent;
     for (let t = nowMs; t < resetMs!; t += HOUR_MS) {
       pct += pctPerToken * (input.profile.avgTokensPerWeekday[new Date(t).getUTCDay()] / 24);
+      // The hour's projected consumption is added before this check, so when
+      // pct first reaches 100 the budget is exhausted by the END of this hour.
+      // Reporting t + HOUR_MS is the correct upper-bound readout of the
+      // discrete hourly simulation — not an off-by-one.
       if (pct >= 100) {
         return {
           primaryAt: new Date(t + HOUR_MS).toISOString(),
