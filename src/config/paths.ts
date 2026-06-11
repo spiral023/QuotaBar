@@ -35,6 +35,10 @@ export function getUsageSnapshotCachePath(): string {
   return path.join(getAppConfigDir(), "cache", "usage-snapshots.json");
 }
 
+export function getWindowRatioPath(): string {
+  return path.join(getAppConfigDir(), "window-ratio.json");
+}
+
 export function getInstalledMarkerPath(): string {
   return path.join(getAppConfigDir(), ".installed");
 }
