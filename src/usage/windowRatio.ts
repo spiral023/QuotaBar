@@ -6,10 +6,11 @@ export interface ProviderRatioState {
   lastWeekly: number | null;
   lastFiveResetsAt: string | null;
   lastPlanType: string | null;
+  lastTs: string | null;
 }
 
 export interface WindowRatioFile {
-  version: 1;
+  version: 2;
   seededThrough: string | null;
   providers: Record<string, ProviderRatioState>;
 }
@@ -27,6 +28,14 @@ export const DECAY_CAP_FIVE_PCT = 3000;
  */
 export const WEEKLY_SATURATION_PCT = 99.5;
 
+/** Paare über größere Lücken (Konto-Wechsel, App-Pausen, Log-Lücken) sind wertlos. */
+export const MAX_PAIR_AGE_MS = 10 * 60 * 1000;
+
+/** State-Map-Key: das Fenster-Verhältnis ist eine Eigenschaft des Tiers (planType). */
+export function ratioKey(provider: string, planType: string | null | undefined): string {
+  return `${provider}:${planType ?? "default"}`;
+}
+
 export function emptyProviderState(): ProviderRatioState {
   return {
     sumFivePct: 0,
@@ -36,11 +45,12 @@ export function emptyProviderState(): ProviderRatioState {
     lastWeekly: null,
     lastFiveResetsAt: null,
     lastPlanType: null,
+    lastTs: null,
   };
 }
 
 export function emptyRatioFile(): WindowRatioFile {
-  return { version: 1, seededThrough: null, providers: {} };
+  return { version: 2, seededThrough: null, providers: {} };
 }
 
 export interface RatioObservation {
@@ -48,6 +58,7 @@ export interface RatioObservation {
   weeklyPct: number;
   fiveResetsAt?: string | null;
   planType?: string | null;
+  ts: string;
 }
 
 /**
@@ -57,6 +68,9 @@ export interface RatioObservation {
  */
 export function recordObservation(state: ProviderRatioState, obs: RatioObservation): ProviderRatioState {
   let s = state;
+  // Defense-in-depth: reset on planType change. Within a tier-keyed state (keyed by
+  // ratioKey(provider, planType) in WindowRatioTracker), planType is stable by construction.
+  // This branch guards against direct callers that don't use the tier-keyed map.
   if (obs.planType != null && s.lastPlanType != null && obs.planType !== s.lastPlanType) {
     s = emptyProviderState();
   }
@@ -70,12 +84,15 @@ export function recordObservation(state: ProviderRatioState, obs: RatioObservati
     // spanning an undetected reset rather than throwing away all first observations.
     const rollover = s.lastFiveResetsAt != null && obs.fiveResetsAt != null && obs.fiveResetsAt !== s.lastFiveResetsAt;
     const saturated = s.lastWeekly >= WEEKLY_SATURATION_PCT;
+    // Gap guard: pairs spanning account switches, app pauses, or log gaps are worthless.
+    // NaN gap (lastTs null or unparsable) means no prior timestamp → reject.
+    const gapMs = s.lastTs !== null ? new Date(obs.ts).getTime() - new Date(s.lastTs).getTime() : NaN;
     // dWeekly === 0 is intentionally accepted: any token usage moves the 5h window
     // by a larger percentage than the weekly window (smaller denominator), so a
     // positive weekly tick never occurs without a positive 5h tick. Zero-delta-weekly
     // pairs therefore never drop a real weekly increment, and sumWeeklyPct telescopes
     // to the true total weekly movement — the ratio stays unbiased.
-    if (dFive > 0 && dWeekly >= 0 && !rollover && !saturated) {
+    if (dFive > 0 && dWeekly >= 0 && !rollover && !saturated && Number.isFinite(gapMs) && gapMs >= 0 && gapMs <= MAX_PAIR_AGE_MS) {
       next.sumFivePct = s.sumFivePct + dFive;
       next.sumWeeklyPct = s.sumWeeklyPct + dWeekly;
       next.pairCount = s.pairCount + 1;
@@ -89,6 +106,7 @@ export function recordObservation(state: ProviderRatioState, obs: RatioObservati
   next.lastWeekly = obs.weeklyPct;
   next.lastFiveResetsAt = obs.fiveResetsAt ?? null;
   next.lastPlanType = obs.planType ?? s.lastPlanType;
+  next.lastTs = obs.ts;
   return next;
 }
 
@@ -131,7 +149,7 @@ export function computeBudget(state: ProviderRatioState | undefined, weeklyUsedP
 export function clearTransients(file: WindowRatioFile): WindowRatioFile {
   const providers: Record<string, ProviderRatioState> = {};
   for (const [name, s] of Object.entries(file.providers)) {
-    providers[name] = { ...s, lastFive: null, lastWeekly: null, lastFiveResetsAt: null };
+    providers[name] = { ...s, lastFive: null, lastWeekly: null, lastFiveResetsAt: null, lastTs: null };
   }
   return { ...file, providers };
 }
@@ -140,12 +158,13 @@ export class WindowRatioTracker {
   constructor(private file: WindowRatioFile = emptyRatioFile()) {}
 
   record(provider: string, obs: RatioObservation): void {
-    const prev = this.file.providers[provider] ?? emptyProviderState();
-    this.file.providers[provider] = recordObservation(prev, obs);
+    const key = ratioKey(provider, obs.planType);
+    const prev = this.file.providers[key] ?? emptyProviderState();
+    this.file.providers[key] = recordObservation(prev, obs);
   }
 
-  getBudget(provider: string, weeklyUsedPercent: number): WindowBudgetInfo {
-    return computeBudget(this.file.providers[provider], weeklyUsedPercent);
+  getBudget(provider: string, planType: string | null | undefined, weeklyUsedPercent: number): WindowBudgetInfo {
+    return computeBudget(this.file.providers[ratioKey(provider, planType)], weeklyUsedPercent);
   }
 
   /** Addiert Seed-Summen (aus Debug-Logs) auf den bestehenden State. */

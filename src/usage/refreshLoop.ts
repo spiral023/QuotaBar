@@ -114,8 +114,9 @@ export class RefreshLoop {
               weeklyPct: weekly.usedPercent,
               fiveResetsAt: five.resetsAt ?? null,
               planType: snapshot.planType ?? null,
+              ts: now.toISOString(),
             });
-            snapshot.windowBudget = this.windowRatioTracker.getBudget(snapshot.provider, weekly.usedPercent);
+            snapshot.windowBudget = this.windowRatioTracker.getBudget(snapshot.provider, snapshot.planType ?? null, weekly.usedPercent);
           }
         }
         if (this.pricingEngine) {

@@ -55,6 +55,8 @@ async function seedFile(filePath: string, result: WindowRatioFile): Promise<void
       if (event.kind !== "snapshot" || event.status !== "ok") continue;
       const provider = typeof event.provider === "string" ? event.provider : null;
       if (!provider) continue;
+      const ts = typeof event.ts === "string" ? event.ts : null;
+      if (!ts) continue;
       const windows = Array.isArray(event.windows) ? (event.windows as Array<Record<string, unknown>>) : [];
       const five = windows.find((w) => w.name === "fiveHour");
       const weekly = windows.find((w) => w.name === "weekly");
@@ -65,6 +67,7 @@ async function seedFile(filePath: string, result: WindowRatioFile): Promise<void
         weeklyPct: weekly.usedPercent,
         fiveResetsAt: typeof five.resetsAt === "string" ? five.resetsAt : null,
         planType: typeof event.planType === "string" ? event.planType : null,
+        ts,
       });
     }
   } catch {

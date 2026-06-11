@@ -5,7 +5,9 @@ import {
   emptyProviderState,
   emptyRatioFile,
   recordObservation,
+  ratioKey,
   WindowRatioTracker,
+  MAX_PAIR_AGE_MS,
   MIN_SAMPLE_FIVE_PCT,
   DECAY_CAP_FIVE_PCT,
   type ProviderRatioState,
@@ -13,8 +15,10 @@ import {
 
 function feed(state: ProviderRatioState, pairs: Array<[number, number]>, resetsAt = "2026-06-08T10:00:00Z"): ProviderRatioState {
   let s = state;
+  let t = Date.parse("2026-06-08T10:00:00Z");
   for (const [five, weekly] of pairs) {
-    s = recordObservation(s, { fivePct: five, weeklyPct: weekly, fiveResetsAt: resetsAt });
+    s = recordObservation(s, { fivePct: five, weeklyPct: weekly, fiveResetsAt: resetsAt, ts: new Date(t).toISOString() });
+    t += 60_000;
   }
   return s;
 }
@@ -40,15 +44,15 @@ describe("recordObservation", () => {
   });
 
   it("verwirft Paare bei geändertem fiveHour-resetsAt (Rollover)", () => {
-    let s = recordObservation(emptyProviderState(), { fivePct: 80, weeklyPct: 50, fiveResetsAt: "2026-06-08T10:00:00Z" });
-    s = recordObservation(s, { fivePct: 90, weeklyPct: 55, fiveResetsAt: "2026-06-08T15:00:00Z" });
+    let s = recordObservation(emptyProviderState(), { fivePct: 80, weeklyPct: 50, fiveResetsAt: "2026-06-08T10:00:00Z", ts: "2026-06-08T10:00:00Z" });
+    s = recordObservation(s, { fivePct: 90, weeklyPct: 55, fiveResetsAt: "2026-06-08T15:00:00Z", ts: "2026-06-08T10:01:00Z" });
     expect(s.sumFivePct).toBe(0);
     expect(s.lastFiveResetsAt).toBe("2026-06-08T15:00:00Z");
   });
 
   it("akzeptiert Paare ohne resetsAt (Claude liefert es teils nicht)", () => {
-    let s = recordObservation(emptyProviderState(), { fivePct: 10, weeklyPct: 5 });
-    s = recordObservation(s, { fivePct: 20, weeklyPct: 8 });
+    let s = recordObservation(emptyProviderState(), { fivePct: 10, weeklyPct: 5, ts: "2026-06-08T10:00:00Z" });
+    s = recordObservation(s, { fivePct: 20, weeklyPct: 8, ts: "2026-06-08T10:01:00Z" });
     expect(s.sumFivePct).toBe(10);
     expect(s.sumWeeklyPct).toBe(3);
   });
@@ -59,20 +63,63 @@ describe("recordObservation", () => {
   });
 
   it("setzt den State bei planType-Wechsel zurück", () => {
-    let s = recordObservation(emptyProviderState(), { fivePct: 0, weeklyPct: 0, planType: "pro" });
-    s = recordObservation(s, { fivePct: 50, weeklyPct: 20, planType: "pro" });
+    let s = recordObservation(emptyProviderState(), { fivePct: 0, weeklyPct: 0, planType: "pro", ts: "2026-06-08T10:00:00Z" });
+    s = recordObservation(s, { fivePct: 50, weeklyPct: 20, planType: "pro", ts: "2026-06-08T10:01:00Z" });
     expect(s.sumFivePct).toBe(50);
-    s = recordObservation(s, { fivePct: 60, weeklyPct: 22, planType: "max" });
+    s = recordObservation(s, { fivePct: 60, weeklyPct: 22, planType: "max", ts: "2026-06-08T10:02:00Z" });
     expect(s.sumFivePct).toBe(0);
     expect(s.lastPlanType).toBe("max");
   });
 
   it("halbiert beide Summen oberhalb des Decay-Deckels", () => {
     let s = emptyProviderState();
-    s = { ...s, sumFivePct: DECAY_CAP_FIVE_PCT - 10, sumWeeklyPct: 900, lastFive: 0, lastWeekly: 0 };
-    s = recordObservation(s, { fivePct: 50, weeklyPct: 15 });
+    // lastTs is set 60s before the observation so the gap guard passes
+    s = { ...s, sumFivePct: DECAY_CAP_FIVE_PCT - 10, sumWeeklyPct: 900, lastFive: 0, lastWeekly: 0, lastTs: "2026-06-08T09:59:00Z" };
+    s = recordObservation(s, { fivePct: 50, weeklyPct: 15, ts: "2026-06-08T10:00:00Z" });
     expect(s.sumFivePct).toBeCloseTo((DECAY_CAP_FIVE_PCT - 10 + 50) / 2);
     expect(s.sumWeeklyPct).toBeCloseTo(915 / 2);
+  });
+
+  it("verwirft Paare mit Lücke > 10 Minuten (max-age guard)", () => {
+    const t0 = "2026-06-08T10:00:00Z";
+    const t1 = "2026-06-08T10:11:00Z"; // 11 minutes later — exceeds MAX_PAIR_AGE_MS
+    let s = recordObservation(emptyProviderState(), { fivePct: 10, weeklyPct: 5, ts: t0 });
+    const sumBefore = s.sumFivePct;
+    s = recordObservation(s, { fivePct: 20, weeklyPct: 8, ts: t1 });
+    expect(s.sumFivePct).toBe(sumBefore); // pair discarded
+    expect(s.pairCount).toBe(0);
+    expect(s.lastFive).toBe(20); // lastFive updated regardless
+    expect(s.lastTs).toBe(t1);   // lastTs updated regardless
+  });
+
+  it("akzeptiert Paare mit Lücke genau ≤ 10 Minuten", () => {
+    const t0 = "2026-06-08T10:00:00Z";
+    const t1 = new Date(Date.parse(t0) + MAX_PAIR_AGE_MS).toISOString(); // exactly 10 min
+    let s = recordObservation(emptyProviderState(), { fivePct: 10, weeklyPct: 5, ts: t0 });
+    s = recordObservation(s, { fivePct: 20, weeklyPct: 8, ts: t1 });
+    expect(s.sumFivePct).toBe(10);
+    expect(s.pairCount).toBe(1);
+  });
+
+  it("verwirft das erste Paar nach clearTransients (lastTs null → kein Paar)", () => {
+    // Build up some state then clear transients
+    let s = feed(emptyProviderState(), [[0, 0], [10, 3]]);
+    expect(s.pairCount).toBe(1);
+    const file = emptyRatioFile();
+    file.providers["p"] = s;
+    const cleared = clearTransients(file);
+    // First observation after clear: lastTs is null → no pair formed
+    const s2 = recordObservation(cleared.providers["p"]!, { fivePct: 20, weeklyPct: 6, ts: "2026-06-08T11:00:00Z" });
+    expect(s2.pairCount).toBe(1); // still 1 — no new pair
+    expect(s2.lastTs).toBe("2026-06-08T11:00:00Z");
+  });
+});
+
+describe("ratioKey", () => {
+  it("erzeugt korrekte Keys für verschiedene planType-Werte", () => {
+    expect(ratioKey("claude", "default_raven")).toBe("claude:default_raven");
+    expect(ratioKey("claude", null)).toBe("claude:default");
+    expect(ratioKey("claude", undefined)).toBe("claude:default");
   });
 });
 
@@ -106,41 +153,84 @@ describe("computeBudget", () => {
   });
 });
 
+describe("emptyRatioFile", () => {
+  it("hat version 2", () => {
+    expect(emptyRatioFile().version).toBe(2);
+  });
+});
+
 describe("clearTransients", () => {
-  it("löscht last-Werte, behält Summen und planType", () => {
+  it("löscht last-Werte inklusive lastTs, behält Summen und planType", () => {
     const file = emptyRatioFile();
-    file.providers.claude = { ...emptyProviderState(), sumFivePct: 500, sumWeeklyPct: 160, lastFive: 80, lastWeekly: 30, lastFiveResetsAt: "x", lastPlanType: "pro" };
+    file.providers.claude = {
+      ...emptyProviderState(),
+      sumFivePct: 500,
+      sumWeeklyPct: 160,
+      lastFive: 80,
+      lastWeekly: 30,
+      lastFiveResetsAt: "x",
+      lastPlanType: "pro",
+      lastTs: "2026-06-08T10:00:00Z",
+    };
     const out = clearTransients(file);
     expect(out.providers.claude.lastFive).toBeNull();
     expect(out.providers.claude.lastWeekly).toBeNull();
     expect(out.providers.claude.lastFiveResetsAt).toBeNull();
+    expect(out.providers.claude.lastTs).toBeNull();
     expect(out.providers.claude.sumFivePct).toBe(500);
     expect(out.providers.claude.lastPlanType).toBe("pro");
   });
 });
 
 describe("WindowRatioTracker", () => {
-  it("record + getBudget über die Klassen-API", () => {
+  it("record + getBudget über die Klassen-API (tier-keyed)", () => {
     const t = new WindowRatioTracker();
-    t.record("codex", { fivePct: 0, weeklyPct: 0 });
-    t.record("codex", { fivePct: 100, weeklyPct: 14 });
-    t.record("codex", { fivePct: 0, weeklyPct: 14 });
-    t.record("codex", { fivePct: 100, weeklyPct: 28 });
-    const b = t.getBudget("codex", 28);
+    // No planType → key is "codex:default"
+    t.record("codex", { fivePct: 0, weeklyPct: 0, ts: "2026-06-08T10:00:00Z" });
+    t.record("codex", { fivePct: 100, weeklyPct: 14, ts: "2026-06-08T10:01:00Z" });
+    t.record("codex", { fivePct: 0, weeklyPct: 14, ts: "2026-06-08T10:02:00Z" });
+    t.record("codex", { fivePct: 100, weeklyPct: 28, ts: "2026-06-08T10:03:00Z" });
+    const b = t.getBudget("codex", null, 28);
     expect(b.learning).toBe(false);
     if (!b.learning) expect(b.windowsPerWeek).toBeCloseTo(200 / 28);
   });
 
   it("mergeSeed addiert Summen und setzt seededThrough", () => {
     const t = new WindowRatioTracker();
-    t.record("claude", { fivePct: 0, weeklyPct: 0 });
-    t.record("claude", { fivePct: 50, weeklyPct: 16 });
+    // No planType → records under "claude:default"
+    t.record("claude", { fivePct: 0, weeklyPct: 0, ts: "2026-06-08T10:00:00Z" });
+    t.record("claude", { fivePct: 50, weeklyPct: 16, ts: "2026-06-08T10:01:00Z" });
     const seed = emptyRatioFile();
-    seed.providers.claude = { ...emptyProviderState(), sumFivePct: 850, sumWeeklyPct: 284, pairCount: 99 };
+    // Seed key must match tracker's tier key to merge correctly
+    seed.providers["claude:default"] = { ...emptyProviderState(), sumFivePct: 850, sumWeeklyPct: 284, pairCount: 99 };
     seed.seededThrough = "2026-06-10";
     t.mergeSeed(seed);
-    expect(t.getFile().providers.claude.sumFivePct).toBe(900);
-    expect(t.getFile().providers.claude.sumWeeklyPct).toBe(300);
+    expect(t.getFile().providers["claude:default"].sumFivePct).toBe(900);
+    expect(t.getFile().providers["claude:default"].sumWeeklyPct).toBe(300);
     expect(t.getFile().seededThrough).toBe("2026-06-10");
+  });
+
+  it("Tier-Keying: verschiedene planTypes landen in separaten States", () => {
+    const t = new WindowRatioTracker();
+    const t0 = "2026-06-08T10:00:00Z";
+    const t1 = "2026-06-08T10:01:00Z";
+    const t2 = "2026-06-08T10:02:00Z";
+
+    // Build up tierA state
+    t.record("claude", { fivePct: 0, weeklyPct: 0, planType: "tierA", ts: t0 });
+    t.record("claude", { fivePct: 50, weeklyPct: 10, planType: "tierA", ts: t1 });
+    const sumAfterTierA = t.getFile().providers["claude:tierA"]!.sumFivePct;
+    expect(sumAfterTierA).toBe(50);
+
+    // Record a tierB observation — must NOT reset tierA's sums
+    t.record("claude", { fivePct: 10, weeklyPct: 2, planType: "tierB", ts: t2 });
+    expect(t.getFile().providers["claude:tierA"]!.sumFivePct).toBe(50); // untouched
+
+    // Switch back to tierA: gap ≤ 10 min so pair IS accepted
+    // (resetsAt-rollover / max-age guard the cross-account cases in the wild)
+    const t3 = "2026-06-08T10:03:00Z";
+    t.record("claude", { fivePct: 70, weeklyPct: 15, planType: "tierA", ts: t3 });
+    // Gap from t1 to t3 is 2 minutes — within max-age, pair accepted
+    expect(t.getFile().providers["claude:tierA"]!.sumFivePct).toBeGreaterThan(50);
   });
 });
