@@ -11,8 +11,9 @@ import {
   buildFiveHourPeak, buildWeeklySummary, buildCostEfficiency, computeActiveHours,
   type AnalyticsSummary, type AnalyticsData,
 } from "./analyticsSummary";
+import { buildModelsData, type ModelsData } from "./modelsData";
 
-interface WorkerInput {
+interface AnalyticsTaskInput {
   task: "get" | "summary";
   claudeProjectsDirs: string[];
   codexSessionsDirs: string[];
@@ -23,7 +24,18 @@ interface WorkerInput {
   cacheHitRate: { claude: number; codex: number };
 }
 
-async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData> {
+interface ModelsTaskInput {
+  task: "models";
+  settings: Settings;
+}
+
+type WorkerInput = AnalyticsTaskInput | ModelsTaskInput;
+
+async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData | ModelsData> {
+  if (input.task === "models") {
+    return buildModelsData({ settings: input.settings });
+  }
+
   const periodStart = new Date(input.periodStartMs);
 
   const [claudeEntries, codexEvents] = await Promise.all([

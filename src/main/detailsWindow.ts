@@ -9,6 +9,7 @@ import type { ReportRequest } from "../reports/types";
 import { getClaudeProjectsDirs, getCodexSessionsDirs } from "../config/paths";
 import type { CostWindow, ViewMode } from "../config/settings";
 import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
+import type { ModelsData } from "./modelsData";
 import type { NotificationService } from "./notifications";
 import type { DebugRecorder } from "./debugRecorder";
 import { AsyncResultCache } from "./asyncResultCache";
@@ -32,6 +33,7 @@ export class DetailsWindowController {
   private isPinned = false;
   private readonly analyticsSummaryCache = new AsyncResultCache<AnalyticsSummary>();
   private readonly analyticsDataCache = new AsyncResultCache<AnalyticsData>();
+  private readonly modelsDataCache = new AsyncResultCache<ModelsData>();
   private notificationService: NotificationService | null = null;
 
   constructor(
@@ -115,6 +117,7 @@ export class DetailsWindowController {
   private clearAnalyticsCaches(): void {
     this.analyticsSummaryCache.clear();
     this.analyticsDataCache.clear();
+    this.modelsDataCache.clear();
   }
 
   private pushUpdate(): void {
@@ -267,6 +270,14 @@ export class DetailsWindowController {
         codexSessionsDirs:  getCodexSessionsDirs(),
         periodStartMs, windowDays, since, settings, cacheHitRate,
       }) as Promise<AnalyticsData>);
+    });
+
+    ipcMain.handle("models:get", async () => {
+      const settings = await loadSettings();
+      return this.modelsDataCache.get("models", () => runAnalyticsWorker({
+        task: "models",
+        settings,
+      }) as Promise<ModelsData>);
     });
 
     ipcMain.handle("window:set-view", async (_, mode: string) => {
