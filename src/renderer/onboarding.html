@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Willkommen bei QuotaBar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base:       #07090d;
+      --bg-surface:    #0b0e14;
+      --bg-card:       #0f1319;
+      --bg-card-hover: #121720;
+
+      --border:        rgba(255,255,255,0.07);
+      --border-mid:    rgba(255,255,255,0.13);
+
+      --t100: #e6eff6;
+      --t200: #b4c8d8;
+      --t300: #8298aa;
+      --t400: #7e92a4;
+
+      --green:  #52d017;
+      --yellow: #ffd700;
+      --gray:   #7a8999;
+
+      --claude-col: #DA785B;
+      --codex-col:  #4B55C8;
+
+      --r-card: 11px;
+      --r-icon: 9px;
+      --r-btn:  7px;
+      --r-badge: 5px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { height: 100%; overflow: hidden; }
+
+    body {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-base);
+      color: var(--t100);
+      font-family: 'DM Sans', system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ── Title bar (nur Drag + Close) ─────────────────────── */
+    .titlebar {
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 0 8px;
+      flex-shrink: 0;
+      -webkit-app-region: drag;
+    }
+    .tbtn {
+      width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      background: none; border: none; border-radius: var(--r-btn);
+      color: var(--t400); cursor: pointer; outline: none;
+      -webkit-app-region: no-drag;
+      transition-property: background, color, scale;
+      transition-duration: 120ms;
+    }
+    .tbtn:hover { background: rgba(255,255,255,0.055); color: var(--t200); }
+    .tbtn:active { scale: 0.96; }
+
+    /* ── Content ──────────────────────────────────────────── */
+    .content {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 0 28px 16px;
+    }
+    .content::-webkit-scrollbar { width: 3px; }
+    .content::-webkit-scrollbar-track { background: transparent; }
+    .content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+    /* ── Hero ─────────────────────────────────────────────── */
+    .hero { text-align: center; padding: 4px 0 22px; }
+    .hero-logo {
+      width: 52px; height: 52px; margin: 0 auto 14px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 14px;
+      background: rgba(82,208,23,0.08);
+      border: 1px solid rgba(82,208,23,0.22);
+      box-shadow: 0 4px 24px rgba(82,208,23,0.14);
+    }
+    .hero-title {
+      font-family: 'Syne', system-ui, sans-serif;
+      font-size: 19px; font-weight: 700;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+    }
+    .hero-title .accent { color: var(--green); }
+    .hero-sub {
+      font-size: 12.5px; line-height: 1.6; color: var(--t200);
+      max-width: 400px; margin: 0 auto;
+      text-wrap: pretty;
+    }
+
+    /* ── Sections ─────────────────────────────────────────── */
+    .section { margin-bottom: 18px; }
+    .section-title {
+      font-size: 9px; font-weight: 600; letter-spacing: 0.15em;
+      text-transform: uppercase; color: var(--t400);
+      padding-bottom: 6px; border-bottom: 1px solid var(--border);
+      margin-bottom: 9px;
+    }
+
+    /* ── Agent cards ──────────────────────────────────────── */
+    .agent-card {
+      display: flex; align-items: center; gap: 11px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--r-card);
+      padding: 10px 12px;
+      margin-bottom: 5px;
+    }
+    .agent-icon {
+      width: 38px; height: 38px;
+      border-radius: var(--r-icon);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .agent-icon img {
+      width: 24px; height: 24px; object-fit: contain; display: block;
+      filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
+    }
+    .agent-icon.icon-claude {
+      background: linear-gradient(145deg, rgba(255,255,255,0.095) 0%, rgba(255,255,255,0.035) 100%);
+      border: 1px solid rgba(245,152,48,0.28);
+      box-shadow: 0 2px 12px rgba(245,152,48,0.16);
+    }
+    .agent-icon.icon-codex {
+      background: linear-gradient(145deg, #0c1e13 0%, #172d1e 100%);
+      border: 1px solid rgba(82,208,23,0.22);
+      box-shadow: 0 2px 12px rgba(82,208,23,0.12);
+    }
+    .agent-card.is-muted .agent-icon { filter: grayscale(1); opacity: 0.55; }
+    .agent-info { flex: 1; min-width: 0; }
+    .agent-name { font-size: 12.5px; font-weight: 600; color: var(--t100); }
+    .agent-vendor { font-size: 10px; color: var(--t400); margin-top: 1px; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 9.5px; font-weight: 500;
+      padding: 3px 8px; border-radius: var(--r-badge);
+      line-height: 1.45; white-space: nowrap; flex-shrink: 0;
+    }
+    .badge-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .b-connected { background: rgba(82,208,23,0.1);   color: #72e832; border: 1px solid rgba(82,208,23,0.22); }
+    .b-detected  { background: rgba(255,215,0,0.1);   color: #ffd700; border: 1px solid rgba(255,215,0,0.24); }
+    .b-missing   { background: rgba(130,152,170,0.1); color: #96aebb; border: 1px solid rgba(130,152,170,0.2); }
+
+    .agents-loading {
+      display: flex; align-items: center; gap: 8px;
+      padding: 14px 2px; color: var(--t400); font-size: 11px;
+    }
+    .spinner {
+      width: 14px; height: 14px;
+      border: 1.5px solid rgba(255,255,255,0.06);
+      border-top-color: var(--t300);
+      border-radius: 50%;
+      animation: spin 700ms linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Feature list ─────────────────────────────────────── */
+    .feature {
+      display: flex; align-items: flex-start; gap: 11px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--r-card);
+      padding: 10px 12px;
+      margin-bottom: 5px;
+    }
+    .feature-icon {
+      width: 32px; height: 32px;
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      background: rgba(82,208,23,0.1);
+      border: 1px solid rgba(82,208,23,0.18);
+      color: var(--green);
+    }
+    .feature-body { flex: 1; min-width: 0; }
+    .feature-cat {
+      font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--green);
+      margin-bottom: 2px;
+    }
+    .feature-text {
+      font-size: 11.5px; color: var(--t200); line-height: 1.5;
+      text-wrap: pretty;
+    }
+
+    /* ── Stagger-Einblendung ──────────────────────────────── */
+    @keyframes enter { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
+    .stagger > * { animation: enter 360ms cubic-bezier(0.2, 0, 0, 1) both; }
+    .stagger > *:nth-child(1) { animation-delay: 40ms; }
+    .stagger > *:nth-child(2) { animation-delay: 110ms; }
+    .stagger > *:nth-child(3) { animation-delay: 180ms; }
+    .stagger > *:nth-child(4) { animation-delay: 250ms; }
+    .stagger > *:nth-child(5) { animation-delay: 320ms; }
+    .stagger > *:nth-child(6) { animation-delay: 390ms; }
+
+    /* ── Footer ───────────────────────────────────────────── */
+    .footer {
+      flex-shrink: 0;
+      padding: 12px 28px 18px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-surface);
+    }
+    .autostart-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 11px;
+    }
+    .autostart-label { font-size: 12px; color: var(--t200); font-weight: 500; }
+
+    .tgl { position: relative; width: 34px; height: 19px; flex-shrink: 0; }
+    .tgl input { opacity: 0; width: 0; height: 0; }
+    .tgl-track {
+      position: absolute; inset: 0; border-radius: 10px;
+      background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+      cursor: pointer; transition-property: background, border-color; transition-duration: 150ms;
+    }
+    .tgl-track::after {
+      content: ''; position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+      width: 13px; height: 13px; border-radius: 50%; background: var(--t400);
+      transition-property: transform, background; transition-duration: 150ms;
+    }
+    .tgl input:checked + .tgl-track { background: rgba(82,208,23,0.18); border-color: rgba(82,208,23,0.36); }
+    .tgl input:checked + .tgl-track::after { transform: translateX(15px) translateY(-50%); background: var(--green); }
+
+    .start-btn {
+      width: 100%; padding: 11px 0;
+      background: rgba(82,208,23,0.1); border: 1px solid rgba(82,208,23,0.28);
+      border-radius: var(--r-card); color: var(--green);
+      font-family: 'DM Sans', system-ui, sans-serif; font-size: 13px; font-weight: 600;
+      cursor: pointer; outline: none;
+      transition-property: background, scale; transition-duration: 120ms;
+    }
+    .start-btn:hover { background: rgba(82,208,23,0.17); }
+    .start-btn:active { scale: 0.98; }
+    .footer-note {
+      font-size: 9.5px; color: var(--t400); text-align: center;
+      margin-top: 7px; line-height: 1.4;
+    }
+  </style>
+  <script src="shared/ipc.js"></script>
+</head>
+<body>
+
+  <div class="titlebar">
+    <button class="tbtn" id="btn-close" title="Schließen">
+      <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
+           stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <line x1="1" y1="1" x2="10" y2="10"/>
+        <line x1="10" y1="1" x2="1"  y2="10"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="content">
+
+    <!-- ── Begrüßung ─────────────────────────────────────── -->
+    <div class="hero">
+      <div class="hero-logo">
+        <svg width="30" height="30" viewBox="0 0 18 18" fill="none">
+          <path d="M9 1L17 9L9 17L1 9Z" fill="#52d017" opacity="0.85"/>
+          <path d="M9 4.5L13.5 9L9 13.5L4.5 9Z" fill="#07090d"/>
+          <path d="M9 7L11 9L9 11L7 9Z" fill="#52d017" opacity="0.65"/>
+        </svg>
+      </div>
+      <div class="hero-title">Willkommen bei <span class="accent">QuotaBar</span></div>
+      <div class="hero-sub">
+        QuotaBar behält die Kontingente deiner AI&nbsp;Coding&nbsp;Agents im Blick —
+        direkt aus der Windows-Taskleiste. Du siehst jederzeit, wie viel Quota dir
+        bleibt, was deine Nutzung kosten würde und ob sich dein Abo lohnt.
+      </div>
+    </div>
+
+    <!-- ── Erkannte Agents ───────────────────────────────── -->
+    <div class="section">
+      <div class="section-title">Automatisch erkannte Coding Agents</div>
+      <div id="agents-list">
+        <div class="agents-loading"><div class="spinner"></div>Suche nach installierten Agents…</div>
+      </div>
+    </div>
+
+    <!-- ── Funktionen ────────────────────────────────────── -->
+    <div class="section">
+      <div class="section-title">Das kannst du mit QuotaBar machen</div>
+      <div class="stagger">
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1.5 8.5 L4.5 8.5 L6 4 L8.5 12 L10 8.5 L13.5 8.5"/>
+            </svg>
+          </div>
+          <div class="feature-body">
+            <div class="feature-cat">Live-Monitoring</div>
+            <div class="feature-text">Session-, 5-Stunden- und Wochenlimits in Echtzeit verfolgen — das Tray-Icon zeigt per Ampelfarbe, wie voll dein Kontingent ist.</div>
+          </div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="7.5" cy="7.5" r="6"/>
+              <path d="M7.5 4.5v3l2 2"/>
+            </svg>
+          </div>
+          <div class="feature-body">
+            <div class="feature-cat">Pace &amp; Burn-Rate</div>
+            <div class="feature-text">Erkennen, ob du schneller verbrauchst als das Zeitfenster läuft — inklusive Prognose, wann die Quota voraussichtlich erschöpft ist.</div>
+          </div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M7.5 1.5v12M10.5 3.5h-4.2a1.8 1.8 0 0 0 0 3.6h2.4a1.8 1.8 0 0 1 0 3.6H4.5"/>
+            </svg>
+          </div>
+          <div class="feature-body">
+            <div class="feature-cat">Kosten &amp; ROI</div>
+            <div class="feature-text">Sehen, was deine Nutzung über die API kosten würde, und sie mit deinem Abo-Preis vergleichen — der ROI-Faktor zeigt, wie sehr sich dein Abo lohnt.</div>
+          </div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 13V8M7.5 13V2M13 13V5.5"/>
+            </svg>
+          </div>
+          <div class="feature-body">
+            <div class="feature-cat">Analytics &amp; Models</div>
+            <div class="feature-text">Nutzungstrends, Aktivitätsmuster und Modell-Statistiken analysieren: Welche Modelle kosten am meisten, wie gut greift der Cache?</div>
+          </div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M7.5 1.5a4 4 0 0 1 4 4c0 3 1 4 1.5 4.5H2c.5-.5 1.5-1.5 1.5-4.5a4 4 0 0 1 4-4Z"/>
+              <path d="M6 12.5a1.6 1.6 0 0 0 3 0"/>
+            </svg>
+          </div>
+          <div class="feature-body">
+            <div class="feature-cat">Benachrichtigungen</div>
+            <div class="feature-text">Alerts erhalten, bevor es eng wird: hohe Auslastung, Quota-Resets, Burn-Rate-Spitzen oder frische Kontingente — alles konfigurierbar.</div>
+          </div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 1.5h7l2.5 2.5v9.5h-9.5Z"/>
+              <path d="M5.5 8h4M5.5 10.5h4M5.5 5.5h2"/>
+            </svg>
+          </div>
+          <div class="feature-body">
+            <div class="feature-cat">History &amp; Berichte</div>
+            <div class="feature-text">Historische Nutzung über frei wählbare Zeiträume auswerten, als Tabelle und Chart — und Berichte als JSON exportieren.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Footer ──────────────────────────────────────────── -->
+  <div class="footer">
+    <div class="autostart-row">
+      <span class="autostart-label">QuotaBar automatisch mit Windows starten</span>
+      <label class="tgl">
+        <input type="checkbox" id="tog-autostart" checked>
+        <span class="tgl-track"></span>
+      </label>
+    </div>
+    <button class="start-btn" id="btn-start">Los geht's</button>
+    <div class="footer-note">QuotaBar läuft danach unauffällig in der Taskleiste — ein Klick auf das Icon öffnet das Dashboard.</div>
+  </div>
+
+  <script>
+    const STATUS_BADGES = {
+      connected: { cls: 'b-connected', label: 'Verbunden' },
+      detected:  { cls: 'b-detected',  label: 'Erkannt — nicht angemeldet' },
+      not_found: { cls: 'b-missing',   label: 'Nicht gefunden' },
+    };
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      })[c]);
+    }
+
+    async function loadAgents() {
+      const list = document.getElementById('agents-list');
+      try {
+        const agents = await QB.ipc.invoke('onboarding:agents');
+        list.classList.add('stagger');
+        list.innerHTML = agents.map(a => {
+          const badge = STATUS_BADGES[a.status] ?? STATUS_BADGES.not_found;
+          const muted = a.status === 'not_found' ? ' is-muted' : '';
+          return `<div class="agent-card${muted}">
+            <div class="agent-icon icon-${esc(a.id)}"><img src="${esc(a.logo)}" alt="" draggable="false"></div>
+            <div class="agent-info">
+              <div class="agent-name">${esc(a.name)}</div>
+              <div class="agent-vendor">${esc(a.vendor)}</div>
+            </div>
+            <span class="badge ${badge.cls}"><span class="badge-dot"></span>${badge.label}</span>
+          </div>`;
+        }).join('');
+      } catch (e) {
+        console.error('onboarding:agents failed', e);
+        list.innerHTML = '<div class="agents-loading">Agents konnten nicht ermittelt werden.</div>';
+      }
+    }
+
+    function complete() {
+      QB.ipc.send('onboarding:complete', {
+        autostart: document.getElementById('tog-autostart').checked,
+      });
+    }
+
+    document.getElementById('btn-start').addEventListener('click', complete);
+    document.getElementById('btn-close').addEventListener('click', () => window.close());
+
+    void loadAgents();
+  </script>
+</body>
+</html>

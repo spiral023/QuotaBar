@@ -1,5 +1,5 @@
 import { app } from "electron";
-import { runFirstRunPrompt } from "../config/firstRun";
+import { isFirstRun } from "../config/firstRun";
 import { loadSettings } from "../config/settings";
 import { createProviderRegistry } from "../providers/providerRegistry";
 import { PricingEngine } from "../pricing/subscription-factor";
@@ -9,6 +9,7 @@ import { applyStartupFlag } from "./autostart";
 import { initializeLogging, log } from "./logging";
 import { TrayController } from "./tray";
 import { DetailsWindowController } from "./detailsWindow";
+import { openOnboardingWindow } from "./onboardingWindow";
 import { initializeUpdater } from "./updater";
 import { NotificationService } from "./notifications";
 import { DebugRecorder } from "./debugRecorder";
@@ -40,7 +41,7 @@ if (!app.requestSingleInstanceLock()) {
       app.setAppUserModelId("com.quotabar.windows");
       applyStartupFlag(cli.startupAction);
 
-      await runFirstRunPrompt();
+      const firstRun = await isFirstRun();
       const settings = await loadSettings(cli.pollIntervalSeconds ? { pollIntervalSeconds: cli.pollIntervalSeconds } : {});
       const recorder = new DebugRecorder({
         enabled: settings.debugLog.enabled,
@@ -54,6 +55,7 @@ if (!app.requestSingleInstanceLock()) {
         platform: process.platform,
       });
       const providers = createProviderRegistry(settings.providerTimeoutMs);
+      if (firstRun) openOnboardingWindow(providers);
       const usageSnapshotCachePath = getUsageSnapshotCachePath();
       const cachedSnapshots = markSnapshotsFromCache(await loadCachedSnapshots(usageSnapshotCachePath));
       const store = new UsageStore(cachedSnapshots);
