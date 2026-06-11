@@ -6,6 +6,7 @@ import { computeLinearPace, toRateWindow, computeSafetyGap } from "./usagePace";
 import { BurnRateTracker } from "./burnRateTracker";
 import type { PricingEngine } from "../pricing/subscription-factor";
 import type { DebugRecorder } from "../main/debugRecorder";
+import type { WindowRatioTracker } from "./windowRatio";
 import { snapshotEvent } from "../main/debugEvents";
 import { computeBackoffMs } from "./backoff";
 import { classifyFetchError } from "./fetchErrorClassifier";
@@ -29,7 +30,8 @@ export class RefreshLoop {
     private readonly intervalSeconds: number,
     private readonly timeoutMs: number,
     private readonly pricingEngine?: PricingEngine,
-    private readonly recorder?: DebugRecorder
+    private readonly recorder?: DebugRecorder,
+    private readonly windowRatioTracker?: WindowRatioTracker
   ) {}
 
   onRefresh(listener: RefreshListener): () => void {
@@ -101,6 +103,19 @@ export class RefreshLoop {
           }
           if (window.pace && window.resetsAt) {
             window.safetyGapSeconds = computeSafetyGap(window.resetsAt, window.pace, now);
+          }
+        }
+        if (this.windowRatioTracker && snapshot.status === "ok") {
+          const five = snapshot.windows.find((w) => w.name === "fiveHour");
+          const weekly = snapshot.windows.find((w) => w.name === "weekly");
+          if (typeof five?.usedPercent === "number" && typeof weekly?.usedPercent === "number") {
+            this.windowRatioTracker.record(snapshot.provider, {
+              fivePct: five.usedPercent,
+              weeklyPct: weekly.usedPercent,
+              fiveResetsAt: five.resetsAt ?? null,
+              planType: snapshot.planType ?? null,
+            });
+            snapshot.windowBudget = this.windowRatioTracker.getBudget(snapshot.provider, weekly.usedPercent);
           }
         }
         if (this.pricingEngine) {

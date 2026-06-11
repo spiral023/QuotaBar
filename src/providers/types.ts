@@ -1,4 +1,5 @@
 import type { UsagePace } from "../usage/usagePace";
+import type { WindowBudgetInfo } from "../usage/windowRatio";
 
 export interface TokenUsageDetail {
   inputTokens: number;
@@ -56,6 +57,7 @@ export interface UsageSnapshot {
   updatedAt: string;
   errorMessage?: string;
   costFactor?: CostFactorResult;
+  windowBudget?: WindowBudgetInfo;
 }
 
 export interface ProviderContext {

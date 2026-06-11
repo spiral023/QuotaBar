@@ -14,7 +14,10 @@ import { initializeUpdater } from "./updater";
 import { NotificationService } from "./notifications";
 import { DebugRecorder } from "./debugRecorder";
 import { runBackfill } from "./debugBackfill";
-import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath } from "../config/paths";
+import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath } from "../config/paths";
+import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
+import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
+import { seedFromDebugLogs } from "./windowRatioSeeder";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { loadCachedSnapshots, markSnapshotsFromCache, saveCachedSnapshots } from "../usage/snapshotCache";
 import { registerLifecycleEvents } from "./lifecycleEvents";
@@ -60,7 +63,22 @@ if (!app.requestSingleInstanceLock()) {
       const cachedSnapshots = markSnapshotsFromCache(await loadCachedSnapshots(usageSnapshotCachePath));
       const store = new UsageStore(cachedSnapshots);
       const pricingEngine = new PricingEngine(settings);
-      const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder);
+      const windowRatioPath = getWindowRatioPath();
+      const ratioFile = await loadWindowRatioFile(windowRatioPath);
+      const windowRatioTracker = new WindowRatioTracker(clearTransients(ratioFile));
+      if (!ratioFile.seededThrough) {
+        // Einmal-Seed aus vorhandenen Debug-Logs — bewusst nicht awaited,
+        // damit der App-Start nicht auf das Log-Parsing wartet.
+        void seedFromDebugLogs(getDebugLogDir())
+          .then((seed) => {
+            windowRatioTracker.mergeSeed(seed);
+            return saveWindowRatioFile(windowRatioPath, windowRatioTracker.getFile());
+          })
+          .catch((err: unknown) => {
+            log.warn(`Window-ratio seed failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+      }
+      const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder, windowRatioTracker);
       const backfillFetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
       const tray = new TrayController(providers, refreshLoop, async () => {
         await runBackfill({
@@ -89,6 +107,9 @@ if (!app.requestSingleInstanceLock()) {
         detailsWindow.notifyUpdate(snapshots);
         void saveCachedSnapshots(usageSnapshotCachePath, snapshots).catch((err: unknown) => {
           log.warn(`Usage snapshot cache save failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+        void saveWindowRatioFile(windowRatioPath, windowRatioTracker.getFile()).catch((err: unknown) => {
+          log.warn(`Window-ratio save failed: ${err instanceof Error ? err.message : String(err)}`);
         });
       });
       refreshLoop.start();

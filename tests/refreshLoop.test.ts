@@ -7,6 +7,7 @@ import type { UsageProvider, UsageSnapshot } from "../src/providers/types";
 import { RefreshLoop } from "../src/usage/refreshLoop";
 import { UsageStore } from "../src/usage/usageStore";
 import { DebugRecorder } from "../src/main/debugRecorder";
+import { WindowRatioTracker, emptyRatioFile, emptyProviderState } from "../src/usage/windowRatio";
 
 function okSnap(provider: string): UsageSnapshot {
   return {
@@ -311,5 +312,46 @@ describe("RefreshLoop robustness", () => {
 
     await loop.refreshNow();
     expect(events.some(e => e.kind === "network.recovered")).toBe(true);
+  });
+});
+
+describe("RefreshLoop windowBudget", () => {
+  function snapWithWindows(provider: string, fivePct: number, weeklyPct: number): UsageSnapshot {
+    return {
+      provider,
+      status: "ok",
+      windows: [
+        { name: "fiveHour", usedPercent: fivePct, windowSeconds: 18000 },
+        { name: "weekly", usedPercent: weeklyPct, windowSeconds: 604800 },
+      ],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  it("füttert den Tracker und hängt windowBudget an den Snapshot", async () => {
+    const store = new UsageStore();
+    const file = emptyRatioFile();
+    file.providers.claude = { ...emptyProviderState(), sumFivePct: 900, sumWeeklyPct: 300 };
+    const tracker = new WindowRatioTracker(file);
+    const provider = makeProvider("claude", async () => snapWithWindows("claude", 30, 62));
+    const loop = new RefreshLoop([provider], store, 60, 10_000, undefined, undefined, tracker);
+
+    const [snap] = await loop.refreshNow();
+    expect(snap.windowBudget).toBeDefined();
+    expect(snap.windowBudget?.learning).toBe(false);
+    if (snap.windowBudget && !snap.windowBudget.learning) {
+      expect(snap.windowBudget.windowsPerWeek).toBeCloseTo(3);
+      expect(snap.windowBudget.usedWindows).toBeCloseTo(1.86);
+    }
+  });
+
+  it("hängt kein windowBudget an, wenn das Weekly-Fenster fehlt", async () => {
+    const store = new UsageStore();
+    const tracker = new WindowRatioTracker();
+    const provider = makeProvider("claude", async () => okSnap("claude"));
+    const loop = new RefreshLoop([provider], store, 60, 10_000, undefined, undefined, tracker);
+
+    const [snap] = await loop.refreshNow();
+    expect(snap.windowBudget).toBeUndefined();
   });
 });
