@@ -9,6 +9,7 @@ import type { ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import type { CodexTokenEvent } from "../pricing/codex-log-reader";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { normalizeModelName, isIgnoredModel } from "../shared/modelNames";
+import { generateUsageReport } from "../reports/reportService";
 
 export interface ModelDay {
   date: string; // YYYY-MM-DD (UTC)
@@ -102,14 +103,47 @@ function addDay(
   }
 }
 
-// Live-Tail: wird in Task 4 implementiert.
 async function mergeLiveTail(
-  _dayMap: Map<string, ModelDay>,
-  _records: BackfillDayRecord[],
-  _settings: Settings,
-  _deps: ModelsDataDeps,
+  dayMap: Map<string, ModelDay>,
+  records: BackfillDayRecord[],
+  settings: Settings,
+  deps: ModelsDataDeps,
 ): Promise<void> {
-  // noch leer
+  for (const provider of ["claude", "codex"] as const) {
+    const lastBackfillDate = records
+      .filter(r => r.provider === provider)
+      .reduce<string | undefined>((max, r) => (!max || r.date > max ? r.date : max), undefined);
+
+    const report = await generateUsageReport(
+      {
+        provider,
+        type: "daily",
+        timezone: "UTC",
+        order: "asc",
+        breakdown: true,
+        ...(lastBackfillDate ? { since: lastBackfillDate } : {}),
+      },
+      {
+        settings,
+        ...(deps.claudeEntries ? { claudeEntries: deps.claudeEntries } : {}),
+        ...(deps.codexEvents ? { codexEvents: deps.codexEvents } : {}),
+      },
+    );
+
+    for (const row of report.rows) {
+      if (lastBackfillDate && row.bucket <= lastBackfillDate) continue;
+      for (const b of row.modelBreakdowns ?? []) {
+        addDay(dayMap, row.bucket, provider, b.model, {
+          inputTokens: b.inputTokens,
+          outputTokens: b.outputTokens,
+          cacheCreationTokens: b.cacheCreationTokens,
+          cacheReadTokens: b.cacheReadTokens,
+          totalTokens: b.totalTokens,
+          costUSD: b.costUSD,
+        });
+      }
+    }
+  }
 }
 
 async function readBenchmarks(file: string): Promise<{ benchmarks: Record<string, number>; benchmarksAsOf: string }> {

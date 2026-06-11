@@ -4,6 +4,8 @@ import path from "node:path";
 import { buildModelsData } from "../src/main/modelsData";
 import { defaultSettings } from "../src/config/settings";
 import type { BackfillDayRecord } from "../src/reports/types";
+import type { ClaudeUsageEntry } from "../src/pricing/jsonl-reader";
+import type { CodexTokenEvent } from "../src/pricing/codex-log-reader";
 
 const SETTINGS = { ...defaultSettings, pricingOfflineMode: true };
 const BENCHMARKS_FILE = path.join(__dirname, "..", "src", "config", "model-benchmarks.json");
@@ -101,5 +103,66 @@ describe("buildModelsData — backfill aggregation", () => {
       codexEvents: [],
     });
     expect(data.days.map(d => d.date)).toEqual(["2026-01-01", "2026-01-03"]);
+  });
+});
+
+function claudeEntry(isoTs: string, model: string, output: number): ClaudeUsageEntry {
+  return {
+    provider: "claude", timestamp: isoTs, model,
+    project: "p", session: "s",
+    inputTokens: 10, outputTokens: output, cacheCreationTokens: 0, cacheReadTokens: 0,
+    costUSD: 0.5,
+  };
+}
+
+function codexEvent(isoTs: string, model: string, output: number): CodexTokenEvent {
+  return {
+    timestamp: isoTs, model, isFallback: false, session: "s", directory: ".",
+    inputTokens: 10, cachedInputTokens: 0, outputTokens: output,
+    reasoningOutputTokens: 0, totalTokens: 10 + output,
+  };
+}
+
+describe("buildModelsData — live tail merge", () => {
+  it("adds live days strictly after the provider's last backfill date", async () => {
+    const data = await buildModelsData({
+      settings: SETTINGS,
+      benchmarksFile: BENCHMARKS_FILE,
+      backfillRecords: [
+        record("2026-01-10", "claude", { "claude-opus-4-8": PM(100, 50, 1.0) }),
+      ],
+      claudeEntries: [
+        claudeEntry("2026-01-10T12:00:00.000Z", "claude-opus-4-8", 99),  // selber Tag → ignoriert
+        claudeEntry("2026-01-11T12:00:00.000Z", "claude-opus-4-8", 42),  // danach → übernommen
+      ],
+      codexEvents: [],
+    });
+    const backfillDay = data.days.find(d => d.date === "2026-01-10");
+    expect(backfillDay?.outputTokens).toBe(50); // unverändert, kein Doppelzählen
+    const liveDay = data.days.find(d => d.date === "2026-01-11");
+    expect(liveDay?.outputTokens).toBe(42);
+  });
+
+  it("falls back to live-only when a provider has no backfill records", async () => {
+    const data = await buildModelsData({
+      settings: SETTINGS,
+      benchmarksFile: BENCHMARKS_FILE,
+      backfillRecords: [],
+      claudeEntries: [claudeEntry("2026-01-05T08:00:00.000Z", "claude-sonnet-4-6", 7)],
+      codexEvents: [codexEvent("2026-01-06T08:00:00.000Z", "gpt-5.5", 11)],
+    });
+    expect(data.days.find(d => d.provider === "claude")?.date).toBe("2026-01-05");
+    expect(data.days.find(d => d.provider === "codex")?.date).toBe("2026-01-06");
+  });
+
+  it("normalizes live model names too", async () => {
+    const data = await buildModelsData({
+      settings: SETTINGS,
+      benchmarksFile: BENCHMARKS_FILE,
+      backfillRecords: [],
+      claudeEntries: [claudeEntry("2026-01-05T08:00:00.000Z", "claude-haiku-4-5-20251001", 3)],
+      codexEvents: [],
+    });
+    expect(data.days[0].model).toBe("claude-haiku-4-5");
   });
 });
