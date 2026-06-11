@@ -17,11 +17,13 @@ vi.mock("electron", () => {
     screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }) },
     Tray: class {},
     clipboard: { writeText: vi.fn() },
+    shell: { openPath: vi.fn() },
   };
 });
 
 import { DebugRecorder } from "../src/main/debugRecorder";
 import { DetailsWindowController } from "../src/main/detailsWindow";
+import { ipcMain } from "electron";
 
 let tmpDir: string;
 
@@ -45,5 +47,17 @@ describe("DetailsWindowController dashboard.refreshRequested", () => {
     const content = await fs.readFile(path.join(tmpDir, files[0]), "utf8");
     const events = content.trim().split("\n").map((l) => JSON.parse(l));
     expect(events.some((e) => e.kind === "dashboard.refreshRequested")).toBe(true);
+  });
+});
+
+describe("DetailsWindowController system IPC", () => {
+  it("registers system data and path-opening handlers", () => {
+    new DetailsWindowController(() => null);
+
+    const channels = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .map((call: unknown[]) => call[0]);
+
+    expect(channels).toContain("system:get");
+    expect(channels).toContain("system:open-path");
   });
 });

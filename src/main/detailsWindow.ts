@@ -1,6 +1,6 @@
 import path from "path";
 import { Worker } from "node:worker_threads";
-import { BrowserWindow, ipcMain, screen, Tray, clipboard } from "electron";
+import { BrowserWindow, ipcMain, screen, Tray, clipboard, shell } from "electron";
 import { UsageSnapshot } from "../providers/types";
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { log } from "./logging";
@@ -14,6 +14,7 @@ import type { NotificationService } from "./notifications";
 import type { DebugRecorder } from "./debugRecorder";
 import { AsyncResultCache } from "./asyncResultCache";
 import { PersistentWorkerClient } from "./workerClient";
+import { collectSystemData, findOpenableSystemPath } from "./systemData";
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -278,6 +279,21 @@ export class DetailsWindowController {
         task: "models",
         settings,
       }) as Promise<ModelsData>);
+    });
+
+    ipcMain.handle("system:get", async () => {
+      return await collectSystemData();
+    });
+
+    ipcMain.handle("system:open-path", async (_, requestedPath: unknown) => {
+      if (typeof requestedPath !== "string" || requestedPath.trim().length === 0) {
+        return { ok: false, error: "invalid_path" };
+      }
+      const report = await collectSystemData();
+      const openPath = findOpenableSystemPath(report, requestedPath);
+      if (!openPath) return { ok: false, error: "path_not_allowed" };
+      const error = await shell.openPath(openPath);
+      return error ? { ok: false, error } : { ok: true };
     });
 
     ipcMain.handle("window:set-view", async (_, mode: string) => {

@@ -25,31 +25,6 @@ Mögliche Funktionen:
 - Benachrichtigungen versenden, wenn ein Nutzungslimit zurückgesetzt wurde
 - E-Mail-Versand optional über Resend
 
-## Onboarding beim ersten Start
-
-Beim ersten Start soll es eine kurze Onboarding Experience geben.
-
-Inhalte:
-
-- Nutzer kurz begrüßen
-- Zweck der App verständlich vorstellen
-- Kurze Liste der wichtigsten Funktionen anzeigen
-- Erklären, was der Nutzer mit QuotaBar machen kann
-- Anzeigen, welche Coding Agents automatisch erkannt wurden
-
-## System-Tab für erkannte Agents und lokale Daten
-
-Es soll einen Tab `System` geben.
-
-Mögliche Inhalte:
-
-- Anzeigen, welche Coding Agents erkannt wurden
-- Anzeigen, wo die zugehörigen Dateien liegen
-- Möglichkeit, den Explorer direkt im jeweiligen Ordner zu öffnen
-- Datenmenge darstellen, z. B. Anzahl der Dateien nach Typ (`logs`, `credentials`, ...)
-- Größe der erkannten Dateien anzeigen
-- Einstellungen optional in diesen Tab verlagern
-
 ## Extremwerte in Tabellen dezent hervorheben
 
 In Tabellen könnten Extremwerte visuell hervorgehoben werden, z. B. sehr hohe API-Kosten einer Woche rot und besonders günstige Tage grün.
