@@ -1,0 +1,11 @@
+{
+  "note": "Manuell gepflegt. Quelle: https://artificialanalysis.ai — Schlüssel in normalisierter Form (ohne Datums-Suffix). Modelle ohne Eintrag erscheinen nicht im Scatter.",
+  "source": "Artificial Analysis Intelligence Index",
+  "asOf": "2026-06",
+  "scores": {
+    "claude-opus-4-8": 61,
+    "claude-opus-4-7": 57,
+    "claude-sonnet-4-6": 52,
+    "gpt-5.5": 59
+  }
+}
