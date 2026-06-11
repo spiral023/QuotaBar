@@ -110,5 +110,97 @@
       .map(([model]) => model);
   }
 
-  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder };
+  function aggregateByModel(days) {
+    const map = new Map();
+    for (const d of days) {
+      let m = map.get(d.model);
+      if (!m) {
+        m = {
+          model: d.model, provider: d.provider,
+          inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0,
+          cacheReadTokens: 0, totalTokens: 0, costUSD: 0,
+          firstUsed: d.date, lastUsed: d.date,
+        };
+        map.set(d.model, m);
+      }
+      m.inputTokens += d.inputTokens;
+      m.outputTokens += d.outputTokens;
+      m.cacheCreationTokens += d.cacheCreationTokens;
+      m.cacheReadTokens += d.cacheReadTokens;
+      m.totalTokens += d.totalTokens;
+      m.costUSD += d.costUSD;
+      if (d.date < m.firstUsed) m.firstUsed = d.date;
+      if (d.date > m.lastUsed) m.lastUsed = d.date;
+    }
+    return Array.from(map.values());
+  }
+
+  // null bei costUSD 0 (Modell ohne Pricing) oder 0 Tokens.
+  function effPerMTokOf(costUSD, totalTokens) {
+    return costUSD > 0 && totalTokens > 0 ? (costUSD / totalTokens) * 1e6 : null;
+  }
+
+  function computeKpis(days, prevDays, benchmarks) {
+    const agg = aggregateByModel(days);
+    const prevAgg = aggregateByModel(prevDays);
+    const totalCost = agg.reduce((s, m) => s + m.costUSD, 0);
+    const totalTokens = agg.reduce((s, m) => s + m.totalTokens, 0);
+    const prevCost = prevAgg.reduce((s, m) => s + m.costUSD, 0);
+    const prevTokens = prevAgg.reduce((s, m) => s + m.totalTokens, 0);
+
+    const byCost = agg.slice().sort((a, b) => b.costUSD - a.costUSD);
+    const byOutput = agg.slice().sort((a, b) => b.outputTokens - a.outputTokens);
+
+    const effPerMTok = effPerMTokOf(totalCost, totalTokens);
+    const prevEff = effPerMTokOf(prevCost, prevTokens);
+
+    let bestValue = null;
+    for (const m of agg) {
+      const score = benchmarks[m.model];
+      const eff = effPerMTokOf(m.costUSD, m.totalTokens);
+      if (typeof score !== 'number' || !eff) continue;
+      const value = score / eff;
+      if (!bestValue || value > bestValue.scorePerDollar) {
+        bestValue = { model: m.model, provider: m.provider, scorePerDollar: value };
+      }
+    }
+
+    return {
+      activeModels: agg.length,
+      activeModelsDelta: prevDays.length > 0 ? agg.length - prevAgg.length : null,
+      topCost: byCost[0]
+        ? { model: byCost[0].model, provider: byCost[0].provider, costUSD: byCost[0].costUSD,
+            sharePct: totalCost > 0 ? (byCost[0].costUSD / totalCost) * 100 : 0 }
+        : null,
+      topOutput: byOutput[0]
+        ? { model: byOutput[0].model, provider: byOutput[0].provider, outputTokens: byOutput[0].outputTokens }
+        : null,
+      effPerMTok,
+      effPerMTokDeltaPct: effPerMTok != null && prevEff ? ((effPerMTok - prevEff) / prevEff) * 100 : null,
+      bestValue,
+      top3SharePct: totalCost > 0
+        ? (byCost.slice(0, 3).reduce((s, m) => s + m.costUSD, 0) / totalCost) * 100
+        : 0,
+    };
+  }
+
+  function tableRows(days, benchmarks) {
+    const agg = aggregateByModel(days);
+    const totalCost = agg.reduce((s, m) => s + m.costUSD, 0);
+    return agg.map((m) => {
+      const eff = effPerMTokOf(m.costUSD, m.totalTokens);
+      const score = typeof benchmarks[m.model] === 'number' ? benchmarks[m.model] : null;
+      const cacheBase = m.inputTokens + m.cacheReadTokens;
+      return {
+        ...m,
+        effPerMTok: eff,
+        score,
+        scorePerDollar: score != null && eff ? score / eff : null,
+        sharePct: totalCost > 0 ? (m.costUSD / totalCost) * 100 : 0,
+        cacheHitRate: cacheBase > 0 ? m.cacheReadTokens / cacheBase : null,
+      };
+    }).sort((a, b) => b.costUSD - a.costUSD);
+  }
+
+  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows };
 });
