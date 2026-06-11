@@ -71,6 +71,9 @@ if (!app.requestSingleInstanceLock()) {
         // damit der App-Start nicht auf das Log-Parsing wartet.
         void seedFromDebugLogs(getDebugLogDir())
           .then((seed) => {
+            // Safe to race with the first live record() calls: mergeSeed only
+            // adds to the running sums and never touches the lastFive/lastWeekly
+            // transients, so no observation pair is double-counted or lost.
             windowRatioTracker.mergeSeed(seed);
             return saveWindowRatioFile(windowRatioPath, windowRatioTracker.getFile());
           })
