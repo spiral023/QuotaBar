@@ -166,3 +166,43 @@ describe("buildModelsData — live tail merge", () => {
     expect(data.days[0].model).toBe("claude-haiku-4-5");
   });
 });
+
+describe("buildModelsData — pricing & benchmarks", () => {
+  it("includes per-model pricing rates from offline fallback prices", async () => {
+    const data = await buildModelsData({
+      settings: SETTINGS, // pricingOfflineMode: true → deterministische FALLBACK_PRICES
+      benchmarksFile: BENCHMARKS_FILE,
+      backfillRecords: [record("2026-01-01", "claude", { "claude-haiku-4-5": PM(10, 5, 0.01) })],
+      claudeEntries: [],
+      codexEvents: [],
+    });
+    const rate = data.pricing["claude-haiku-4-5"];
+    expect(rate).toBeDefined();
+    expect(rate.inputPerMTok).toBeCloseTo(0.8);      // 8e-7 × 1e6
+    expect(rate.cacheReadPerMTok).toBeCloseTo(0.08); // 8e-8 × 1e6
+  });
+
+  it("exposes benchmark scores with asOf", async () => {
+    const data = await buildModelsData({
+      settings: SETTINGS,
+      benchmarksFile: BENCHMARKS_FILE,
+      backfillRecords: [],
+      claudeEntries: [],
+      codexEvents: [],
+    });
+    expect(data.benchmarks["claude-opus-4-8"]).toBe(61);
+    expect(data.benchmarksAsOf).toMatch(/^\d{4}-\d{2}$/);
+  });
+
+  it("returns empty benchmarks when the file is missing (spec error case)", async () => {
+    const data = await buildModelsData({
+      settings: SETTINGS,
+      benchmarksFile: path.join(__dirname, "does-not-exist.json"),
+      backfillRecords: [],
+      claudeEntries: [],
+      codexEvents: [],
+    });
+    expect(data.benchmarks).toEqual({});
+    expect(data.benchmarksAsOf).toBe("");
+  });
+});
