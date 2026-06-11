@@ -3,8 +3,14 @@
 // und in vitest (module.exports). KEINE DOM- oder Chart.js-Abhängigkeiten.
 (function (root, factory) {
   'use strict';
-  if (typeof module === 'object' && module.exports) { module.exports = factory(); }
-  else { root.QB = root.QB || {}; root.QB.modelsCalc = factory(); }
+  // In Electron renderer, both `module` and `window` are defined (nodeIntegration).
+  // Only use CommonJS when window is truly absent (pure Node.js / vitest).
+  if (typeof module === 'object' && module.exports && typeof window === 'undefined') {
+    module.exports = factory();
+  } else {
+    root.QB = root.QB || {};
+    root.QB.modelsCalc = factory();
+  }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 

@@ -37,7 +37,8 @@ window.QB = window.QB || {};
       renderUI();
     } catch (e) {
       console.error('models:get failed', e);
-      container.innerHTML = '<div class="empty"><span>Fehler beim Laden</span></div>';
+      const msg = (e && e.message) ? e.message : String(e);
+      container.innerHTML = `<div class="empty"><span>Fehler: ${msg.slice(0, 300)}</span></div>`;
     }
   };
 
