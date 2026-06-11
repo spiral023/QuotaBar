@@ -156,6 +156,42 @@ function tokenCollapseHtml(cf, provider) {
   </div>`;
 }
 
+function fmtWindows(n) {
+  return n.toFixed(1).replace('.', ',');
+}
+
+function windowBudgetRowHtml(snap) {
+  const wb = snap.windowBudget;
+  if (!wb) return '';
+  if (wb.learning) {
+    const tip = 'QuotaBar lernt das Verhältnis zwischen 5h- und Weekly-Limit aus deiner Nutzung.\n'
+      + `Fortschritt: ${Math.round(wb.sampleFivePct)} % von 200 % 5h-Nutzung beobachtet.`;
+    return `<div class="wb-row"><span class="wb-learning" data-tip="${QB.esc(tip)}">Fenster-Budget: lernt noch…</span></div>`;
+  }
+  const total = wb.windowsPerWeek;
+  const segCount = Math.max(1, Math.ceil(total));
+  const segs = [];
+  for (let i = 0; i < segCount; i++) {
+    const capacity = Math.min(1, total - i);          // letztes Segment ggf. partiell
+    const used = clamp(wb.usedWindows - i, 0, capacity);
+    const fillPct = capacity > 0 ? (used / capacity) * 100 : 0;
+    const isCurrent = wb.usedWindows > i && wb.usedWindows < i + capacity;
+    const isFree = used === 0;
+    segs.push(`<div class="wb-seg${isFree ? ' wb-free' : ''}" style="flex:${capacity.toFixed(2)}">` +
+      (fillPct > 0 ? `<div class="wb-fill${isCurrent ? ' wb-current' : ''}" style="width:${fillPct.toFixed(0)}%"></div>` : '') +
+      `</div>`);
+  }
+  const tip = `Weekly-Budget umgerechnet in volle 5h-Fenster.\n`
+    + `Gelernt aus deiner Nutzung: ~${fmtWindows(total)} volle 5h-Fenster passen in ein Weekly-Fenster.`;
+  return `<div class="wb-row" data-tip="${QB.esc(tip)}">
+    <div class="wb-bar">${segs.join('')}</div>
+    <div class="wb-stats">
+      <span>5h-Fenster: ${fmtWindows(wb.usedWindows)} verbraucht</span>
+      <span>${fmtWindows(wb.remainingWindows)} übrig</span>
+    </div>
+  </div>`;
+}
+
 function windowBadgeHtml(cf) {
   if (!cf || !cf.windowLabel) return '';
   const days = cf.windowDays ?? '?';
@@ -291,6 +327,7 @@ function renderStandard(snap, name, delay) {
         <div class="bar-fill c-${wc}" style="width:${clamp(weekly.usedPercent,0,100)}%"></div>
         ${timeMarkerHtml(weekly.usedPercent, wkExpected)}
       </div>
+      ${windowBudgetRowHtml(snap)}
     </div>`;
   }
 

@@ -663,6 +663,22 @@
       white-space: nowrap;
     }
 
+    /* ── Fenster-Budget (5h ↔ Weekly) ─────────────────────── */
+    .wb-row { margin-top: 7px; }
+    .wb-bar { display: flex; gap: 2px; height: 10px; }
+    .wb-seg {
+      position: relative; flex: 1; background: rgba(255,255,255,0.07);
+      border-radius: 3px; overflow: hidden;
+    }
+    .wb-seg.wb-free { background: none; border: 1px dashed rgba(130,152,170,0.35); }
+    .wb-fill { position: absolute; inset: 0; right: auto; background: var(--codex-col); }
+    .wb-fill.wb-current { background: #9aa3f0; }
+    .wb-stats {
+      display: flex; justify-content: space-between;
+      font-size: 10px; color: var(--t400); margin-top: 3px;
+    }
+    .wb-learning { font-size: 10px; color: var(--t400); font-style: italic; }
+
     /* ── Token collapse ──────────────────────────────────────────── */
     .token-collapse { margin-top: 6px; }
     .token-toggle {
