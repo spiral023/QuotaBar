@@ -195,6 +195,7 @@ function windowBudgetRowHtml(snap) {
 // Chart-Instanzen pro Provider, damit Re-Renders sie sauber ersetzen
 const _wbCharts = {};
 let _wbDataPromise = null;
+let _wbGeneration  = 0;
 
 function windowBudgetCollapseHtml(snap) {
   const wb = snap.windowBudget;
@@ -228,16 +229,17 @@ function wbForecastHtml(fc) {
       : 'Keine Prognose möglich';
   let burn = '';
   if (fc.burnRateLastsUntilReset === true) burn = '<br>Bei aktuellem Tempo: reicht bis zum Reset';
-  else if (fc.burnRateAt) burn = `<br>Bei aktuellem Tempo: ~${fmt(fc.burnRateAt)}`;
+  else if (fc.burnRateAt) burn = `<br>Bei aktuellem Tempo: ~${QB.esc(fmt(fc.burnRateAt))}`;
   return `<span class="wb-fc-main">${QB.esc(main)}</span>${burn}`;
 }
 
-async function hydrateWindowBudgets(snapshots) {
+async function hydrateWindowBudgets(snapshots, gen) {
   const wanted = snapshots.filter(s => s.windowBudget && !s.windowBudget.learning);
   if (wanted.length === 0) return;
   try {
     if (!_wbDataPromise) _wbDataPromise = QB.ipc.invoke('windowBudget:get');
     const data = await _wbDataPromise;
+    if (gen !== _wbGeneration) return; // ein neuerer Render-Zyklus hat das DOM bereits ersetzt
     for (const snap of wanted) {
       const d = data.perProvider?.[snap.provider];
       const fcEl = document.getElementById(`wb-forecast-${snap.provider}`);
@@ -502,6 +504,7 @@ QB.renderLive = function renderLive(snapshots) {
   const tip      = renderTip(snapshots);
   el.innerHTML   = overview + cards + tip;
   _wbDataPromise = null; // neue Snapshots → Budget-Daten neu laden
-  void hydrateWindowBudgets(snapshots);
+  const wbGen = ++_wbGeneration;
+  void hydrateWindowBudgets(snapshots, wbGen);
   startCd();
 };
