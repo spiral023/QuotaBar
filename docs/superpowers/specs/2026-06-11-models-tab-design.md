@@ -35,15 +35,18 @@ ausgeschlossen.
 ## Layout (von oben nach unten)
 
 ```
-┌─ KPI-KACHELN (6) ──────────────────────────────────────────────┐
-│ Aktive     Top-Modell   Top-Modell   Ø $/MTok    Bestes   Top-3│
-│ Modelle    (Kosten)     (Tokens)     effektiv    P/L      Konz.│
+┌─ KPI-KACHELN (6-Spalten-Grid, Lead spannt 2) ──────────────────┐
+│ ┌Ø $/MTok eff.┐  Aktive    Top-Modell  Top-Modell  Bestes Top-3│
+│ │ $1.84 ▼12%  │  Modelle   (Kosten)    (Tokens)    P/L    Konz.│
+│ └──(24px Mono)┘                                                │
 └────────────────────────────────────────────────────────────────┘
-┌─ MODELL-VERTEILUNG (100% gestapelt) ───────────────────────────┐
+┌─ MODELL-VERTEILUNG (100% gestapelt, HERO, 200px) ──────────────┐
 │ [Output|Input|Cache Read|Cache Creation|Total|Kosten]  ← Metrik│
 │ [Alle|Claude|Codex]                    [30D|90D|Alles] ← Filter│
+│ ████ wöchentliche Balken, flush, 1px Lücke ████                │
+│ ▂▂▂ Provider-Ribbon (3px, Orange/Blau-Anteil je Bucket) ▂▂▂    │
 └────────────────────────────────────────────────────────────────┘
-┌─ PREIS vs. INTELLIGENZ (Scatter) ──────────────────────────────┐
+┌─ PREIS vs. INTELLIGENZ (Scatter, Value-Quadrant getönt) ───────┐
 ┌─ MODELL-TABELLE (sortierbar, mit Summenzeile) ─────────────────┐
 ┌─ INSIGHTS: Modell-Adoption (Timeline) │ Cache-Effizienz ───────┐
 ```
@@ -206,6 +209,63 @@ Neues, von Worker genutztes Modul:
 - Zuweisung nach erstmaligem Auftreten in der Historie (älteste zuerst) →
   stabil über Fenster-/Metrikwechsel. Palette wiederholt sich bei >6 Modellen.
 - „Andere" = Grau.
+
+## UI/UX-Detailspezifikation
+
+Gestaltungsrichtung: **„Strata"** — der Models-Tab ist die geologische
+Schichtkarte der Modellnutzung. Das 100%-Chart ist der visuelle Anker des Tabs
+und wird als Hero behandelt; alles andere ordnet sich unter. Die Umsetzung
+bleibt strikt in der bestehenden QuotaBar-Designsprache (Syne für Labels,
+IBM Plex Mono für Zahlen, `--bg-card`-Flächen, Radius- und Motion-Tokens).
+
+### Hierarchie & Komposition
+
+- **Hero-Chart**: 200px hoch (statt 140px wie Analytics-Charts), Balken flush
+  mit 1px Lücke (wie Screenshot-Vorlage), y-Achse nur Hairlines bei 25/50/75 %,
+  keine Achsen-Border. Es ist das Erste, was man sieht — KPI-Kacheln stehen
+  kompakt darüber, nicht davor.
+- **KPI-Hierarchie statt 6 gleicher Kacheln**: „Ø $/MTok effektiv" ist die
+  Lead-Kachel (Wert in 24px Mono wie `.an-peak-hero`, mit Trend-Chip), die
+  übrigen 5 folgen im `.an-stat-tile`-Format (13px). Grid: Lead-Kachel
+  spannt 2 Spalten in einem 6-Spalten-Grid (2/1/1/1/1).
+- **Provider-Ribbon** unter dem Hero-Chart: pro Bucket ein 3px hoher
+  Zweifarb-Microbar (Claude-Orange/Codex-Blau) mit dem Provider-Anteil —
+  Generationswechsel UND Provider-Verschiebung auf einen Blick, ohne Legende.
+- **Scatter mit Value-Quadrant**: dezente diagonale Tönung zur „smart &
+  günstig"-Ecke (oben links, `rgba(82,208,23,0.04)`-Verlauf), damit die
+  Leserichtung ohne Erklärtext klar ist.
+
+### Mikro-Interaktionen (Prinzipien aus make-interfaces-feel-better)
+
+| Prinzip | Festlegung für den Models-Tab |
+| --- | --- |
+| Split & Stagger beim Eintritt | Beim ersten Öffnen des Tabs: Sektionen einzeln einblenden (opacity 0→1, translateY 4px→0), 70ms Versatz pro Sektion, einmal pro Session — nicht bei Daten-Refresh oder Fensterwechsel |
+| Unterbrechbare Animationen | Metrik-/Fenster-/Provider-Wechsel mutieren die bestehende Chart.js-Instanz (`chart.update()`, 300ms house-default) — Canvas wird nie neu erstellt (kein Flash), laufende Übergänge sind unterbrechbar |
+| Scale on Press | Alle Pills/Sort-Header: `:active { scale: 0.96 }` mit `transition-property: background, border-color, color, scale` — exakt wie `.tbtn`, niemals `transition: all` |
+| Tabular Numbers | Sämtliche Zahlen (KPI, Tabelle, Tooltips, Legende) `font-variant-numeric: tabular-nums` — Haus-Standard, verhindert Layout-Shift bei Fensterwechsel |
+| Konzentrische Radien | Sektionen `--r-card` (11px) außen, verschachtelte Kacheln/Chips `--r-inner` (7px) — bestehende Token, keine neuen Radien |
+| Hit-Areas | Pills sind visuell 22px hoch (Dichte gewollt); klickbare Fläche per `::before` auf volle Kopfzeilen-Höhe (~28px) ausgedehnt, ohne Überlappung benachbarter Pills |
+| Sanfte Exits | Tooltip/Hinweisbanner blenden mit opacity + translateY(2px) aus — kein Height-Collapse |
+| Sort-Feedback | Sort-Caret rotiert 180° bei Richtungswechsel (120ms); Zeilen-Reorder selbst ist instant (kein Ge-animiere beim Sortieren) |
+
+### Hover- & Fokus-Verhalten
+
+- **Stacked-Chart**: Hover hebt das Segment via Chart.js `hoverBackgroundColor`
+  (+10 % Helligkeit); Tooltip zeigt Modell, absoluten Wert, Prozentanteil.
+- **Legende ist interaktiv**: Klick toggelt Modell-Sichtbarkeit (Chart.js-nativ,
+  100 % renormalisiert sich), Eintrag wird durchgestrichen + `--t400`.
+- **Scatter**: `hoverRadius` +2px, Tooltip mit Modell, Score, eff. $/MTok,
+  Kostenanteil. Fußnote „basierend auf deiner echten Nutzung" als Untertitel.
+- **Tabelle**: Zeilen-Hover `--bg-card-hover` (`transition-property: background`,
+  120ms); Summenzeile ausgenommen.
+- **Trend-Chips** (▲/▼): Semantik invertiert für Kostenmetriken — sinkende
+  Kosten/$/MTok = `--green`, steigende = `--orange`. Bei Token-Metriken neutral
+  (`--t300`), denn mehr Nutzung ist weder gut noch schlecht.
+
+### Ladezustand
+
+Bestehendes `loading-dots`-Muster beim ersten Laden; bei Fenster-/Metrikwechsel
+kein Spinner (lokales Recompute ist <16ms), nur Chart-Übergang.
 
 ## Fehlerfälle
 
