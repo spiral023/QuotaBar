@@ -20,6 +20,8 @@ export async function saveWindowRatioFile(filePath: string, file: WindowRatioFil
 function isWindowRatioFile(value: unknown): value is WindowRatioFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const r = value as Record<string, unknown>;
+  // v1-Dateien nutzten Provider-only-Keys; bewusst verwerfen (→ leerer State,
+  // seededThrough null), damit der Seeder den Tier-keyed State neu aufbaut.
   if (r.version !== 2) return false;
   if (r.seededThrough !== null && typeof r.seededThrough !== "string") return false;
   if (!r.providers || typeof r.providers !== "object" || Array.isArray(r.providers)) return false;
