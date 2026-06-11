@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "QuotaBar for Windows - Electron tray app for AI coding quota usage",
   "main": "dist/main/main.js",
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
     "dev": "npm run build && electron . --log-debug",
     "dev:watch": "concurrently --kill-others \"tsc -p tsconfig.json --watch\" \"nodemon --watch dist --watch src/renderer --delay 1 --exec \\\"electron . --log-debug\\\"\"",

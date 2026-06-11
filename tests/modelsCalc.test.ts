@@ -1,4 +1,3 @@
-import { describe, it, expect } from "vitest";
 import * as calc from "../src/renderer/tabs/models-calc";
 import {
   filterWindow,
@@ -212,5 +211,60 @@ describe("tableRows", () => {
       day("2026-03-01", "claude-opus-4-8", { costUSD: 9 }),
     ], BENCH);
     expect(rows[0].model).toBe("claude-opus-4-8");
+  });
+});
+
+describe("scatterPoints", () => {
+  it("emits only models with score and effective price", () => {
+    const rows = calc.tableRows([
+      day("2026-03-01", "claude-opus-4-8", { totalTokens: 1_000_000, costUSD: 3 }),
+      day("2026-03-01", "gpt-5-codex-mini"),
+    ], BENCH);
+    const pts = calc.scatterPoints(rows);
+    expect(pts).toHaveLength(1);
+    expect(pts[0]).toMatchObject({ model: "claude-opus-4-8", x: 3, y: 61 });
+    expect(pts[0].r).toBeGreaterThan(0);
+  });
+});
+
+describe("adoptionTimeline", () => {
+  it("returns per-model month intensities relative to the model's peak month", () => {
+    const t = calc.adoptionTimeline([
+      day("2026-01-10", "gpt-5.5", { outputTokens: 100 }),
+      day("2026-02-10", "gpt-5.5", { outputTokens: 50 }),
+    ]);
+    expect(t).toHaveLength(1);
+    expect(t[0].model).toBe("gpt-5.5");
+    expect(t[0].months).toEqual([
+      { month: "2026-01", intensity: 1 },
+      { month: "2026-02", intensity: 0.5 },
+    ]);
+  });
+});
+
+describe("cacheEfficiency", () => {
+  it("computes hit rate and saved USD from pricing rates", () => {
+    const days = [day("2026-03-01", "claude-opus-4-8", { inputTokens: 100, cacheReadTokens: 900 })];
+    const pricing = { "claude-opus-4-8": { inputPerMTok: 15, cacheReadPerMTok: 1.5 } };
+    const e = calc.cacheEfficiency(days, pricing);
+    expect(e).toHaveLength(1);
+    expect(e[0].hitRate).toBeCloseTo(0.9);
+    expect(e[0].savedUSD).toBeCloseTo((900 / 1e6) * (15 - 1.5));
+  });
+
+  it("skips models without pricing", () => {
+    const days = [day("2026-03-01", "gpt-5.5", { cacheReadTokens: 100 })];
+    expect(calc.cacheEfficiency(days, {})).toHaveLength(0);
+  });
+});
+
+describe("providerRibbon", () => {
+  it("returns claude share per bucket", () => {
+    const days = [
+      day("2026-01-05", "claude-opus-4-8", { outputTokens: 75 }),
+      day("2026-01-05", "gpt-5.5",         { outputTokens: 25 }),
+    ];
+    const r = calc.providerRibbon(days, "output", "daily");
+    expect(r).toEqual([{ bucket: "2026-01-05", claudeShare: 0.75 }]);
   });
 });

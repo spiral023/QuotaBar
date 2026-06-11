@@ -202,5 +202,66 @@
     }).sort((a, b) => b.costUSD - a.costUSD);
   }
 
-  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows };
+  // Bubble-Radius: 4–18px, skaliert mit Wurzel des Kostenanteils.
+  function scatterPoints(rows) {
+    return rows
+      .filter((r) => r.score != null && r.effPerMTok != null)
+      .map((r) => ({
+        model: r.model, provider: r.provider,
+        x: r.effPerMTok, y: r.score,
+        r: 4 + Math.sqrt(Math.max(r.sharePct, 0)) * 1.4,
+        sharePct: r.sharePct,
+      }));
+  }
+
+  // Pro Modell: Monate mit Deckkraft relativ zum stärksten Monat.
+  function adoptionTimeline(days) {
+    const byModel = new Map();
+    for (const d of days) {
+      const month = d.date.slice(0, 7);
+      let m = byModel.get(d.model);
+      if (!m) { m = { provider: d.provider, months: new Map() }; byModel.set(d.model, m); }
+      m.months.set(month, (m.months.get(month) || 0) + d.outputTokens);
+    }
+    return Array.from(byModel.entries()).map(([model, m]) => {
+      const max = Math.max(...m.months.values());
+      const months = Array.from(m.months.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([month, v]) => ({ month, intensity: max > 0 ? v / max : 0 }));
+      return { model, provider: m.provider, first: months[0].month, last: months[months.length - 1].month, months };
+    }).sort((a, b) => a.first.localeCompare(b.first) || a.model.localeCompare(b.model));
+  }
+
+  function cacheEfficiency(days, pricing) {
+    return aggregateByModel(days)
+      .filter((m) => pricing[m.model] && (m.inputTokens + m.cacheReadTokens) > 0)
+      .map((m) => {
+        const rate = pricing[m.model];
+        return {
+          model: m.model, provider: m.provider,
+          hitRate: m.cacheReadTokens / (m.inputTokens + m.cacheReadTokens),
+          savedUSD: (m.cacheReadTokens / 1e6) * Math.max(rate.inputPerMTok - rate.cacheReadPerMTok, 0),
+        };
+      })
+      .sort((a, b) => b.savedUSD - a.savedUSD);
+  }
+
+  // Claude-Anteil je Bucket für das 3px-Ribbon unter dem Hero-Chart.
+  function providerRibbon(days, metric, granularity) {
+    const bucketOf = granularity === 'weekly' ? (d) => isoWeek(d.date) : (d) => d.date;
+    const map = new Map();
+    for (const d of days) {
+      const b = bucketOf(d);
+      const v = metricOf(d, metric);
+      let e = map.get(b);
+      if (!e) { e = { claude: 0, total: 0 }; map.set(b, e); }
+      if (d.provider === 'claude') e.claude += v;
+      e.total += v;
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([bucket, e]) => ({ bucket, claudeShare: e.total > 0 ? e.claude / e.total : 0 }));
+  }
+
+  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, adoptionTimeline, cacheEfficiency, providerRibbon };
 });
