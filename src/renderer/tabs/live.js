@@ -192,6 +192,73 @@ function windowBudgetRowHtml(snap) {
   </div>`;
 }
 
+// Chart-Instanzen pro Provider, damit Re-Renders sie sauber ersetzen
+const _wbCharts = {};
+let _wbDataPromise = null;
+
+function windowBudgetCollapseHtml(snap) {
+  const wb = snap.windowBudget;
+  if (!wb || wb.learning) return '';
+  const id = `wbc-${QB.esc(snap.provider)}`;
+  let isOpen = false;
+  try { isOpen = localStorage.getItem('windowBudgetOpen') === '1'; } catch {}
+  return `<div class="token-collapse wb-collapse${isOpen ? ' open' : ''}" id="${id}">
+    <button class="token-toggle" aria-expanded="${isOpen}"
+            onclick="QB.toggleWindowBudget('${id}', '${QB.esc(snap.provider)}')">
+      <svg class="toggle-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none">
+        <path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Fenster-Budget
+    </button>
+    <div class="token-body">
+      <div class="wb-chart-wrap"><canvas id="wb-chart-${QB.esc(snap.provider)}"></canvas></div>
+      <div class="wb-forecast" id="wb-forecast-${QB.esc(snap.provider)}">Lädt…</div>
+    </div>
+  </div>`;
+}
+
+function wbForecastHtml(fc) {
+  const fmt = (iso) => new Date(iso).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  const kindLbl = fc.primaryKind === 'profile' ? 'Wochenprofil' : 'linear';
+  const main = fc.primaryLastsUntilReset
+    ? 'Reicht voraussichtlich bis zum Reset'
+    : fc.primaryAt
+      ? `Limit erreicht: ~${fmt(fc.primaryAt)} (${kindLbl})`
+      : 'Keine Prognose möglich';
+  let burn = '';
+  if (fc.burnRateLastsUntilReset === true) burn = '<br>Bei aktuellem Tempo: reicht bis zum Reset';
+  else if (fc.burnRateAt) burn = `<br>Bei aktuellem Tempo: ~${fmt(fc.burnRateAt)}`;
+  return `<span class="wb-fc-main">${QB.esc(main)}</span>${burn}`;
+}
+
+async function hydrateWindowBudgets(snapshots) {
+  const wanted = snapshots.filter(s => s.windowBudget && !s.windowBudget.learning);
+  if (wanted.length === 0) return;
+  try {
+    if (!_wbDataPromise) _wbDataPromise = QB.ipc.invoke('windowBudget:get');
+    const data = await _wbDataPromise;
+    for (const snap of wanted) {
+      const d = data.perProvider?.[snap.provider];
+      const fcEl = document.getElementById(`wb-forecast-${snap.provider}`);
+      const canvas = document.getElementById(`wb-chart-${snap.provider}`);
+      if (!d || !fcEl || !canvas) continue;
+      fcEl.innerHTML = wbForecastHtml(d.forecast);
+      if (_wbCharts[snap.provider]) { _wbCharts[snap.provider].destroy(); delete _wbCharts[snap.provider]; }
+      if (d.hasSeriesData) {
+        const weekly = snap.windows.find(w => w.name === 'weekly');
+        _wbCharts[snap.provider] = QB.weeklyBudgetChart(
+          canvas.getContext('2d'), d.series, d.forecast, weekly?.resetsAt ?? null);
+      } else {
+        canvas.closest('.wb-chart-wrap').innerHTML =
+          '<div class="wb-hint">Kein Verlauf verfügbar — Debug-Logging ist deaktiviert (Einstellungen).</div>';
+      }
+    }
+  } catch (e) {
+    console.error('windowBudget:get failed', e);
+  }
+}
+
 function windowBadgeHtml(cf) {
   if (!cf || !cf.windowLabel) return '';
   const days = cf.windowDays ?? '?';
@@ -354,6 +421,7 @@ function renderStandard(snap, name, delay) {
         </div>
         ${bars}
         ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
+        ${windowBudgetCollapseHtml(snap)}
         ${tokenHtml}
       </div>
     </div>
@@ -408,6 +476,15 @@ QB.toggleTokenSection = function toggleTokenSection(id) {
   try { localStorage.setItem('tokenDetailsOpen', isOpen ? '1' : '0'); } catch {}
 };
 
+QB.toggleWindowBudget = function toggleWindowBudget(id, provider) {
+  const container = document.getElementById(id);
+  if (!container) return;
+  const isOpen = container.classList.toggle('open');
+  const btn = container.querySelector('.token-toggle');
+  if (btn) btn.setAttribute('aria-expanded', String(isOpen));
+  try { localStorage.setItem('windowBudgetOpen', isOpen ? '1' : '0'); } catch {}
+};
+
 QB.renderLive = function renderLive(snapshots) {
   const el = document.getElementById('content');
   stopCd();
@@ -424,5 +501,7 @@ QB.renderLive = function renderLive(snapshots) {
   const cards    = snapshots.map((snap, i) => renderCard(snap, i + 1)).join('');
   const tip      = renderTip(snapshots);
   el.innerHTML   = overview + cards + tip;
+  _wbDataPromise = null; // neue Snapshots → Budget-Daten neu laden
+  void hydrateWindowBudgets(snapshots);
   startCd();
 };

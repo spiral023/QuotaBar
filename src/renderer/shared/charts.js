@@ -139,6 +139,96 @@ QB.charts.createDoughnut = function(ctx, labels, data, colors) {
   });
 };
 
+/**
+ * Weekly-Budget-Verlauf: kumulierte Weekly-% über das aktuelle Fenster,
+ * gestrichelte Projektion bis zur Prognose, vertikale 5h-Reset-Marker.
+ */
+QB.weeklyBudgetChart = function (ctx, series, forecast, windowEndIso) {
+  const histData = series.points.map(p => ({ x: new Date(p.t).getTime(), y: p.weeklyPct }));
+  const datasets = [{
+    label: 'Weekly',
+    data: histData,
+    borderColor: '#4a9eda',
+    backgroundColor: 'rgba(74,158,218,0.08)',
+    borderWidth: 2,
+    pointRadius: 0,
+    fill: true,
+    tension: 0.2,
+  }];
+  if (histData.length > 0 && forecast && forecast.primaryAt && !forecast.primaryLastsUntilReset) {
+    const last = histData[histData.length - 1];
+    datasets.push({
+      label: 'Prognose',
+      data: [last, { x: new Date(forecast.primaryAt).getTime(), y: 100 }],
+      borderColor: '#d95757',
+      borderWidth: 1.5,
+      borderDash: [5, 4],
+      pointRadius: 0,
+      fill: false,
+    });
+  }
+  const resetMs = series.fiveHourResets.map(t => new Date(t).getTime());
+  const resetLines = {
+    id: 'wbResetLines',
+    afterDraw(chart) {
+      const { ctx: c, chartArea, scales } = chart;
+      if (!scales.x) return;
+      c.save();
+      c.strokeStyle = 'rgba(139,144,160,0.35)';
+      c.setLineDash([3, 3]);
+      for (const ms of resetMs) {
+        const x = scales.x.getPixelForValue(ms);
+        if (x < chartArea.left || x > chartArea.right) continue;
+        c.beginPath();
+        c.moveTo(x, chartArea.top);
+        c.lineTo(x, chartArea.bottom);
+        c.stroke();
+      }
+      c.restore();
+    },
+  };
+  const xMax = windowEndIso ? new Date(windowEndIso).getTime() : undefined;
+  return new Chart(ctx, {
+    type: 'line',
+    data: { datasets },
+    plugins: [resetLines],
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: {
+          type: 'linear',
+          min: histData.length > 0 ? histData[0].x : undefined,
+          max: xMax,
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: {
+            color: '#8b90a0',
+            font: { size: 9 },
+            maxTicksLimit: 7,
+            callback: (v) => new Date(v).toLocaleDateString('de-DE', { weekday: 'short' }),
+          },
+        },
+        y: {
+          min: 0,
+          max: 100,
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#8b90a0', font: { size: 9 }, callback: (v) => `${v}%` },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => new Date(items[0].parsed.x).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
+            label: (item) => `${item.parsed.y.toFixed(1)} %`,
+          },
+        },
+      },
+    },
+  });
+};
+
 // 100% gestapelte Balken für den Models-Tab. datasets[i].rawValues trägt die
 // Absolutwerte für den Tooltip; data ist bereits in Prozent normalisiert.
 QB.charts.createStacked100 = function(ctx, labels, datasets, opts) {
