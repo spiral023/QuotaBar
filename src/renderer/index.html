@@ -22,13 +22,13 @@
       --t100: #e6eff6;
       --t200: #b4c8d8;
       --t300: #8298aa;
-      --t400: #506070;
+      --t400: #6f8294;
 
       --green:  #52d017;
       --yellow: #ffd700;
       --orange: #ff8c00;
       --red:    #ff4444;
-      --gray:   #475460;
+      --gray:   #667684;
 
       --claude-col:  #DA785B;
       --codex-col:   #4B55C8;
@@ -1390,6 +1390,97 @@
     .hr-empty-icon { color: var(--t400); opacity: 0.5; }
     .hr-empty-text { font-size: 12px; color: var(--t300); font-weight: 500; }
     .hr-empty-sub  { font-size: 10px; color: var(--t400); }
+
+    /* ══ MODELS TAB ════════════════════════════════════════════ */
+    .mod-kpi-grid {
+      display: grid; grid-template-columns: 2fr repeat(5, 1fr); gap: 5px; margin-bottom: 6px;
+    }
+    .mod-kpi-lead .an-stat-val {
+      font-size: 24px;
+    }
+    .mod-kpi-trend {
+      display: inline-block; margin-left: 6px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .mod-kpi-trend.good { color: var(--green); }
+    .mod-kpi-trend.bad  { color: var(--orange); }
+    .mod-kpi-trend.flat { color: var(--t300); }
+    .mod-kpi-sub { font-size: 8.5px; color: var(--t400); margin-top: 3px; }
+
+    .mod-hero-wrap { height: 200px; position: relative; }
+    .mod-ribbon { display: flex; gap: 1px; height: 3px; margin-top: 4px; }
+    .mod-ribbon-cell { flex: 1; display: flex; border-radius: 1px; overflow: hidden; }
+    .mod-ribbon-claude { background: var(--claude-col); height: 100%; }
+    .mod-ribbon-codex  { background: var(--codex-col);  height: 100%; }
+
+    .mod-head-rows { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+    .mod-pills { display: flex; gap: 3px; flex-wrap: wrap; }
+    .mod-pills .pill { padding: 3px 10px; font-size: 10px; height: auto; position: relative; }
+    .mod-pills .pill::before { content: ''; position: absolute; inset: -4px 0; }
+
+    .mod-scatter-wrap { height: 220px; position: relative; }
+    .mod-scatter-note { font-size: 8.5px; color: var(--t400); margin-top: 6px; }
+
+    .mod-table-scroll { overflow-x: auto; }
+    .mod-table { width: 100%; border-collapse: collapse; font-size: 10px; white-space: nowrap; }
+    .mod-table th {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--t400); text-align: right; padding: 4px 7px;
+      border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
+      transition-property: color; transition-duration: 120ms;
+    }
+    .mod-table th:hover { color: var(--t200); }
+    .mod-table th:active { scale: 0.96; }
+    .mod-table th.txt { text-align: left; }
+    .mod-table .sort-caret {
+      display: inline-block; margin-left: 3px;
+      transition-property: rotate; transition-duration: 120ms;
+      transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+    }
+    .mod-table th.sorted-asc .sort-caret { rotate: 180deg; }
+    .mod-table td {
+      padding: 4px 7px; border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums;
+      text-align: right; color: var(--t200);
+      transition-property: background; transition-duration: 120ms;
+    }
+    .mod-table td.txt { text-align: left; font-family: 'DM Sans', system-ui, sans-serif; color: var(--t100); }
+    .mod-table tbody tr:hover td { background: var(--bg-card-hover); }
+    .mod-table tr.mod-total td { border-bottom: none; color: var(--t100); font-weight: 500; }
+    .mod-table tr.mod-total:hover td { background: none; }
+    .mod-dot { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 5px; }
+
+    .mod-adopt-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .mod-adopt-lbl {
+      width: 130px; flex-shrink: 0; font-size: 9.5px; color: var(--t300);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .mod-adopt-track { flex: 1; display: flex; gap: 1px; height: 8px; }
+    .mod-adopt-seg { flex: 1; border-radius: 1px; }
+
+    .mod-cache-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .mod-cache-lbl {
+      width: 130px; flex-shrink: 0; font-size: 9.5px; color: var(--t300);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .mod-cache-track { flex: 1; height: 7px; background: rgba(255,255,255,0.04); border-radius: 2px; }
+    .mod-cache-fill { height: 100%; border-radius: 2px; }
+    .mod-cache-val {
+      width: 92px; flex-shrink: 0; text-align: right;
+      font-family: 'IBM Plex Mono', monospace; font-size: 8.5px;
+      font-variant-numeric: tabular-nums; color: var(--t400);
+    }
+
+    .mod-note { font-size: 9.5px; color: var(--t400); padding: 4px 0; }
+
+    @keyframes modEnter { from { opacity: 0; translate: 0 4px; } to { opacity: 1; translate: 0 0; } }
+    .mod-stagger > * { animation: modEnter 360ms cubic-bezier(0.2, 0, 0, 1) both; }
+    .mod-stagger > *:nth-child(1) { animation-delay: 0ms; }
+    .mod-stagger > *:nth-child(2) { animation-delay: 70ms; }
+    .mod-stagger > *:nth-child(3) { animation-delay: 140ms; }
+    .mod-stagger > *:nth-child(4) { animation-delay: 210ms; }
+    .mod-stagger > *:nth-child(5) { animation-delay: 280ms; }
   </style>
   <script src="../../assets/vendor/chart.min.js"></script>
   <script src="shared/ipc.js"></script>
@@ -1398,6 +1489,8 @@
   <script src="shared/charts.js"></script>
   <script src="tabs/live.js"></script>
   <script src="tabs/analytics.js"></script>
+  <script src="tabs/models-calc.js"></script>
+  <script src="tabs/models.js"></script>
   <script src="tabs/notifications.js"></script>
   <script src="tabs/history.js"></script>
 </head>
@@ -1416,6 +1509,7 @@
     <nav class="tab-nav">
       <button class="tab-btn active" id="tab-live"          data-tab="live">Live</button>
       <button class="tab-btn"        id="tab-analytics"    data-tab="analytics">Analytics</button>
+      <button class="tab-btn" id="tab-models" data-tab="models">Models</button>
       <button class="tab-btn"        id="tab-notifications" data-tab="notifications">Alerts</button>
       <button class="tab-btn"        id="tab-history"      data-tab="history">History</button>
     </nav>
@@ -1509,6 +1603,13 @@
   <!-- ── Analytics View ────────────────────────────────── -->
   <div class="view" id="view-analytics" hidden>
     <div class="analytics-wrap" id="analytics-content">
+      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+    </div>
+  </div>
+
+  <!-- ── Models View ──────────────────────────────────────────────── -->
+  <div class="view" id="view-models" hidden>
+    <div class="analytics-wrap" id="models-content">
       <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
     </div>
   </div>
@@ -1610,18 +1711,21 @@
       activeTab = tab;
       document.getElementById('view-dashboard').hidden     = tab !== 'live';
       document.getElementById('view-analytics').hidden     = tab !== 'analytics';
+      document.getElementById('view-models').hidden        = tab !== 'models';
       document.getElementById('view-notifications').hidden = tab !== 'notifications';
       document.getElementById('view-history').hidden       = tab !== 'history';
       document.querySelectorAll('.tab-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.tab === tab)
       );
       if (tab === 'analytics')     QB.renderAnalytics();
+      if (tab === 'models')        QB.renderModels();
       if (tab === 'notifications') QB.renderNotifications();
       if (tab === 'history')       QB.renderHistory();
     }
 
     document.getElementById('tab-live').addEventListener('click',          () => switchTab('live'));
     document.getElementById('tab-analytics').addEventListener('click',     () => switchTab('analytics'));
+    document.getElementById('tab-models').addEventListener('click', () => switchTab('models'));
     document.getElementById('tab-notifications').addEventListener('click', () => switchTab('notifications'));
     document.getElementById('tab-history').addEventListener('click',       () => switchTab('history'));
 
@@ -1691,6 +1795,7 @@
       inSettings = !inSettings;
       document.getElementById('view-dashboard').hidden     = inSettings || activeTab !== 'live';
       document.getElementById('view-analytics').hidden     = inSettings || activeTab !== 'analytics';
+      document.getElementById('view-models').hidden        = inSettings || activeTab !== 'models';
       document.getElementById('view-notifications').hidden = inSettings || activeTab !== 'notifications';
       document.getElementById('view-history').hidden       = inSettings || activeTab !== 'history';
       document.getElementById('view-settings').hidden      = !inSettings;
@@ -1822,6 +1927,7 @@
 
     async function prefetchDashboardData(activeCostWindow) {
       if (QB.prefetchAnalytics) QB.prefetchAnalytics();
+      if (QB.prefetchModels) QB.prefetchModels();
       await prefetchSummaryWindows(activeCostWindow);
     }
 
