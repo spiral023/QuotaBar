@@ -20,6 +20,11 @@ export const MIN_SAMPLE_FIVE_PCT = 200;
 export const MIN_SAMPLE_WEEKLY_PCT = 5;
 /** Exponentielles Vergessen: oberhalb dieses Deckels werden beide Summen halbiert. */
 export const DECAY_CAP_FIVE_PCT = 3000;
+/**
+ * At or above this weekly percentage the weekly window is effectively exhausted
+ * and can no longer grow, so pairs are discarded to avoid polluting the ratio.
+ * 99.5 rather than 100 leaves margin for integer-rounded values.
+ */
 export const WEEKLY_SATURATION_PCT = 99.5;
 
 export function emptyProviderState(): ProviderRatioState {
@@ -59,8 +64,17 @@ export function recordObservation(state: ProviderRatioState, obs: RatioObservati
   if (s.lastFive !== null && s.lastWeekly !== null) {
     const dFive = obs.fivePct - s.lastFive;
     const dWeekly = obs.weeklyPct - s.lastWeekly;
+    // Rollover is only detected when BOTH the previous and current fiveResetsAt are
+    // present. A null→present transition is treated as no-rollover by design: Claude
+    // sometimes omits resetsAt at 0% usage, so we accept the small risk of a pair
+    // spanning an undetected reset rather than throwing away all first observations.
     const rollover = s.lastFiveResetsAt != null && obs.fiveResetsAt != null && obs.fiveResetsAt !== s.lastFiveResetsAt;
     const saturated = s.lastWeekly >= WEEKLY_SATURATION_PCT;
+    // dWeekly === 0 is intentionally accepted: any token usage moves the 5h window
+    // by a larger percentage than the weekly window (smaller denominator), so a
+    // positive weekly tick never occurs without a positive 5h tick. Zero-delta-weekly
+    // pairs therefore never drop a real weekly increment, and sumWeeklyPct telescopes
+    // to the true total weekly movement — the ratio stays unbiased.
     if (dFive > 0 && dWeekly >= 0 && !rollover && !saturated) {
       next.sumFivePct = s.sumFivePct + dFive;
       next.sumWeeklyPct = s.sumWeeklyPct + dWeekly;
