@@ -71,4 +71,27 @@ describe("readWeeklySeries", () => {
     expect(s.points).toEqual([]);
     expect(s.fiveHourResets).toEqual([]);
   });
+
+  it("erkennt 5h-Reset über eine Tagesdatei-Grenze hinweg", async () => {
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"),
+      snapLine("claude", 80, 30, "2026-06-09T23:30:00Z"), "utf8");
+    await fs.writeFile(path.join(dir, "2026-06-10.jsonl"),
+      snapLine("claude", 2, 30, "2026-06-10T00:30:00Z"), "utf8");
+    const s = await readWeeklySeries(dir, "claude", START, NOW);
+    expect(s.fiveHourResets).toEqual(["2026-06-10T00:30:00Z"]);
+  });
+
+  it("ignoriert Snapshots mit status != ok", async () => {
+    const errLine = JSON.stringify({
+      ts: "2026-06-09T08:00:00Z", kind: "snapshot", provider: "claude", status: "error",
+      windows: [{ name: "weekly", usedPercent: 99, windowSeconds: 604800 }], fetchedAt: "2026-06-09T08:00:00Z",
+    });
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      errLine,
+      snapLine("claude", 5, 12, "2026-06-09T09:00:00Z"),
+    ].join("\n"), "utf8");
+    const s = await readWeeklySeries(dir, "claude", START, NOW);
+    expect(s.points).toHaveLength(1);
+    expect(s.points[0].weeklyPct).toBe(12);
+  });
 });
