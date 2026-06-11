@@ -153,10 +153,16 @@ interface ModelDay {
   costUSD: number;
 }
 
+interface ModelPricingRate {
+  inputPerMTok: number;     // $ pro 1M Input-Tokens (Listenpreis)
+  cacheReadPerMTok: number; // $ pro 1M Cache-Read-Tokens
+}
+
 interface ModelsData {
   days: ModelDay[];
   benchmarks: Record<string, number>; // normalisierter Name → Score
   benchmarksAsOf: string;             // z.B. "2026-06"
+  pricing: Record<string, ModelPricingRate>; // für Cache-Ersparnis-Berechnung
   generatedAt: string;
 }
 ```
