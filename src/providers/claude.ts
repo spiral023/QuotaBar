@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { isClaudeTokenExpired, loadClaudeCredentials, ClaudeCredentials } from "../auth/claudeAuth";
+import { fetchClaudeProfile } from "../auth/claudeProfile";
 import { refreshClaudeToken } from "../auth/tokenRefresh";
 import { log } from "../main/logging";
 import { NotAuthenticatedError, RateLimitError, toErrorMessage } from "../shared/errors";
@@ -51,9 +52,14 @@ export class ClaudeProvider implements UsageProvider {
         throw new Error(`Claude usage returned HTTP ${response.status}`);
       }
 
-      return normalizeClaudeUsageResponse(await response.json(), {
+      const snapshot = normalizeClaudeUsageResponse(await response.json(), {
         rateLimitTier: credentials.rateLimitTier
       });
+      const profile = await fetchClaudeProfile(credentials.accessToken, this.timeoutMs);
+      if (profile?.email || profile?.accountUuid) {
+        snapshot.identity = { email: profile.email, accountId: profile.accountUuid };
+      }
+      return snapshot;
     } catch (error) {
       if (error instanceof RateLimitError) throw error;
       const status = error instanceof NotAuthenticatedError ? "not_authenticated" : "error";

@@ -43,6 +43,12 @@ describe("redactPII", () => {
     });
   });
 
+  it("redacts identity.email on a snapshot-shaped object", () => {
+    const snap = { provider: "claude", identity: { email: "a@b.c", accountId: "uuid-x" } };
+    const out = redactPII(snap);
+    expect(out).toEqual({ provider: "claude", identity: { email: "<redacted>", accountId: "<redacted>" } });
+  });
+
   it("does not mutate the input", () => {
     const input = { email: "x@y.com", n: 1 };
     redactPII(input);

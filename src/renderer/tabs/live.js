@@ -421,6 +421,7 @@ function renderStandard(snap, name, delay) {
             <span class="card-chevron">›</span>
           </div>
         </div>
+        ${snap.identity?.email ? `<div class="prov-account" title="Aktives Konto">${QB.esc(snap.identity.email)}</div>` : ''}
         ${bars}
         ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
         ${windowBudgetCollapseHtml(snap)}
