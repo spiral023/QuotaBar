@@ -42,7 +42,7 @@ export class CodexProvider implements UsageProvider {
 
       const json = await response.json();
       log.debug(`Codex usage payload shape: ${redactObject(summarizeShape(json))}`);
-      return normalizeCodexUsageResponse(json, { accountId: credentials.accountId });
+      return normalizeCodexUsageResponse(json, { accountId: credentials.accountId, email: credentials.email });
     } catch (error) {
       const status = error instanceof NotAuthenticatedError ? "not_authenticated" : "error";
       log.warn(`Codex fetch failed: ${toErrorMessage(error)}`);
@@ -51,7 +51,7 @@ export class CodexProvider implements UsageProvider {
   }
 }
 
-export function normalizeCodexUsageResponse(input: unknown, identity: { accountId?: string } = {}): UsageSnapshot {
+export function normalizeCodexUsageResponse(input: unknown, identity: { accountId?: string; email?: string } = {}): UsageSnapshot {
   const root = asRecord(input) ?? {};
   const rateLimit = asRecord(root.rate_limit);
   const windows: UsageWindow[] = [];
@@ -73,7 +73,7 @@ export function normalizeCodexUsageResponse(input: unknown, identity: { accountI
     provider: "codex",
     status: "ok",
     planType: stringFrom(root.plan_type),
-    identity: identity.accountId ? { accountId: identity.accountId } : undefined,
+    identity: identity.accountId || identity.email ? { accountId: identity.accountId, email: identity.email } : undefined,
     windows,
     updatedAt: new Date().toISOString()
   };

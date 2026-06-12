@@ -5,6 +5,7 @@ import { decodeJwtClaim } from "./jwt";
 export interface CodexCredentials {
   accessToken: string;
   accountId?: string;
+  email?: string;
 }
 
 const ACCOUNT_ID_CLAIM = "https://api.openai.com/auth.chatgpt_account_id";
@@ -21,9 +22,13 @@ export function parseCodexAuthJson(content: string): CodexCredentials | null {
     ?? readString(parsed.account_id)
     ?? readString(decodeJwtClaim(accessToken, ACCOUNT_ID_CLAIM));
 
+  const idToken = readString(tokens?.id_token) ?? readString(parsed.id_token);
+  const email = idToken ? readString(decodeJwtClaim(idToken, "email")) : undefined;
+
   return {
     accessToken,
-    ...(accountId ? { accountId } : {})
+    ...(accountId ? { accountId } : {}),
+    ...(email ? { email } : {})
   };
 }
 

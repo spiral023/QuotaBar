@@ -20,6 +20,25 @@ describe("provider snapshot normalization", () => {
     expect(snapshot.windows[1]).toMatchObject({ name: "weekly", usedPercent: 31, windowSeconds: 604800 });
   });
 
+  it("sets Codex identity when only email is provided", () => {
+    const snapshot = normalizeCodexUsageResponse({}, { email: "dev@example.com" });
+
+    expect(snapshot.identity).toEqual({ accountId: undefined, email: "dev@example.com" });
+  });
+
+  it("sets Codex identity with both accountId and email", () => {
+    const snapshot = normalizeCodexUsageResponse({}, { accountId: "acct_1", email: "dev@example.com" });
+
+    expect(snapshot.identity?.accountId).toBe("acct_1");
+    expect(snapshot.identity?.email).toBe("dev@example.com");
+  });
+
+  it("leaves Codex identity undefined when neither accountId nor email is provided", () => {
+    const snapshot = normalizeCodexUsageResponse({}, {});
+
+    expect(snapshot.identity).toBeUndefined();
+  });
+
   it("normalizes Claude five-hour and weekly windows", () => {
     const snapshot = normalizeClaudeUsageResponse({
       fiveHour: { utilization: 0.42, resetsAt: "2026-05-18T12:15:00.000Z" },
