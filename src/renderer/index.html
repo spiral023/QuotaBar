@@ -1283,6 +1283,16 @@
     .notif-hist-window { font-size: 9px; color: var(--t400); }
     .notif-hist-body   { font-size: 11px; color: var(--t200); }
     .notif-hist-reason { font-size: 9px; color: var(--t400); font-family: 'IBM Plex Mono', monospace; margin-top: 1px; }
+    .notif-hist-mute {
+      margin-left: auto;
+      padding: 1px 7px; font-size: 8.5px;
+      color: var(--t300); background: transparent;
+      border: 1px solid var(--border); border-radius: 3px;
+      cursor: pointer;
+    }
+    .notif-hist-mute:hover:not(:disabled) { color: var(--t100); border-color: rgba(255,255,255,0.2); }
+    .notif-hist-mute:disabled { color: var(--t400); cursor: default; opacity: 0.7; }
+    .notif-hist-muted .notif-hist-body { color: var(--t400); font-style: italic; }
 
     /* Toggle shared with settings */
     .toggle-row {
@@ -1448,15 +1458,23 @@
     .hr-chart-wrap { height: 160px; position: relative; }
     .hr-row-count { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--t400); }
 
-    .hr-table-scroll { overflow-x: auto; }
+    /* Ein Container für beide Scroll-Richtungen — nur so haften die
+       Sticky-Header auch bei horizontalem Scrollen am Scroll-Parent. */
+    .hr-table-scroll { overflow: auto; max-height: min(420px, 55vh); }
     .hr-table {
       width: 100%; border-collapse: collapse; font-size: 10.5px;
+    }
+    .hr-table thead {
+      position: sticky; top: 0; z-index: 2;
     }
     .hr-table th {
       font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
       text-transform: uppercase; color: var(--t400);
-      padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--border);
+      padding: 4px 6px; text-align: left;
       white-space: nowrap;
+      background: var(--bg-card);
+      /* border-bottom haftet bei border-collapse nicht mit — Schatten statt Rahmen */
+      box-shadow: 0 1px 0 var(--border);
     }
     .hr-table th.num { text-align: right; }
     .hr-table td {
@@ -1479,12 +1497,14 @@
     .hr-table td.bucket-cell {
       font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: var(--t300);
     }
-    .hr-table tfoot tr:first-child td { border-top: 1px solid var(--border); }
+    .hr-table tfoot { position: sticky; bottom: 0; z-index: 2; }
+    .hr-table tfoot tr:first-child td { box-shadow: 0 -1px 0 var(--border); }
     .hr-table tfoot td {
       padding: 5px 6px; white-space: nowrap;
       border-bottom: 1px solid rgba(255,255,255,0.035);
       font-family: 'IBM Plex Mono', monospace;
       font-variant-numeric: tabular-nums;
+      background: var(--bg-card);
     }
     .hr-table tfoot tr.hr-foot-sub td {
       color: var(--t300); font-size: 9.5px;
@@ -2073,6 +2093,8 @@
       startFooterTimer();
       restartRefreshFuse();
     });
+
+    QB.ipc.on('ui:show-tab', (_, tab) => switchTab(tab));
 
     QB.ipc.send('quota:ready');
 

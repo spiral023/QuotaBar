@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { isFirstRun } from "../config/firstRun";
-import { loadSettings } from "../config/settings";
+import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { createProviderRegistry } from "../providers/providerRegistry";
 import { PricingEngine } from "../pricing/subscription-factor";
 import { RefreshLoop } from "../usage/refreshLoop";
@@ -105,6 +105,21 @@ if (!app.requestSingleInstanceLock()) {
       await tray.rebuildMenu();
       const notificationService = new NotificationService(settings.notifications);
       detailsWindow.setNotificationService(notificationService);
+      notificationService.setActionHandlers({
+        openDashboard: () => detailsWindow.open(
+          () => void refreshLoop.refreshNow("dashboard"),
+          () => void refreshLoop.recomputeCost(),
+          { tab: "notifications" },
+        ),
+        muteRule: async (ruleId: string) => {
+          const current = await loadSettings();
+          const rules = current.notifications.rules as unknown as Record<string, { enabled: boolean }>;
+          if (rules[ruleId]) rules[ruleId].enabled = false;
+          const merged = normalizeNotificationSettings(current.notifications);
+          await saveSettings({ ...current, notifications: merged });
+          return merged;
+        },
+      });
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
         detailsWindow.notifyUpdate(snapshots);

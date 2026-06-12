@@ -22,20 +22,6 @@ Wichtig:
 - Nur aussagekräftige Ausreißer markieren
 - Hervorhebung soll das Scannen erleichtern, nicht vom eigentlichen Wert ablenken
 
-## History-Detailtabelle: Spaltenüberschriften beim Scrollen sichtbar halten
-
-Wenn man im History-Tab nach unten scrollt und die Detailtabelle ansieht, sind die Spaltenüberschriften nicht mehr sichtbar. Dadurch muss man sich merken, welche Zahl zu welcher Spalte gehört.
-
-welche lösung sollten wir machen? z.b.
-
-- Sticky Header innerhalb der Tabelle
-- Kompakte wiederholte Kopfzeile oberhalb des sichtbaren Tabellenbereichs
-- Horizontales Scrollen und Sticky Header sauber kombinieren
-
-Ziel:
-
-- Beim Lesen tiefer Tabellenzeilen soll klar bleiben, welche Spalte welche Bedeutung hat.
-
 ## Notification-Aktionen: Öffnen und stummschalten
 
 Desktop-Benachrichtigungen könnten zwei direkte Aktionen bekommen:

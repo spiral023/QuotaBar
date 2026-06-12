@@ -20,7 +20,7 @@ QB.renderNotifications = async function () {
 
   wrap.innerHTML = buildNotificationsHTML(ns, rules);
   bindNotificationsEvents(wrap, ns, rules);
-  loadNotificationHistory(wrap);
+  loadNotificationHistory(wrap, rules);
 };
 
 // ── HTML aufbauen ──────────────────────────────────────────────────────────
@@ -275,7 +275,15 @@ async function saveNotificationSettings(wrap) {
 
 // ── Verlauf laden ──────────────────────────────────────────────────────────
 
-async function loadNotificationHistory(wrap) {
+function ruleLabel(ruleId) {
+  for (const group of RULE_GROUPS) {
+    const def = group.rules.find(r => r.id === ruleId);
+    if (def) return def.label;
+  }
+  return ruleId;
+}
+
+async function loadNotificationHistory(wrap, rules) {
   const list = wrap.querySelector('#notif-history-list');
   if (!list) return;
   try {
@@ -288,20 +296,51 @@ async function loadNotificationHistory(wrap) {
       const time = new Date(e.firedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
       const date = new Date(e.firedAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
       const providerLabel = e.provider ? e.provider[0].toUpperCase() + e.provider.slice(1) : '';
+      const isMuteEntry = e.reason === 'rule-muted';
+      const ruleEnabled = rules[e.ruleId]?.enabled !== false;
+      const muteBtn = isMuteEntry ? '' : `
+        <button class="notif-hist-mute" data-rule="${e.ruleId}" ${ruleEnabled ? '' : 'disabled'}
+                title="Benachrichtigungstyp „${ruleLabel(e.ruleId)}" dauerhaft deaktivieren">
+          ${ruleEnabled ? 'Stumm' : 'Typ deaktiviert'}
+        </button>`;
       return `
-        <div class="notif-hist-entry">
+        <div class="notif-hist-entry${isMuteEntry ? ' notif-hist-muted' : ''}">
           <div class="notif-hist-meta">
             <span class="notif-hist-time">${date} ${time}</span>
             <span class="notif-hist-provider">${providerLabel}</span>
             ${e.windowName ? `<span class="notif-hist-window">${e.windowName}</span>` : ''}
+            ${muteBtn}
           </div>
-          <div class="notif-hist-body">${e.body}</div>
+          <div class="notif-hist-body">${isMuteEntry ? `Typ „${ruleLabel(e.ruleId)}" deaktiviert` : e.body}</div>
           <div class="notif-hist-reason">${e.reason}</div>
         </div>
       `;
     }).join('');
+
+    list.querySelectorAll('.notif-hist-mute').forEach(btn => {
+      btn.addEventListener('click', () => void muteRuleFromHistory(wrap, rules, btn.dataset.rule));
+    });
   } catch (e) {
     list.innerHTML = '<div class="empty" style="padding:12px 0"><span>Verlauf nicht verfügbar.</span></div>';
     console.error(e);
+  }
+}
+
+async function muteRuleFromHistory(wrap, rules, ruleId) {
+  try {
+    // Vollständiges Rule-Objekt senden — der Handler ersetzt rules[ruleId] komplett
+    await QB.ipc.invoke('notification:settings:save', {
+      rules: { [ruleId]: { ...(rules[ruleId] ?? {}), enabled: false } },
+    });
+    if (rules[ruleId]) rules[ruleId].enabled = false;
+    // Alle Buttons dieses Typs und den Regel-Toggle oben synchronisieren
+    wrap.querySelectorAll(`.notif-hist-mute[data-rule="${ruleId}"]`).forEach(b => {
+      b.disabled = true;
+      b.textContent = 'Typ deaktiviert';
+    });
+    const toggle = wrap.querySelector(`.notif-rule-toggle[data-rule="${ruleId}"]`);
+    if (toggle) toggle.checked = false;
+  } catch (e) {
+    console.error('Mute via Verlauf fehlgeschlagen', e);
   }
 }

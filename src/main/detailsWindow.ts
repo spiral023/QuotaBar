@@ -50,12 +50,14 @@ export class DetailsWindowController {
     this.notificationService = svc;
   }
 
-  open(onRefreshRequest: () => void, onRecomputeRequest?: () => void): void {
+  open(onRefreshRequest: () => void, onRecomputeRequest?: () => void, opts?: { tab?: string }): void {
+    this.pendingTab = opts?.tab ?? null;
     if (this.win && !this.win.isDestroyed()) {
       this.win.show();
       this.positionWindow();
       this.pushUpdate();
       this.win.focus();
+      this.sendPendingTab();
       return;
     }
 
@@ -170,6 +172,13 @@ export class DetailsWindowController {
 
   private _onRefreshRequest: (() => void) | null = null;
   private _onRecomputeRequest: (() => void) | null = null;
+  private pendingTab: string | null = null;
+
+  private sendPendingTab(): void {
+    if (!this.pendingTab || !this.win || this.win.isDestroyed()) return;
+    this.win.webContents.send("ui:show-tab", this.pendingTab);
+    this.pendingTab = null;
+  }
 
   private handleDashboardRefresh(onRefreshRequest: () => void): void {
     this.recorder?.write({ kind: "dashboard.refreshRequested" });
@@ -188,6 +197,7 @@ export class DetailsWindowController {
       }
       const settings = await loadSettings();
       this.win?.webContents.send("quota:ready-ack", { viewMode: settings.viewMode });
+      this.sendPendingTab();
     });
 
     ipcMain.on("window:toggle-pin", () => {

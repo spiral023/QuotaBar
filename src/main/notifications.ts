@@ -10,8 +10,16 @@ import type { NotificationEvent, PersistedNotificationState } from "./notificati
 import { NotificationHistory } from "./notificationHistory";
 import { NotificationLog } from "./notificationLog";
 import { getNotificationStatePath } from "../config/paths";
+import { localISOString, log } from "./logging";
 
 export { NotificationEvent };
+
+export interface NotificationActionHandlers {
+  /** Dashboard-Fenster öffnen/fokussieren (Notifications-Tab). */
+  openDashboard: () => void;
+  /** Persistiert rules[ruleId].enabled = false und liefert die neuen Settings. */
+  muteRule: (ruleId: string) => Promise<NotificationSettings>;
+}
 
 const PROVIDER_LOGO_FILES: Record<string, string> = {
   claude: "claude.png",
@@ -26,6 +34,7 @@ export class NotificationService {
 
   private previous: UsageSnapshot[] = [];
   private settings: NotificationSettings;
+  private actionHandlers: NotificationActionHandlers | null = null;
 
   constructor(settings: NotificationSettings) {
     this.settings = settings;
@@ -54,6 +63,10 @@ export class NotificationService {
     this.settings = settings;
   }
 
+  setActionHandlers(handlers: NotificationActionHandlers): void {
+    this.actionHandlers = handlers;
+  }
+
   onRefresh(snapshots: UsageSnapshot[]): void {
     const events = this.engine.evaluate({
       current: snapshots,
@@ -75,23 +88,65 @@ export class NotificationService {
   }
 
   sendTest(): void {
-    new Notification({
+    const notification = new Notification({
       title: "QuotaBar",
       body: "Testbenachrichtigung – Benachrichtigungen funktionieren.",
-    }).show();
+      ...(this.actionHandlers ? { actions: [{ type: "button" as const, text: "Öffnen" }] } : {}),
+    });
+    notification.on("click", () => this.actionHandlers?.openDashboard());
+    notification.on("action", () => this.actionHandlers?.openDashboard());
+    notification.show();
   }
 
   private show(event: NotificationEvent): void {
-    new Notification(buildNotificationOptions(event)).show();
+    const notification = new Notification(buildNotificationOptions(event, this.actionHandlers != null));
+    notification.on("click", () => this.actionHandlers?.openDashboard());
+    notification.on("action", (details, legacyIndex) => {
+      // Neuere Electron-Versionen liefern details.actionIndex, ältere den Index als 2. Argument
+      const fromDetails = (details as { actionIndex?: number } | undefined)?.actionIndex;
+      const index = typeof fromDetails === "number" ? fromDetails : legacyIndex;
+      if (index === 0) this.actionHandlers?.openDashboard();
+      else if (index === 1) void this.muteRuleFromNotification(event.ruleId);
+    });
+    notification.show();
+  }
+
+  private async muteRuleFromNotification(ruleId: string): Promise<void> {
+    if (!this.actionHandlers) return;
+    try {
+      this.settings = await this.actionHandlers.muteRule(ruleId);
+    } catch (error) {
+      log.warn(`Mute via notification failed for rule ${ruleId}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    // Aktion im Verlauf sichtbar machen — nur die Rule-ID, keine sensiblen Inhalte
+    const entry: NotificationEvent = {
+      ruleId,
+      provider: "",
+      severity: "info",
+      title: "Regel deaktiviert",
+      body: `Benachrichtigungstyp "${ruleId}" wurde über eine Benachrichtigung deaktiviert.`,
+      firedAt: localISOString(new Date()),
+      reason: "rule-muted",
+    };
+    this.notifLog.write(entry);
+    this.history.add([entry]);
+    log.info(`Notification rule ${ruleId} muted via toast action`);
   }
 }
 
-export function buildNotificationOptions(event: NotificationEvent): NotificationConstructorOptions {
+export function buildNotificationOptions(event: NotificationEvent, withActions = false): NotificationConstructorOptions {
   const icon = getProviderLogoPath(event.provider);
   return {
     title: event.title,
     body: event.body,
     ...(icon ? { icon } : {}),
+    ...(withActions ? {
+      actions: [
+        { type: "button" as const, text: "Öffnen" },
+        { type: "button" as const, text: "Stumm" },
+      ],
+    } : {}),
   };
 }
 
