@@ -6,6 +6,7 @@ import { resetsAtChanged } from "../usage/windowRatio";
 
 const LIVE_LOG_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
 const RESET_DROP_PCT = 15;
+const SPIKE_DELTA_PCT = 20;
 
 export interface WeeklySeriesPoint {
   t: string;
@@ -81,7 +82,10 @@ export async function readWeeklySeries(
         }
         if (typeof five?.usedPercent === "number") {
           const fiveResetsAt = typeof five.resetsAt === "string" ? five.resetsAt : null;
-          if (resetsAtChanged(prevFiveResetsAt, fiveResetsAt)) {
+          // Codex idle windows roll resetsAt forward on every poll (ts+5h) while
+          // usage stays flat/rising — only count a resetsAt change as a genuine
+          // reset when usage also decreased (a real rollover empties the window).
+          if (resetsAtChanged(prevFiveResetsAt, fiveResetsAt) && prevFivePct !== null && five.usedPercent < prevFivePct) {
             resets.push(ts);
           } else if (prevFivePct !== null && five.usedPercent < prevFivePct - RESET_DROP_PCT) {
             resets.push(ts);
@@ -98,7 +102,19 @@ export async function readWeeklySeries(
   const points = [...buckets.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([ms, pct]) => ({ t: new Date(ms).toISOString(), weeklyPct: pct }));
-  return { points, fiveHourResets: resets };
+  return { points: removeSpikes(points), fiveHourResets: resets };
+}
+
+/** Entfernt isolierte Ausreißer-Buckets (transiente weekly=100-Spikes der API). */
+function removeSpikes(points: WeeklySeriesPoint[]): WeeklySeriesPoint[] {
+  if (points.length < 2) return points;
+  return points.filter((p, i) => {
+    const left = i > 0 ? points[i - 1].weeklyPct : null;
+    const right = i < points.length - 1 ? points[i + 1].weeklyPct : null;
+    const aboveLeft = left === null || p.weeklyPct - left > SPIKE_DELTA_PCT;
+    const aboveRight = right === null || p.weeklyPct - right > SPIKE_DELTA_PCT;
+    return !(aboveLeft && aboveRight);
+  });
 }
 
 function utcDateKey(date: Date): string {

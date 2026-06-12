@@ -145,4 +145,86 @@ describe("readWeeklySeries", () => {
     expect(s.fiveHourResets).toHaveLength(1);
     expect(s.fiveHourResets[0]).toBe("2026-06-09T09:30:00Z");
   });
+
+  // --- Artifact 1: rolling resetsAt fix ---
+
+  it("ignoriert rollierendes resetsAt bei flacher Nutzung", async () => {
+    // Codex idle: fivePct constant 1, each resetsAt = ts+5h (all >60s apart)
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      snapLine("codex", 1, 10, "2026-06-09T08:00:00Z", "2026-06-09T13:00:00Z"),
+      snapLine("codex", 1, 10, "2026-06-09T08:02:00Z", "2026-06-09T13:02:00Z"),
+      snapLine("codex", 1, 10, "2026-06-09T08:04:00Z", "2026-06-09T13:04:00Z"),
+      snapLine("codex", 1, 10, "2026-06-09T08:06:00Z", "2026-06-09T13:06:00Z"),
+    ].join("\n"), "utf8");
+    const s = await readWeeklySeries(dir, "codex", START, NOW);
+    expect(s.fiveHourResets).toHaveLength(0);
+  });
+
+  it("ignoriert rollierendes resetsAt bei steigender Nutzung", async () => {
+    // fivePct 1→2→3 with rolling resetsAt → no reset (usage not decreasing)
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      snapLine("codex", 1, 10, "2026-06-09T08:00:00Z", "2026-06-09T13:00:00Z"),
+      snapLine("codex", 2, 11, "2026-06-09T08:02:00Z", "2026-06-09T13:02:00Z"),
+      snapLine("codex", 3, 12, "2026-06-09T08:04:00Z", "2026-06-09T13:04:00Z"),
+    ].join("\n"), "utf8");
+    const s = await readWeeklySeries(dir, "codex", START, NOW);
+    expect(s.fiveHourResets).toHaveLength(0);
+  });
+
+  it("echter Rollover mit sinkender Nutzung wird weiter erkannt", async () => {
+    // fivePct 10→3 (drop 7pp, below RESET_DROP_PCT=15) with resetsAt jumping by 5h
+    // Only the resetsAt-change + decrease branch can fire here
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      snapLine("codex", 10, 20, "2026-06-09T08:00:00Z", "2026-06-09T13:00:00Z"),
+      snapLine("codex", 3,  20, "2026-06-09T13:00:00Z", "2026-06-09T18:00:00Z"),
+    ].join("\n"), "utf8");
+    const s = await readWeeklySeries(dir, "codex", START, NOW);
+    expect(s.fiveHourResets).toHaveLength(1);
+    expect(s.fiveHourResets[0]).toBe("2026-06-09T13:00:00Z");
+  });
+
+  // --- Artifact 2: weekly spike filter ---
+
+  it("entfernt transienten weekly-Spike", async () => {
+    // weekly buckets [2, 100, 5, 8] — spike at index 1 (100) should be removed
+    const base = new Date("2026-06-09T08:00:00Z").getTime();
+    const bucket = 30 * 60 * 1000;
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      snapLine("claude", 5, 2,   new Date(base).toISOString()),
+      snapLine("claude", 5, 100, new Date(base + bucket).toISOString()),
+      snapLine("claude", 5, 5,   new Date(base + 2 * bucket).toISOString()),
+      snapLine("claude", 5, 8,   new Date(base + 3 * bucket).toISOString()),
+    ].join("\n"), "utf8");
+    const s = await readWeeklySeries(dir, "claude", START, NOW);
+    expect(s.points).toHaveLength(3);
+    expect(s.points.map((p) => p.weeklyPct)).toEqual([2, 5, 8]);
+  });
+
+  it("entfernt Spike am Serienanfang", async () => {
+    // [100, 5, 8] → first point removed (only right neighbor: 5, spike delta=95)
+    const base = new Date("2026-06-09T08:00:00Z").getTime();
+    const bucket = 30 * 60 * 1000;
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      snapLine("claude", 5, 100, new Date(base).toISOString()),
+      snapLine("claude", 5, 5,   new Date(base + bucket).toISOString()),
+      snapLine("claude", 5, 8,   new Date(base + 2 * bucket).toISOString()),
+    ].join("\n"), "utf8");
+    const s = await readWeeklySeries(dir, "claude", START, NOW);
+    expect(s.points).toHaveLength(2);
+    expect(s.points.map((p) => p.weeklyPct)).toEqual([5, 8]);
+  });
+
+  it("behält echtes schnelles Wachstum", async () => {
+    // [10, 60, 65] — 60 exceeds left by 50 but right neighbor 65 is also high
+    const base = new Date("2026-06-09T08:00:00Z").getTime();
+    const bucket = 30 * 60 * 1000;
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      snapLine("claude", 5, 10,  new Date(base).toISOString()),
+      snapLine("claude", 5, 60,  new Date(base + bucket).toISOString()),
+      snapLine("claude", 5, 65,  new Date(base + 2 * bucket).toISOString()),
+    ].join("\n"), "utf8");
+    const s = await readWeeklySeries(dir, "claude", START, NOW);
+    expect(s.points).toHaveLength(3);
+    expect(s.points.map((p) => p.weeklyPct)).toEqual([10, 60, 65]);
+  });
 });
