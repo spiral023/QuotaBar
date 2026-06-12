@@ -10,9 +10,28 @@ export interface ProviderRatioState {
 }
 
 export interface WindowRatioFile {
-  version: 2;
+  version: 3;
   seededThrough: string | null;
   providers: Record<string, ProviderRatioState>;
+}
+
+/**
+ * Claudes resets_at hat Mikrosekunden-Jitter: derselbe Reset-Zeitpunkt wird
+ * bei jedem Poll minimal anders serialisiert. Ein echter Rollover verschiebt
+ * resetsAt um Minuten bis Stunden — erst oberhalb dieser Toleranz zählt eine
+ * Änderung als Fenster-Wechsel.
+ */
+export const RESETS_AT_TOLERANCE_MS = 60_000;
+
+/** true, wenn zwei resetsAt-Werte einen echten Fenster-Wechsel anzeigen. */
+export function resetsAtChanged(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (a == null || b == null) return false;
+  const aMs = new Date(a).getTime();
+  const bMs = new Date(b).getTime();
+  if (Number.isFinite(aMs) && Number.isFinite(bMs)) {
+    return Math.abs(bMs - aMs) > RESETS_AT_TOLERANCE_MS;
+  }
+  return a !== b;
 }
 
 /** Mindestens zwei volle 5h-Fenster an Beobachtung, bevor das Verhältnis als belastbar gilt. */
@@ -50,7 +69,7 @@ export function emptyProviderState(): ProviderRatioState {
 }
 
 export function emptyRatioFile(): WindowRatioFile {
-  return { version: 2, seededThrough: null, providers: {} };
+  return { version: 3, seededThrough: null, providers: {} };
 }
 
 export interface RatioObservation {
@@ -82,7 +101,8 @@ export function recordObservation(state: ProviderRatioState, obs: RatioObservati
     // present. A null→present transition is treated as no-rollover by design: Claude
     // sometimes omits resetsAt at 0% usage, so we accept the small risk of a pair
     // spanning an undetected reset rather than throwing away all first observations.
-    const rollover = s.lastFiveResetsAt != null && obs.fiveResetsAt != null && obs.fiveResetsAt !== s.lastFiveResetsAt;
+    // resetsAtChanged returns false when either side is null — same semantics as before.
+    const rollover = resetsAtChanged(s.lastFiveResetsAt, obs.fiveResetsAt);
     const saturated = s.lastWeekly >= WEEKLY_SATURATION_PCT;
     // Gap guard: pairs spanning account switches, app pauses, or log gaps are worthless.
     // NaN gap (lastTs null or unparsable) means no prior timestamp → reject.

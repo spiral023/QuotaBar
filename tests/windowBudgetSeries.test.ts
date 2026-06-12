@@ -123,6 +123,17 @@ describe("readWeeklySeries", () => {
     expect(s.points[1].weeklyPct).toBe(31);
   });
 
+  it("Mikrosekunden-Jitter in fiveResetsAt erzeugt keine false-positive Resets", async () => {
+    // Same reset instant re-serialized with microsecond jitter on each poll
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      snapLine("claude", 20, 10, "2026-06-09T08:00:00Z", "2026-06-09T12:20:00.739597+00:00"),
+      snapLine("claude", 30, 13, "2026-06-09T08:01:00Z", "2026-06-09T12:20:00.750574+00:00"),
+      snapLine("claude", 40, 16, "2026-06-09T08:02:00Z", "2026-06-09T12:20:00.761033+00:00"),
+    ].join("\n"), "utf8");
+    const s = await readWeeklySeries(dir, "claude", START, NOW);
+    expect(s.fiveHourResets).toHaveLength(0);
+  });
+
   it("ohne Filter registriert der fremde-planType-Einbruch einen Reset", async () => {
     // Same fixture as above but no planType filter → the tierB dip IS seen as a reset
     await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [

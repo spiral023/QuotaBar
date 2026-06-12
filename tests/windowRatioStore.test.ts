@@ -59,13 +59,26 @@ describe("windowRatioStore", () => {
     expect(loaded).toEqual(emptyRatioFile());
   });
 
+  it("liefert leeren State bei v2-Datei (mit fehlerhaftem Rollover-Filter trainiert)", async () => {
+    // v2 state was trained with a faulty rollover filter (microsecond jitter counted as
+    // window change) and must be rejected so the seeder rebuilds a correct state.
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(
+      file,
+      JSON.stringify({ version: 2, seededThrough: "2026-06-10", providers: {} }),
+      "utf8",
+    );
+    const loaded = await loadWindowRatioFile(file);
+    expect(loaded).toEqual(emptyRatioFile());
+  });
+
   it("liefert leeren State bei ungültigem Provider-Eintrag (lastTs ist Zahl)", async () => {
     // Ensures the lastTs field in ProviderRatioState is validated as null|string.
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(
       file,
       JSON.stringify({
-        version: 2,
+        version: 3,
         seededThrough: null,
         providers: {
           claude: {
@@ -92,7 +105,7 @@ describe("windowRatioStore", () => {
     await fs.writeFile(
       file,
       JSON.stringify({
-        version: 2,
+        version: 3,
         seededThrough: null,
         providers: { claude: { sumFivePct: "bad", sumWeeklyPct: 0, pairCount: 0 } },
       }),

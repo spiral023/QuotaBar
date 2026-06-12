@@ -6,6 +6,7 @@ import {
   emptyRatioFile,
   recordObservation,
   ratioKey,
+  resetsAtChanged,
   WindowRatioTracker,
   MAX_PAIR_AGE_MS,
   MIN_SAMPLE_FIVE_PCT,
@@ -22,6 +23,47 @@ function feed(state: ProviderRatioState, pairs: Array<[number, number]>, resetsA
   }
   return s;
 }
+
+describe("resetsAtChanged", () => {
+  it("gibt false zurück bei Mikrosekunden-Jitter (Claude-API-Eigenheit)", () => {
+    expect(resetsAtChanged(
+      "2026-05-26T12:20:00.739597+00:00",
+      "2026-05-26T12:20:00.750574+00:00",
+    )).toBe(false);
+  });
+
+  it("gibt true zurück bei 5-Stunden-Differenz (echter Rollover)", () => {
+    expect(resetsAtChanged(
+      "2026-06-08T10:00:00Z",
+      "2026-06-08T15:00:00Z",
+    )).toBe(true);
+  });
+
+  it("gibt false zurück bei genau 60 s Differenz (Randwert ≤ Toleranz)", () => {
+    expect(resetsAtChanged(
+      "2026-06-08T10:00:00.000Z",
+      "2026-06-08T10:01:00.000Z",
+    )).toBe(false);
+  });
+
+  it("gibt true zurück bei 61 s Differenz (knapp über Toleranz)", () => {
+    expect(resetsAtChanged(
+      "2026-06-08T10:00:00.000Z",
+      "2026-06-08T10:01:01.000Z",
+    )).toBe(true);
+  });
+
+  it("gibt false zurück wenn eine Seite null ist", () => {
+    expect(resetsAtChanged(null, "2026-06-08T10:00:00Z")).toBe(false);
+    expect(resetsAtChanged("2026-06-08T10:00:00Z", null)).toBe(false);
+    expect(resetsAtChanged(null, null)).toBe(false);
+    expect(resetsAtChanged(undefined, "2026-06-08T10:00:00Z")).toBe(false);
+  });
+
+  it("gibt true zurück bei zwei unterschiedlichen unparsebaren Strings (Fallback)", () => {
+    expect(resetsAtChanged("not-a-date", "also-not-a-date")).toBe(true);
+  });
+});
 
 describe("recordObservation", () => {
   it("akkumuliert ko-okkurrierende positive Deltas", () => {
@@ -44,10 +86,30 @@ describe("recordObservation", () => {
   });
 
   it("verwirft Paare bei geändertem fiveHour-resetsAt (Rollover)", () => {
+    // 5-hour difference → genuine rollover, pair must be discarded
     let s = recordObservation(emptyProviderState(), { fivePct: 80, weeklyPct: 50, fiveResetsAt: "2026-06-08T10:00:00Z", ts: "2026-06-08T10:00:00Z" });
     s = recordObservation(s, { fivePct: 90, weeklyPct: 55, fiveResetsAt: "2026-06-08T15:00:00Z", ts: "2026-06-08T10:01:00Z" });
     expect(s.sumFivePct).toBe(0);
     expect(s.lastFiveResetsAt).toBe("2026-06-08T15:00:00Z");
+  });
+
+  it("akzeptiert Paare wenn fiveResetsAt nur Mikrosekunden-Jitter zeigt (kein Rollover)", () => {
+    // Same reset instant re-serialized with microsecond jitter — must NOT be treated as rollover
+    let s = recordObservation(emptyProviderState(), {
+      fivePct: 10,
+      weeklyPct: 3,
+      fiveResetsAt: "2026-05-26T12:20:00.739597+00:00",
+      ts: "2026-05-26T12:20:00Z",
+    });
+    s = recordObservation(s, {
+      fivePct: 20,
+      weeklyPct: 6,
+      fiveResetsAt: "2026-05-26T12:20:00.750574+00:00",
+      ts: "2026-05-26T12:21:00Z",
+    });
+    expect(s.sumFivePct).toBe(10);
+    expect(s.sumWeeklyPct).toBe(3);
+    expect(s.pairCount).toBe(1);
   });
 
   it("akzeptiert Paare ohne resetsAt (Claude liefert es teils nicht)", () => {
@@ -154,8 +216,8 @@ describe("computeBudget", () => {
 });
 
 describe("emptyRatioFile", () => {
-  it("hat version 2", () => {
-    expect(emptyRatioFile().version).toBe(2);
+  it("hat version 3", () => {
+    expect(emptyRatioFile().version).toBe(3);
   });
 });
 

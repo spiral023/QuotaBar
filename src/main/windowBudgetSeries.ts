@@ -2,6 +2,7 @@ import { createInterface } from "node:readline";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { resetsAtChanged } from "../usage/windowRatio";
 
 const LIVE_LOG_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
 const RESET_DROP_PCT = 15;
@@ -80,7 +81,7 @@ export async function readWeeklySeries(
         }
         if (typeof five?.usedPercent === "number") {
           const fiveResetsAt = typeof five.resetsAt === "string" ? five.resetsAt : null;
-          if (prevFiveResetsAt !== null && fiveResetsAt !== null && fiveResetsAt !== prevFiveResetsAt) {
+          if (resetsAtChanged(prevFiveResetsAt, fiveResetsAt)) {
             resets.push(ts);
           } else if (prevFivePct !== null && five.usedPercent < prevFivePct - RESET_DROP_PCT) {
             resets.push(ts);

@@ -22,7 +22,10 @@ function isWindowRatioFile(value: unknown): value is WindowRatioFile {
   const r = value as Record<string, unknown>;
   // v1-Dateien nutzten Provider-only-Keys; bewusst verwerfen (→ leerer State,
   // seededThrough null), damit der Seeder den Tier-keyed State neu aufbaut.
-  if (r.version !== 2) return false;
+  // v2-Dateien wurden mit einem fehlerhaften Rollover-Filter trainiert (Mikrosekunden-
+  // Jitter der Claude-API wurde als Fenster-Wechsel gezählt) und werden ebenfalls
+  // bewusst verworfen, damit der Seeder einen korrekten State neu aufbaut.
+  if (r.version !== 3) return false;
   if (r.seededThrough !== null && typeof r.seededThrough !== "string") return false;
   if (!r.providers || typeof r.providers !== "object" || Array.isArray(r.providers)) return false;
   return Object.values(r.providers as Record<string, unknown>).every(isProviderState);
