@@ -243,11 +243,11 @@ QuotaBar lernt aus der eigenen Nutzung, wie viele volle 5h-Fenster in ein Weekly
 r = Σ ΔWeekly% / Σ Δ5h%        Fenster pro Woche = 1 / r
 ```
 
-Verworfen werden Paare mit 5h-Reset (Δ5h ≤ 0 oder `resetsAt`-Wechsel), Weekly-Reset (ΔWeekly < 0), gesättigtem Weekly (≥ 99,5 %) und Paare mit mehr als 10 Minuten Abstand (Konto-Wechsel, App-Pausen, Log-Lücken); ein `resetsAt`-Wechsel zählt erst oberhalb von 60 s Differenz als echter Rollover (Mikrosekunden-Jitter der Claude-API). Das Verhältnis gilt erst ab 200 % beobachteter 5h-Nutzung als belastbar — vorher zeigt die Karte „lernt noch…".
+Verworfen werden Paare mit 5h-Reset (Δ5h ≤ 0 oder `resetsAt`-Wechsel), Weekly-Reset (ΔWeekly < 0), gesättigtem Weekly (≥ 99,5 %), Paare mit mehr als 10 Minuten Abstand (Konto-Wechsel, App-Pausen, Log-Lücken) und Paare mit ΔWeekly > Δ5h (physikalisch unmöglich — transiente API-Ausreißer); ein `resetsAt`-Wechsel zählt erst oberhalb von 60 s Differenz als echter Rollover (Mikrosekunden-Jitter der Claude-API). Das Verhältnis gilt erst ab 200 % beobachteter 5h-Nutzung als belastbar — vorher zeigt die Karte „lernt noch…".
 
 **Mehrere Konten:** Gelernt wird pro Plan-Tier (`planType`), denn das Fenster-Verhältnis ist eine Eigenschaft des Abos, nicht des Kontos. Wer mehrere Claude-Konten nutzt (Wechsel via `claude /login`), behält für jedes Tier den gelernten Stand; Kennzahlen und Verlaufsgraph zeigen immer das gerade aktive Konto. Die Claude-Karte zeigt dessen E-Mail-Adresse an (Quelle: OAuth-Profil-Endpoint, in Debug-Logs redigiert).
 
-Der State liegt in `%USERPROFILE%\.quotabar-win\window-ratio.json` (Format-Version 3; ältere Dateien werden verworfen und automatisch neu aus den Logs geseedet) und wird beim ersten Start einmalig aus den vorhandenen Live-Debug-Logs aufgebaut. Oberhalb von 3000 % Summe werden beide Summen halbiert (exponentielles Vergessen), damit sich Limit-Änderungen der Anbieter durchsetzen.
+Der State liegt in `%USERPROFILE%\.quotabar-win\window-ratio.json` (Format-Version 4; ältere Dateien werden verworfen und automatisch neu aus den Logs geseedet) und wird beim ersten Start einmalig aus den vorhandenen Live-Debug-Logs aufgebaut. Oberhalb von 3000 % Summe werden beide Summen halbiert (exponentielles Vergessen), damit sich Limit-Änderungen der Anbieter durchsetzen.
 
 **Prognose:** Der Termin „Limit erreicht ~…" basiert primär auf dem Wochenprofil (durchschnittliche Token pro Wochentag der letzten 4 Wochen, ab 2 Wochen Historie), sonst auf der linearen Wochen-Durchschnittsrate. Zusätzlich wird die aktuelle Burn-Rate als „Bei aktuellem Tempo: …" angezeigt.
 

@@ -25,7 +25,8 @@ function isWindowRatioFile(value: unknown): value is WindowRatioFile {
   // v2-Dateien wurden mit einem fehlerhaften Rollover-Filter trainiert (Mikrosekunden-
   // Jitter der Claude-API wurde als Fenster-Wechsel gezählt) und werden ebenfalls
   // bewusst verworfen, damit der Seeder einen korrekten State neu aufbaut.
-  if (r.version !== 3) return false;
+  // v3 wurde mit dem Weekly-Spike-Bias trainiert (ΔWeekly>Δ5h-Paare) und wird ebenfalls verworfen.
+  if (r.version !== 4) return false;
   if (r.seededThrough !== null && typeof r.seededThrough !== "string") return false;
   if (!r.providers || typeof r.providers !== "object" || Array.isArray(r.providers)) return false;
   return Object.values(r.providers as Record<string, unknown>).every(isProviderState);

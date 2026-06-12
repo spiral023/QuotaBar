@@ -163,6 +163,43 @@ describe("recordObservation", () => {
     expect(s.pairCount).toBe(1);
   });
 
+  it("verwirft Paare, bei denen ΔWeekly > Δ5h (transiente API-Ausreißer, z. B. Weekly-Spike nach Reset)", () => {
+    // [0,0] → [6,100]: dFive=6, dWeekly=100 → physikalisch unmöglich → rejected
+    // sums stay 0, pairCount 0, but lastFive/lastWeekly are updated
+    let s = recordObservation(emptyProviderState(), { fivePct: 0, weeklyPct: 0, ts: "2026-06-08T10:00:00Z" });
+    s = recordObservation(s, { fivePct: 6, weeklyPct: 100, ts: "2026-06-08T10:01:00Z" });
+    expect(s.sumFivePct).toBe(0);
+    expect(s.sumWeeklyPct).toBe(0);
+    expect(s.pairCount).toBe(0);
+    expect(s.lastFive).toBe(6);
+    expect(s.lastWeekly).toBe(100);
+  });
+
+  it("akzeptiert Paare mit ΔWeekly = Δ5h (Gleichheit, durch Rundung möglich)", () => {
+    // [0,0] → [1,1]: dFive=1, dWeekly=1 → valid (equality allowed)
+    let s = recordObservation(emptyProviderState(), { fivePct: 0, weeklyPct: 0, ts: "2026-06-08T10:00:00Z" });
+    s = recordObservation(s, { fivePct: 1, weeklyPct: 1, ts: "2026-06-08T10:01:00Z" });
+    expect(s.sumFivePct).toBe(1);
+    expect(s.sumWeeklyPct).toBe(1);
+    expect(s.pairCount).toBe(1);
+  });
+
+  it("vollständiger Spike-Zyklus heilt sich selbst: nur gültige Paare fließen ein", () => {
+    // [0,0] → [6,100]: dW=100>dF=6 → rejected (spike up)
+    // [6,100] → [8,14]: dW=-86<0 → rejected (weekly reset filter)
+    // [8,14] → [10,15]: dF=2, dW=1 → accepted
+    // final sums: sumFive=2, sumWeekly=1
+    let s = recordObservation(emptyProviderState(), { fivePct: 0, weeklyPct: 0, ts: "2026-06-08T10:00:00Z" });
+    s = recordObservation(s, { fivePct: 6, weeklyPct: 100, ts: "2026-06-08T10:01:00Z" });
+    expect(s.sumFivePct).toBe(0); // spike rejected
+    s = recordObservation(s, { fivePct: 8, weeklyPct: 14, ts: "2026-06-08T10:02:00Z" });
+    expect(s.sumFivePct).toBe(0); // weekly reset rejected
+    s = recordObservation(s, { fivePct: 10, weeklyPct: 15, ts: "2026-06-08T10:03:00Z" });
+    expect(s.sumFivePct).toBe(2);
+    expect(s.sumWeeklyPct).toBe(1);
+    expect(s.pairCount).toBe(1);
+  });
+
   it("verwirft das erste Paar nach clearTransients (lastTs null → kein Paar)", () => {
     // Build up some state then clear transients
     let s = feed(emptyProviderState(), [[0, 0], [10, 3]]);
@@ -216,8 +253,8 @@ describe("computeBudget", () => {
 });
 
 describe("emptyRatioFile", () => {
-  it("hat version 3", () => {
-    expect(emptyRatioFile().version).toBe(3);
+  it("hat version 4", () => {
+    expect(emptyRatioFile().version).toBe(4);
   });
 });
 

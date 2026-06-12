@@ -10,7 +10,7 @@ export interface ProviderRatioState {
 }
 
 export interface WindowRatioFile {
-  version: 3;
+  version: 4;
   seededThrough: string | null;
   providers: Record<string, ProviderRatioState>;
 }
@@ -69,7 +69,7 @@ export function emptyProviderState(): ProviderRatioState {
 }
 
 export function emptyRatioFile(): WindowRatioFile {
-  return { version: 3, seededThrough: null, providers: {} };
+  return { version: 4, seededThrough: null, providers: {} };
 }
 
 export interface RatioObservation {
@@ -112,7 +112,14 @@ export function recordObservation(state: ProviderRatioState, obs: RatioObservati
     // positive weekly tick never occurs without a positive 5h tick. Zero-delta-weekly
     // pairs therefore never drop a real weekly increment, and sumWeeklyPct telescopes
     // to the true total weekly movement — the ratio stays unbiased.
-    if (dFive > 0 && dWeekly >= 0 && !rollover && !saturated && Number.isFinite(gapMs) && gapMs >= 0 && gapMs <= MAX_PAIR_AGE_MS) {
+    //
+    // Physikalische Invariante: beide Fenster zählen dieselbe Nutzung und die
+    // Weekly-Kapazität ist ≥ der 5h-Kapazität, also gilt für echte Paare immer
+    // ΔWeekly ≤ Δ5h (Rundung erzeugt höchstens Gleichheit). Verletzungen sind
+    // transiente API-Artefakte (z. B. weekly springt nach einem Reset kurz auf
+    // 100) — deren Aufwärtsflanke würde sonst einseitig in die Summen gelangen,
+    // während die Abwärtsflanke als Reset gefiltert wird.
+    if (dFive > 0 && dWeekly >= 0 && dWeekly <= dFive && !rollover && !saturated && Number.isFinite(gapMs) && gapMs >= 0 && gapMs <= MAX_PAIR_AGE_MS) {
       next.sumFivePct = s.sumFivePct + dFive;
       next.sumWeeklyPct = s.sumWeeklyPct + dWeekly;
       next.pairCount = s.pairCount + 1;
