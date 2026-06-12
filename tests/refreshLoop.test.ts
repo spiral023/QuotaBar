@@ -331,7 +331,7 @@ describe("RefreshLoop windowBudget", () => {
   it("füttert den Tracker und hängt windowBudget an den Snapshot", async () => {
     const store = new UsageStore();
     const file = emptyRatioFile();
-    file.providers.claude = { ...emptyProviderState(), sumFivePct: 900, sumWeeklyPct: 300 };
+    file.providers["claude:default"] = { ...emptyProviderState(), sumFivePct: 900, sumWeeklyPct: 300 };
     const tracker = new WindowRatioTracker(file);
     const provider = makeProvider("claude", async () => snapWithWindows("claude", 30, 62));
     const loop = new RefreshLoop([provider], store, 60, 10_000, undefined, undefined, tracker);
@@ -353,5 +353,23 @@ describe("RefreshLoop windowBudget", () => {
 
     const [snap] = await loop.refreshNow();
     expect(snap.windowBudget).toBeUndefined();
+  });
+
+  it("liest den State des aktiven Plan-Tiers", async () => {
+    const store = new UsageStore();
+    const file = emptyRatioFile();
+    file.providers["claude:tierA"] = { ...emptyProviderState(), sumFivePct: 900, sumWeeklyPct: 300 };
+    const tracker = new WindowRatioTracker(file);
+    const provider = makeProvider("claude", async () => ({
+      ...snapWithWindows("claude", 30, 62),
+      planType: "tierA",
+    }));
+    const loop = new RefreshLoop([provider], store, 60, 10_000, undefined, undefined, tracker);
+
+    const [snap] = await loop.refreshNow();
+    expect(snap.windowBudget?.learning).toBe(false);
+    if (snap.windowBudget && !snap.windowBudget.learning) {
+      expect(snap.windowBudget.windowsPerWeek).toBeCloseTo(3);
+    }
   });
 });
