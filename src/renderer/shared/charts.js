@@ -232,13 +232,16 @@ QB.weeklyBudgetChart = function (ctx, series, forecast, windowEndIso) {
 // 100% gestapelte Balken für den Models-Tab. datasets[i].rawValues trägt die
 // Absolutwerte für den Tooltip; data ist bereits in Prozent normalisiert.
 QB.charts.createStacked100 = function(ctx, labels, datasets, opts) {
-  const fmtAbs = opts && opts.format === 'cost'
-    ? (v) => '$' + (v < 0.01 ? Number(v).toFixed(4) : Number(v).toFixed(2))
-    : (v) => QB.fmtTokens(v);
+  // Format liegt in options.qbFormat, damit es bei chart.update() nach einem
+  // Metrik-Wechsel mitwechseln kann (Closure würde das Erstellungsformat einfrieren).
+  const fmtAbs = (chart, v) => chart.options.qbFormat === 'cost'
+    ? '$' + (v < 0.01 ? Number(v).toFixed(4) : Number(v).toFixed(2))
+    : QB.fmtTokens(v);
   return new Chart(ctx, {
     type: 'bar',
     data: { labels, datasets },
     options: {
+      qbFormat: opts && opts.format === 'cost' ? 'cost' : 'tokens',
       responsive: true,
       maintainAspectRatio: false,
       animation: { duration: 300 },
@@ -257,7 +260,7 @@ QB.charts.createStacked100 = function(ctx, labels, datasets, opts) {
           callbacks: {
             label: (item) => {
               const raw = item.dataset.rawValues ? item.dataset.rawValues[item.dataIndex] : 0;
-              return ' ' + item.dataset.label + ': ' + fmtAbs(raw) + ' (' + item.parsed.y.toFixed(1) + '%)';
+              return ' ' + item.dataset.label + ': ' + fmtAbs(item.chart, raw) + ' (' + item.parsed.y.toFixed(1) + '%)';
             },
           },
         },

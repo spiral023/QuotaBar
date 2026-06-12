@@ -55,6 +55,17 @@
       user-select: none;
     }
 
+    /* ══ SCROLLBARS (global, alle scrollbaren Bereiche) ═════════ */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-corner { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.22);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover  { background: rgba(255,255,255,0.38); }
+    ::-webkit-scrollbar-thumb:active { background: rgba(255,255,255,0.5); }
+
     /* ══ TITLE BAR ══════════════════════════════════════════ */
     .titlebar {
       height: 44px;
@@ -149,9 +160,6 @@
       padding: 6px;
       scroll-behavior: smooth;
     }
-    .content::-webkit-scrollbar { width: 3px; }
-    .content::-webkit-scrollbar-track { background: transparent; }
-    .content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
     /* ── Base card ──────────────────────────────────────────── */
     .card {
@@ -501,9 +509,6 @@
     .settings-wrap {
       flex: 1; overflow-y: auto; padding: 8px 10px 10px;
     }
-    .settings-wrap::-webkit-scrollbar { width: 3px; }
-    .settings-wrap::-webkit-scrollbar-track { background: transparent; }
-    .settings-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
     .s-section { margin-bottom: 5px; }
     .s-section-title {
@@ -734,9 +739,6 @@
     .analytics-wrap {
       flex: 1; overflow-y: auto; padding: 8px 10px;
     }
-    .analytics-wrap::-webkit-scrollbar { width: 3px; }
-    .analytics-wrap::-webkit-scrollbar-track { background: transparent; }
-    .analytics-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
     .an-section {
       background: var(--bg-card);
@@ -922,6 +924,36 @@
       color: var(--t300);
     }
     .footer-btns { display: flex; align-items: center; gap: 1px; }
+
+    /* ── Refresh-Fuse: 2px-Leiste am unteren Fensterrand ── */
+    .refresh-fuse {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      height: 2px;
+      z-index: 200;
+      pointer-events: none;
+      background: rgba(255,255,255,0.04);
+      overflow: hidden;
+    }
+    .refresh-fuse-fill {
+      height: 100%;
+      width: 100%;
+      transform-origin: left;
+      transform: scaleX(0);
+      background: linear-gradient(90deg, var(--claude-col), var(--codex-col));
+      box-shadow: 0 0 5px rgba(218,120,91,0.35);
+      opacity: 0.8;
+    }
+    .refresh-fuse-fill.run {
+      animation:
+        fuseFill var(--fuse-duration, 60s) linear forwards,
+        fuseOverdue 1.8s ease-in-out var(--fuse-duration, 60s) infinite;
+    }
+    @keyframes fuseFill    { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    @keyframes fuseOverdue { 0%, 100% { opacity: 0.8; } 50% { opacity: 0.25; } }
+    @media (prefers-reduced-motion: reduce) {
+      .refresh-fuse-fill.run { animation: none; transform: scaleX(1); opacity: 0.3; }
+    }
 
     /* Default: insights panel hidden until body class is set */
     .insights-panel { display: none; }
@@ -1177,9 +1209,6 @@
     .notif-wrap {
       flex: 1; overflow-y: auto; padding: 8px 10px 10px;
     }
-    .notif-wrap::-webkit-scrollbar { width: 3px; }
-    .notif-wrap::-webkit-scrollbar-track { background: transparent; }
-    .notif-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
     .notif-global-section, .notif-rules-section, .notif-history-section {
       background: var(--bg-card); border: 1px solid var(--border);
@@ -1266,9 +1295,6 @@
     .hr-wrap {
       flex: 1; overflow-y: auto; padding: 8px 10px 10px;
     }
-    .hr-wrap::-webkit-scrollbar { width: 3px; }
-    .hr-wrap::-webkit-scrollbar-track { background: transparent; }
-    .hr-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
     .hr-controls {
       display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
@@ -1506,6 +1532,10 @@
     .mod-ribbon-claude { background: var(--claude-col); height: 100%; }
     .mod-ribbon-codex  { background: var(--codex-col);  height: 100%; }
 
+    .mod-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 7px; }
+    .mod-legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--t300); white-space: nowrap; }
+    .mod-legend-swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+
     .mod-head-rows { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
     .mod-pills { display: flex; gap: 3px; flex-wrap: wrap; }
     .mod-pills .pill { padding: 3px 10px; font-size: 10px; height: auto; position: relative; }
@@ -1578,9 +1608,6 @@
     .sys-wrap {
       flex: 1; overflow-y: auto; padding: 8px 10px 10px;
     }
-    .sys-wrap::-webkit-scrollbar { width: 3px; }
-    .sys-wrap::-webkit-scrollbar-track { background: transparent; }
-    .sys-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
     .sys-toolbar {
       display: flex; align-items: center; gap: 8px;
@@ -1989,6 +2016,8 @@
     </div>
   </div>
 
+  <div class="refresh-fuse"><div class="refresh-fuse-fill" id="refresh-fuse-fill"></div></div>
+
   <script>
     let lastRefreshedAt = null;
     let footerTimer     = null;
@@ -2032,6 +2061,8 @@
     QB.ipc.on('quota:update', (_, data) => {
       lastRefreshedAt = data.lastRefreshedAt ? new Date(data.lastRefreshedAt) : new Date();
       clearDashboardDataCache();
+      // Models-Tab-Cache invalidieren — beim nächsten Tab-Besuch frisch laden
+      if (QB.clearModelsCache) QB.clearModelsCache();
       render(data.snapshots);
       // Joins an in-progress cost-window switch (the skeleton then stays
       // until this fresher recompute lands too); a plain background refresh
@@ -2040,6 +2071,7 @@
         void prefetchSummaryWindows(activeCostWindowFromUI());
       });
       startFooterTimer();
+      restartRefreshFuse();
     });
 
     QB.ipc.send('quota:ready');
@@ -2048,6 +2080,8 @@
       document.body.classList.toggle('view-dashboard', data.viewMode === 'dashboard');
       document.body.classList.toggle('view-compact',   data.viewMode !== 'dashboard');
       const s = await QB.ipc.invoke('settings:get');
+      pollIntervalSec = s.pollIntervalSeconds ?? 60;
+      restartRefreshFuse();
       // Cost Window initialisieren
       const activeCostWindow = s.costWindow ?? '30d';
       document.querySelectorAll('#window-pill-grid .pill').forEach(p => {
@@ -2151,6 +2185,8 @@
 
       try {
         await QB.ipc.invoke('settings:save', payload);
+        pollIntervalSec = activePillVal;
+        restartRefreshFuse();
         clearDashboardDataCache();
         if (QB.clearAnalyticsCache) QB.clearAnalyticsCache();
         btn.textContent = '✓ Saved';
@@ -2382,6 +2418,25 @@
       if (sec < 10)  { el.textContent = 'Just updated'; return; }
       if (sec < 60)  { el.textContent = `Updated ${sec}s ago`; return; }
       el.textContent = `Updated ${Math.floor(sec / 60)}m ago`;
+    }
+
+    // ── Refresh-Fuse ──────────────────────────────────────────────
+
+    let pollIntervalSec = 60;
+
+    function restartRefreshFuse() {
+      const fill = document.getElementById('refresh-fuse-fill');
+      if (!fill) return;
+      // Beim Öffnen mitten im Intervall nicht bei 0 starten: bereits
+      // verstrichene Zeit per negativem animation-delay überspringen.
+      const elapsed = lastRefreshedAt
+        ? Math.min(Math.max((Date.now() - lastRefreshedAt.getTime()) / 1000, 0), pollIntervalSec)
+        : 0;
+      fill.style.setProperty('--fuse-duration', pollIntervalSec + 's');
+      fill.style.animationDelay = `-${elapsed}s, ${pollIntervalSec - elapsed}s`;
+      fill.classList.remove('run');
+      void fill.offsetWidth; // Reflow erzwingen, damit die Animation neu startet
+      fill.classList.add('run');
     }
   </script>
 </body>

@@ -109,6 +109,7 @@ window.QB = window.QB || {};
           </div>
           <div class="mod-hero-wrap"><canvas id="mod-stack-canvas"></canvas></div>
           <div class="mod-ribbon" id="mod-ribbon"></div>
+          <div class="mod-legend" id="mod-legend"></div>
           <div class="mod-note" id="mod-stack-note" hidden></div>
           <div class="mod-note">Historie ab ${_data.days.length > 0 ? _data.days[0].date : '—'}</div>
         </div>
@@ -254,6 +255,7 @@ window.QB = window.QB || {};
     if (_stackChart && !initial) {
       _stackChart.data.labels = stack.buckets;
       _stackChart.data.datasets = datasets;
+      _stackChart.options.qbFormat = _metric === 'cost' ? 'cost' : 'tokens';
       _stackChart.update();
     } else {
       if (_stackChart) _stackChart.destroy();
@@ -263,6 +265,16 @@ window.QB = window.QB || {};
     }
 
     renderRibbon(days, granularity);
+    renderLegend(stack.series);
+  }
+
+  // Legende in Stapel-Reihenfolge; Farben identisch zu den Balkensegmenten.
+  function renderLegend(series) {
+    const el = document.getElementById('mod-legend');
+    el.innerHTML = series.map((s) => `
+      <div class="mod-legend-item" title="${s.model}">
+        <span class="mod-legend-swatch" style="background:${colorFor(s.model, s.provider, _colorOrder)}"></span>${s.model}
+      </div>`).join('');
   }
 
   function renderRibbon(days, granularity) {

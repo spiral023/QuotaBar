@@ -9,6 +9,7 @@ files:
   - assets/**
   - logos/**
   - src/renderer/**
+  - src/config/**
 win:
   target:
     - nsis

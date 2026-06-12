@@ -3,9 +3,16 @@
   "source": "Artificial Analysis Intelligence Index",
   "asOf": "2026-06",
   "scores": {
+    "claude-fable-5": 65,
     "claude-opus-4-8": 61,
+    "gpt-5.5": 60,
+    "claude-opus-4-1": 57,
     "claude-opus-4-7": 57,
+    "gpt-5.4": 57,
+    "gpt-5.3-codex": 54,
     "claude-sonnet-4-6": 52,
-    "gpt-5.5": 59
+    "gpt-5.2": 51,
+    "gpt-5.1": 48,
+    "gpt-5": 45
   }
 }
