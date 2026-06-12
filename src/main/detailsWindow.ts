@@ -298,6 +298,7 @@ export class DetailsWindowController {
             weeklyResetsAt: weekly.resetsAt ?? null,
             burnRatePctPerHour: weekly.burnRatePctPerHour ?? null,
             pace: weekly.pace ?? null,
+            planType: s.planType ?? null,
           }];
         });
       if (providers.length === 0) return { perProvider: {} };

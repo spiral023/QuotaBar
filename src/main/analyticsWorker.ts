@@ -43,6 +43,7 @@ interface WindowBudgetTaskInput {
     weeklyResetsAt: string | null;
     burnRatePctPerHour: number | null;
     pace: UsagePace | null;
+    planType: string | null;
   }>;
 }
 
@@ -159,7 +160,7 @@ async function buildWindowBudgetData(input: WindowBudgetTaskInput): Promise<Wind
   for (const p of input.providers) {
     const resetMs = p.weeklyResetsAt ? new Date(p.weeklyResetsAt).getTime() : null;
     const windowStartMs = resetMs !== null && !Number.isNaN(resetMs) ? resetMs - WEEK_MS : input.nowMs - WEEK_MS;
-    const series = await readWeeklySeries(input.logDir, p.provider, windowStartMs, input.nowMs);
+    const series = await readWeeklySeries(input.logDir, p.provider, windowStartMs, input.nowMs, 30, p.planType);
     const profile = buildWeeklyProfile(records, p.provider, now);
     const windowStartKey = new Date(windowStartMs).toISOString().slice(0, 10);
     const tokensInCurrentWindow = records

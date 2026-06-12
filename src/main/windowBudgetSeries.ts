@@ -27,6 +27,7 @@ export async function readWeeklySeries(
   windowStartMs: number,
   nowMs: number,
   bucketMinutes = 30,
+  planType?: string | null,
 ): Promise<WindowBudgetSeries> {
   const empty: WindowBudgetSeries = { points: [], fiveHourResets: [] };
   let entries: string[];
@@ -64,6 +65,9 @@ export async function readWeeklySeries(
           continue;
         }
         if (event.kind !== "snapshot" || event.provider !== provider || event.status !== "ok") continue;
+        // Filter by planType before bucketing AND reset detection so that
+        // account-switches (different planType) are never mistaken for 5h resets.
+        if (typeof planType === "string" && event.planType !== planType) continue;
         const ts = typeof event.ts === "string" ? event.ts : null;
         if (!ts) continue;
         const tsMs = new Date(ts).getTime();
