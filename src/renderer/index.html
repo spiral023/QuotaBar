@@ -511,6 +511,7 @@
     }
 
     .s-section { margin-bottom: 5px; }
+    .s-hint { font-size: 11px; color: var(--t300); line-height: 1.4; }
     .s-section-title {
       font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
       text-transform: uppercase; color: var(--t400);
@@ -2165,23 +2166,8 @@
       </div>
 
       <div class="s-section">
-        <div class="s-section-title">Subscription Cost / month</div>
-        <div class="cost-rows">
-          <div class="cost-row">
-            <span class="cost-label">Claude</span>
-            <div class="cost-wrap">
-              <span class="cost-sym">$</span>
-              <input class="cost-field" id="cost-claude" type="number" min="0" step="1" placeholder="20">
-            </div>
-          </div>
-          <div class="cost-row">
-            <span class="cost-label">Codex</span>
-            <div class="cost-wrap">
-              <span class="cost-sym">$</span>
-              <input class="cost-field" id="cost-codex" type="number" min="0" step="1" placeholder="20">
-            </div>
-          </div>
-        </div>
+        <div class="s-section-title">Abos</div>
+        <div class="s-hint">Abo-Pläne &amp; Kosten werden jetzt im Tab <b>Abos</b> verwaltet.</div>
       </div>
 
       <div class="s-section">
@@ -2354,8 +2340,6 @@
     async function loadSettingsUI() {
       try {
         const s = await QB.ipc.invoke('settings:get');
-        document.getElementById('cost-claude').value   = s.subscriptionCosts?.claude ?? 20;
-        document.getElementById('cost-codex').value    = s.subscriptionCosts?.codex  ?? 20;
         document.getElementById('tog-offline').checked = !!s.pricingOfflineMode;
 
         activePillVal = s.pollIntervalSeconds ?? 60;
@@ -2379,10 +2363,6 @@
 
       const payload = {
         pollIntervalSeconds: activePillVal,
-        subscriptionCosts: {
-          claude: parseFloat(document.getElementById('cost-claude').value) || 20,
-          codex:  parseFloat(document.getElementById('cost-codex').value)  || 20,
-        },
         pricingOfflineMode: document.getElementById('tog-offline').checked,
       };
 
