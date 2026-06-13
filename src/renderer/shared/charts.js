@@ -154,6 +154,7 @@ QB.weeklyBudgetChart = function (ctx, series, forecast, windowEndIso) {
     pointRadius: 0,
     fill: true,
     tension: 0.2,
+    spanGaps: false, // null-Punkte (Lücke/Reset) unterbrechen Linie + Fläche
   }];
   if (histData.length > 0 && forecast && forecast.primaryAt && !forecast.primaryLastsUntilReset) {
     const last = histData[histData.length - 1];
