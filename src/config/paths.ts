@@ -35,6 +35,10 @@ export function getUsageSnapshotCachePath(): string {
   return path.join(getAppConfigDir(), "cache", "usage-snapshots.json");
 }
 
+export function getFxCachePath(): string {
+  return path.join(getAppConfigDir(), "cache", "fx-rates.json");
+}
+
 export function getWindowRatioPath(): string {
   return path.join(getAppConfigDir(), "window-ratio.json");
 }
