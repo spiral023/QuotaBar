@@ -7,10 +7,12 @@ import { resetsAtChanged } from "../usage/windowRatio";
 const LIVE_LOG_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
 const RESET_DROP_PCT = 15;
 const SPIKE_DELTA_PCT = 20;
+export const GAP_THRESHOLD_MS = 60 * 60_000;
+export const WEEKLY_RESET_DROP_PCT = 15;
 
 export interface WeeklySeriesPoint {
   t: string;
-  weeklyPct: number;
+  weeklyPct: number | null;
 }
 
 export interface WindowBudgetSeries {
@@ -109,12 +111,33 @@ export async function readWeeklySeries(
 function removeSpikes(points: WeeklySeriesPoint[]): WeeklySeriesPoint[] {
   if (points.length < 2) return points;
   return points.filter((p, i) => {
+    if (p.weeklyPct === null) return true;
     const left = i > 0 ? points[i - 1].weeklyPct : null;
     const right = i < points.length - 1 ? points[i + 1].weeklyPct : null;
     const aboveLeft = left === null || p.weeklyPct - left > SPIKE_DELTA_PCT;
     const aboveRight = right === null || p.weeklyPct - right > SPIKE_DELTA_PCT;
     return !(aboveLeft && aboveRight);
   });
+}
+
+export function insertBreaks(points: WeeklySeriesPoint[]): WeeklySeriesPoint[] {
+  if (points.length < 2) return points;
+  const out: WeeklySeriesPoint[] = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const cur = points[i];
+    if (prev.weeklyPct !== null && cur.weeklyPct !== null) {
+      const prevMs = new Date(prev.t).getTime();
+      const curMs = new Date(cur.t).getTime();
+      const gap = curMs - prevMs > GAP_THRESHOLD_MS;
+      const drop = prev.weeklyPct - cur.weeklyPct > WEEKLY_RESET_DROP_PCT;
+      if (gap || drop) {
+        out.push({ t: new Date((prevMs + curMs) / 2).toISOString(), weeklyPct: null });
+      }
+    }
+    out.push(cur);
+  }
+  return out;
 }
 
 function utcDateKey(date: Date): string {

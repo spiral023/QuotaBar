@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readWeeklySeries } from "../src/main/windowBudgetSeries";
+import { readWeeklySeries, insertBreaks, GAP_THRESHOLD_MS, WEEKLY_RESET_DROP_PCT } from "../src/main/windowBudgetSeries";
 
 function snapLine(provider: string, fivePct: number, weeklyPct: number, ts: string, fiveResetsAt?: string, planType?: string): string {
   const windows = [
@@ -226,5 +226,52 @@ describe("readWeeklySeries", () => {
     const s = await readWeeklySeries(dir, "claude", START, NOW);
     expect(s.points).toHaveLength(3);
     expect(s.points.map((p) => p.weeklyPct)).toEqual([10, 60, 65]);
+  });
+});
+
+describe("insertBreaks", () => {
+  const pt = (t: string, weeklyPct: number | null) => ({ t, weeklyPct });
+
+  it("exportiert sinnvolle Schwellen", () => {
+    expect(GAP_THRESHOLD_MS).toBe(60 * 60_000);
+    expect(WEEKLY_RESET_DROP_PCT).toBe(15);
+  });
+
+  it("fügt Bruch bei großer Zeitlücke ein (auch ohne Sturz)", () => {
+    const r = insertBreaks([
+      pt("2026-06-12T08:00:00Z", 10),
+      pt("2026-06-12T10:00:00Z", 12),
+    ]);
+    expect(r.map((p) => p.weeklyPct)).toEqual([10, null, 12]);
+  });
+
+  it("fügt Bruch bei Weekly-Sturz ein", () => {
+    const r = insertBreaks([
+      pt("2026-06-12T08:00:00Z", 67),
+      pt("2026-06-12T08:30:00Z", 1),
+    ]);
+    expect(r.map((p) => p.weeklyPct)).toEqual([67, null, 1]);
+  });
+
+  it("kein Bruch bei dichten, monotonen Daten", () => {
+    const r = insertBreaks([
+      pt("2026-06-12T08:00:00Z", 10),
+      pt("2026-06-12T08:30:00Z", 12),
+      pt("2026-06-12T09:00:00Z", 15),
+    ]);
+    expect(r.map((p) => p.weeklyPct)).toEqual([10, 12, 15]);
+  });
+
+  it("kein Bruch bei einzelnem verpasstem Poll (< 60 min)", () => {
+    const r = insertBreaks([
+      pt("2026-06-12T08:00:00Z", 10),
+      pt("2026-06-12T08:45:00Z", 11),
+    ]);
+    expect(r).toHaveLength(2);
+  });
+
+  it("gibt leere/einelementige Serie unverändert zurück", () => {
+    expect(insertBreaks([])).toEqual([]);
+    expect(insertBreaks([pt("2026-06-12T08:00:00Z", 5)])).toHaveLength(1);
   });
 });
