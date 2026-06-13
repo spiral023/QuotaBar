@@ -62,7 +62,7 @@ if (!app.requestSingleInstanceLock()) {
       const usageSnapshotCachePath = getUsageSnapshotCachePath();
       const cachedSnapshots = markSnapshotsFromCache(await loadCachedSnapshots(usageSnapshotCachePath));
       const store = new UsageStore(cachedSnapshots);
-      const pricingEngine = new PricingEngine(settings);
+      const pricingEngine = new PricingEngine(settings, undefined, undefined, undefined, () => loadSettings());
       const windowRatioPath = getWindowRatioPath();
       const ratioFile = await loadWindowRatioFile(windowRatioPath);
       const windowRatioTracker = new WindowRatioTracker(clearTransients(ratioFile));

@@ -1,6 +1,5 @@
 import { getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs } from "../config/paths";
 import type { CostWindow, Settings } from "../config/settings";
-import { loadSettings } from "../config/settings";
 import type { CostFactorResult, UsageSnapshot, UsageWindow } from "../providers/types";
 import { calculateCodexApiCost, readCodexSpeedTierFromPaths } from "./codex-cost-calculator";
 import { readCodexTokensForPeriod } from "./codex-log-reader";
@@ -16,8 +15,17 @@ export class PricingEngine {
     private readonly claudeProjectsDir: string | string[] = getClaudeProjectsDirs(),
     private readonly codexSessionsDir: string | string[] = getCodexSessionsDirs(),
     private readonly codexConfigPath: string | string[] = getCodexConfigPaths(),
+    // Optional: liefert in der Produktion immer die aktuellen Disk-Settings (z. B. nach
+    // Laufzeit-Änderung des costWindow). Ohne Provider — etwa in Tests — verwendet die
+    // Engine die im Konstruktor injizierten Settings, bleibt also eine reine Funktion
+    // ihrer Eingaben.
+    private readonly settingsProvider?: () => Promise<Settings>,
   ) {
     this.fetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
+  }
+
+  private async resolveSettings(): Promise<Settings> {
+    return this.settingsProvider ? await this.settingsProvider() : this.settings;
   }
 
   async calculateFactor(snapshot: UsageSnapshot): Promise<CostFactorResult | undefined> {
@@ -34,7 +42,7 @@ export class PricingEngine {
   }
 
   private async calculateClaudeFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const currentSettings = await loadSettings();
+    const currentSettings = await this.resolveSettings();
     const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(currentSettings.costWindow, snapshot, "claude");
     const entries = await readClaudeUsageEntriesForPeriod(this.claudeProjectsDir, billingStart);
     const tokens = aggregateClaudeEntries(entries);
@@ -99,13 +107,13 @@ export class PricingEngine {
   }
 
   private async calculateCodexFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
-    const currentSettings = await loadSettings();
+    const currentSettings = await this.resolveSettings();
     const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(currentSettings.costWindow, snapshot, "codex");
     const events = await readCodexTokensForPeriod(this.codexSessionsDir, billingStart);
     if (events.length === 0) {
       return {
         apiCostUSD: 0,
-        subscriptionCostUSD: this.settings.subscriptionCosts.codex,
+        subscriptionCostUSD: currentSettings.subscriptionCosts.codex,
         factor: null,
         isEstimate: true,
         windowLabel,
