@@ -28,6 +28,13 @@ function makeRow(bucket: string, outputTokens: number): ReportRow {
   };
 }
 
+// Erzeugt einen ISO-Timestamp aus LOKALEN Zeitkomponenten. Die Builder bucketen
+// nach Lokalzeit; so bleiben Stunden-/Wochentags-/Tagesschlüssel-Assertions in
+// jeder Zeitzone (z. B. CI in UTC) deterministisch.
+function localIso(y: number, mo: number, d: number, h = 0, mi = 0): string {
+  return new Date(y, mo - 1, d, h, mi).toISOString();
+}
+
 describe("buildHourHeatmap", () => {
   it("returns exactly 24 entries for hours 0–23", () => {
     const result = buildHourHeatmap([]);
@@ -35,11 +42,11 @@ describe("buildHourHeatmap", () => {
     expect(result.map(b => b.hour)).toEqual(Array.from({ length: 24 }, (_, i) => i));
   });
 
-  it("counts entries by UTC hour", () => {
+  it("counts entries by local hour", () => {
     const entries = [
-      makeEntry("2026-05-01T14:30:00.000Z"),
-      makeEntry("2026-05-01T14:59:00.000Z"),
-      makeEntry("2026-05-01T16:00:00.000Z"),
+      makeEntry(localIso(2026, 5, 1, 14, 30)),
+      makeEntry(localIso(2026, 5, 1, 14, 59)),
+      makeEntry(localIso(2026, 5, 1, 16, 0)),
     ];
     const result = buildHourHeatmap(entries);
     expect(result[14].count).toBe(2);
@@ -49,9 +56,9 @@ describe("buildHourHeatmap", () => {
 
   it("sets pct=1 for peak hour, pct=0 for empty hours", () => {
     const entries = [
-      makeEntry("2026-05-01T14:00:00.000Z"),
-      makeEntry("2026-05-01T14:00:00.000Z"),
-      makeEntry("2026-05-01T16:00:00.000Z"),
+      makeEntry(localIso(2026, 5, 1, 14, 0)),
+      makeEntry(localIso(2026, 5, 1, 14, 0)),
+      makeEntry(localIso(2026, 5, 1, 16, 0)),
     ];
     const result = buildHourHeatmap(entries);
     expect(result[14].pct).toBe(1);
@@ -71,24 +78,23 @@ describe("buildWeekdayDistribution", () => {
     expect(result.map(b => b.day)).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 
-  it("counts entries by UTC weekday (0=Sunday)", () => {
-    // 2026-05-04 is a Monday (UTC day 1)
-    // 2026-05-10 is a Sunday (UTC day 0)
+  it("counts entries by local weekday (0=Sunday)", () => {
+    // 2026-05-04 ist ein Montag (Tag 1), 2026-05-10 ein Sonntag (Tag 0)
     const entries = [
-      makeEntry("2026-05-04T12:00:00.000Z"), // Monday
-      makeEntry("2026-05-04T18:00:00.000Z"), // Monday
-      makeEntry("2026-05-10T10:00:00.000Z"), // Sunday
+      makeEntry(localIso(2026, 5, 4, 12)), // Montag
+      makeEntry(localIso(2026, 5, 4, 18)), // Montag
+      makeEntry(localIso(2026, 5, 10, 10)), // Sonntag
     ];
     const result = buildWeekdayDistribution(entries);
-    expect(result[1].count).toBe(2); // Monday
-    expect(result[0].count).toBe(1); // Sunday
-    expect(result[2].count).toBe(0); // Tuesday
+    expect(result[1].count).toBe(2); // Montag
+    expect(result[0].count).toBe(1); // Sonntag
+    expect(result[2].count).toBe(0); // Dienstag
   });
 
   it("computes pct as share of total entries", () => {
     const entries = [
-      makeEntry("2026-05-04T12:00:00.000Z"), // Monday
-      makeEntry("2026-05-04T18:00:00.000Z"), // Monday
+      makeEntry(localIso(2026, 5, 4, 12)), // Montag
+      makeEntry(localIso(2026, 5, 4, 18)), // Montag
     ];
     const result = buildWeekdayDistribution(entries);
     expect(result[1].pct).toBeCloseTo(1.0);
@@ -106,18 +112,18 @@ describe("buildWeekdayDistribution", () => {
 describe("buildTopActiveDays", () => {
   it("returns at most limit entries", () => {
     const entries = [
-      makeEntry("2026-05-01T10:00:00.000Z"),
-      makeEntry("2026-05-02T10:00:00.000Z"),
-      makeEntry("2026-05-03T10:00:00.000Z"),
+      makeEntry(localIso(2026, 5, 1, 10)),
+      makeEntry(localIso(2026, 5, 2, 10)),
+      makeEntry(localIso(2026, 5, 3, 10)),
     ];
     expect(buildTopActiveDays(entries, [], 2)).toHaveLength(2);
   });
 
   it("sorts by count descending", () => {
     const entries = [
-      makeEntry("2026-05-01T10:00:00.000Z"),
-      makeEntry("2026-05-02T10:00:00.000Z"),
-      makeEntry("2026-05-02T11:00:00.000Z"),
+      makeEntry(localIso(2026, 5, 1, 10)),
+      makeEntry(localIso(2026, 5, 2, 10)),
+      makeEntry(localIso(2026, 5, 2, 11)),
     ];
     const result = buildTopActiveDays(entries, [], 3);
     expect(result[0].date).toBe("2026-05-02");
@@ -126,22 +132,22 @@ describe("buildTopActiveDays", () => {
   });
 
   it("picks outputTokens from claudeRows by date", () => {
-    const entries = [makeEntry("2026-05-01T10:00:00.000Z")];
+    const entries = [makeEntry(localIso(2026, 5, 1, 10))];
     const rows = [makeRow("2026-05-01", 500)];
     const result = buildTopActiveDays(entries, rows, 5);
     expect(result[0].outputTokens).toBe(500);
   });
 
   it("returns 0 outputTokens if no matching row", () => {
-    const entries = [makeEntry("2026-05-01T10:00:00.000Z")];
+    const entries = [makeEntry(localIso(2026, 5, 1, 10))];
     const result = buildTopActiveDays(entries, [], 5);
     expect(result[0].outputTokens).toBe(0);
   });
 
   it("returns entries in stable order when counts tie", () => {
     const entries = [
-      makeEntry("2026-05-01T10:00:00.000Z"),
-      makeEntry("2026-05-02T10:00:00.000Z"),
+      makeEntry(localIso(2026, 5, 1, 10)),
+      makeEntry(localIso(2026, 5, 2, 10)),
     ];
     const result = buildTopActiveDays(entries, [], 5);
     expect(result).toHaveLength(2);

@@ -203,7 +203,7 @@ export function buildHourHeatmap(
 ): { hour: number; count: number; pct: number }[] {
   const counts = new Array(24).fill(0) as number[];
   for (const e of entries) {
-    counts[new Date(e.timestamp).getUTCHours()]++;
+    counts[new Date(e.timestamp).getHours()]++; // lokale Stunde — konsistent mit den Tages-Buckets
   }
   const peak = Math.max(...counts, 1);
   return counts.map((count, hour) => ({ hour, count, pct: count / peak }));
@@ -214,7 +214,7 @@ export function buildWeekdayDistribution(
 ): { day: number; label: string; count: number; pct: number }[] {
   const counts = new Array(7).fill(0) as number[];
   for (const e of entries) {
-    counts[new Date(e.timestamp).getUTCDay()]++;
+    counts[new Date(e.timestamp).getDay()]++; // lokaler Wochentag — konsistent mit den Tages-Buckets
   }
   const total = counts.reduce((s, c) => s + c, 0) || 1;
   return counts.map((count, day) => ({
@@ -229,7 +229,7 @@ export function buildTopActiveDays(
 ): { date: string; count: number; outputTokens: number }[] {
   const countByDate = new Map<string, number>();
   for (const e of entries) {
-    const d = e.timestamp.slice(0, 10); // assumes UTC ISO-8601 timestamp
+    const d = localDayKey(e.timestamp); // lokaler Tag — passt zu den bucket-Keys aus dem Report-Layer
     countByDate.set(d, (countByDate.get(d) ?? 0) + 1);
   }
   const outputByDate = new Map(claudeRows.map(r => [r.bucket, r.outputTokens]));
@@ -382,6 +382,15 @@ function getWeekStart(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00Z");
   const toMonday = d.getUTCDay() === 0 ? -6 : 1 - d.getUTCDay();
   return new Date(d.getTime() + toMonday * 86400000).toISOString().slice(0, 10);
+}
+
+// Lokaler Tagesschlüssel (YYYY-MM-DD) aus einem ISO-Timestamp — passt zu den
+// bucket-Keys des Report-Layers (lokale Kalendertage). UTC-Slicing würde Einträge
+// um einen Tag verschieben.
+function localDayKey(timestamp: string): string {
+  const d = new Date(timestamp);
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function getLastNDays(n: number): string[] {
