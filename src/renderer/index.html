@@ -2009,6 +2009,7 @@
   <script src="tabs/notifications.js"></script>
   <script src="tabs/history.js"></script>
   <script src="tabs/system.js"></script>
+  <script src="tabs/plans.js"></script>
 </head>
 <body>
 
@@ -2028,6 +2029,7 @@
       <button class="tab-btn" id="tab-models" data-tab="models">Models</button>
       <button class="tab-btn"        id="tab-notifications" data-tab="notifications">Alerts</button>
       <button class="tab-btn"        id="tab-history"      data-tab="history">History</button>
+      <button class="tab-btn"        id="tab-plans"        data-tab="plans">Abos</button>
       <button class="tab-btn"        id="tab-system"       data-tab="system">System</button>
     </nav>
     <div class="titlebar-btns">
@@ -2152,6 +2154,13 @@
     </div>
   </div>
 
+  <!-- ── Plans View ──────────────────────────────────────── -->
+  <div class="view" id="view-plans" hidden>
+    <div class="pl-wrap" id="plans-content">
+      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+    </div>
+  </div>
+
   <!-- ── Settings View ──────────────────────────────────── -->
   <div class="view" id="view-settings" hidden>
     <div class="settings-wrap">
@@ -2225,6 +2234,7 @@
       document.getElementById('view-models').hidden        = tab !== 'models';
       document.getElementById('view-notifications').hidden = tab !== 'notifications';
       document.getElementById('view-history').hidden       = tab !== 'history';
+      document.getElementById('view-plans').hidden         = tab !== 'plans';
       document.getElementById('view-system').hidden        = tab !== 'system';
       document.querySelectorAll('.tab-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.tab === tab)
@@ -2233,6 +2243,7 @@
       if (tab === 'models')        QB.renderModels();
       if (tab === 'notifications') QB.renderNotifications();
       if (tab === 'history')       QB.renderHistory();
+      if (tab === 'plans' && QB.renderPlans) QB.renderPlans();
       if (tab === 'system')        QB.renderSystem();
     }
 
@@ -2241,6 +2252,7 @@
     document.getElementById('tab-models').addEventListener('click', () => switchTab('models'));
     document.getElementById('tab-notifications').addEventListener('click', () => switchTab('notifications'));
     document.getElementById('tab-history').addEventListener('click',       () => switchTab('history'));
+    document.getElementById('tab-plans').addEventListener('click',         () => switchTab('plans'));
     document.getElementById('tab-system').addEventListener('click',        () => switchTab('system'));
 
     // ── IPC ──────────────────────────────────────────────────────
@@ -2319,6 +2331,7 @@
       document.getElementById('view-models').hidden        = inSettings || activeTab !== 'models';
       document.getElementById('view-notifications').hidden = inSettings || activeTab !== 'notifications';
       document.getElementById('view-history').hidden       = inSettings || activeTab !== 'history';
+      document.getElementById('view-plans').hidden         = inSettings || activeTab !== 'plans';
       document.getElementById('view-system').hidden        = inSettings || activeTab !== 'system';
       document.getElementById('view-settings').hidden      = !inSettings;
       document.getElementById('btn-settings').classList.toggle('active', inSettings);
