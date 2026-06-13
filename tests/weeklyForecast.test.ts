@@ -48,6 +48,8 @@ describe("computeWeeklyForecast", () => {
       now: NOW,
     });
     expect(fc.primaryKind).toBe("profile");
+    expect(fc.confidence).toBe("high");
+    expect(fc.reason).toBe("profile");
     expect(fc.primaryLastsUntilReset).toBe(false);
     const hours = (new Date(fc.primaryAt!).getTime() - NOW.getTime()) / 3600_000;
     expect(hours).toBeGreaterThan(115);
@@ -82,6 +84,8 @@ describe("computeWeeklyForecast", () => {
       now: NOW,
     });
     expect(fc.primaryKind).toBe("linear");
+    expect(fc.confidence).toBe("medium");
+    expect(fc.reason).toBe("linear");
     expect(fc.primaryAt).toBe(new Date(NOW.getTime() + 36_000_000).toISOString());
   });
 
@@ -142,5 +146,7 @@ describe("computeWeeklyForecast", () => {
     });
     expect(fc.burnRateLastsUntilReset).toBeNull();
     expect(fc.primaryAt).toBeNull();
+    expect(fc.confidence).toBe("none");
+    expect(fc.reason).toBe("insufficient-data");
   });
 });

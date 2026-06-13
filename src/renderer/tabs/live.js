@@ -225,12 +225,16 @@ function windowBudgetCollapseHtml(snap) {
 
 function wbForecastHtml(fc) {
   const fmt = (iso) => new Date(iso).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  const CONF = { high: 'hohe Sicherheit', medium: 'grobe Schätzung', none: 'unsicher' };
   const kindLbl = fc.primaryKind === 'profile' ? 'Wochenprofil' : 'linear';
-  const main = fc.primaryLastsUntilReset
-    ? 'Reicht voraussichtlich bis zum Reset'
-    : fc.primaryAt
-      ? `Limit erreicht: ~${fmt(fc.primaryAt)} (${kindLbl})`
-      : 'Keine Prognose möglich';
+  const confLbl = CONF[fc.confidence] ? `, ${CONF[fc.confidence]}` : '';
+  const main = fc.reason === 'insufficient-data'
+    ? 'Keine belastbare Prognose (zu wenig Daten)'
+    : fc.primaryLastsUntilReset
+      ? `Reicht voraussichtlich bis zum Reset (${kindLbl}${confLbl})`
+      : fc.primaryAt
+        ? `Limit erreicht: ~${fmt(fc.primaryAt)} (${kindLbl}${confLbl})`
+        : 'Keine Prognose möglich';
   let burn = '';
   if (fc.burnRateLastsUntilReset === true) burn = '<br>Bei aktuellem Tempo: reicht bis zum Reset';
   else if (fc.burnRateAt) burn = `<br>Bei aktuellem Tempo: ~${QB.esc(fmt(fc.burnRateAt))}`;

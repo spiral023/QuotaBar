@@ -49,6 +49,13 @@ export interface WeeklyForecastResult {
   primaryAt: string | null;
   primaryKind: "profile" | "linear";
   primaryLastsUntilReset: boolean;
+  /**
+   * Vertrauensgrad der Primärprognose: "high" = Wochenprofil (>=2 Wochen Daten),
+   * "medium" = lineare Hochrechnung aus der Pace, "none" = keine belastbare Basis.
+   */
+  confidence: "high" | "medium" | "none";
+  /** Begründung der Prognosebasis. */
+  reason: "profile" | "linear" | "insufficient-data";
   burnRateAt: string | null;
   /** null = keine Burn-Rate verfügbar */
   burnRateLastsUntilReset: boolean | null;
@@ -97,26 +104,30 @@ export function computeWeeklyForecast(input: WeeklyForecastInput): WeeklyForecas
           primaryAt: new Date(t + HOUR_MS).toISOString(),
           primaryKind: "profile",
           primaryLastsUntilReset: false,
+          confidence: "high",
+          reason: "profile",
           burnRateAt,
           burnRateLastsUntilReset,
         };
       }
     }
-    return { primaryAt: null, primaryKind: "profile", primaryLastsUntilReset: true, burnRateAt, burnRateLastsUntilReset };
+    return { primaryAt: null, primaryKind: "profile", primaryLastsUntilReset: true, confidence: "high", reason: "profile", burnRateAt, burnRateLastsUntilReset };
   }
 
   // Fallback: lineare Pace (Wochen-Durchschnitt seit Fensterbeginn)
   if (input.pace) {
     if (input.pace.willLastToReset || input.pace.etaSeconds === null) {
-      return { primaryAt: null, primaryKind: "linear", primaryLastsUntilReset: true, burnRateAt, burnRateLastsUntilReset };
+      return { primaryAt: null, primaryKind: "linear", primaryLastsUntilReset: true, confidence: "medium", reason: "linear", burnRateAt, burnRateLastsUntilReset };
     }
     return {
       primaryAt: new Date(nowMs + input.pace.etaSeconds * 1000).toISOString(),
       primaryKind: "linear",
       primaryLastsUntilReset: false,
+      confidence: "medium",
+      reason: "linear",
       burnRateAt,
       burnRateLastsUntilReset,
     };
   }
-  return { primaryAt: null, primaryKind: "linear", primaryLastsUntilReset: false, burnRateAt, burnRateLastsUntilReset };
+  return { primaryAt: null, primaryKind: "linear", primaryLastsUntilReset: false, confidence: "none", reason: "insufficient-data", burnRateAt, burnRateLastsUntilReset };
 }
