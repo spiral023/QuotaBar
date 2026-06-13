@@ -230,12 +230,22 @@ describe("rule: farAhead / farBehind pace transition", () => {
 
   beforeEach(() => { engine = new NotificationEngine(); state = new NotificationStateStore(); });
 
+  // farAhead/farBehind sind per Default deaktiviert (bewusste Produktentscheidung,
+  // sonst zu laut). Diese Tests prüfen die Feuerlogik, also Regeln explizit aktivieren.
+  const enablePaceRules = {
+    rules: {
+      ...defaultNotificationSettings.rules,
+      farAhead:  { ...defaultNotificationSettings.rules.farAhead,  enabled: true },
+      farBehind: { ...defaultNotificationSettings.rules.farBehind, enabled: true },
+    },
+  };
+
   it("farAhead fires on transition from onTrack to farAhead", () => {
     const pace = { stage: "farAhead" as const, deltaPercent: 20, expectedUsedPercent: 30, actualUsedPercent: 50, etaSeconds: null, willLastToReset: true };
     const current  = [snap("claude", [{ name: "weekly", usedPercent: 50, pace }])];
     const prevPace = { stage: "onTrack" as const, deltaPercent: 1, expectedUsedPercent: 30, actualUsedPercent: 31, etaSeconds: null, willLastToReset: true };
     const previous = [snap("claude", [{ name: "weekly", usedPercent: 31, pace: prevPace }])];
-    const events = engine.evaluate(ctx(current, previous), state);
+    const events = engine.evaluate(ctx(current, previous, enablePaceRules), state);
     expect(events.some(e => e.ruleId === "farAhead")).toBe(true);
   });
 
@@ -243,7 +253,7 @@ describe("rule: farAhead / farBehind pace transition", () => {
     const pace = { stage: "farAhead" as const, deltaPercent: 20, expectedUsedPercent: 30, actualUsedPercent: 50, etaSeconds: null, willLastToReset: true };
     const current  = [snap("claude", [{ name: "weekly", usedPercent: 52, pace }])];
     const previous = [snap("claude", [{ name: "weekly", usedPercent: 50, pace }])];
-    const events = engine.evaluate(ctx(current, previous), state);
+    const events = engine.evaluate(ctx(current, previous, enablePaceRules), state);
     expect(events.some(e => e.ruleId === "farAhead")).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 // tests/modelsData.test.ts
 import { describe, it, expect } from "vitest";
+import fs from "node:fs";
 import path from "node:path";
 import { buildModelsData } from "../src/main/modelsData";
 import { defaultSettings } from "../src/config/settings";
@@ -190,8 +191,11 @@ describe("buildModelsData — pricing & benchmarks", () => {
       claudeEntries: [],
       codexEvents: [],
     });
-    expect(data.benchmarks["claude-opus-4-8"]).toBe(61);
-    expect(data.benchmarksAsOf).toMatch(/^\d{4}-\d{2}$/);
+    // Gegen die gepflegte JSON prüfen statt einen festen Score zu pinnen — Scores
+    // werden regelmäßig aktualisiert; der Test verifiziert das Durchreichen, nicht den Wert.
+    const fileScores = (JSON.parse(fs.readFileSync(BENCHMARKS_FILE, "utf8")) as { scores: Record<string, number> }).scores;
+    expect(data.benchmarks["claude-opus-4-8"]).toBe(fileScores["claude-opus-4-8"]);
+    expect(data.benchmarksAsOf).toMatch(/^\d{4}-\d{2}(-\d{2})?$/);
   });
 
   it("returns empty benchmarks when the file is missing (spec error case)", async () => {

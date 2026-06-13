@@ -13,10 +13,10 @@ describe("model-benchmarks.json", () => {
     expect(() => raw()).not.toThrow();
   });
 
-  it("has source and asOf in YYYY-MM form", () => {
+  it("has source and asOf in YYYY-MM or YYYY-MM-DD form", () => {
     const json = raw();
     expect(json.source.length).toBeGreaterThan(0);
-    expect(json.asOf).toMatch(/^\d{4}-\d{2}$/);
+    expect(json.asOf).toMatch(/^\d{4}-\d{2}(-\d{2})?$/);
   });
 
   it("all scores are finite numbers in plausible range", () => {
