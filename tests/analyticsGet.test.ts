@@ -79,6 +79,13 @@ describe("buildDailyBuckets", () => {
   it("returns empty array when until precedes since", () => {
     expect(buildDailyBuckets([], [], "2026-06-10", "2026-06-01")).toHaveLength(0);
   });
+
+  it("dailyBuckets tragen claudeSubUSD/codexSubUSD (default 0)", () => {
+    const { since, until } = rangeEndingToday(3);
+    const b = buildDailyBuckets([], [], since, until);
+    expect(b[0].claudeSubUSD).toBe(0);
+    expect(b[0].codexSubUSD).toBe(0);
+  });
 });
 
 describe("buildSessionStats", () => {

@@ -2,6 +2,7 @@ import type { ReportRow } from "../reports/types";
 import type { ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import type { UsageSnapshot } from "../providers/types";
 import type { CodexTokenEvent } from "../pricing/codex-log-reader";
+import type { PlanChangePoint } from "../pricing/plan-cost";
 
 export interface AnalyticsSummary {
   apiCostUSD: { claude: number; codex: number; total: number };
@@ -120,6 +121,7 @@ export interface AnalyticsData extends AnalyticsSummary {
   fiveHourPeak: { maxOutputTokens: number; maxTotalTokens: number; peakWindowStart: string | null };
   weeklySummary: WeeklyBucket[];
   costEfficiency: CostEfficiency;
+  planChanges: PlanChangePoint[];
 }
 
 export interface DailyBucket {
@@ -128,6 +130,8 @@ export interface DailyBucket {
   codexUSD: number;
   claudeQuotaPct: number | null;
   codexQuotaPct: number | null;
+  claudeSubUSD: number;  // USD-Abokosten dieses Tages (Claude)
+  codexSubUSD: number;   // USD-Abokosten dieses Tages (Codex)
 }
 
 export function buildDailyBuckets(
@@ -145,6 +149,8 @@ export function buildDailyBuckets(
     codexUSD:       codexByDate.get(date)  ?? 0,
     claudeQuotaPct: null,
     codexQuotaPct:  null,
+    claudeSubUSD:   0,
+    codexSubUSD:    0,
   }));
 }
 

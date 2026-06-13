@@ -13,6 +13,8 @@ import {
   type AnalyticsSummary, type AnalyticsData,
 } from "./analyticsSummary";
 import { buildModelsData, type ModelsData } from "./modelsData";
+import { dailySubCostUSD, periodSubCostUSD, planChangePoints, type PlanChangePoint } from "../pricing/plan-cost";
+import { makeFxLookup } from "../pricing/fx-fetcher";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
 import { buildWeeklyProfile, computeWeeklyForecast, type WeeklyForecastResult } from "./weeklyForecast";
 import { readWeeklySeries, type WindowBudgetSeries } from "./windowBudgetSeries";
@@ -28,6 +30,8 @@ interface AnalyticsTaskInput {
   until?: string;
   settings: Settings;
   cacheHitRate: { claude: number; codex: number };
+  eurUsdRates?: Record<string, number>;
+  fxEstimated?: boolean;
 }
 
 interface ModelsTaskInput {
@@ -116,14 +120,12 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
 
   const claudeCost = claudeReport.totals.costUSD;
   const codexCost  = codexReport.totals.costUSD;
-  // TODO(task 2): replace with plan-cost engine once PlanPeriod timeline is wired up
-  const claudeSub  = 0;
-  const codexSub   = 0;
 
-  // Normalize ROI to the actual window duration so all windows are comparable.
-  // periodSubCost = monthlySubCost × windowDays/30
-  const claudePeriodSub  = claudeSub  * windowDays / 30;
-  const codexPeriodSub   = codexSub   * windowDays / 30;
+  // Real plan-based subscription costs (time-varying), summed over the period.
+  const fx = makeFxLookup(input.eurUsdRates ?? {}, input.fxEstimated ?? false);
+  const untilDay = input.until ?? localDayKey(new Date(Date.now()).toISOString());
+  const claudePeriodSub  = periodSubCostUSD(input.settings.plans, "claude", input.since, untilDay, fx);
+  const codexPeriodSub   = periodSubCostUSD(input.settings.plans, "codex",  input.since, untilDay, fx);
   const combinedPeriodSub = claudePeriodSub + codexPeriodSub;
 
   const roiFactor = {
@@ -135,7 +137,7 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
   if (input.task === "summary") {
     const result: AnalyticsSummary = {
       apiCostUSD:          { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },
-      subscriptionCostUSD: { claude: claudeSub,  codex: codexSub,  total: claudeSub  + codexSub  },
+      subscriptionCostUSD: { claude: claudePeriodSub, codex: codexPeriodSub, total: combinedPeriodSub },
       roiFactor,
       activeDays, avgSessionMinutes, cacheHitRate, sparkline7d, topModels,
       windowDays,
@@ -144,6 +146,14 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
   }
 
   const dailyBuckets      = buildDailyBuckets(claudeReport.rows, codexReport.rows, input.since, input.until ?? input.since);
+  for (const b of dailyBuckets) {
+    b.claudeSubUSD = dailySubCostUSD(input.settings.plans, "claude", b.date, fx);
+    b.codexSubUSD  = dailySubCostUSD(input.settings.plans, "codex",  b.date, fx);
+  }
+  const planChanges: PlanChangePoint[] = [
+    ...planChangePoints(input.settings.plans, "claude", input.since, untilDay),
+    ...planChangePoints(input.settings.plans, "codex",  input.since, untilDay),
+  ];
   const sessionStats      = buildSessionStats(claudeEntries, activeDays);
   const totalTokens       = buildTotalTokens(claudeReport.rows, codexReport.rows);
   const hourHeatmap       = buildHourHeatmap(claudeEntries);
@@ -155,12 +165,13 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
 
   const result: AnalyticsData = {
     apiCostUSD:          { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },
-    subscriptionCostUSD: { claude: claudeSub,  codex: codexSub,  total: claudeSub  + codexSub  },
+    subscriptionCostUSD: { claude: claudePeriodSub, codex: codexPeriodSub, total: combinedPeriodSub },
     roiFactor,
     activeDays, avgSessionMinutes, cacheHitRate, sparkline7d, topModels,
     windowDays,
     dailyBuckets, sessionStats, totalTokens,
     hourHeatmap, weekdayDistribution, topActiveDays, fiveHourPeak, weeklySummary, costEfficiency,
+    planChanges,
   };
   return result;
 }
