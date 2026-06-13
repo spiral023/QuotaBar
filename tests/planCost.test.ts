@@ -25,8 +25,10 @@ describe("dailySubCostUSD", () => {
     expect(v).toBeCloseTo(1.0 * 1.10, 6);
   });
   it("Grenztag wird anteilig nach Uhrzeit prorat", () => {
-    const v = dailySubCostUSD([plan({ startsAt: "2026-03-10T12:00:00.000Z" })], "claude", "2026-03-10", fx);
-    expect(v).toBeGreaterThan(0.4); expect(v).toBeLessThan(0.6);
+    // Start auf LOKALE Mittagszeit → exakt halber lokaler Tag aktiv, in jeder Zeitzone.
+    const localNoon = new Date(2026, 2, 10, 12, 0, 0).toISOString();
+    const v = dailySubCostUSD([plan({ startsAt: localNoon })], "claude", "2026-03-10", fx);
+    expect(v).toBeCloseTo(0.5, 6); // amount/30 = 1.0 → halber Tag = 0.5
   });
   it("ignoriert anderen Anbieter", () => {
     expect(dailySubCostUSD([plan({ provider: "codex" })], "claude", "2026-03-10", fx)).toBe(0);
