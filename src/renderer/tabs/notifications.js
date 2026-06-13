@@ -10,7 +10,7 @@ QB.renderNotifications = async function () {
   let settings;
   try {
     settings = await QB.ipc.invoke('settings:get');
-  } catch (e) {
+  } catch {
     wrap.innerHTML = '<div class="empty"><span>Fehler beim Laden der Einstellungen.</span></div>';
     return;
   }
@@ -143,8 +143,6 @@ const RULE_GROUPS = [
   },
 ];
 
-const SEVERITY_BADGE = { critical: 'badge-critical', warning: 'badge-warning', watch: 'badge-watch', info: 'badge-info' };
-
 function buildRuleGroups(rules) {
   return RULE_GROUPS.map(group => `
     <div class="notif-rule-group">
@@ -194,7 +192,7 @@ function buildRuleCard(def, cfg) {
 
 // ── Event-Binding ──────────────────────────────────────────────────────────
 
-function bindNotificationsEvents(wrap, ns, rules) {
+function bindNotificationsEvents(wrap, _ns, _rules) {
   // Master switch
   const masterToggle = wrap.querySelector('#notif-master');
   const globalDetail = wrap.querySelector('#notif-global-detail');

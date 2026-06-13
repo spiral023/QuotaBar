@@ -202,7 +202,7 @@ describe("recordObservation", () => {
 
   it("verwirft das erste Paar nach clearTransients (lastTs null → kein Paar)", () => {
     // Build up some state then clear transients
-    let s = feed(emptyProviderState(), [[0, 0], [10, 3]]);
+    const s = feed(emptyProviderState(), [[0, 0], [10, 3]]);
     expect(s.pairCount).toBe(1);
     const file = emptyRatioFile();
     file.providers["p"] = s;

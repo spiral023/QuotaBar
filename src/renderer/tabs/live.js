@@ -487,7 +487,7 @@ QB.toggleTokenSection = function toggleTokenSection(id) {
   try { localStorage.setItem('tokenDetailsOpen', isOpen ? '1' : '0'); } catch {}
 };
 
-QB.toggleWindowBudget = function toggleWindowBudget(id, provider) {
+QB.toggleWindowBudget = function toggleWindowBudget(id, _provider) {
   const container = document.getElementById(id);
   if (!container) return;
   const isOpen = container.classList.toggle('open');

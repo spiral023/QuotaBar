@@ -448,7 +448,7 @@ function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-function applyLimit(rows: ReportRow[], limit: number | undefined, order: "asc" | "desc"): ReportRow[] {
+function applyLimit(rows: ReportRow[], limit: number | undefined, _order: "asc" | "desc"): ReportRow[] {
   if (!limit) return rows;
   // rows are already sorted; collect unique buckets and keep the most recent `limit` of them
   const uniqueBuckets = [...new Set(rows.map(r => r.bucket))].sort();

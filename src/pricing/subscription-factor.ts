@@ -1,6 +1,6 @@
 import { getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs } from "../config/paths";
 import type { CostWindow, Settings } from "../config/settings";
-import type { CostFactorResult, UsageSnapshot, UsageWindow } from "../providers/types";
+import type { CostFactorResult, UsageSnapshot } from "../providers/types";
 import { calculateCodexApiCost, findUnpricedCodexModels, readCodexSpeedTierFromPaths } from "./codex-cost-calculator";
 import { readCodexTokensForPeriod } from "./codex-log-reader";
 import { calculateCostFromTokens } from "./cost-calculator";

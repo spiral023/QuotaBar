@@ -66,7 +66,6 @@ export class DebugRecorder {
     const now = Date.now();
     if (now - this.lastErrorMs < 60_000) return;
     this.lastErrorMs = now;
-    // eslint-disable-next-line no-console
     console.error(`DebugRecorder failed to append to ${filePath}:`, err);
   }
 }
