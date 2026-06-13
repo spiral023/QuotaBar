@@ -41,13 +41,12 @@ describe("PricingEngine", () => {
   it("returns zero cost for Claude when no JSONL dir exists", async () => {
     const engine = new PricingEngine(settings, "/nonexistent/path");
     const result = await engine.calculateFactor(makeSnapshot("claude"));
-    // subscriptionCostUSD is 0 until plan-cost engine is wired up (TODO task 2)
-    expect(result).toMatchObject({
-      apiCostUSD: 0,
-      subscriptionCostUSD: 0,
-      factor: 0,
-      isEstimate: false,
-    });
+    // No entries → sinceDay = untilDay = today, so the plan window is a single day.
+    // Claude Pro plan: $20/30 per day × 1 day = $0.6667. apiCost is 0 → factor 0.
+    expect(result!.apiCostUSD).toBe(0);
+    expect(result!.isEstimate).toBe(false);
+    expect(result!.factor).toBe(0);
+    expect(result!.subscriptionCostUSD).toBeCloseTo(20 / 30, 6);
   });
 
   it("returns Keine Logs for Codex when sessions dir is empty", async () => {
@@ -58,7 +57,7 @@ describe("PricingEngine", () => {
     expect(result!.isEstimate).toBe(true);
     expect(result!.label).toBe("Keine Logs verfügbar");
     expect(result!.apiCostUSD).toBe(0);
-    // subscriptionCostUSD is 0 until plan-cost engine is wired up (TODO task 2)
+    // No logs → early return with subscriptionCostUSD 0 and factor null.
     expect(result!.subscriptionCostUSD).toBe(0);
   });
 
@@ -104,8 +103,9 @@ describe("PricingEngine", () => {
       expect(result!.factor).not.toBeNull();
       expect(result!.isEstimate).toBe(false);
       expect(result!.apiCostUSD).toBeGreaterThan(0);
-      // subscriptionCostUSD is 0 until plan-cost engine is wired up (TODO task 2)
-      expect(result!.subscriptionCostUSD).toBe(0);
+      // Events are ~now → sinceDay = untilDay = today (single day).
+      // Codex Team plan: $10/30 per day × 1 day = $0.3333.
+      expect(result!.subscriptionCostUSD).toBeCloseTo(10 / 30, 6);
     } finally {
       await fs.rm(sessionsDir, { recursive: true, force: true });
     }

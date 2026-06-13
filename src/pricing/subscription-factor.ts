@@ -4,8 +4,10 @@ import type { CostFactorResult, UsageSnapshot } from "../providers/types";
 import { calculateCodexApiCost, findUnpricedCodexModels, readCodexSpeedTierFromPaths } from "./codex-cost-calculator";
 import { readCodexTokensForPeriod } from "./codex-log-reader";
 import { calculateCostFromTokens } from "./cost-calculator";
+import { sharedFxFetcher } from "./fx-fetcher";
 import { aggregateClaudeEntries, readClaudeUsageEntriesForPeriod } from "./jsonl-reader";
 import { LiteLLMFetcher } from "./litellm-fetcher";
+import { periodSubCostUSD } from "./plan-cost";
 
 export class PricingEngine {
   private readonly fetcher: LiteLLMFetcher;
@@ -83,13 +85,18 @@ export class PricingEngine {
       }
     }
 
-    // TODO(task 2): replace with plan-cost engine once PlanPeriod timeline is wired up
-    const subscriptionCostUSD = 0;
     const effectiveDays = windowDays > 0
       ? windowDays
       : computeActualDaysFromEntries(entries.map(e => e.timestamp));
-    const periodSubCost = subscriptionCostUSD * effectiveDays / 30;
-    const factor = periodSubCost > 0 ? apiCostUSD / periodSubCost : 0;
+    const sinceDay = localDayKey(billingStart.getTime() > 0 ? billingStart.getTime()
+      : (entries.length ? Math.min(...entries.map(e => new Date(e.timestamp).getTime())) : Date.now()));
+    const untilDay = localDayKey(Date.now());
+    const needsFx = currentSettings.plans.some(p => p.provider === "claude" && p.currency === "EUR");
+    if (needsFx) await sharedFxFetcher.ensureRange(sinceDay, untilDay);
+    const fx = sharedFxFetcher.lookup();
+    const periodSubCost = periodSubCostUSD(currentSettings.plans, "claude", sinceDay, untilDay, fx);
+    const subscriptionCostUSD = periodSubCost;
+    const factor = periodSubCost > 0 ? apiCostUSD / periodSubCost : null;
     return {
       apiCostUSD,
       subscriptionCostUSD,
@@ -115,12 +122,10 @@ export class PricingEngine {
     const currentSettings = await this.resolveSettings();
     const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(currentSettings.costWindow, snapshot, "codex");
     const events = await readCodexTokensForPeriod(this.codexSessionsDir, billingStart);
-    // TODO(task 2): replace with plan-cost engine once PlanPeriod timeline is wired up
-    const subscriptionCostUSD = 0;
     if (events.length === 0) {
       return {
         apiCostUSD: 0,
-        subscriptionCostUSD,
+        subscriptionCostUSD: 0,
         factor: null,
         isEstimate: true,
         windowLabel,
@@ -135,8 +140,15 @@ export class PricingEngine {
     const effectiveDays = windowDays > 0
       ? windowDays
       : computeActualDaysFromEntries(events.map(e => e.timestamp));
-    const periodSubCost = subscriptionCostUSD * effectiveDays / 30;
-    const factor = periodSubCost > 0 ? apiCostUSD / periodSubCost : 0;
+    const sinceDay = localDayKey(billingStart.getTime() > 0 ? billingStart.getTime()
+      : (events.length ? Math.min(...events.map(e => new Date(e.timestamp).getTime())) : Date.now()));
+    const untilDay = localDayKey(Date.now());
+    const needsFx = currentSettings.plans.some(p => p.provider === "codex" && p.currency === "EUR");
+    if (needsFx) await sharedFxFetcher.ensureRange(sinceDay, untilDay);
+    const fx = sharedFxFetcher.lookup();
+    const periodSubCost = periodSubCostUSD(currentSettings.plans, "codex", sinceDay, untilDay, fx);
+    const subscriptionCostUSD = periodSubCost;
+    const factor = periodSubCost > 0 ? apiCostUSD / periodSubCost : null;
 
     let inputTokens = 0, cacheReadTokens = 0, outputTokens = 0, totalTokens = 0;
     const modelSet = new Set<string>();
@@ -194,8 +206,14 @@ function computeActualDaysFromEntries(timestamps: string[]): number {
   return Math.max(1, spanDays);
 }
 
-function formatLabel(apiCostUSD: number, factor: number, isEstimate: boolean): string {
+function formatLabel(apiCostUSD: number, factor: number | null, isEstimate: boolean): string {
+  if (factor === null) return "Kein Abo hinterlegt";
   if (apiCostUSD === 0 && !isEstimate) return "$0.00 (keine Daten)";
   const prefix = isEstimate ? "~" : "";
   return `${prefix}${factor.toFixed(1)}× Abo`;
+}
+
+function localDayKey(ms: number): string {
+  const d = new Date(ms); const p = (v: number) => String(v).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
