@@ -22,31 +22,6 @@ Wichtig:
 - Nur aussagekräftige Ausreißer markieren
 - Hervorhebung soll das Scannen erleichtern, nicht vom eigentlichen Wert ablenken
 
-## Notification-Aktionen: Öffnen und stummschalten
-
-Desktop-Benachrichtigungen könnten zwei direkte Aktionen bekommen:
-
-- `Öffnen`: QuotaBar öffnen
-- `Stumm`: diesen Nachrichtentyp ausschalten
-
-Alternativ als etwas explizitere Labels:
-
-- `QuotaBar öffnen`
-- `Typ deaktivieren`
-
-Idee:
-
-- Jede Notification trägt intern ihre Rule-ID mit, z. B. `highUsage` oder `resetSoon`.
-- Klick auf `Öffnen` bringt das bestehende Fenster nach vorne und öffnet den Notifications-Tab oder den relevanten Provider.
-- Klick auf `Stumm` setzt `notifications.rules[ruleId].enabled = false` und speichert die Settings.
-- Optional statt dauerhaft deaktivieren: `Für heute stummschalten`, damit eine versehentliche Aktion nicht zu viel abschaltet.
-- Aktion im Notification-Verlauf sichtbar machen, z. B. "Typ deaktiviert".
-
-Wichtig:
-
-- Electron/Windows-Unterstützung für Notification-Actions prüfen; falls Buttons nicht zuverlässig erscheinen, als Fallback Klick auf die Notification zum Öffnen nutzen und den `Stumm`-Befehl im Notification-Verlauf anbieten.
-- Keine sensitiven Inhalte in Action-Payloads oder Logs speichern.
-
 ## Grauen Text besser lesbar machen
 
 Grauer Text ist an manchen Stellen schwer zu lesen, weil der Kontrast zu gering ist.

@@ -1,16 +1,16 @@
 {
   "note": "Manuell gepflegt. Quelle: https://artificialanalysis.ai — Schlüssel in normalisierter Form (ohne Datums-Suffix). Modelle ohne Eintrag erscheinen nicht im Scatter.",
   "source": "Artificial Analysis Intelligence Index",
-  "asOf": "2026-06",
+  "asOf": "2026-06-13",
   "scores": {
-    "claude-fable-5": 65,
-    "claude-opus-4-8": 61,
-    "gpt-5.5": 60,
+    "claude-fable-5": 77,
+    "claude-opus-4-8": 73,
+    "gpt-5.5": 76,
     "claude-opus-4-1": 57,
-    "claude-opus-4-7": 57,
+    "claude-opus-4-7": 65,
     "gpt-5.4": 57,
     "gpt-5.3-codex": 54,
-    "claude-sonnet-4-6": 52,
+    "claude-sonnet-4-6": 54,
     "gpt-5.2": 51,
     "gpt-5.1": 48,
     "gpt-5": 45
