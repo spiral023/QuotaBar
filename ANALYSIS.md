@@ -1,11 +1,11 @@
 # QuotaBar Analysebericht
 
 Erstanalyse: 2026-06-13  
-Letzte Aktualisierung: 2026-06-13 (nach erstem Fix-Durchlauf)
+Letzte Aktualisierung: 2026-06-13 (nach Renderer-Härtung)
 
 ## Änderungen seit Erstanalyse
 
-Am 2026-06-13 wurden die dringendsten Befunde direkt behoben (10 Commits auf `main`):
+Am 2026-06-13 wurden die dringendsten Befunde direkt behoben (11 Commits auf `main`):
 
 | Commit | Befund | Status |
 | --- | --- | --- |
@@ -19,10 +19,11 @@ Am 2026-06-13 wurden die dringendsten Befunde direkt behoben (10 Commits auf `ma
 | `2423481` | Unbekannte Modelle still mit $0 verschluckt (Kosten zu niedrig) | ✅ `missingPricingModels` + UI-Hinweis |
 | `c22ad7e` | Forecast ohne Vertrauensgrad (Profil vs. dünn linear nicht unterscheidbar) | ✅ `confidence`/`reason` + UI |
 | `e0f20ba` | Analytics-Zeitsemantik UTC vs. lokal gemischt (falscher Tag/Stunde) | ✅ auf Lokalzeit vereinheitlicht |
+| `e3f48c3` | Renderer nicht gehärtet (`nodeIntegration: true` → XSS = RCE) | ✅ contextIsolation + preload-Bridge |
 
-Verifikation nach Fixes: **`npm test` grün (466 Tests, 54 Dateien)**, `npm run build` grün; Analytics-Zeit-Tests in mehreren Zeitzonen deterministisch.
+Verifikation nach Fixes: **`npm test` grün (468 Tests, 55 Dateien)**, `npm run build` grün; Analytics-Zeit-Tests in mehreren Zeitzonen deterministisch; Renderer-Härtung zusätzlich per manuellem GUI-Smoke-Test geprüft.
 
-Damit sind die beiden Berechnungsfehler, der Testpipeline-Blocker, das Models-Tab-XSS sowie drei praxisnahe Transparenz-/Korrektheits-Verbesserungen (nicht eingepreiste Modelle, Forecast-Confidence, Zeitsemantik) erledigt. Die Bewertungen unten sind entsprechend angehoben; verbleibende Punkte sind klar als offen markiert.
+Damit sind die beiden Berechnungsfehler, der Testpipeline-Blocker, das Models-Tab-XSS, die Renderer-Härtung sowie drei praxisnahe Transparenz-/Korrektheits-Verbesserungen (nicht eingepreiste Modelle, Forecast-Confidence, Zeitsemantik) erledigt. Die Bewertungen unten sind entsprechend angehoben; verbleibende Punkte sind klar als offen markiert.
 
 ## Kurzfazit
 
@@ -30,9 +31,9 @@ QuotaBar ist technisch und fachlich deutlich weiter als ein typisches MVP: Die A
 
 Der zuvor größte Qualitätsbruch — rote Testpipeline plus Settings-Drift in der `PricingEngine` — ist behoben: `npm test` ist grün, die Engine ist eine reine Funktion ihrer injizierten Settings (Produktion injiziert weiterhin Live-Settings über einen Provider), und die `.test.js`-Altlast ist entfernt. Auch das Models-Tab-XSS ist geschlossen.
 
-Der jetzt dominierende offene Punkt ist die **Renderer-Härtung**: `nodeIntegration: true` und `contextIsolation: false` gelten weiterhin für Details- und Onboarding-Fenster. Solange das so ist, bleibt jeder verbleibende unescaped-Pfad potenziell RCE-relevant. Daneben fehlen weiterhin CI und Lint, und einige Analyse-Ergebnisse tragen noch keine Quellen-/Confidence-Metadaten.
+Auch die **Renderer-Härtung** ist erledigt: beide Fenster laufen jetzt mit `nodeIntegration: false` und `contextIsolation: true`, der IPC-Zugriff läuft über ein preload-`contextBridge`-Script (`src/main/preload.ts`). Damit ist die schwerwiegendste Sicherheitslücke geschlossen — ein künftiger unescaped-Pfad wäre auf DOM-Ebene begrenzt statt RCE. Verbleibende offene Punkte sind eher Reifegrad als akutes Risiko: keine CI/kein Lint, fehlende Preisquellen-/KPI-Metadaten, doppelte Live/Backfill-Tokensemantik und ein noch grobes Forecast-Profil (Wochentagsmittel über 24 h).
 
-Gesamtbewertung: **2.7 - befriedigend** (vorher 3.2)  
+Gesamtbewertung: **2.5 - befriedigend bis gut** (vorher 3.2)  
 Bewertung Business-Logik und Berechnungen: **2.4 - gut bis befriedigend** (vorher 2.8)
 
 ## Gesamt-Scorecard
@@ -42,7 +43,7 @@ Bewertung Business-Logik und Berechnungen: **2.4 - gut bis befriedigend** (vorhe
 | Architektur und Modulgrenzen | 2.5 | – | Gute fachliche Schichten, aber `DetailsWindowController` ist zu breit. |
 | Codequalität und Wartbarkeit | 3.0 | – | Solider TypeScript-Core, Renderer/HTML wächst stark und ist nicht typechecked. |
 | Testqualität und Verifikation | 2.0 | ▲ 4.5 | `npm test` jetzt grün; Duplikate weg. Es fehlen weiterhin CI und Lint. |
-| Sicherheit und Robustheit | 3.5 | ▲ 4.0 | Models-Tab-XSS geschlossen; `nodeIntegration: true` bleibt der dominante Hebel. |
+| Sicherheit und Robustheit | 2.0 | ▲ 4.0 | Models-Tab-XSS geschlossen **und** Renderer gehärtet (contextIsolation + preload-Bridge). |
 | Performance und Effizienz | 2.5 | – | Gute Worker-/Cache-Ansätze, kleinere Skalierungsrisiken bei großen Logs. |
 | DX, Tooling und Delivery | 3.3 | ▲ 4.0 | Grüne Testpipeline; weiterhin kein Lint, keine CI, README-Versions­lücke. |
 | Dokumentation und Operabilität | 2.0 | – | README und TESTING sind stark, kleine Versions- und Automationslücken. |
@@ -235,8 +236,8 @@ Empfehlungen:
 5. ✅ **Testpipeline ist grün.**  
    `.test.js`-Duplikate entfernt, Vitest auf `tests/**/*.test.ts` beschränkt, gitignore-Guard ergänzt; 3 veraltete `.ts`-Erwartungen angeglichen. Die sehr gute Testbasis wirkt jetzt wieder als Sicherheitsnetz.
 
-6. ⚠️ **Renderer ist weiterhin nicht gehärtet (neuer Top-Befund).**  
-   `nodeIntegration: true` / `contextIsolation: false` in `src/main/detailsWindow.ts` und `src/main/onboardingWindow.ts`. Das XSS im Models-Tab ist geschlossen, aber ohne Renderer-Härtung bleibt jeder künftige unescaped-Pfad RCE-relevant.
+6. ✅ **Renderer gehärtet (`e3f48c3`).**  
+   `nodeIntegration: false` / `contextIsolation: true` in `detailsWindow.ts` und `onboardingWindow.ts`; IPC über preload-`contextBridge` (`src/main/preload.ts`, `on`-Wrapper reicht nur die Payload durch). Künftige unescaped-Pfade sind damit auf DOM-Ebene begrenzt statt RCE.
 
 ## Priorisierte Roadmap
 
@@ -250,8 +251,7 @@ Empfehlungen:
 
 ### 60 Tage
 
-1. **Renderer-Härtung umsetzen - Risk-Reducer (jetzt Top-Priorität)**  
-   Preload-Script, `contextBridge`, `nodeIntegration: false`, `contextIsolation: true` — für Details- und Onboarding-Fenster.
+1. ✅ **Renderer-Härtung umgesetzt** (`e3f48c3`) — preload-`contextBridge`, `nodeIntegration: false`, `contextIsolation: true` für beide Fenster.
 
 2. ✅ **Zeitsemantik vereinheitlicht** — Analytics-Ansichten auf Lokalzeit standardisiert (Heatmap/Weekday/Top-Days).
 
@@ -281,21 +281,22 @@ Empfehlungen:
 
 Stand 2026-06-13 nach Fixes:
 
-- `npm test` — **erfolgreich (469 Tests, 54 Dateien)**.
+- `npm test` — **erfolgreich (468 Tests, 55 Dateien)**.
   - `.test.js`-Duplikate entfernt; Vitest lädt nur noch `tests/**/*.test.ts`.
   - Zuvor rote `.ts`-Tests (Pricing, Benchmark, Notification) sind grün.
 - `npm run build` — erfolgreich.
+- Renderer-Härtung manuell per GUI-Smoke-Test verifiziert.
 - `npm audit` / `npm audit --omit=dev` — bei Erstanalyse 0 bekannte Vulnerabilities (nicht erneut geprüft).
 
-Noch nicht automatisiert: kein CI, kein Lint, kein GUI-Smoke-Test.
+Noch nicht automatisiert: kein CI, kein Lint, kein automatisierter GUI-Smoke-Test.
 
 ## Offene Kleinbefunde
 
 - ✅ README-Badge auf Electron 42 korrigiert (`c63975b`).
 - ✅ Doppelter `describe("source: backfill")`-Block in `tests/reports.test.ts` entfernt (`4ba4384`).
-- `nodeIntegration: true` / `contextIsolation: false` in Details- und Onboarding-Fenster (offen).
+- ✅ Renderer gehärtet: `nodeIntegration: false` / `contextIsolation: true` + preload-Bridge (`e3f48c3`).
 - Mehrere Analyse-/Pricing-Ergebnisse ohne Quellen-/Confidence-Metadaten (offen).
 
 ## Endnote
 
-QuotaBar hat eine gute fachliche Grundlage. Besonders die Window-Ratio- und Debug-/Backfill-Logik zeigt ein gutes Verständnis realer Provider-Artefakte. Nach dem ersten Fix-Durchlauf sind die kritischen Berechnungsfehler beseitigt, die Testpipeline ist grün und das Models-Tab-XSS geschlossen. Der nächste strukturelle Hebel ist die **Renderer-Härtung** (contextIsolation/Preload), gefolgt von sichtbaren Datenqualitäts- und Preisquellen-Metadaten. Neue Analysefeatures sollten erst danach folgen.
+QuotaBar hat eine gute fachliche Grundlage. Besonders die Window-Ratio- und Debug-/Backfill-Logik zeigt ein gutes Verständnis realer Provider-Artefakte. Nach den Fix-Durchläufen sind die kritischen Berechnungsfehler beseitigt, die Testpipeline ist grün, das Models-Tab-XSS geschlossen und der Renderer gehärtet (contextIsolation/preload). Der nächste große Hebel ist die **Genauigkeit des Weekly-Forecasts** (Modellierung nach Wochentag + Tageszeit statt Tagesmittel gleichmäßig über 24 h) — die Prognose ist die wertvollste Funktion und aktuell die gröbste. Danach folgen Preisquellen-/KPI-Metadaten und die Konsolidierung der Live-/Backfill-Tokensemantik.
