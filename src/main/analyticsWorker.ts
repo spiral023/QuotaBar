@@ -128,7 +128,7 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     return result;
   }
 
-  const dailyBuckets      = buildDailyBuckets(claudeReport.rows, codexReport.rows, input.windowDays);
+  const dailyBuckets      = buildDailyBuckets(claudeReport.rows, codexReport.rows, windowDays);
   const sessionStats      = buildSessionStats(claudeEntries, activeDays);
   const totalTokens       = buildTotalTokens(claudeReport.rows, codexReport.rows);
   const hourHeatmap       = buildHourHeatmap(claudeEntries);
