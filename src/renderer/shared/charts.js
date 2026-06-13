@@ -5,6 +5,42 @@ window.QB = window.QB || {};
 QB.charts = QB.charts || {};
 QB.charts.mutedTextColor = '#7e92a4';
 
+// Zeichnet vertikale Linien + Labels an Plan-Wechselpunkten.
+// changes: [{ label, _index }] — _index = Position auf der Kategorie-X-Achse.
+QB.charts.planChangePlugin = {
+  id: 'planChanges',
+  afterDatasetsDraw(chart, _args, opts) {
+    const changes = opts && opts.changes;
+    if (!Array.isArray(changes) || !changes.length) return;
+    const { ctx, chartArea: { top, bottom }, scales: { x } } = chart;
+    ctx.save();
+    for (const ch of changes) {
+      if (ch._index == null) continue;
+      const px = x.getPixelForValue(ch._index);
+      if (px == null || isNaN(px)) continue;
+      ctx.strokeStyle = 'rgba(180,200,216,0.45)';
+      ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(180,200,216,0.9)';
+      ctx.font = "9px 'DM Sans', system-ui, sans-serif";
+      ctx.save(); ctx.translate(px + 3, top + 4); ctx.fillText(ch.label, 0, 0); ctx.restore();
+    }
+    ctx.restore();
+  },
+};
+
+// Bildet planChanges (mit `day`: YYYY-MM-DD) auf Bucket-Indizes ab.
+// dayKeys = die Labels/Buckets der X-Achse (für daily = YYYY-MM-DD).
+QB.charts.mapChangesToIndex = function(changes, dayKeys) {
+  if (!Array.isArray(changes)) return [];
+  return changes.map(ch => {
+    let idx = dayKeys.findIndex(d => d >= ch.day);
+    if (idx === -1) idx = dayKeys.length - 1;
+    return { label: ch.label, _index: idx };
+  }).filter(c => c._index >= 0);
+};
+
 QB.charts.createLine = function(ctx, labels, datasets, opts) {
   const isRoi  = opts?.yFormat === 'roi';
   const yFmt   = isRoi ? (v) => Number(v).toFixed(1) + '×' : (v) => '$' + Number(v).toFixed(0);
@@ -14,6 +50,7 @@ QB.charts.createLine = function(ctx, labels, datasets, opts) {
   return new Chart(ctx, {
     type: 'line',
     data: { labels, datasets },
+    plugins: [QB.charts.planChangePlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -32,6 +69,7 @@ QB.charts.createLine = function(ctx, labels, datasets, opts) {
             label: tipFmt,
           },
         },
+        planChanges: { changes: (opts && opts.planChanges) || [] },
       },
       scales: {
         x: {
@@ -70,6 +108,7 @@ QB.charts.createStackedBar = function(ctx, labels, datasets, opts) {
   return new Chart(ctx, {
     type: 'bar',
     data: { labels, datasets },
+    plugins: [QB.charts.planChangePlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -85,6 +124,7 @@ QB.charts.createStackedBar = function(ctx, labels, datasets, opts) {
           padding: 8,
           callbacks: { label: tipFmt },
         },
+        planChanges: { changes: (opts && opts.planChanges) || [] },
       },
       scales: {
         x: {
