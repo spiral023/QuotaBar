@@ -20,6 +20,12 @@ export interface CostFactorResult {
   windowDays?: number;
   calculationMode?: "fixed" | "actual-span";
   tokenUsage?: TokenUsageDetail;
+  /**
+   * Modelle im Fenster, für die keine Preisdaten gefunden wurden (weder LiteLLM
+   * noch Fallback). Deren Tokens fehlen in apiCostUSD — die Summe ist also eine
+   * Untergrenze. Leer/undefined = alle Modelle eingepreist.
+   */
+  missingPricingModels?: string[];
 }
 
 export type UsageStatus = "ok" | "not_authenticated" | "error" | "stale";

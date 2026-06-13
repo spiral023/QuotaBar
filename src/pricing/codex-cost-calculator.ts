@@ -33,6 +33,24 @@ export async function calculateCodexApiCost(
   return total;
 }
 
+/**
+ * Modellnamen aus den Events, für die kein Preis gefunden wird (nach Alias-Auflösung).
+ * Deren Tokens fließen nicht in `calculateCodexApiCost` ein — dieser Helper macht sie
+ * sichtbar, ohne die bestehende Kostenfunktion zu verändern. Preise sind gecacht,
+ * daher ist der zusätzliche Lookup günstig.
+ */
+export async function findUnpricedCodexModels(
+  events: CodexTokenEvent[],
+  fetcher: LiteLLMFetcher,
+): Promise<string[]> {
+  const missing = new Set<string>();
+  for (const event of events) {
+    const modelName = MODEL_ALIASES[event.model] ?? event.model;
+    if (!(await fetcher.getModelPricing(modelName))) missing.add(modelName);
+  }
+  return [...missing];
+}
+
 export async function readCodexSpeedTier(configPath: string): Promise<"standard" | "fast"> {
   try {
     const content = await fs.readFile(configPath, "utf8");

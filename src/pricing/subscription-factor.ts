@@ -1,7 +1,7 @@
 import { getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs } from "../config/paths";
 import type { CostWindow, Settings } from "../config/settings";
 import type { CostFactorResult, UsageSnapshot, UsageWindow } from "../providers/types";
-import { calculateCodexApiCost, readCodexSpeedTierFromPaths } from "./codex-cost-calculator";
+import { calculateCodexApiCost, findUnpricedCodexModels, readCodexSpeedTierFromPaths } from "./codex-cost-calculator";
 import { readCodexTokensForPeriod } from "./codex-log-reader";
 import { calculateCostFromTokens } from "./cost-calculator";
 import { aggregateClaudeEntries, readClaudeUsageEntriesForPeriod } from "./jsonl-reader";
@@ -48,12 +48,13 @@ export class PricingEngine {
     const tokens = aggregateClaudeEntries(entries);
 
     let apiCostUSD = 0;
+    const missingPricingModels = new Set<string>();
     const entriesWithoutCost = entries.filter((entry) => entry.costUSD === undefined);
     apiCostUSD += entries.reduce((sum, entry) => sum + (entry.costUSD ?? 0), 0);
     const tokensToCalculate = aggregateClaudeEntries(entriesWithoutCost);
     for (const [modelName, modelTokens] of Object.entries(tokensToCalculate.perModel)) {
       const pricing = await this.fetcher.getModelPricing(modelName);
-      if (!pricing) continue;
+      if (!pricing) { missingPricingModels.add(modelName); continue; }
       apiCostUSD += calculateCostFromTokens(
         {
           input_tokens: modelTokens.inputTokens,
@@ -77,6 +78,8 @@ export class PricingEngine {
           },
           pricing,
         );
+      } else {
+        missingPricingModels.add(fallbackModel);
       }
     }
 
@@ -95,6 +98,7 @@ export class PricingEngine {
       windowDays: effectiveDays,
       calculationMode,
       label: formatLabel(apiCostUSD, factor, false),
+      missingPricingModels: missingPricingModels.size > 0 ? [...missingPricingModels] : undefined,
       tokenUsage: {
         inputTokens: tokens.inputTokens,
         outputTokens: tokens.outputTokens,
@@ -124,6 +128,7 @@ export class PricingEngine {
     }
     const speedTier = await readCodexSpeedTierFromPaths(Array.isArray(this.codexConfigPath) ? this.codexConfigPath : [this.codexConfigPath]);
     const apiCostUSD = await calculateCodexApiCost(events, this.fetcher, speedTier);
+    const missingPricingModels = await findUnpricedCodexModels(events, this.fetcher);
     const subscriptionCostUSD = currentSettings.subscriptionCosts.codex;
     const effectiveDays = windowDays > 0
       ? windowDays
@@ -150,6 +155,7 @@ export class PricingEngine {
       windowDays: effectiveDays,
       calculationMode,
       label: formatLabel(apiCostUSD, factor, false),
+      missingPricingModels: missingPricingModels.length > 0 ? missingPricingModels : undefined,
       tokenUsage: {
         inputTokens: Math.max(0, inputTokens - cacheReadTokens), // uncached only, consistent with Claude
         outputTokens,

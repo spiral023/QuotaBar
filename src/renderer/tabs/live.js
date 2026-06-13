@@ -133,7 +133,11 @@ function tokenDetailInnerHtml(cf) {
   ).join('');
   const modelsHtml = t.models?.length > 0
     ? `<div class="token-models">${QB.esc(t.models.join(', '))}</div>` : '';
-  return `<div class="token-section"><div class="token-grid">${cellsHtml}</div>${modelsHtml}</div>`;
+  const missing = cf.missingPricingModels;
+  const missingHtml = missing?.length > 0
+    ? `<div class="token-missing" title="Tokens dieser Modelle fehlen in den Kosten — die Summe ist eine Untergrenze">⚠ nicht eingepreist: ${QB.esc(missing.join(', '))}</div>`
+    : '';
+  return `<div class="token-section"><div class="token-grid">${cellsHtml}</div>${modelsHtml}${missingHtml}</div>`;
 }
 
 function tokenCollapseHtml(cf, provider) {

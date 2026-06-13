@@ -204,4 +204,23 @@ describe("PricingEngine", () => {
       await fs.rm(claudeDir, { recursive: true, force: true });
     }
   });
+
+  it("listet Modelle ohne Preis in missingPricingModels und zählt deren Tokens nicht", async () => {
+    const claudeDir = path.join(os.tmpdir(), `qb-sf-missing-${Date.now()}`);
+    const projectDir = path.join(claudeDir, "proj1");
+    await fs.mkdir(projectDir, { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, "session.jsonl"),
+      [JSON.stringify({ timestamp: new Date().toISOString(), message: { id: "msg_x", model: "zzz-unpriced-9000", usage: { output_tokens: 1000 } } })].join("\n") + "\n",
+      "utf8",
+    );
+    try {
+      const engine = new PricingEngine(settings, claudeDir);
+      const result = await engine.calculateFactor(makeSnapshot("claude"));
+      expect(result!.missingPricingModels).toContain("zzz-unpriced-9000");
+      expect(result!.apiCostUSD).toBe(0);
+    } finally {
+      await fs.rm(claudeDir, { recursive: true, force: true });
+    }
+  });
 });
