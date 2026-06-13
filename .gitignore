@@ -34,6 +34,9 @@ coverage/
 .vitest/
 .nyc_output/
 
+# Kompilierte Test-Duplikate (Quelle der Wahrheit sind die .test.ts)
+tests/**/*.test.js
+
 # Electron cache artifacts
 *.asar
 *.blockmap
