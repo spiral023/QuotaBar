@@ -38,7 +38,7 @@ window.QB = window.QB || {};
     } catch (e) {
       console.error('models:get failed', e);
       const msg = (e && e.message) ? e.message : String(e);
-      container.innerHTML = `<div class="empty"><span>Fehler: ${msg.slice(0, 300)}</span></div>`;
+      container.innerHTML = `<div class="empty"><span>Fehler: ${QB.esc(msg.slice(0, 300))}</span></div>`;
     }
   };
 
@@ -119,7 +119,7 @@ window.QB = window.QB || {};
           <div class="an-section-head"><span class="an-section-title">PREIS vs. INTELLIGENZ</span></div>
           <div class="mod-scatter-wrap"><canvas id="mod-scatter-canvas"></canvas></div>
           <div class="mod-scatter-note">x: effektiver $/MTok basierend auf deiner echten Nutzung (inkl. Cache) &middot;
-            Quelle: ${_data.benchmarksAsOf ? 'Artificial Analysis Intelligence Index, Stand ' + _data.benchmarksAsOf : 'Artificial Analysis'}</div>
+            Quelle: ${_data.benchmarksAsOf ? 'Artificial Analysis Intelligence Index, Stand ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
         </div>` : `
         <div class="an-section"><div class="mod-note">Benchmark-Daten nicht verfügbar — Scatter ausgeblendet.</div></div>`}
 
@@ -204,17 +204,17 @@ window.QB = window.QB || {};
       </div>
       <div class="an-stat-tile">
         <div class="an-stat-lbl">Top nach Kosten</div>
-        <div class="an-stat-val" title="${k.topCost ? k.topCost.model : ''}">${k.topCost ? shortName(k.topCost.model) : '—'}</div>
+        <div class="an-stat-val" title="${k.topCost ? QB.esc(k.topCost.model) : ''}">${k.topCost ? QB.esc(shortName(k.topCost.model)) : '—'}</div>
         <div class="mod-kpi-sub">${k.topCost ? '$' + k.topCost.costUSD.toFixed(0) + ' · ' + k.topCost.sharePct.toFixed(0) + '%' : ''}</div>
       </div>
       <div class="an-stat-tile">
         <div class="an-stat-lbl">Top nach Output</div>
-        <div class="an-stat-val" title="${k.topOutput ? k.topOutput.model : ''}">${k.topOutput ? shortName(k.topOutput.model) : '—'}</div>
+        <div class="an-stat-val" title="${k.topOutput ? QB.esc(k.topOutput.model) : ''}">${k.topOutput ? QB.esc(shortName(k.topOutput.model)) : '—'}</div>
         <div class="mod-kpi-sub">${k.topOutput ? QB.fmtTokens(k.topOutput.outputTokens) : ''}</div>
       </div>
       <div class="an-stat-tile">
         <div class="an-stat-lbl">Preis/Leistung</div>
-        <div class="an-stat-val" title="${k.bestValue ? k.bestValue.model : ''}">${k.bestValue ? shortName(k.bestValue.model) : '—'}</div>
+        <div class="an-stat-val" title="${k.bestValue ? QB.esc(k.bestValue.model) : ''}">${k.bestValue ? QB.esc(shortName(k.bestValue.model)) : '—'}</div>
         <div class="mod-kpi-sub">${k.bestValue ? 'Score/$ am höchsten' : 'kein Score verfügbar'}</div>
       </div>
       <div class="an-stat-tile">
@@ -272,8 +272,8 @@ window.QB = window.QB || {};
   function renderLegend(series) {
     const el = document.getElementById('mod-legend');
     el.innerHTML = series.map((s) => `
-      <div class="mod-legend-item" title="${s.model}">
-        <span class="mod-legend-swatch" style="background:${colorFor(s.model, s.provider, _colorOrder)}"></span>${s.model}
+      <div class="mod-legend-item" title="${QB.esc(s.model)}">
+        <span class="mod-legend-swatch" style="background:${colorFor(s.model, s.provider, _colorOrder)}"></span>${QB.esc(s.model)}
       </div>`).join('');
   }
 
@@ -281,7 +281,7 @@ window.QB = window.QB || {};
     const el = document.getElementById('mod-ribbon');
     const ribbon = calc.providerRibbon(days, _metric, granularity);
     el.innerHTML = ribbon.map((r) => `
-      <div class="mod-ribbon-cell" title="${r.bucket}: Claude ${(r.claudeShare * 100).toFixed(0)}%">
+      <div class="mod-ribbon-cell" title="${QB.esc(r.bucket)}: Claude ${(r.claudeShare * 100).toFixed(0)}%">
         <div class="mod-ribbon-claude" style="width:${(r.claudeShare * 100).toFixed(1)}%"></div>
         <div class="mod-ribbon-codex" style="width:${((1 - r.claudeShare) * 100).toFixed(1)}%"></div>
       </div>`).join('');
@@ -376,7 +376,7 @@ window.QB = window.QB || {};
     });
 
     const fmt = {
-      model: (r) => `<span class="mod-dot" style="background:${QB.providerColor(r.provider)}"></span>${r.model}`,
+      model: (r) => `<span class="mod-dot" style="background:${QB.providerColor(r.provider)}"></span>${QB.esc(r.model)}`,
       inputTokens: (r) => QB.fmtTokens(r.inputTokens),
       outputTokens: (r) => QB.fmtTokens(r.outputTokens),
       cacheReadTokens: (r) => QB.fmtTokens(r.cacheReadTokens),
@@ -439,7 +439,7 @@ window.QB = window.QB || {};
       const byMonth = new Map(t.months.map((x) => [x.month, x.intensity]));
       return `
         <div class="mod-adopt-row">
-          <div class="mod-adopt-lbl" title="${t.model}">${t.model}</div>
+          <div class="mod-adopt-lbl" title="${QB.esc(t.model)}">${QB.esc(t.model)}</div>
           <div class="mod-adopt-track">${allMonths.map((m) => {
             const i = byMonth.get(m);
             return `<div class="mod-adopt-seg" style="background:${i != null
@@ -460,7 +460,7 @@ window.QB = window.QB || {};
     if (eff.length === 0) { el.innerHTML = '<div class="mod-note">Keine Cache-Daten oder Preise verfügbar.</div>'; return; }
     el.innerHTML = eff.map((e) => `
       <div class="mod-cache-row">
-        <div class="mod-cache-lbl" title="${e.model}">${e.model}</div>
+        <div class="mod-cache-lbl" title="${QB.esc(e.model)}">${QB.esc(e.model)}</div>
         <div class="mod-cache-track">
           <div class="mod-cache-fill" style="width:${(e.hitRate * 100).toFixed(1)}%;background:${QB.providerColor(e.provider)};opacity:0.75"></div>
         </div>
