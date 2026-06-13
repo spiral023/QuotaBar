@@ -2087,7 +2087,7 @@
 
     // ── IPC ──────────────────────────────────────────────────────
 
-    QB.ipc.on('quota:update', (_, data) => {
+    QB.ipc.on('quota:update', (data) => {
       lastRefreshedAt = data.lastRefreshedAt ? new Date(data.lastRefreshedAt) : new Date();
       clearDashboardDataCache();
       // Models-Tab-Cache invalidieren — beim nächsten Tab-Besuch frisch laden
@@ -2103,11 +2103,11 @@
       restartRefreshFuse();
     });
 
-    QB.ipc.on('ui:show-tab', (_, tab) => switchTab(tab));
+    QB.ipc.on('ui:show-tab', (tab) => switchTab(tab));
 
     QB.ipc.send('quota:ready');
 
-    QB.ipc.on('quota:ready-ack', async (_, data) => {
+    QB.ipc.on('quota:ready-ack', async (data) => {
       document.body.classList.toggle('view-dashboard', data.viewMode === 'dashboard');
       document.body.classList.toggle('view-compact',   data.viewMode !== 'dashboard');
       const s = await QB.ipc.invoke('settings:get');
@@ -2126,7 +2126,7 @@
       });
     });
 
-    QB.ipc.on('window:pin-state', (_, pinned) => {
+    QB.ipc.on('window:pin-state', (pinned) => {
       document.getElementById('btn-pin').classList.toggle('active', pinned);
       document.getElementById('btn-pin').title = pinned ? 'Unpin window' : 'Keep window open';
     });
