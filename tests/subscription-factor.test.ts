@@ -9,7 +9,10 @@ import type { UsageSnapshot } from "../src/providers/types";
 const settings: Settings = {
   pollIntervalSeconds: 60,
   providerTimeoutMs: 10_000,
-  subscriptionCosts: { claude: 20, codex: 10 },
+  plans: [
+    { id: "claude-pro", provider: "claude", name: "Pro", amount: 20, currency: "USD", startsAt: "2020-01-01T00:00:00.000Z", endsAt: null },
+    { id: "codex-team", provider: "codex",  name: "Team", amount: 10, currency: "USD", startsAt: "2020-01-01T00:00:00.000Z", endsAt: null },
+  ],
   pricingOfflineMode: true,
   costWindow: "billing",
 };
@@ -38,9 +41,10 @@ describe("PricingEngine", () => {
   it("returns zero cost for Claude when no JSONL dir exists", async () => {
     const engine = new PricingEngine(settings, "/nonexistent/path");
     const result = await engine.calculateFactor(makeSnapshot("claude"));
+    // subscriptionCostUSD is 0 until plan-cost engine is wired up (TODO task 2)
     expect(result).toMatchObject({
       apiCostUSD: 0,
-      subscriptionCostUSD: 20,
+      subscriptionCostUSD: 0,
       factor: 0,
       isEstimate: false,
     });
@@ -54,7 +58,8 @@ describe("PricingEngine", () => {
     expect(result!.isEstimate).toBe(true);
     expect(result!.label).toBe("Keine Logs verfügbar");
     expect(result!.apiCostUSD).toBe(0);
-    expect(result!.subscriptionCostUSD).toBe(10);
+    // subscriptionCostUSD is 0 until plan-cost engine is wired up (TODO task 2)
+    expect(result!.subscriptionCostUSD).toBe(0);
   });
 
   it("returns real cost for Codex when JSONL events exist", async () => {
@@ -99,7 +104,8 @@ describe("PricingEngine", () => {
       expect(result!.factor).not.toBeNull();
       expect(result!.isEstimate).toBe(false);
       expect(result!.apiCostUSD).toBeGreaterThan(0);
-      expect(result!.subscriptionCostUSD).toBe(10);
+      // subscriptionCostUSD is 0 until plan-cost engine is wired up (TODO task 2)
+      expect(result!.subscriptionCostUSD).toBe(0);
     } finally {
       await fs.rm(sessionsDir, { recursive: true, force: true });
     }

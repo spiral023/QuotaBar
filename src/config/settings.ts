@@ -5,9 +5,22 @@ import { getSettingsPath } from "./paths";
 export type CostWindow = "7d" | "30d" | "all";
 export type ViewMode = "dashboard" | "compact";
 
+/** @deprecated Legacy flat cost config — kept for reading old settings files only. Not part of Settings. */
 export interface SubscriptionCosts {
   claude: number;
   codex: number;
+}
+
+export type PlanCurrency = "USD" | "EUR";
+
+export interface PlanPeriod {
+  id: string;
+  provider: "claude" | "codex";
+  name: string;
+  amount: number;        // Monatsbetrag in `currency`
+  currency: PlanCurrency;
+  startsAt: string;      // ISO datetime
+  endsAt: string | null; // ISO datetime | null = läuft weiter
 }
 
 export interface DebugLogSettings {
@@ -82,7 +95,7 @@ export const defaultNotificationSettings: NotificationSettings = {
 export interface Settings {
   pollIntervalSeconds: number;
   providerTimeoutMs: number;
-  subscriptionCosts: SubscriptionCosts;
+  plans: PlanPeriod[];
   pricingOfflineMode: boolean;
   costWindow: CostWindow;
   viewMode: ViewMode;
@@ -95,7 +108,7 @@ export interface Settings {
 export const defaultSettings: Settings = {
   pollIntervalSeconds: 60,
   providerTimeoutMs: 10_000,
-  subscriptionCosts: { claude: 20, codex: 20 },
+  plans: [],
   pricingOfflineMode: false,
   costWindow: "30d",
   viewMode: "dashboard",
@@ -121,7 +134,6 @@ export async function saveSettings(settings: Settings): Promise<void> {
 }
 
 export function normalizeSettings(settings: Settings): Settings {
-  const sub = (settings.subscriptionCosts ?? {}) as Partial<SubscriptionCosts>;
   const validWindows: CostWindow[] = ["7d", "30d", "all"];
   const costWindow: CostWindow = validWindows.includes(settings.costWindow as CostWindow)
     ? (settings.costWindow as CostWindow)
@@ -130,13 +142,31 @@ export function normalizeSettings(settings: Settings): Settings {
   const viewMode: ViewMode = validViewModes.includes(settings.viewMode as ViewMode)
     ? (settings.viewMode as ViewMode)
     : "dashboard";
+  const ISO_RE = /^\d{4}-\d{2}-\d{2}T/;
+  const validProviders = new Set(["claude", "codex"]);
+  const validCurrencies = new Set(["USD", "EUR"]);
+  const rawPlans = Array.isArray((settings as { plans?: unknown }).plans)
+    ? ((settings as { plans: unknown[] }).plans)
+    : [];
+  const plans: PlanPeriod[] = rawPlans.flatMap((p) => {
+    const o = (p ?? {}) as Partial<PlanPeriod>;
+    if (typeof o.id !== "string" || !o.id) return [];
+    if (!validProviders.has(o.provider as string)) return [];
+    if (typeof o.name !== "string" || o.name.trim() === "") return [];
+    if (!(Number(o.amount) >= 0)) return [];
+    if (!validCurrencies.has(o.currency as string)) return [];
+    if (typeof o.startsAt !== "string" || !ISO_RE.test(o.startsAt)) return [];
+    const endsAt = (typeof o.endsAt === "string" && ISO_RE.test(o.endsAt)) ? o.endsAt : null;
+    return [{
+      id: o.id, provider: o.provider as "claude" | "codex", name: o.name.trim(),
+      amount: Number(o.amount), currency: o.currency as PlanCurrency,
+      startsAt: o.startsAt, endsAt,
+    }];
+  });
   return {
     pollIntervalSeconds: Math.max(15, Math.floor(Number(settings.pollIntervalSeconds) || defaultSettings.pollIntervalSeconds)),
     providerTimeoutMs: Math.max(1000, Math.floor(Number(settings.providerTimeoutMs) || defaultSettings.providerTimeoutMs)),
-    subscriptionCosts: {
-      claude: Math.max(0, Number(sub.claude) || defaultSettings.subscriptionCosts.claude),
-      codex: Math.max(0, Number(sub.codex) || defaultSettings.subscriptionCosts.codex),
-    },
+    plans,
     pricingOfflineMode: Boolean(settings.pricingOfflineMode),
     costWindow,
     viewMode,

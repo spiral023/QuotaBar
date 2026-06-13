@@ -230,13 +230,10 @@ export class DetailsWindowController {
 
     ipcMain.handle("settings:save", async (_, partial: Record<string, unknown>) => {
       const current = await loadSettings();
+      // TODO(task 2): replace with plan-cost engine once PlanPeriod timeline is wired up
       const merged = {
         ...current,
         ...partial,
-        subscriptionCosts: {
-          ...current.subscriptionCosts,
-          ...((partial.subscriptionCosts as Record<string, unknown>) ?? {}),
-        },
       };
       await saveSettings(merged);
       log.info("Settings saved via dashboard");
@@ -274,16 +271,16 @@ export class DetailsWindowController {
       }) as Promise<AnalyticsSummary>);
     });
 
-    ipcMain.handle("analytics:get", async () => {
+    ipcMain.handle("analytics:get", async (_, request?: { since?: string; until?: string }) => {
       const settings     = await loadSettings();
-      const { periodStartMs, windowDays, since } = calendarWindow(30);
+      const { periodStartMs, windowDays, since, until } = resolveAnalyticsGetWindow(request);
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
-      return this.analyticsDataCache.get("get:30d", () => runAnalyticsWorker({
+      return this.analyticsDataCache.get(`get:${since}:${until}`, () => runAnalyticsWorker({
         task: "get",
         claudeProjectsDirs: getClaudeProjectsDirs(),
         codexSessionsDirs:  getCodexSessionsDirs(),
-        periodStartMs, windowDays, since, settings, cacheHitRate,
+        periodStartMs, windowDays, since, until, settings, cacheHitRate,
       }) as Promise<AnalyticsData>);
     });
 
@@ -382,6 +379,31 @@ function normalizeCostWindow(value: unknown): CostWindow | null {
   return value === "7d" || value === "30d" || value === "all"
     ? value
     : null;
+}
+
+// Datumsbereich für den Analytics-Tab. Akzeptiert ein konkretes {since, until}
+// (YYYY-MM-DD) aus der Steuerleiste; fällt auf die letzten 30 Kalendertage
+// zurück, wenn nichts oder Ungültiges übergeben wird.
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function resolveAnalyticsGetWindow(
+  request?: { since?: string; until?: string },
+): { periodStartMs: number; windowDays: number; since: string; until: string } {
+  if (
+    request && typeof request.since === "string" && typeof request.until === "string" &&
+    DATE_KEY_RE.test(request.since) && DATE_KEY_RE.test(request.until)
+  ) {
+    let since = request.since;
+    let until = request.until;
+    if (since > until) [since, until] = [until, since];
+    const start = new Date(`${since}T00:00:00`);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(`${until}T00:00:00`);
+    const windowDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+    return { periodStartMs: start.getTime(), windowDays, since, until };
+  }
+  const cw = calendarWindow(30);
+  return { ...cw, until: localDateKey(new Date()) };
 }
 
 function resolveAnalyticsWindow(costWindow: CostWindow): { periodStartMs: number; windowDays: number; since: string } {

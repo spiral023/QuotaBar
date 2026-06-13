@@ -31,31 +31,53 @@ function makeEntry(project: string, session: string, isoTimestamp: string): Clau
   };
 }
 
+// Lokaler Tagesschlüssel (YYYY-MM-DD), konsistent mit buildDailyBuckets.
+function localDayKey(d: Date): string {
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+// Bereich [seit nDays-1 Tagen … heute] als {since, until} aus lokalen Kalendertagen.
+function rangeEndingToday(nDays: number): { since: string; until: string } {
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
+  const start = new Date(end);
+  start.setDate(start.getDate() - (nDays - 1));
+  return { since: localDayKey(start), until: localDayKey(end) };
+}
+
 describe("buildDailyBuckets", () => {
-  it("returns exactly windowDays entries", () => {
-    expect(buildDailyBuckets([], [], 7)).toHaveLength(7);
-    expect(buildDailyBuckets([], [], 30)).toHaveLength(30);
+  it("returns one entry per day in the [since, until] range (inclusive)", () => {
+    const r7 = rangeEndingToday(7);
+    expect(buildDailyBuckets([], [], r7.since, r7.until)).toHaveLength(7);
+    const r30 = rangeEndingToday(30);
+    expect(buildDailyBuckets([], [], r30.since, r30.until)).toHaveLength(30);
   });
 
   it("maps claudeUSD and codexUSD from report rows by date", () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const claudeRows = [makeRow(today, 3.5, "claude")];
-    const codexRows  = [makeRow(today, 1.2, "codex")];
-    const buckets = buildDailyBuckets(claudeRows, codexRows, 7);
-    const todayBucket = buckets.find(b => b.date === today);
+    const { since, until } = rangeEndingToday(7);
+    const claudeRows = [makeRow(until, 3.5, "claude")];
+    const codexRows  = [makeRow(until, 1.2, "codex")];
+    const buckets = buildDailyBuckets(claudeRows, codexRows, since, until);
+    const todayBucket = buckets.find(b => b.date === until);
     expect(todayBucket?.claudeUSD).toBe(3.5);
     expect(todayBucket?.codexUSD).toBe(1.2);
   });
 
   it("fills missing days with 0", () => {
-    const buckets = buildDailyBuckets([], [], 7);
+    const { since, until } = rangeEndingToday(7);
+    const buckets = buildDailyBuckets([], [], since, until);
     expect(buckets.every(b => b.claudeUSD === 0 && b.codexUSD === 0)).toBe(true);
   });
 
   it("sets claudeQuotaPct and codexQuotaPct to null", () => {
-    const buckets = buildDailyBuckets([], [], 7);
+    const { since, until } = rangeEndingToday(7);
+    const buckets = buildDailyBuckets([], [], since, until);
     expect(buckets[0].claudeQuotaPct).toBeNull();
     expect(buckets[0].codexQuotaPct).toBeNull();
+  });
+
+  it("returns empty array when until precedes since", () => {
+    expect(buildDailyBuckets([], [], "2026-06-10", "2026-06-01")).toHaveLength(0);
   });
 });
 

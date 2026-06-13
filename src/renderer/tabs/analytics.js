@@ -5,66 +5,213 @@ window.QB = window.QB || {};
 
 let _lineChart    = null;
 let _donutChart   = null;
-let _currentData  = null;
-let _dataPromise  = null;
-let _timeWindow   = '30d';
+let _initialized  = false;
+let _minDate      = null;
+let _activePreset = null;
+let _from         = null;
+let _to           = null;
+let _lastData     = null;     // aktuell gerendertes AnalyticsData (für Chart-Toggles)
+let _chartMode    = 'cost';   // 'cost' | 'roi'
+const _cache      = new Map(); // `${from}:${to}` → AnalyticsData
+
+const PRESETS = [
+  { id: '7d',    label: 'Letzte 7 Tage' },
+  { id: '30d',   label: 'Letzte 30 Tage' },
+  { id: 'week',  label: 'Diese Woche' },
+  { id: 'month', label: 'Dieser Monat' },
+  { id: 'year',  label: 'Dieses Jahr' },
+  { id: 'all',   label: 'Gesamt' },
+];
+
+// Kurzlabel für die dynamischen Section-Titel (z. B. "(30 Tage)").
+const PRESET_LABELS = {
+  '7d': '7 Tage', '30d': '30 Tage', week: 'diese Woche',
+  month: 'dieser Monat', year: 'dieses Jahr', all: 'Gesamt',
+};
 
 QB.renderAnalytics = async function renderAnalytics() {
   const container = document.getElementById('analytics-content');
   if (!container) return;
 
-  if (_currentData) {
-    _renderUI(_currentData);
-    return;
-  }
-
-  container.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
-
-  try {
-    _currentData = await _loadAnalyticsData();
-    _renderUI(_currentData);
-  } catch (e) {
-    console.error('analytics:get failed', e);
-    container.innerHTML = '<div class="empty"><span>Fehler beim Laden</span></div>';
+  if (!_initialized) {
+    _initialized = true;
+    _minDate = await _fetchMinDate();
+    _buildControls(container);
+    await _loadAndRender();
+  } else if (!_cache.has(_rangeKey())) {
+    // Cache wurde z. B. nach Settings-Save invalidiert → aktuellen Bereich neu laden.
+    await _loadAndRender();
   }
 };
 
 QB.prefetchAnalytics = function prefetchAnalytics() {
-  void _loadAnalyticsData().catch(e => console.error('analytics prefetch failed', e));
+  const { from, to } = _presetDates('30d');
+  const key = `${from}:${to}`;
+  if (_cache.has(key)) return;
+  QB.ipc.invoke('analytics:get', { since: from, until: to })
+    .then(data => _cache.set(key, data))
+    .catch(e => console.error('analytics prefetch failed', e));
 };
 
 QB.clearAnalyticsCache = function clearAnalyticsCache() {
-  _currentData = null;
-  _dataPromise = null;
+  _cache.clear();
 };
 
-function _loadAnalyticsData() {
-  if (_currentData) return Promise.resolve(_currentData);
-  if (!_dataPromise) {
-    _dataPromise = QB.ipc.invoke('analytics:get')
-      .then(data => {
-        _currentData = data;
-        return data;
-      })
-      .catch(error => {
-        _dataPromise = null;
-        throw error;
-      });
+async function _fetchMinDate() {
+  try {
+    const report = await QB.ipc.invoke('reports:get', {
+      source:    'backfill',
+      type:      'daily',
+      order:     'asc',
+      timezone:  Intl.DateTimeFormat().resolvedOptions().timeZone,
+      breakdown: false,
+    });
+    return report.rows?.[0]?.bucket ?? null;
+  } catch {
+    return null;
   }
-  return _dataPromise;
 }
 
-function _renderUI(data) {
-  const container = document.getElementById('analytics-content');
-  const winLabel  = _timeWindow === '7d' ? '7D' : '30D';
+function _presetDates(preset) {
+  const now   = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const pad   = n => String(n).padStart(2, '0');
+
+  switch (preset) {
+    case '7d':
+      return { from: new Date(now - 7  * 864e5).toISOString().slice(0, 10), to: today };
+    case '30d':
+      return { from: new Date(now - 30 * 864e5).toISOString().slice(0, 10), to: today };
+    case 'week': {
+      const d   = new Date(now);
+      const day = d.getDay();
+      d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+      return { from: d.toISOString().slice(0, 10), to: today };
+    }
+    case 'month':
+      return { from: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`, to: today };
+    case 'year':
+      return { from: `${now.getFullYear()}-01-01`, to: today };
+    case 'all':
+    default: {
+      const fallback = new Date(now - 90 * 864e5).toISOString().slice(0, 10);
+      return { from: _minDate ?? fallback, to: today };
+    }
+  }
+}
+
+function _rangeKey() {
+  return `${_from}:${_to}`;
+}
+
+function _winLabel() {
+  if (_activePreset && PRESET_LABELS[_activePreset]) return PRESET_LABELS[_activePreset];
+  if (_from && _to) {
+    const days = Math.round((new Date(_to) - new Date(_from)) / 864e5) + 1;
+    return `${days} Tage`;
+  }
+  return '';
+}
+
+function _buildControls(container) {
+  const today     = new Date().toISOString().slice(0, 10);
+  const ninetyAgo = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+
+  // Default-Zeitraum: letzte 30 Tage (wie bisher).
+  if (_activePreset === null && _from === null) {
+    _activePreset = '30d';
+    const d = _presetDates('30d');
+    _from = d.from;
+    _to   = d.to;
+  }
+
+  const presetOptions = PRESETS.map(p =>
+    `<option value="${p.id}"${_activePreset === p.id ? ' selected' : ''}>${p.label}</option>`
+  ).join('');
 
   container.innerHTML = `
+    <div class="hr-controls">
+      <div class="hr-select-wrap">
+        <select class="hr-preset-select" id="an-preset" aria-label="Zeitraum" title="Zeitraum wählen">
+          <option value="custom" hidden${_activePreset ? '' : ' selected'}>Eigene Auswahl</option>
+          ${presetOptions}
+        </select>
+        <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
+             stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1.5 3 4 5.5 6.5 3"/>
+        </svg>
+      </div>
+      <div class="hr-date-pair">
+        <input class="hr-date-input" type="date" id="an-from" value="${_from ?? ninetyAgo}" aria-label="Von" title="Startdatum">
+        <span class="hr-date-sep" aria-hidden="true">–</span>
+        <input class="hr-date-input" type="date" id="an-to" value="${_to ?? today}" aria-label="Bis" title="Enddatum">
+      </div>
+    </div>
+    <div id="an-results"></div>
+  `;
+
+  const presetSelect = document.getElementById('an-preset');
+  presetSelect?.addEventListener('change', () => {
+    if (presetSelect.value === 'custom') return;
+    _activePreset = presetSelect.value;
+    const { from, to } = _presetDates(_activePreset);
+    _from = from;
+    _to   = to;
+    document.getElementById('an-from').value = from;
+    document.getElementById('an-to').value   = to;
+    _loadAndRender();
+  });
+
+  ['an-from', 'an-to'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => {
+      _activePreset = null;
+      if (presetSelect) presetSelect.value = 'custom';
+      _from = document.getElementById('an-from').value;
+      _to   = document.getElementById('an-to').value;
+      _loadAndRender();
+    });
+  });
+}
+
+async function _loadAndRender() {
+  const results = document.getElementById('an-results');
+  if (!results) return;
+
+  results.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
+
+  try {
+    const key = _rangeKey();
+    let data = _cache.get(key);
+    if (!data) {
+      data = await QB.ipc.invoke('analytics:get', { since: _from, until: _to });
+      _cache.set(key, data);
+    }
+    _renderResults(data);
+  } catch (e) {
+    console.error('analytics:get failed', e);
+    results.innerHTML = '<div class="empty"><span>Fehler beim Laden</span></div>';
+  }
+}
+
+function _renderResults(data) {
+  const results = document.getElementById('an-results');
+  if (!results) return;
+
+  const winLabel = _winLabel();
+
+  results.innerHTML = `
     <div class="an-section">
       <div class="an-section-head">
-        <span class="an-section-title">USAGE OVER TIME</span>
-        <div class="an-window-pills">
-          <button class="pill ${_timeWindow === '7d'  ? 'active' : ''}" data-win="7d">7D</button>
-          <button class="pill ${_timeWindow === '30d' ? 'active' : ''}" data-win="30d">30D</button>
+        <span class="an-section-title" id="an-line-title">${_lineTitle()}</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <div class="an-window-pills" id="an-ctype-pills">
+            <button class="pill${_chartMode === 'cost' ? ' active' : ''}" data-ctype="cost">Kosten</button>
+            <button class="pill${_chartMode === 'roi'  ? ' active' : ''}" data-ctype="roi">ROI</button>
+          </div>
+          <div class="hr-chart-legend">
+            <span class="hr-legend-dot" style="background:var(--claude-col)"></span><span>Claude</span>
+            <span class="hr-legend-dot" style="background:var(--codex-col)"></span><span>Codex</span>
+          </div>
         </div>
       </div>
       <div class="an-chart-wrap"><canvas id="an-line-canvas"></canvas></div>
@@ -80,7 +227,7 @@ function _renderUI(data) {
         <div class="an-legend" id="an-legend"></div>
       </div>
       <div class="an-section">
-        <div class="an-section-head"><span class="an-section-title">TOP MODELS BY COST (30D)</span></div>
+        <div class="an-section-head"><span class="an-section-title">TOP MODELS BY COST (${winLabel})</span></div>
         <table class="top-models-table">
           <thead><tr><th>Modell</th><th>Kosten</th><th>%</th></tr></thead>
           <tbody id="an-top-models-body"></tbody>
@@ -89,17 +236,17 @@ function _renderUI(data) {
     </div>
 
     <div class="an-section">
-      <div class="an-section-head"><span class="an-section-title">AKTIVITÄTSSTATS (30D)</span></div>
+      <div class="an-section-head"><span class="an-section-title">AKTIVITÄTSSTATS (${winLabel})</span></div>
       <div class="an-stats-grid" id="an-stats-grid"></div>
     </div>
 
     <div class="an-row2">
       <div class="an-section">
-        <div class="an-section-head"><span class="an-section-title">STUNDEN-HEATMAP (UTC, 30D)</span></div>
+        <div class="an-section-head"><span class="an-section-title">STUNDEN-HEATMAP (${winLabel})</span></div>
         <div id="an-hour-heatmap"></div>
       </div>
       <div class="an-section">
-        <div class="an-section-head"><span class="an-section-title">WOCHENTAG (30D)</span></div>
+        <div class="an-section-head"><span class="an-section-title">WOCHENTAG (${winLabel})</span></div>
         <div id="an-weekday-bars"></div>
         <div class="an-section-head" style="margin-top:8px"><span class="an-section-title">TOP 5 TAGE</span></div>
         <div id="an-top-days"></div>
@@ -107,12 +254,12 @@ function _renderUI(data) {
     </div>
 
     <div class="an-section">
-      <div class="an-section-head"><span class="an-section-title">5H-FENSTER-PEAK (CLAUDE, 30D)</span></div>
+      <div class="an-section-head"><span class="an-section-title">5H-FENSTER-PEAK (CLAUDE, ${winLabel})</span></div>
       <div id="an-peak"></div>
     </div>
 
     <div class="an-section">
-      <div class="an-section-head"><span class="an-section-title">WÖCHENTLICHER VERLAUF (30D)</span></div>
+      <div class="an-section-head"><span class="an-section-title">WÖCHENTLICHER VERLAUF (${winLabel})</span></div>
       <div id="an-weekly"></div>
     </div>
 
@@ -128,7 +275,9 @@ function _renderUI(data) {
     </div>
   `;
 
+  _lastData = data;
   _buildLineChart(data);
+  _bindLineToggles();
   _buildDonut(data);
   _buildTopModels(data);
   _buildStats(data);
@@ -138,18 +287,26 @@ function _renderUI(data) {
   _buildFiveHourPeak(data);
   _buildWeeklySummary(data);
   _buildCostEfficiency(data);
-
-  container.querySelectorAll('.an-window-pills .pill').forEach(btn => {
-    btn.addEventListener('click', () => {
-      _timeWindow = btn.dataset.win;
-      _renderUI(_currentData);
-    });
-  });
 }
 
-function _buckets(data) {
-  const all = data.dailyBuckets || [];
-  return _timeWindow === '7d' ? all.slice(-7) : all;
+function _lineTitle() {
+  const winLabel = _winLabel();
+  return _chartMode === 'roi'
+    ? `API-ÄQUIVALENT-FAKTOR · LAUFEND (${winLabel})`
+    : `API-KOSTEN PRO TAG (${winLabel})`;
+}
+
+// Laufender ("kumulativer") ROI je Anbieter: an jedem Tag das Verhältnis der bis
+// dahin aufgelaufenen API-Kosten zu den anteiligen Abokosten (Monatsabo/30 × Tage).
+// Pendelt sich auf den Gesamt-ROI ein, den der Donut zeigt.
+function _cumulativeRoiSeries(buckets, costKey, monthlySub) {
+  const perDaySub = monthlySub / 30;
+  let cumCost = 0;
+  return buckets.map((b, i) => {
+    cumCost += b[costKey] ?? 0;
+    const cumSub = perDaySub * (i + 1);
+    return cumSub > 0 ? cumCost / cumSub : 0;
+  });
 }
 
 function _buildLineChart(data) {
@@ -157,16 +314,25 @@ function _buildLineChart(data) {
   const ctx = document.getElementById('an-line-canvas');
   if (!ctx || typeof Chart === 'undefined') return;
 
-  const buckets = _buckets(data);
+  const buckets = data.dailyBuckets || [];
   const labels  = buckets.map(b => {
     const d = new Date(b.date);
     return d.toLocaleDateString('de-AT', { day: '2-digit', month: 'short' });
   });
 
+  const isRoi = _chartMode === 'roi';
+  const sub   = data.subscriptionCostUSD ?? { claude: 0, codex: 0 };
+  const claudeData = isRoi
+    ? _cumulativeRoiSeries(buckets, 'claudeUSD', sub.claude ?? 0)
+    : buckets.map(b => b.claudeUSD);
+  const codexData = isRoi
+    ? _cumulativeRoiSeries(buckets, 'codexUSD', sub.codex ?? 0)
+    : buckets.map(b => b.codexUSD);
+
   _lineChart = QB.charts.createLine(ctx, labels, [
     {
       label: 'Claude',
-      data: buckets.map(b => b.claudeUSD),
+      data: claudeData,
       borderColor: '#DA785B',
       backgroundColor: 'rgba(218,120,91,0.08)',
       borderWidth: 1.5,
@@ -177,7 +343,7 @@ function _buildLineChart(data) {
     },
     {
       label: 'Codex',
-      data: buckets.map(b => b.codexUSD),
+      data: codexData,
       borderColor: '#4B55C8',
       backgroundColor: 'rgba(75,85,200,0.07)',
       borderWidth: 1.5,
@@ -186,7 +352,25 @@ function _buildLineChart(data) {
       tension: 0.3,
       fill: true,
     },
-  ]);
+  ], { yFormat: isRoi ? 'roi' : 'cost' });
+}
+
+function _bindLineToggles() {
+  document.querySelectorAll('#an-ctype-pills .pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('active')) return;
+      document.querySelectorAll('#an-ctype-pills .pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _chartMode = btn.dataset.ctype;
+      _updateLineTitle();
+      if (_lastData) _buildLineChart(_lastData);
+    });
+  });
+}
+
+function _updateLineTitle() {
+  const el = document.getElementById('an-line-title');
+  if (el) el.textContent = _lineTitle();
 }
 
 function _buildDonut(data) {

@@ -5,7 +5,12 @@ window.QB = window.QB || {};
 QB.charts = QB.charts || {};
 QB.charts.mutedTextColor = '#7e92a4';
 
-QB.charts.createLine = function(ctx, labels, datasets) {
+QB.charts.createLine = function(ctx, labels, datasets, opts) {
+  const isRoi  = opts?.yFormat === 'roi';
+  const yFmt   = isRoi ? (v) => Number(v).toFixed(1) + '×' : (v) => '$' + Number(v).toFixed(0);
+  const tipFmt = isRoi
+    ? (item) => ` ${item.dataset.label}: ${item.parsed.y.toFixed(1)}×`
+    : (item) => ` ${item.dataset.label}: $${item.parsed.y.toFixed(2)}`;
   return new Chart(ctx, {
     type: 'line',
     data: { labels, datasets },
@@ -24,7 +29,7 @@ QB.charts.createLine = function(ctx, labels, datasets) {
           bodyColor: '#8298aa',
           padding: 8,
           callbacks: {
-            label: (item) => ` ${item.dataset.label}: $${item.parsed.y.toFixed(2)}`,
+            label: tipFmt,
           },
         },
       },
@@ -45,7 +50,7 @@ QB.charts.createLine = function(ctx, labels, datasets) {
           ticks: {
             color: QB.charts.mutedTextColor,
             font: { family: "'IBM Plex Mono', monospace", size: 9 },
-            callback: (v) => '$' + Number(v).toFixed(0),
+            callback: yFmt,
           },
           beginAtZero: true,
         },
@@ -203,10 +208,27 @@ QB.weeklyBudgetChart = function (ctx, series, forecast, windowEndIso) {
           min: histData.length > 0 ? histData[0].x : undefined,
           max: xMax,
           grid: { color: 'rgba(255,255,255,0.04)' },
+          // Genau ein Tick je Kalendertag (lokale Mitternacht) erzwingen, damit
+          // auch in schmalen Fenstern alle Wochentage sichtbar bleiben.
+          afterBuildTicks: (scale) => {
+            const { min, max } = scale;
+            if (min == null || max == null) return;
+            const ticks = [];
+            const d = new Date(min);
+            d.setHours(0, 0, 0, 0);
+            if (d.getTime() < min) d.setDate(d.getDate() + 1);
+            while (d.getTime() <= max) {
+              ticks.push({ value: d.getTime() });
+              d.setDate(d.getDate() + 1);
+            }
+            scale.ticks = ticks;
+          },
           ticks: {
             color: '#8b90a0',
             font: { size: 9 },
-            maxTicksLimit: 7,
+            autoSkip: false, // kein automatisches Ausdünnen der Wochentags-Labels
+            maxRotation: 0,
+            minRotation: 0,
             callback: (v) => new Date(v).toLocaleDateString('de-DE', { weekday: 'short' }),
           },
         },

@@ -102,13 +102,7 @@ function getLast7Days(): string[] {
 }
 
 export interface AnalyticsData extends AnalyticsSummary {
-  dailyBuckets: {
-    date: string;
-    claudeUSD: number;
-    codexUSD: number;
-    claudeQuotaPct: number | null;
-    codexQuotaPct: number | null;
-  }[];
+  dailyBuckets: DailyBucket[];
   sessionStats: {
     count: number;
     avgMinutes: number;
@@ -128,12 +122,21 @@ export interface AnalyticsData extends AnalyticsSummary {
   costEfficiency: CostEfficiency;
 }
 
+export interface DailyBucket {
+  date: string;
+  claudeUSD: number;
+  codexUSD: number;
+  claudeQuotaPct: number | null;
+  codexQuotaPct: number | null;
+}
+
 export function buildDailyBuckets(
   claudeRows: ReportRow[],
   codexRows: ReportRow[],
-  windowDays: number,
-): { date: string; claudeUSD: number; codexUSD: number; claudeQuotaPct: null; codexQuotaPct: null }[] {
-  const days = getLastNDays(windowDays);
+  since: string,
+  until: string,
+): DailyBucket[] {
+  const days = localDaysInRange(since, until);
   const claudeByDate = new Map(claudeRows.map(r => [r.bucket, r.costUSD]));
   const codexByDate  = new Map(codexRows.map(r  => [r.bucket, r.costUSD]));
   return days.map(date => ({
@@ -387,10 +390,28 @@ function getWeekStart(dateStr: string): string {
 // Lokaler Tagesschlüssel (YYYY-MM-DD) aus einem ISO-Timestamp — passt zu den
 // bucket-Keys des Report-Layers (lokale Kalendertage). UTC-Slicing würde Einträge
 // um einen Tag verschieben.
-function localDayKey(timestamp: string): string {
+export function localDayKey(timestamp: string): string {
   const d = new Date(timestamp);
   const pad = (v: number) => String(v).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Liste der lokalen Kalendertage (YYYY-MM-DD) von `since` bis `until` (inkl.).
+// Lokale Tage, konsistent mit den bucket-Keys des Report-Layers. Leeres Array
+// bei ungültigen Grenzen oder until < since; gegen pathologische Bereiche gedeckelt.
+export function localDaysInRange(since: string, until: string): string[] {
+  const pad = (v: number) => String(v).padStart(2, "0");
+  const start = new Date(`${since}T00:00:00`);
+  const end   = new Date(`${until}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
+  const days: string[] = [];
+  for (let i = 0; i < 100_000; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    if (d > end) break;
+    days.push(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+  }
+  return days;
 }
 
 function getLastNDays(n: number): string[] {

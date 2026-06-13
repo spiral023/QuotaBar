@@ -9,6 +9,7 @@ import {
   buildDailyBuckets, buildSessionStats, buildTotalTokens,
   buildHourHeatmap, buildWeekdayDistribution, buildTopActiveDays,
   buildFiveHourPeak, buildWeeklySummary, buildCostEfficiency, computeActiveHours,
+  localDayKey,
   type AnalyticsSummary, type AnalyticsData,
 } from "./analyticsSummary";
 import { buildModelsData, type ModelsData } from "./modelsData";
@@ -24,6 +25,7 @@ interface AnalyticsTaskInput {
   periodStartMs: number;
   windowDays: number;
   since: string;
+  until?: string;
   settings: Settings;
   cacheHitRate: { claude: number; codex: number };
 }
@@ -69,18 +71,30 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
 
   const periodStart = new Date(input.periodStartMs);
 
-  const [claudeEntries, codexEvents] = await Promise.all([
+  const [claudeEntriesAll, codexEventsAll] = await Promise.all([
     readClaudeUsageEntriesForPeriod(input.claudeProjectsDirs, periodStart),
     readCodexTokensForPeriod(input.codexSessionsDirs, periodStart),
   ]);
 
+  // Die Reader begrenzen nur nach unten (periodStart). Bei einem Enddatum in der
+  // Vergangenheit (eigene Auswahl) müssen die entry-basierten Statistiken
+  // (Sessions, Heatmap, 5h-Peak, …) zusätzlich nach oben auf `until` begrenzt
+  // werden — sonst zählen sie Aktivität nach dem gewählten Zeitraum mit.
+  const untilKey = input.until;
+  const claudeEntries = untilKey
+    ? claudeEntriesAll.filter(e => localDayKey(e.timestamp) <= untilKey)
+    : claudeEntriesAll;
+  const codexEvents = untilKey
+    ? codexEventsAll.filter(e => localDayKey(e.timestamp) <= untilKey)
+    : codexEventsAll;
+
   const [claudeReport, codexReport] = await Promise.all([
     generateUsageReport(
-      { type: "daily", provider: "claude", since: input.since, order: "asc", breakdown: true },
+      { type: "daily", provider: "claude", since: input.since, until: input.until, order: "asc", breakdown: true },
       { settings: input.settings, claudeEntries },
     ),
     generateUsageReport(
-      { type: "daily", provider: "codex", since: input.since, order: "asc", breakdown: true },
+      { type: "daily", provider: "codex", since: input.since, until: input.until, order: "asc", breakdown: true },
       { settings: input.settings, codexEvents },
     ),
   ]);
@@ -102,8 +116,9 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
 
   const claudeCost = claudeReport.totals.costUSD;
   const codexCost  = codexReport.totals.costUSD;
-  const claudeSub  = input.settings.subscriptionCosts.claude;
-  const codexSub   = input.settings.subscriptionCosts.codex;
+  // TODO(task 2): replace with plan-cost engine once PlanPeriod timeline is wired up
+  const claudeSub  = 0;
+  const codexSub   = 0;
 
   // Normalize ROI to the actual window duration so all windows are comparable.
   // periodSubCost = monthlySubCost × windowDays/30
@@ -128,7 +143,7 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     return result;
   }
 
-  const dailyBuckets      = buildDailyBuckets(claudeReport.rows, codexReport.rows, windowDays);
+  const dailyBuckets      = buildDailyBuckets(claudeReport.rows, codexReport.rows, input.since, input.until ?? input.since);
   const sessionStats      = buildSessionStats(claudeEntries, activeDays);
   const totalTokens       = buildTotalTokens(claudeReport.rows, codexReport.rows);
   const hourHeatmap       = buildHourHeatmap(claudeEntries);

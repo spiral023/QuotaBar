@@ -83,7 +83,8 @@ export class PricingEngine {
       }
     }
 
-    const subscriptionCostUSD = currentSettings.subscriptionCosts.claude;
+    // TODO(task 2): replace with plan-cost engine once PlanPeriod timeline is wired up
+    const subscriptionCostUSD = 0;
     const effectiveDays = windowDays > 0
       ? windowDays
       : computeActualDaysFromEntries(entries.map(e => e.timestamp));
@@ -114,10 +115,12 @@ export class PricingEngine {
     const currentSettings = await this.resolveSettings();
     const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(currentSettings.costWindow, snapshot, "codex");
     const events = await readCodexTokensForPeriod(this.codexSessionsDir, billingStart);
+    // TODO(task 2): replace with plan-cost engine once PlanPeriod timeline is wired up
+    const subscriptionCostUSD = 0;
     if (events.length === 0) {
       return {
         apiCostUSD: 0,
-        subscriptionCostUSD: currentSettings.subscriptionCosts.codex,
+        subscriptionCostUSD,
         factor: null,
         isEstimate: true,
         windowLabel,
@@ -129,7 +132,6 @@ export class PricingEngine {
     const speedTier = await readCodexSpeedTierFromPaths(Array.isArray(this.codexConfigPath) ? this.codexConfigPath : [this.codexConfigPath]);
     const apiCostUSD = await calculateCodexApiCost(events, this.fetcher, speedTier);
     const missingPricingModels = await findUnpricedCodexModels(events, this.fetcher);
-    const subscriptionCostUSD = currentSettings.subscriptionCosts.codex;
     const effectiveDays = windowDays > 0
       ? windowDays
       : computeActualDaysFromEntries(events.map(e => e.timestamp));
