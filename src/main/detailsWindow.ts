@@ -16,6 +16,8 @@ import type { DebugRecorder } from "./debugRecorder";
 import { AsyncResultCache } from "./asyncResultCache";
 import { PersistentWorkerClient } from "./workerClient";
 import { collectSystemData, findOpenableSystemPath } from "./systemData";
+import { sharedFxFetcher } from "../pricing/fx-fetcher";
+import { planChangePoints } from "../pricing/plan-cost";
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -242,7 +244,14 @@ export class DetailsWindowController {
 
     ipcMain.handle("reports:get", async (_, request: ReportRequest) => {
       const settings = await loadSettings();
-      return await generateUsageReport(request, { settings });
+      const report = await generateUsageReport(request, { settings });
+      const sinceDay = request.since ?? report.rows[0]?.bucket?.slice(0, 10);
+      const untilDay = request.until ?? new Date().toISOString().slice(0, 10);
+      const planChanges = (sinceDay && untilDay) ? [
+        ...planChangePoints(settings.plans, "claude", sinceDay, untilDay),
+        ...planChangePoints(settings.plans, "codex",  sinceDay, untilDay),
+      ] : [];
+      return { ...report, planChanges };
     });
 
     ipcMain.handle("reports:copy-json", async (_, request: ReportRequest) => {
@@ -276,13 +285,35 @@ export class DetailsWindowController {
       const { periodStartMs, windowDays, since, until } = resolveAnalyticsGetWindow(request);
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
-      return this.analyticsDataCache.get(`get:${since}:${until}`, () => runAnalyticsWorker({
+      const needsFx = settings.plans.some((p) => p.currency === "EUR");
+      if (needsFx) await sharedFxFetcher.ensureRange(since, until);
+      const eurUsdRates = sharedFxFetcher.exportRange("EURUSD", since, until);
+      const fxEstimated = sharedFxFetcher.estimated;
+      const planSig = JSON.stringify(settings.plans);
+
+      return this.analyticsDataCache.get(`get:${since}:${until}:${planSig}`, () => runAnalyticsWorker({
         task: "get",
         claudeProjectsDirs: getClaudeProjectsDirs(),
         codexSessionsDirs:  getCodexSessionsDirs(),
         periodStartMs, windowDays, since, until, settings, cacheHitRate,
+        eurUsdRates, fxEstimated,
       }) as Promise<AnalyticsData>);
     });
+
+    ipcMain.handle("plans:get", async () => {
+      const settings = await loadSettings();
+      return settings.plans;
+    });
+
+    ipcMain.handle("plans:save", async (_, plans: unknown) => {
+      const current = await loadSettings();
+      await saveSettings({ ...current, plans: Array.isArray(plans) ? (plans as typeof current.plans) : [] });
+      this.clearAnalyticsCaches();
+      log.info("Plans saved via dashboard");
+      return { ok: true };
+    });
+
+    ipcMain.handle("fx:status", () => ({ estimated: sharedFxFetcher.estimated }));
 
     ipcMain.handle("models:get", async () => {
       const settings = await loadSettings();
