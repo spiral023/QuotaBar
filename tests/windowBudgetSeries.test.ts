@@ -227,6 +227,28 @@ describe("readWeeklySeries", () => {
     expect(s.points).toHaveLength(3);
     expect(s.points.map((p) => p.weeklyPct)).toEqual([10, 60, 65]);
   });
+
+  it("unterbricht die Linie über eine Datenlücke (Builder-Integration)", async () => {
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      snapLine("claude", 30, 50, "2026-06-09T08:00:00Z"),
+      snapLine("claude", 31, 55, "2026-06-09T08:30:00Z"),
+      snapLine("claude", 2,  2,  "2026-06-09T20:00:00Z"), // ~11.5h Lücke + Sturz
+    ].join("\n"), "utf8");
+    const s = await readWeeklySeries(dir, "claude", START, NOW);
+    expect(s.points.map((p) => p.weeklyPct)).toEqual([50, 55, null, 2]);
+  });
+
+  it("transienter Spike erzeugt keinen Falsch-Bruch (removeSpikes vor insertBreaks)", async () => {
+    const base = new Date("2026-06-09T08:00:00Z").getTime();
+    const bucket = 30 * 60 * 1000;
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      snapLine("claude", 5, 5,   new Date(base).toISOString()),
+      snapLine("claude", 5, 100, new Date(base + bucket).toISOString()),
+      snapLine("claude", 5, 8,   new Date(base + 2 * bucket).toISOString()),
+    ].join("\n"), "utf8");
+    const s = await readWeeklySeries(dir, "claude", START, NOW);
+    expect(s.points.map((p) => p.weeklyPct)).toEqual([5, 8]);
+  });
 });
 
 describe("insertBreaks", () => {

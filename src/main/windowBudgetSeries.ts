@@ -104,7 +104,7 @@ export async function readWeeklySeries(
   const points = [...buckets.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([ms, pct]) => ({ t: new Date(ms).toISOString(), weeklyPct: pct }));
-  return { points: removeSpikes(points), fiveHourResets: resets };
+  return { points: insertBreaks(removeSpikes(points)), fiveHourResets: resets };
 }
 
 /** Entfernt isolierte Ausreißer-Buckets (transiente weekly=100-Spikes der API). */
