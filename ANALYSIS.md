@@ -1,7 +1,7 @@
 # QuotaBar Analysebericht
 
 Erstanalyse: 2026-06-13  
-Letzte Aktualisierung: 2026-06-13 (nach Renderer-Härtung)
+Letzte Aktualisierung: 2026-06-13 (nach Lint-Setup)
 
 ## Änderungen seit Erstanalyse
 
@@ -20,10 +20,11 @@ Am 2026-06-13 wurden die dringendsten Befunde direkt behoben (11 Commits auf `ma
 | `c22ad7e` | Forecast ohne Vertrauensgrad (Profil vs. dünn linear nicht unterscheidbar) | ✅ `confidence`/`reason` + UI |
 | `e0f20ba` | Analytics-Zeitsemantik UTC vs. lokal gemischt (falscher Tag/Stunde) | ✅ auf Lokalzeit vereinheitlicht |
 | `e3f48c3` | Renderer nicht gehärtet (`nodeIntegration: true` → XSS = RCE) | ✅ contextIsolation + preload-Bridge |
+| `1dda491` | Kein Lint-Setup (Roadmap-90-Tage-Punkt) | ✅ ESLint Flat-Config + `npm run lint`, läuft grün |
 
-Verifikation nach Fixes: **`npm test` grün (468 Tests, 55 Dateien)**, `npm run build` grün; Analytics-Zeit-Tests in mehreren Zeitzonen deterministisch; Renderer-Härtung zusätzlich per manuellem GUI-Smoke-Test geprüft.
+Verifikation nach Fixes: **`npm test` grün (470 Tests, 56 Dateien)**, `npm run build` grün, **`npm run lint` grün (0 Fehler)**; Analytics-Zeit-Tests in mehreren Zeitzonen deterministisch; Renderer-Härtung zusätzlich per manuellem GUI-Smoke-Test geprüft.
 
-Damit sind die beiden Berechnungsfehler, der Testpipeline-Blocker, das Models-Tab-XSS, die Renderer-Härtung sowie drei praxisnahe Transparenz-/Korrektheits-Verbesserungen (nicht eingepreiste Modelle, Forecast-Confidence, Zeitsemantik) erledigt. Die Bewertungen unten sind entsprechend angehoben; verbleibende Punkte sind klar als offen markiert.
+Damit sind die beiden Berechnungsfehler, der Testpipeline-Blocker, das Models-Tab-XSS, die Renderer-Härtung, das Lint-Setup sowie drei praxisnahe Transparenz-/Korrektheits-Verbesserungen (nicht eingepreiste Modelle, Forecast-Confidence, Zeitsemantik) erledigt. Die Bewertungen unten sind entsprechend angehoben; verbleibende Punkte sind klar als offen markiert.
 
 ## Kurzfazit
 
@@ -31,7 +32,7 @@ QuotaBar ist technisch und fachlich deutlich weiter als ein typisches MVP: Die A
 
 Der zuvor größte Qualitätsbruch — rote Testpipeline plus Settings-Drift in der `PricingEngine` — ist behoben: `npm test` ist grün, die Engine ist eine reine Funktion ihrer injizierten Settings (Produktion injiziert weiterhin Live-Settings über einen Provider), und die `.test.js`-Altlast ist entfernt. Auch das Models-Tab-XSS ist geschlossen.
 
-Auch die **Renderer-Härtung** ist erledigt: beide Fenster laufen jetzt mit `nodeIntegration: false` und `contextIsolation: true`, der IPC-Zugriff läuft über ein preload-`contextBridge`-Script (`src/main/preload.ts`). Damit ist die schwerwiegendste Sicherheitslücke geschlossen — ein künftiger unescaped-Pfad wäre auf DOM-Ebene begrenzt statt RCE. Verbleibende offene Punkte sind eher Reifegrad als akutes Risiko: keine CI/kein Lint, fehlende Preisquellen-/KPI-Metadaten, doppelte Live/Backfill-Tokensemantik und ein noch grobes Forecast-Profil (Wochentagsmittel über 24 h).
+Auch die **Renderer-Härtung** ist erledigt: beide Fenster laufen jetzt mit `nodeIntegration: false` und `contextIsolation: true`, der IPC-Zugriff läuft über ein preload-`contextBridge`-Script (`src/main/preload.ts`). Damit ist die schwerwiegendste Sicherheitslücke geschlossen — ein künftiger unescaped-Pfad wäre auf DOM-Ebene begrenzt statt RCE. Auch das **Lint-Setup** ist jetzt vorhanden (`1dda491`): eine ESLint-Flat-Config (`eslint.config.mjs`) mit getrennten Regelsets für TS-Core und JS-Renderer, ausgeführt über `npm run lint` und durch `tests/lintConfig.test.ts` abgesichert; sie läuft aktuell ohne Befunde. Verbleibende offene Punkte sind eher Reifegrad als akutes Risiko: keine CI (Lint/Test/Build sind alle grün, aber nicht automatisiert verkettet), fehlende Preisquellen-/KPI-Metadaten, doppelte Live/Backfill-Tokensemantik und ein noch grobes Forecast-Profil (Wochentagsmittel über 24 h).
 
 Gesamtbewertung: **2.5 - befriedigend bis gut** (vorher 3.2)  
 Bewertung Business-Logik und Berechnungen: **2.4 - gut bis befriedigend** (vorher 2.8)
@@ -42,10 +43,10 @@ Bewertung Business-Logik und Berechnungen: **2.4 - gut bis befriedigend** (vorhe
 | --- | ---: | :---: | --- |
 | Architektur und Modulgrenzen | 2.5 | – | Gute fachliche Schichten, aber `DetailsWindowController` ist zu breit. |
 | Codequalität und Wartbarkeit | 3.0 | – | Solider TypeScript-Core, Renderer/HTML wächst stark und ist nicht typechecked. |
-| Testqualität und Verifikation | 2.0 | ▲ 4.5 | `npm test` jetzt grün; Duplikate weg. Es fehlen weiterhin CI und Lint. |
+| Testqualität und Verifikation | 1.8 | ▲ 4.7 | `npm test` grün (470 Tests), Duplikate weg, **`npm run lint` grün**. Es fehlt weiterhin CI. |
 | Sicherheit und Robustheit | 2.0 | ▲ 4.0 | Models-Tab-XSS geschlossen **und** Renderer gehärtet (contextIsolation + preload-Bridge). |
 | Performance und Effizienz | 2.5 | – | Gute Worker-/Cache-Ansätze, kleinere Skalierungsrisiken bei großen Logs. |
-| DX, Tooling und Delivery | 3.3 | ▲ 4.0 | Grüne Testpipeline; weiterhin kein Lint, keine CI, README-Versions­lücke. |
+| DX, Tooling und Delivery | 2.8 | ▲ 4.5 | Grüne Test- **und Lint-Pipeline**; weiterhin keine CI (Verkettung fehlt). |
 | Dokumentation und Operabilität | 2.0 | – | README und TESTING sind stark, kleine Versions- und Automationslücken. |
 
 ## Business-Logik-Scorecard
@@ -239,6 +240,9 @@ Empfehlungen:
 6. ✅ **Renderer gehärtet (`e3f48c3`).**  
    `nodeIntegration: false` / `contextIsolation: true` in `detailsWindow.ts` und `onboardingWindow.ts`; IPC über preload-`contextBridge` (`src/main/preload.ts`, `on`-Wrapper reicht nur die Payload durch). Künftige unescaped-Pfade sind damit auf DOM-Ebene begrenzt statt RCE.
 
+7. ✅ **Lint-Setup vorhanden (`1dda491`).**  
+   ESLint-Flat-Config mit getrennten Regelsets für TS-Core und JS-Renderer (`eslint.config.mjs`), als `npm run lint` verfügbar und durch `tests/lintConfig.test.ts` abgesichert; läuft aktuell ohne Befunde. Der einzig verbleibende Reifegrad-Hebel auf dieser Ebene ist die **CI-Verkettung** (Lint/Test/Build laufen, sind aber nicht automatisiert durchgesetzt).
+
 ## Priorisierte Roadmap
 
 ### 30 Tage
@@ -263,10 +267,9 @@ Empfehlungen:
 ### 90 Tage
 
 1. **CI und GUI-Smoke-Test etablieren**  
-   `npm ci`, `npm run build`, `npm test`, plus automatisierter Electron-Smoke-Test aus `TESTING.md`. (Aktuell kein `.github/workflows`.)
+   `npm ci`, `npm run build`, `npm test`, **`npm run lint`**, plus automatisierter Electron-Smoke-Test aus `TESTING.md`. (Aktuell kein `.github/workflows`.) Da Lint/Test/Build lokal alle grün sind, ist dies jetzt der größte verbleibende Reifegrad-Hebel: nur noch verketten und durchsetzen.
 
-2. **Lint-Setup ergänzen**  
-   ESLint o. Ä. als `npm run lint`; aktuell existiert kein Lint-Script.
+2. ✅ **Lint-Setup ergänzt** (`1dda491`) — ESLint-Flat-Config (`eslint.config.mjs`, getrennte TS-/JS-Renderer-Regelsets) als `npm run lint`, durch `tests/lintConfig.test.ts` abgesichert, läuft ohne Befunde.
 
 3. **Hourly/Session-basiertes Weekly-Profil verbessern**  
    Forecast nicht nur nach Wochentag, sondern nach Wochentag und Tageszeit modellieren.
@@ -281,14 +284,15 @@ Empfehlungen:
 
 Stand 2026-06-13 nach Fixes:
 
-- `npm test` — **erfolgreich (468 Tests, 55 Dateien)**.
+- `npm test` — **erfolgreich (470 Tests, 56 Dateien)**.
   - `.test.js`-Duplikate entfernt; Vitest lädt nur noch `tests/**/*.test.ts`.
   - Zuvor rote `.ts`-Tests (Pricing, Benchmark, Notification) sind grün.
+- `npm run lint` — **erfolgreich (0 Fehler)**; ESLint-Flat-Config über TS-Core und JS-Renderer.
 - `npm run build` — erfolgreich.
 - Renderer-Härtung manuell per GUI-Smoke-Test verifiziert.
 - `npm audit` / `npm audit --omit=dev` — bei Erstanalyse 0 bekannte Vulnerabilities (nicht erneut geprüft).
 
-Noch nicht automatisiert: kein CI, kein Lint, kein automatisierter GUI-Smoke-Test.
+Noch nicht automatisiert: kein CI (Lint/Test/Build laufen nur lokal, nicht verkettet), kein automatisierter GUI-Smoke-Test.
 
 ## Offene Kleinbefunde
 
@@ -299,4 +303,4 @@ Noch nicht automatisiert: kein CI, kein Lint, kein automatisierter GUI-Smoke-Tes
 
 ## Endnote
 
-QuotaBar hat eine gute fachliche Grundlage. Besonders die Window-Ratio- und Debug-/Backfill-Logik zeigt ein gutes Verständnis realer Provider-Artefakte. Nach den Fix-Durchläufen sind die kritischen Berechnungsfehler beseitigt, die Testpipeline ist grün, das Models-Tab-XSS geschlossen und der Renderer gehärtet (contextIsolation/preload). Der nächste große Hebel ist die **Genauigkeit des Weekly-Forecasts** (Modellierung nach Wochentag + Tageszeit statt Tagesmittel gleichmäßig über 24 h) — die Prognose ist die wertvollste Funktion und aktuell die gröbste. Danach folgen Preisquellen-/KPI-Metadaten und die Konsolidierung der Live-/Backfill-Tokensemantik.
+QuotaBar hat eine gute fachliche Grundlage. Besonders die Window-Ratio- und Debug-/Backfill-Logik zeigt ein gutes Verständnis realer Provider-Artefakte. Nach den Fix-Durchläufen sind die kritischen Berechnungsfehler beseitigt, die Testpipeline ist grün, das Models-Tab-XSS geschlossen, der Renderer gehärtet (contextIsolation/preload) und ein Lint-Setup vorhanden. Damit liegen mit Test, Lint und Build jetzt drei lokal grüne Qualitätsgates vor — der nächste reine Reifegrad-Hebel ist deren **CI-Verkettung** (geringe Mühe, hoher Schutz). Der größte *fachliche* Hebel bleibt die **Genauigkeit des Weekly-Forecasts** (Modellierung nach Wochentag + Tageszeit statt Tagesmittel gleichmäßig über 24 h) — die Prognose ist die wertvollste Funktion und aktuell die gröbste. Daneben stehen der Quick Win der Preisquellen-/KPI-Metadaten (offener 30-Tage-Punkt) und die Konsolidierung der Live-/Backfill-Tokensemantik.
