@@ -14,7 +14,8 @@ import { openOnboardingWindow } from "./onboardingWindow";
 import { initializeUpdater } from "./updater";
 import { NotificationService } from "./notifications";
 import { DebugRecorder } from "./debugRecorder";
-import { runBackfill } from "./debugBackfill";
+import { runBackfill, BACKFILL_REPAIR_VERSION } from "./debugBackfill";
+import { getRepairedVersion, setRepairedVersion } from "./backfillManifest";
 import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
 import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
@@ -186,14 +187,30 @@ if (!app.requestSingleInstanceLock()) {
         },
       });
       const backfillTimer = setTimeout(() => {
-        void runBackfill({
-          recorder,
-          logDir: getDebugLogDir(),
-          claudeProjectsDirs: getClaudeProjectsDirs(),
-          codexSessionsDirs: getCodexSessionsDirs(),
-          codexConfigPaths: getCodexConfigPaths(),
-          fetcher: backfillFetcher,
-        }).catch((err: unknown) => {
+        void (async () => {
+          const logDir = getDebugLogDir();
+          // Erster Start nach einem datenverändernden Fix → einmaliger Force-Rebuild,
+          // der alle bereits beschädigten Tagessätze neu berechnet. Danach läuft der
+          // Backfill wieder inkrementell.
+          const needsRepair = (await getRepairedVersion(logDir)) < BACKFILL_REPAIR_VERSION;
+          if (needsRepair) {
+            log.info(`Backfill repair: forcing one-time rebuild to version ${BACKFILL_REPAIR_VERSION}`);
+          }
+          const result = await runBackfill({
+            recorder,
+            logDir,
+            claudeProjectsDirs: getClaudeProjectsDirs(),
+            codexSessionsDirs: getCodexSessionsDirs(),
+            codexConfigPaths: getCodexConfigPaths(),
+            fetcher: backfillFetcher,
+            force: needsRepair,
+          });
+          // Marker nur setzen, wenn der Rebuild fehlerfrei durchlief – sonst beim
+          // nächsten Start erneut versuchen.
+          if (needsRepair && result.errors.length === 0) {
+            await setRepairedVersion(logDir, BACKFILL_REPAIR_VERSION);
+          }
+        })().catch((err: unknown) => {
           log.warn(`Backfill failed: ${err instanceof Error ? err.message : String(err)}`);
         });
       }, 15_000);

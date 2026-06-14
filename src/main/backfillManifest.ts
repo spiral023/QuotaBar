@@ -31,6 +31,34 @@ export async function saveManifest(logDir: string, manifest: BackfillManifest): 
   await fs.writeFile(path.join(logDir, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
+const REPAIR_MARKER_FILE = "backfill-repair.json";
+
+/**
+ * Höchste Reparatur-Version, die bereits per einmaligem Force-Rebuild auf die
+ * Backfill-Daten angewendet wurde. 0 = noch nie repariert / Marker fehlt.
+ */
+export async function getRepairedVersion(logDir: string): Promise<number> {
+  try {
+    const raw = await fs.readFile(path.join(logDir, REPAIR_MARKER_FILE), "utf8");
+    const parsed = JSON.parse(raw) as { repairedVersion?: unknown };
+    return typeof parsed.repairedVersion === "number" && Number.isFinite(parsed.repairedVersion)
+      ? parsed.repairedVersion
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Persistiert, dass die Backfill-Daten bis einschließlich `version` repariert wurden. */
+export async function setRepairedVersion(logDir: string, version: number): Promise<void> {
+  await fs.mkdir(logDir, { recursive: true });
+  await fs.writeFile(
+    path.join(logDir, REPAIR_MARKER_FILE),
+    `${JSON.stringify({ repairedVersion: version, repairedAt: new Date().toISOString() }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 /** "size:mtimeMs" for an existing file, or null if it cannot be stat'd. */
 export async function fileSignature(filePath: string): Promise<string | null> {
   try {

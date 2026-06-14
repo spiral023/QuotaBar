@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { loadManifest, saveManifest, fileSignature, diffSources } from "../src/main/backfillManifest";
+import { loadManifest, saveManifest, fileSignature, diffSources, getRepairedVersion, setRepairedVersion } from "../src/main/backfillManifest";
 
 let tmp: string;
 
@@ -49,5 +49,19 @@ describe("backfillManifest", () => {
     const { changed, unchanged } = diffSources(prev, current);
     expect(changed.sort()).toEqual(["/b.jsonl", "/c.jsonl"]);
     expect(unchanged).toEqual(["/a.jsonl"]);
+  });
+
+  it("reports repaired version 0 when no marker exists", async () => {
+    expect(await getRepairedVersion(tmp)).toBe(0);
+  });
+
+  it("reports repaired version 0 when the marker is corrupt", async () => {
+    await fs.writeFile(path.join(tmp, "backfill-repair.json"), "{ not json", "utf8");
+    expect(await getRepairedVersion(tmp)).toBe(0);
+  });
+
+  it("round-trips the repaired version marker", async () => {
+    await setRepairedVersion(tmp, 1);
+    expect(await getRepairedVersion(tmp)).toBe(1);
   });
 });
