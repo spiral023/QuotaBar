@@ -232,7 +232,6 @@ export class DetailsWindowController {
 
     ipcMain.handle("settings:save", async (_, partial: Record<string, unknown>) => {
       const current = await loadSettings();
-      // TODO(task 2): replace with plan-cost engine once PlanPeriod timeline is wired up
       const merged = {
         ...current,
         ...partial,
