@@ -332,11 +332,14 @@ export class DetailsWindowController {
         .flatMap((s) => {
           const weekly = s.windows.find((w) => w.name === "weekly");
           if (!weekly || typeof weekly.usedPercent !== "number") return [];
+          const budget = s.windowBudget;
+          if (!budget || budget.learning) return [];
           if (s.provider !== "claude" && s.provider !== "codex") return [];
           return [{
             provider: s.provider,
             weeklyUsedPercent: weekly.usedPercent,
             weeklyResetsAt: weekly.resetsAt ?? null,
+            windowsPerWeek: budget.windowsPerWeek,
             burnRatePctPerHour: weekly.burnRatePctPerHour ?? null,
             pace: weekly.pace ?? null,
             planType: s.planType ?? null,

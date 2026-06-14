@@ -164,47 +164,76 @@ function fmtWindows(n) {
   return n.toFixed(1).replace('.', ',');
 }
 
-function windowBudgetRowHtml(snap) {
+function windowBudgetRowHtml(snap, currentUsage) {
   const wb = snap.windowBudget;
   if (!wb) return '';
+  const id = `wb-row-${QB.esc(snap.provider)}`;
   if (wb.learning) {
     const tip = 'QuotaBar lernt das Verhältnis zwischen 5h- und Weekly-Limit aus deiner Nutzung.\n'
       + `Fortschritt: ${Math.round(wb.sampleFivePct)} % von 200 % 5h-Nutzung beobachtet.`;
-    return `<div class="wb-row"><span class="wb-learning" data-tip="${QB.esc(tip)}">Fenster-Budget: lernt noch…</span></div>`;
+    return `<div class="wb-wrap" id="${id}"><div class="wb-row"><span class="wb-learning" data-tip="${QB.esc(tip)}">Fenster-Budget: lernt noch…</span></div></div>`;
   }
-  const total = wb.windowsPerWeek;
+  const adjusted = currentUsage && currentUsage.bonusResetCount > 0;
+  const total = adjusted ? currentUsage.totalWindows : wb.windowsPerWeek;
+  const usedWindows = adjusted ? currentUsage.budgetEquivalentUsedWindows : wb.usedWindows;
+  const remainingWindows = adjusted ? currentUsage.remainingWindows : wb.remainingWindows;
+  const priorWindows = adjusted ? currentUsage.preResetUsedWindows : 0;
   const segCount = Math.max(1, Math.ceil(total));
   const segs = [];
   for (let i = 0; i < segCount; i++) {
     const capacity = Math.min(1, total - i);          // letztes Segment ggf. partiell
-    const used = clamp(wb.usedWindows - i, 0, capacity);
-    const fillPct = capacity > 0 ? (used / capacity) * 100 : 0;
-    const isCurrent = wb.usedWindows > i && wb.usedWindows < i + capacity;
-    const isFree = used === 0;
+    const totalUsed = clamp(usedWindows - i, 0, capacity);
+    const priorUsed = clamp(priorWindows - i, 0, capacity);
+    const currentUsed = Math.max(0, totalUsed - priorUsed);
+    const priorPct = capacity > 0 ? (priorUsed / capacity) * 100 : 0;
+    const currentPct = capacity > 0 ? (currentUsed / capacity) * 100 : 0;
+    const isCurrent = usedWindows > i && usedWindows < i + capacity;
+    const isFree = totalUsed === 0;
     segs.push(`<div class="wb-seg${isFree ? ' wb-free' : ''}" style="flex:${capacity.toFixed(2)}">` +
-      (fillPct > 0 ? `<div class="wb-fill${isCurrent ? ' wb-current' : ''}" style="width:${fillPct.toFixed(0)}%"></div>` : '') +
+      (priorPct > 0 ? `<div class="wb-fill wb-prior" style="width:${priorPct.toFixed(0)}%"></div>` : '') +
+      (currentPct > 0 ? `<div class="wb-fill${isCurrent ? ' wb-current' : ''}" style="left:${priorPct.toFixed(0)}%;width:${currentPct.toFixed(0)}%"></div>` : '') +
       `</div>`);
   }
-  const tip = `Weekly-Budget umgerechnet in volle 5h-Fenster.\n`
+  let tip = `Weekly-Budget umgerechnet in volle 5h-Fenster.\n`
     + `Gelernt aus deiner Nutzung: ~${fmtWindows(total)} volle 5h-Fenster passen in ein Weekly-Fenster.`;
-  return `<div class="wb-row" data-tip="${QB.esc(tip)}">
+  if (adjusted) {
+    tip = `Außerplanmäßiger Reset berücksichtigt.\n`
+      + `Budgetäquivalent: ${currentUsage.resetAdjustedWeeklyPercent.toFixed(0)} % Weekly-Auslastung über alle Reset-Abschnitte.\n`
+      + `Gezählte 5h-Fenster: ${currentUsage.observedUsedWindows}.`;
+  }
+  const adjustedHtml = adjusted
+    ? `<div class="wb-adjusted">
+        <span>${Math.round(currentUsage.observedUsedWindows)} gezählt</span>
+        <span>+${fmtWindows(currentUsage.preResetUsedWindows)} vor Reset</span>
+      </div>`
+    : '';
+  return `<div class="wb-wrap" id="${id}">
+  <div class="wb-row${adjusted ? ' wb-row-adjusted' : ''}" data-tip="${QB.esc(tip)}">
     <div class="wb-bar">${segs.join('')}</div>
     <div class="wb-stats">
-      <span>5h-Fenster: ${fmtWindows(wb.usedWindows)} verbraucht</span>
-      <span>${fmtWindows(wb.remainingWindows)} übrig</span>
+      <span>5h-Fenster: ${fmtWindows(usedWindows)} verbraucht</span>
+      <span>${fmtWindows(remainingWindows)} übrig</span>
     </div>
-  </div>${bonusBadgeHtml(wb)}`;
+    ${adjustedHtml}
+  </div>${bonusBadgeHtml(wb, currentUsage)}
+  </div>`;
 }
 
-function bonusBadgeHtml(wb) {
-  if (!wb.bonus || !wb.bonus.active) return '';
-  const extra = wb.bonus.estimatedExtraWindows;
-  const tip = 'Außerplanmäßiger Reset erkannt: Das Weekly-Budget wurde erneuert, ohne den '
-    + '7d-Reset-Zeitpunkt zu verschieben. Bis dahin steht effektiv zusätzliches Budget bereit.\n'
-    + 'Die Zahl ist eine grobe Schätzung und durch die verbleibende Zeit begrenzt.';
+function bonusBadgeHtml(wb, currentUsage) {
+  const hasTrackerBonus = wb.bonus && wb.bonus.active;
+  const hasObservedReset = currentUsage && currentUsage.bonusResetCount > 0;
+  if (!hasTrackerBonus && !hasObservedReset) return '';
+  const extra = hasTrackerBonus ? wb.bonus.estimatedExtraWindows : currentUsage.preResetUsedWindows;
+  const label = hasTrackerBonus ? 'Bonus-Woche' : 'Reset berücksichtigt';
+  const tip = hasTrackerBonus
+    ? 'Außerplanmäßiger Reset erkannt: Das Weekly-Budget wurde erneuert, ohne den '
+      + '7d-Reset-Zeitpunkt zu verschieben. Bis dahin steht effektiv zusätzliches Budget bereit.\n'
+      + 'Die Zahl ist eine grobe Schätzung und durch die verbleibende Zeit begrenzt.'
+    : 'Aus den lokalen Snapshots wurde ein Weekly-Reset innerhalb derselben 7d-Periode rekonstruiert. '
+      + 'Die Fenster-Zeile zählt den Verbrauch vor und nach dem Reset zusammen.';
   return `<div class="wb-bonus" data-tip="${QB.esc(tip)}">
     <span class="wb-bonus-icon" aria-hidden="true">⚡</span>
-    <span class="wb-bonus-text">Bonus-Woche${extra >= 0.1
+    <span class="wb-bonus-text">${label}${extra >= 0.1
       ? ` · ≈ +<span class="wb-bonus-num">${fmtWindows(extra)}</span> 5h-Fenster`
       : ''}</span>
   </div>`;
@@ -268,6 +297,8 @@ async function hydrateWindowBudgets(snapshots, gen) {
       const canvas = document.getElementById(`wb-chart-${snap.provider}`);
       if (!d || !fcEl || !canvas) continue;
       fcEl.innerHTML = wbForecastHtml(d.forecast);
+      const row = document.getElementById(`wb-row-${snap.provider}`);
+      if (row && d.currentUsage) row.outerHTML = windowBudgetRowHtml(snap, d.currentUsage);
       if (_wbCharts[snap.provider]) { _wbCharts[snap.provider].destroy(); delete _wbCharts[snap.provider]; }
       if (d.hasSeriesData) {
         const weekly = snap.windows.find(w => w.name === 'weekly');

@@ -21,6 +21,7 @@ import { readWeeklySeriesForProviders, type WindowBudgetSeries } from "./windowB
 import { readWindowHistoryObservations } from "./windowHistoryReader";
 import { buildWindowHistory, type WindowHistoryEntry } from "../usage/windowHistory";
 import type { UsagePace } from "../usage/usagePace";
+import type { CurrentWindowUsage } from "../usage/windowBudgetRollup";
 
 interface AnalyticsTaskInput {
   task: "get" | "summary";
@@ -49,6 +50,7 @@ interface WindowBudgetTaskInput {
     provider: "claude" | "codex";
     weeklyUsedPercent: number;
     weeklyResetsAt: string | null;
+    windowsPerWeek: number;
     burnRatePctPerHour: number | null;
     pace: UsagePace | null;
     planType: string | null;
@@ -59,6 +61,7 @@ export interface WindowBudgetProviderData {
   series: WindowBudgetSeries;
   forecast: WeeklyForecastResult;
   hasSeriesData: boolean;
+  currentUsage: CurrentWindowUsage | null;
 }
 
 export interface WindowBudgetData {
@@ -207,7 +210,13 @@ async function buildWindowBudgetData(input: WindowBudgetTaskInput): Promise<Wind
   // Dateien pro Provider erneut zu parsen.
   const seriesList = await readWeeklySeriesForProviders(
     input.logDir,
-    input.providers.map((p, i) => ({ provider: p.provider, windowStartMs: windowStarts[i], planType: p.planType })),
+    input.providers.map((p, i) => ({
+      provider: p.provider,
+      windowStartMs: windowStarts[i],
+      planType: p.planType,
+      windowsPerWeek: p.windowsPerWeek,
+      currentWeeklyPct: p.weeklyUsedPercent,
+    })),
     input.nowMs,
     30,
   );
@@ -229,7 +238,12 @@ async function buildWindowBudgetData(input: WindowBudgetTaskInput): Promise<Wind
       profile,
       now,
     });
-    perProvider[p.provider] = { series, forecast, hasSeriesData: series.points.length > 0 };
+    perProvider[p.provider] = {
+      series,
+      forecast,
+      hasSeriesData: series.points.length > 0,
+      currentUsage: series.currentUsage ?? null,
+    };
   }
   return { perProvider };
 }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readWeeklySeries, insertBreaks, GAP_THRESHOLD_MS, WEEKLY_RESET_DROP_PCT } from "../src/main/windowBudgetSeries";
+import { readWeeklySeries, readWeeklySeriesForProviders, insertBreaks, GAP_THRESHOLD_MS, WEEKLY_RESET_DROP_PCT } from "../src/main/windowBudgetSeries";
 
 function snapLine(provider: string, fivePct: number, weeklyPct: number, ts: string, fiveResetsAt?: string, planType?: string): string {
   const windows = [
@@ -248,6 +248,44 @@ describe("readWeeklySeries", () => {
     ].join("\n"), "utf8");
     const s = await readWeeklySeries(dir, "claude", START, NOW);
     expect(s.points.map((p) => p.weeklyPct)).toEqual([5, 8]);
+  });
+
+  it("liefert reset-bewusste 5h-Fenster-Nutzung für die laufende Periode", async () => {
+    const weeklyReset = "2026-06-16T11:00:00Z";
+    await fs.writeFile(path.join(dir, "2026-06-12.jsonl"), [
+      snapLine("claude", 37, 67, "2026-06-12T09:46:00Z", "2026-06-12T13:30:00Z", "default_raven"),
+    ].join("\n"), "utf8");
+    await fs.writeFile(path.join(dir, "2026-06-13.jsonl"), [
+      JSON.stringify({
+        ts: "2026-06-13T08:04:00Z", kind: "snapshot", provider: "claude", status: "ok", planType: "default_raven",
+        windows: [
+          { name: "fiveHour", usedPercent: 0, windowSeconds: 18000 },
+          { name: "weekly", usedPercent: 0, windowSeconds: 604800 },
+        ],
+        fetchedAt: "2026-06-13T08:04:00Z",
+      }),
+      snapLine("claude", 5, 100, "2026-06-13T09:02:00Z", "2026-06-13T13:30:00Z", "default_raven"),
+      snapLine("claude", 11, 2, "2026-06-13T09:19:00Z", "2026-06-13T13:30:00Z", "default_raven"),
+    ].join("\n"), "utf8");
+    await fs.writeFile(path.join(dir, "2026-06-14.jsonl"), [
+      snapLine("claude", 98, 74, "2026-06-14T23:12:00Z", "2026-06-15T01:20:00Z", "default_raven"),
+    ].join("\n"), "utf8");
+
+    const [s] = await readWeeklySeriesForProviders(dir, [{
+      provider: "claude",
+      windowStartMs: Date.parse("2026-06-09T11:00:00Z"),
+      planType: "default_raven",
+      windowsPerWeek: 8.338,
+      currentWeeklyPct: 74,
+    }], Date.parse("2026-06-15T00:00:00Z"));
+
+    expect(s.currentUsage).toBeDefined();
+    expect(s.currentUsage?.bonusResetCount).toBe(1);
+    expect(s.currentUsage?.observedUsedWindows).toBe(2);
+    expect(s.currentUsage?.preResetWeeklyPercent).toBe(67);
+    expect(s.currentUsage?.resetAdjustedWeeklyPercent).toBe(141);
+    expect(s.currentUsage?.budgetEquivalentUsedWindows).toBeCloseTo(11.75658, 5);
+    expect(s.currentUsage?.remainingWindows).toBeCloseTo(2.16788, 5);
   });
 });
 

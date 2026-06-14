@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { resetsAtChanged } from "../usage/windowRatio";
+import { buildCurrentWindowUsage, type CurrentWindowObservation, type CurrentWindowUsage } from "../usage/windowBudgetRollup";
 
 const LIVE_LOG_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
 const RESET_DROP_PCT = 15;
@@ -18,17 +19,21 @@ export interface WeeklySeriesPoint {
 export interface WindowBudgetSeries {
   points: WeeklySeriesPoint[];
   fiveHourResets: string[];
+  currentUsage?: CurrentWindowUsage;
 }
 
 export interface WeeklySeriesRequest {
   provider: string;
   windowStartMs: number;
   planType?: string | null;
+  windowsPerWeek?: number | null;
+  currentWeeklyPct?: number | null;
 }
 
 interface SeriesState {
   buckets: Map<number, number>;
   resets: string[];
+  observations: CurrentWindowObservation[];
   prevFivePct: number | null;
   prevFiveResetsAt: string | null;
 }
@@ -89,6 +94,7 @@ export async function readWeeklySeriesForProviders(
   const states: SeriesState[] = requests.map(() => ({
     buckets: new Map<number, number>(),
     resets: [],
+    observations: [],
     prevFivePct: null,
     prevFiveResetsAt: null,
   }));
@@ -127,6 +133,15 @@ export async function readWeeklySeriesForProviders(
           if (typeof weekly?.usedPercent === "number") {
             st.buckets.set(Math.floor(tsMs / bucketMs) * bucketMs, weekly.usedPercent);
           }
+          if (typeof five?.usedPercent === "number" && typeof weekly?.usedPercent === "number") {
+            st.observations.push({
+              ts,
+              fivePct: five.usedPercent,
+              fiveResetsAt: typeof five.resetsAt === "string" ? five.resetsAt : null,
+              weeklyPct: weekly.usedPercent,
+              weeklyResetsAt: typeof weekly.resetsAt === "string" ? weekly.resetsAt : null,
+            });
+          }
           if (typeof five?.usedPercent === "number") {
             const fiveResetsAt = typeof five.resetsAt === "string" ? five.resetsAt : null;
             // Codex idle windows roll resetsAt forward on every poll (ts+5h) while
@@ -147,11 +162,15 @@ export async function readWeeklySeriesForProviders(
     }
   }
 
-  return states.map((st) => {
+  return states.map((st, i) => {
+    const req = requests[i];
     const points = [...st.buckets.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([ms, pct]) => ({ t: new Date(ms).toISOString(), weeklyPct: pct }));
-    return { points: insertBreaks(removeSpikes(points)), fiveHourResets: st.resets };
+    const currentUsage = typeof req.windowsPerWeek === "number" && typeof req.currentWeeklyPct === "number"
+      ? buildCurrentWindowUsage(st.observations, req.windowsPerWeek, req.currentWeeklyPct)
+      : undefined;
+    return { points: insertBreaks(removeSpikes(points)), fiveHourResets: st.resets, ...(currentUsage ? { currentUsage } : {}) };
   });
 }
 
