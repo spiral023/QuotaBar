@@ -8,6 +8,7 @@ window.QB = window.QB || {};
 
   let _data = null;
   let _dataPromise = null;
+  let _stale = false;
   let _stackChart = null;
   let _scatterChart = null;
   let _animated = false;
@@ -30,8 +31,13 @@ window.QB = window.QB || {};
   QB.renderModels = async function renderModels() {
     const container = document.getElementById('models-content');
     if (!container) return;
-    if (_data) { renderUI(); return; }
-    container.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
+    if (_data && !_stale) { renderUI(); return; }
+    // Nur einen Spinner zeigen, wenn noch GAR keine Daten vorliegen. Bei
+    // bloß veralteten Daten (Cache invalidiert durch quota:update) bleibt die
+    // bisherige Ansicht stehen und wird nach dem Reload still ersetzt.
+    if (!_data) {
+      container.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
+    }
     try {
       _data = await loadData();
       renderUI();
@@ -47,15 +53,20 @@ window.QB = window.QB || {};
   };
 
   QB.clearModelsCache = function clearModelsCache() {
-    _data = null;
+    // _data bewusst NICHT nullen: Der Models-Tab kann gerade sichtbar sein,
+    // und seine Pill-Handler greifen synchron auf _data.days zu. Würde _data
+    // hier null, käme es beim nächsten Pill-Klick zu einem TypeError und die
+    // Umschaltung "reagiert nicht mehr". Stattdessen nur als veraltet markieren
+    // → beim nächsten Render werden frische Daten geladen.
+    _stale = true;
     _dataPromise = null;
   };
 
   function loadData() {
-    if (_data) return Promise.resolve(_data);
+    if (_data && !_stale) return Promise.resolve(_data);
     if (!_dataPromise) {
       _dataPromise = QB.ipc.invoke('models:get')
-        .then((d) => { _data = d; return d; })
+        .then((d) => { _data = d; _stale = false; return d; })
         .catch((err) => { _dataPromise = null; throw err; });
     }
     return _dataPromise;
@@ -118,6 +129,7 @@ window.QB = window.QB || {};
         <div class="an-section">
           <div class="an-section-head"><span class="an-section-title">PREIS vs. INTELLIGENZ</span></div>
           <div class="mod-scatter-wrap"><canvas id="mod-scatter-canvas"></canvas></div>
+          <div class="mod-note" id="mod-scatter-empty" hidden></div>
           <div class="mod-scatter-note">x: effektiver $/MTok basierend auf deiner echten Nutzung (inkl. Cache) &middot;
             Quelle: ${_data.benchmarksAsOf ? 'Artificial Analysis Intelligence Index, Stand ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
         </div>` : `
@@ -145,7 +157,7 @@ window.QB = window.QB || {};
     syncPills();
     renderKpis();
     renderStack(true);
-    if (hasBenchmarks) renderScatter();
+    if (hasBenchmarks) renderScatter(true);
     renderTable();
     renderAdoption();
     renderCache();
@@ -170,6 +182,7 @@ window.QB = window.QB || {};
     syncPills();
     renderKpis();
     renderStack(false);
+    renderScatter(false);
     renderTable();
     renderAdoption();
     renderCache();
@@ -287,9 +300,25 @@ window.QB = window.QB || {};
       </div>`).join('');
   }
 
-  function renderScatter() {
+  function renderScatter(initial) {
+    const canvas = document.getElementById('mod-scatter-canvas');
+    if (!canvas) return; // Benchmark-Sektion nicht gerendert (keine Benchmarks)
+
     const rows = calc.tableRows(visibleDays(), _data.benchmarks);
     const pts = calc.scatterPoints(rows);
+
+    // Hinweis statt leerem Graph, wenn im gewählten Fenster/Provider-Filter
+    // kein Modell mit Benchmark-Score Kosten verursacht hat.
+    const emptyNote = document.getElementById('mod-scatter-empty');
+    if (emptyNote) {
+      const isEmpty = pts.length === 0;
+      emptyNote.hidden = !isEmpty;
+      emptyNote.textContent = isEmpty
+        ? 'Keine Modelle mit Benchmark-Score im gewählten Zeitraum/Filter.'
+        : '';
+      canvas.style.visibility = isEmpty ? 'hidden' : '';
+    }
+
     const data = {
       datasets: [{
         data: pts.map((p) => ({ x: p.x, y: p.y, r: p.r })),
@@ -300,12 +329,16 @@ window.QB = window.QB || {};
         hoverRadius: 2,
       }],
     };
-    if (_scatterChart) {
+    // Beim (Neu-)Aufbau der UI ist das Canvas-Element frisch — ein zuvor an das
+    // alte (jetzt detachte) Canvas gebundenes Chart würde sonst ins Leere
+    // zeichnen. Daher bei initial=true zerstören und neu erstellen.
+    if (_scatterChart && !initial) {
       _scatterChart.data = data;
       _scatterChart.update();
       return;
     }
-    const ctx = document.getElementById('mod-scatter-canvas').getContext('2d');
+    if (_scatterChart) _scatterChart.destroy();
+    const ctx = canvas.getContext('2d');
     const quadrant = {
       id: 'modQuadrant',
       beforeDraw(chart) {

@@ -32,6 +32,20 @@ QB.renderPlans = async function renderPlans() {
 
 function _uid() { return 'p_' + Math.random().toString(36).slice(2, 10); }
 
+// Erster erfasster Nutzungstag (YYYY-MM-DD) des Anbieters aus den Backfill-
+// Reports; null, wenn (noch) keine Nutzungsdaten vorliegen.
+async function _firstUsageDate(provider) {
+  try {
+    const report = await QB.ipc.invoke('reports:get', {
+      source: 'backfill', type: 'daily', provider,
+      order: 'asc', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, breakdown: false,
+    });
+    return report?.rows?.[0]?.bucket ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function _save() {
   // Strip any transient editor fields — only the 7 PlanPeriod fields persist.
   const clean = _plans.map((p) => ({
@@ -225,7 +239,9 @@ function _renderEditor() {
 
       <div class="pl-f-grid">
         <label class="pl-f">
-          <span class="pl-f-lbl">Start</span>
+          <span class="pl-f-lbl">Start
+            <button type="button" class="pl-f-link" id="pl-start-begin" title="Ersten erfassten Nutzungstag von ${prov.label} eintragen">seit Beginn</button>
+          </span>
           <input id="pl-start" class="pl-input" type="datetime-local" value="${(e.startsAt || '').slice(0, 16)}">
         </label>
         <label class="pl-f">
@@ -278,6 +294,23 @@ function _renderEditor() {
 
   $('pl-amount').addEventListener('input', updatePreview);
   updatePreview();
+
+  // "seit Beginn": trägt den ersten erfassten Nutzungstag des Anbieters ein.
+  const beginBtn = $('pl-start-begin');
+  beginBtn?.addEventListener('click', async () => {
+    const original = beginBtn.textContent;
+    beginBtn.disabled = true;
+    beginBtn.textContent = '…';
+    const first = await _firstUsageDate(e.provider);
+    if (first) {
+      $('pl-start').value = first + 'T00:00';
+      beginBtn.textContent = original;
+    } else {
+      beginBtn.textContent = 'keine Daten';
+      setTimeout(() => { beginBtn.textContent = original; }, 1800);
+    }
+    beginBtn.disabled = false;
+  });
 
   $('pl-cancel').addEventListener('click', _closeEditor);
   $('pl-ok').addEventListener('click', () => _submitEditor(currency));

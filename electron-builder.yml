@@ -1,6 +1,10 @@
 appId: com.quotabar.windows
 productName: QuotaBar for Windows
 publish: null
+protocols:
+  - name: QuotaBar Protocol
+    schemes:
+      - quotabar
 directories:
   output: package-output
 files:

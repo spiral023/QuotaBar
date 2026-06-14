@@ -1,3 +1,4 @@
+import path from "node:path";
 import { app } from "electron";
 import { isFirstRun } from "../config/firstRun";
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
@@ -32,16 +33,39 @@ interface CliOptions {
 const cli = parseCliArgs(process.argv.slice(2));
 initializeLogging(cli.debug);
 
+// Wird in whenReady gesetzt, sobald der NotificationService existiert. Der
+// second-instance-Handler kann eine quotabar://-Aktivierung dann weiterreichen.
+let onProtocolUrl: ((url: string) => void) | null = null;
+
+function findProtocolUrl(argv: readonly string[]): string | null {
+  return argv.find((arg) => arg.startsWith("quotabar://")) ?? null;
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv) => {
     log.info("Second instance attempted; existing tray instance kept");
+    // Klick auf eine Windows-Toast (Body oder Button) startet einen neuen
+    // Prozess mit der quotabar://-URL in argv. Hier an die laufende Instanz
+    // weiterreichen, statt eine zweite (generische) App zu öffnen.
+    const url = findProtocolUrl(argv);
+    if (url && onProtocolUrl) onProtocolUrl(url);
   });
 
   app.whenReady()
     .then(async () => {
       app.setAppUserModelId("com.quotabar.windows");
+      // quotabar://-Protokoll registrieren, damit Windows Toast-Aktivierungen an
+      // diese App weiterleitet (Voraussetzung für funktionierende Toast-Buttons).
+      if (process.platform === "win32") {
+        if (app.isPackaged) {
+          app.setAsDefaultProtocolClient("quotabar");
+        } else if (process.argv.length >= 2) {
+          // Dev: electron.exe mit Projektpfad als Argument registrieren.
+          app.setAsDefaultProtocolClient("quotabar", process.execPath, [path.resolve(process.argv[1])]);
+        }
+      }
       applyStartupFlag(cli.startupAction);
 
       const firstRun = await isFirstRun();
@@ -120,6 +144,11 @@ if (!app.requestSingleInstanceLock()) {
           return merged;
         },
       });
+      // Toast-Aktivierungen (quotabar://…) an den NotificationService weiterreichen.
+      onProtocolUrl = (url: string) => notificationService.handleProtocolUrl(url);
+      // Kaltstart über eine Toast: URL steht bereits in den Startargumenten.
+      const initialUrl = findProtocolUrl(process.argv);
+      if (initialUrl) onProtocolUrl(initialUrl);
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
         detailsWindow.notifyUpdate(snapshots);

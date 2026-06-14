@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import fsSync from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { Notification } from "electron";
 import type { NotificationConstructorOptions } from "electron";
 import type { UsageSnapshot } from "../providers/types";
@@ -88,18 +89,32 @@ export class NotificationService {
   }
 
   sendTest(): void {
-    const notification = new Notification({
-      title: "QuotaBar",
-      body: "Testbenachrichtigung – Benachrichtigungen funktionieren.",
-      ...(this.actionHandlers ? { actions: [{ type: "button" as const, text: "Öffnen" }] } : {}),
-    });
+    const withActions = this.actionHandlers != null;
+    const notification = new Notification(
+      // Auf Windows muss die Toast-Aktivierung über das quotabar://-Protokoll
+      // laufen, weil Windows beim Klick einen neuen Prozess startet statt die
+      // on('click')/on('action')-Handler der laufenden Instanz auszulösen.
+      process.platform === "win32"
+        ? { toastXml: buildTestToastXml(withActions) }
+        : {
+            title: "QuotaBar",
+            body: "Testbenachrichtigung – Benachrichtigungen funktionieren.",
+            ...(withActions ? { actions: [{ type: "button" as const, text: "Öffnen" }] } : {}),
+          },
+    );
+    // Fallback für macOS bzw. Fälle, in denen die Events doch feuern.
     notification.on("click", () => this.actionHandlers?.openDashboard());
     notification.on("action", () => this.actionHandlers?.openDashboard());
     notification.show();
   }
 
   private show(event: NotificationEvent): void {
-    const notification = new Notification(buildNotificationOptions(event, this.actionHandlers != null));
+    const withActions = this.actionHandlers != null;
+    const notification = new Notification(
+      process.platform === "win32"
+        ? { toastXml: buildToastXml(event, withActions) }
+        : buildNotificationOptions(event, withActions),
+    );
     notification.on("click", () => this.actionHandlers?.openDashboard());
     notification.on("action", (details, legacyIndex) => {
       // Neuere Electron-Versionen liefern details.actionIndex, ältere den Index als 2. Argument
@@ -109,6 +124,31 @@ export class NotificationService {
       else if (index === 1) void this.muteRuleFromNotification(event.ruleId);
     });
     notification.show();
+  }
+
+  /**
+   * Verarbeitet eine quotabar://-Aktivierung aus einer Windows-Toast.
+   * Aufgerufen aus dem second-instance-Handler (App lief bereits) bzw. beim
+   * Kaltstart mit der Protokoll-URL in process.argv.
+   *   quotabar://open            → Dashboard öffnen
+   *   quotabar://mute?rule=<id>  → Regel stummschalten (ohne Dashboard zu öffnen)
+   */
+  handleProtocolUrl(rawUrl: string): void {
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      return;
+    }
+    if (parsed.protocol !== "quotabar:") return;
+    // Bei quotabar://open landet "open" im hostname; defensiv auch pathname prüfen.
+    const action = (parsed.hostname || parsed.pathname.replace(/^\/+/, "")).toLowerCase();
+    if (action === "mute") {
+      const ruleId = parsed.searchParams.get("rule");
+      if (ruleId) void this.muteRuleFromNotification(ruleId);
+      return;
+    }
+    this.actionHandlers?.openDashboard();
   }
 
   private async muteRuleFromNotification(ruleId: string): Promise<void> {
@@ -148,6 +188,56 @@ export function buildNotificationOptions(event: NotificationEvent, withActions =
       ],
     } : {}),
   };
+}
+
+function escapeXml(value: string): string {
+  return value.replace(/[<>&"']/g, (c) =>
+    c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === "&" ? "&amp;" : c === '"' ? "&quot;" : "&apos;",
+  );
+}
+
+/**
+ * Baut das Windows-ToastGeneric-XML mit Protokoll-Aktivierung. Der Body-Klick
+ * (launch) und beide Buttons aktivieren quotabar://-URLs, die Windows an die
+ * (laufende) App weiterreicht – siehe NotificationService.handleProtocolUrl.
+ */
+export function buildToastXml(event: NotificationEvent, withActions = false): string {
+  const icon = getProviderLogoPath(event.provider);
+  const imageXml = icon
+    ? `<image placement="appLogoOverride" src="${escapeXml(pathToFileURL(icon).href)}"/>`
+    : "";
+  const muteArg = `quotabar://mute?rule=${encodeURIComponent(event.ruleId)}`;
+  const actionsXml = withActions
+    ? `<actions>` +
+      `<action content="Öffnen" activationType="protocol" arguments="quotabar://open"/>` +
+      `<action content="Stumm" activationType="protocol" arguments="${escapeXml(muteArg)}"/>` +
+      `</actions>`
+    : "";
+  return (
+    `<toast activationType="protocol" launch="quotabar://open">` +
+    `<visual><binding template="ToastGeneric">` +
+    imageXml +
+    `<text>${escapeXml(event.title)}</text>` +
+    `<text>${escapeXml(event.body)}</text>` +
+    `</binding></visual>` +
+    actionsXml +
+    `</toast>`
+  );
+}
+
+export function buildTestToastXml(withActions = false): string {
+  const actionsXml = withActions
+    ? `<actions><action content="Öffnen" activationType="protocol" arguments="quotabar://open"/></actions>`
+    : "";
+  return (
+    `<toast activationType="protocol" launch="quotabar://open">` +
+    `<visual><binding template="ToastGeneric">` +
+    `<text>QuotaBar</text>` +
+    `<text>Testbenachrichtigung – Benachrichtigungen funktionieren.</text>` +
+    `</binding></visual>` +
+    actionsXml +
+    `</toast>`
+  );
 }
 
 function getProviderLogoPath(provider: string): string | undefined {

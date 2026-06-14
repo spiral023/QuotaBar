@@ -3,6 +3,12 @@
 
 window.QB = window.QB || {};
 
+// IIFE-gekapselt, damit top-level let/const/function (z. B. _initialized,
+// _minDate, PRESETS) nicht mit gleichnamigen Symbolen anderer Tab-Skripte im
+// gemeinsamen globalen Scope kollidieren (sonst SyntaxError beim Laden des
+// nachfolgenden history.js → QB.renderHistory bliebe undefiniert).
+(function () {
+
 let _lineChart    = null;
 let _donutChart   = null;
 let _initialized  = false;
@@ -12,6 +18,7 @@ let _from         = null;
 let _to           = null;
 let _lastData     = null;     // aktuell gerendertes AnalyticsData (für Chart-Toggles)
 let _chartMode    = 'cost';   // 'cost' | 'roi'
+let _agg          = 'daily';  // 'daily' | 'weekly' | 'monthly' (Auflösung des Linien-Charts)
 const _cache      = new Map(); // `${from}:${to}` → AnalyticsData
 
 const PRESETS = [
@@ -146,6 +153,12 @@ function _buildControls(container) {
         <span class="hr-date-sep" aria-hidden="true">–</span>
         <input class="hr-date-input" type="date" id="an-to" value="${_to ?? today}" aria-label="Bis" title="Enddatum">
       </div>
+      <div class="hr-tb-sep" aria-hidden="true"></div>
+      <div class="hr-seg" id="an-agg-pills" role="group" aria-label="Auflösung">
+        <button class="hr-seg-btn${_agg === 'daily'   ? ' active' : ''}" data-agg="daily"   title="Täglich">Tag</button>
+        <button class="hr-seg-btn${_agg === 'weekly'  ? ' active' : ''}" data-agg="weekly"  title="Wöchentlich">Wo</button>
+        <button class="hr-seg-btn${_agg === 'monthly' ? ' active' : ''}" data-agg="monthly" title="Monatlich">Mon</button>
+      </div>
     </div>
     <div id="an-results"></div>
   `;
@@ -169,6 +182,19 @@ function _buildControls(container) {
       _from = document.getElementById('an-from').value;
       _to   = document.getElementById('an-to').value;
       _loadAndRender();
+    });
+  });
+
+  // Auflösungs-Umschaltung (Tag/Woche/Monat): betrifft nur den Linien-Chart,
+  // daher nur lokal neu aggregieren statt erneut per IPC zu laden.
+  container.querySelectorAll('#an-agg-pills .hr-seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('active')) return;
+      container.querySelectorAll('#an-agg-pills .hr-seg-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _agg = btn.dataset.agg;
+      _updateLineTitle();
+      if (_lastData) _buildLineChart(_lastData);
     });
   });
 }
@@ -291,9 +317,13 @@ function _renderResults(data) {
 
 function _lineTitle() {
   const winLabel = _winLabel();
-  return _chartMode === 'roi'
-    ? `API-ÄQUIVALENT-FAKTOR · LAUFEND (${winLabel})`
-    : `API-KOSTEN PRO TAG (${winLabel})`;
+  if (_chartMode === 'roi') {
+    return `API-ÄQUIVALENT-FAKTOR · LAUFEND (${winLabel})`;
+  }
+  const per = _agg === 'monthly' ? 'Ø API-KOSTEN/TAG · MONAT'
+            : _agg === 'weekly'  ? 'Ø API-KOSTEN/TAG · WOCHE'
+            : 'API-KOSTEN PRO TAG';
+  return `${per} (${winLabel})`;
 }
 
 // Laufender ("kumulativer") ROI je Anbieter: an jedem Tag das Verhältnis der bis
@@ -308,24 +338,75 @@ function _cumulativeRoiSeries(buckets, costKey, subKey) {
   });
 }
 
+// ISO-Wochenanfang (Montag) als YYYY-MM-DD.
+function _isoWeekStart(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() - (day - 1));
+  return d.toISOString().slice(0, 10);
+}
+
+function _isoWeekNum(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d - yearStart) / 864e5 + 1) / 7);
+}
+
+// Aggregiert Tages-Buckets zu Tag/Woche/Monat. Jeder Bucket trägt die
+// aufsummierten USD-Werte sowie die Anzahl enthaltener Tage (days) – so lässt
+// sich daraus sowohl der Tagesdurchschnitt (Kosten) als auch der laufende ROI
+// (über die Summen) bilden.
+function _aggregateBuckets(daily, agg) {
+  if (agg === 'daily') {
+    return daily.map(b => ({
+      date: b.date, days: 1,
+      claudeUSD: b.claudeUSD || 0, codexUSD: b.codexUSD || 0,
+      claudeSubUSD: b.claudeSubUSD || 0, codexSubUSD: b.codexSubUSD || 0,
+    }));
+  }
+  const keyOf = agg === 'weekly'
+    ? (b) => _isoWeekStart(b.date)
+    : (b) => b.date.slice(0, 7) + '-01';
+  const map = new Map();
+  for (const b of daily) {
+    const key = keyOf(b);
+    let e = map.get(key);
+    if (!e) { e = { date: key, days: 0, claudeUSD: 0, codexUSD: 0, claudeSubUSD: 0, codexSubUSD: 0 }; map.set(key, e); }
+    e.claudeUSD    += b.claudeUSD    || 0;
+    e.codexUSD     += b.codexUSD     || 0;
+    e.claudeSubUSD += b.claudeSubUSD || 0;
+    e.codexSubUSD  += b.codexSubUSD  || 0;
+    e.days += 1;
+  }
+  return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function _bucketLabel(dateStr, agg) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  if (agg === 'monthly') return d.toLocaleDateString('de-AT', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+  if (agg === 'weekly')  return 'KW ' + _isoWeekNum(dateStr);
+  return d.toLocaleDateString('de-AT', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+}
+
 function _buildLineChart(data) {
   if (_lineChart) { _lineChart.destroy(); _lineChart = null; }
   const ctx = document.getElementById('an-line-canvas');
   if (!ctx || typeof Chart === 'undefined') return;
 
-  const buckets = data.dailyBuckets || [];
-  const labels  = buckets.map(b => {
-    const d = new Date(b.date);
-    return d.toLocaleDateString('de-AT', { day: '2-digit', month: 'short' });
-  });
+  const buckets = _aggregateBuckets(data.dailyBuckets || [], _agg);
+  const labels  = buckets.map(b => _bucketLabel(b.date, _agg));
 
   const isRoi = _chartMode === 'roi';
+  // Kosten: Ø $/Tag je Bucket (bei 'daily' == Tageswert). ROI: laufender
+  // kumulativer Faktor über die aufsummierten Bucket-Werte.
   const claudeData = isRoi
     ? _cumulativeRoiSeries(buckets, 'claudeUSD', 'claudeSubUSD')
-    : buckets.map(b => b.claudeUSD);
+    : buckets.map(b => b.days > 0 ? b.claudeUSD / b.days : 0);
   const codexData = isRoi
     ? _cumulativeRoiSeries(buckets, 'codexUSD', 'codexSubUSD')
-    : buckets.map(b => b.codexUSD);
+    : buckets.map(b => b.days > 0 ? b.codexUSD / b.days : 0);
 
   // Plan-Wechsel-Marker (beide Modi): Bucket-Datum → Chart-Index.
   const dayKeys = buckets.map(b => b.date);
@@ -657,3 +738,5 @@ function _buildCostEfficiency(data) {
     `;
   }
 }
+
+})();
