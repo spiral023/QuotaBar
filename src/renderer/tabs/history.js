@@ -6,6 +6,7 @@ window.QB = window.QB || {};
 let _barChart    = null;
 let _initialized = false;
 let _lastRows    = [];
+let _lastReport  = null;
 let _chartMode   = 'cost';   // 'cost' | 'tokens'
 let _tokenMode   = 'output'; // 'total' | 'input' | 'output' | 'cache'
 let _minDate      = null;
@@ -250,10 +251,11 @@ function _renderChart() {
   const titleEl = document.getElementById('hr-chart-title');
   if (titleEl) titleEl.textContent = _chartMode === 'cost' ? 'KOSTEN PRO PERIODE' : `${titleMap[_tokenMode]} PRO PERIODE`;
 
+  const changes = QB.charts.mapChangesToIndex(_lastReport?.planChanges || [], labels);
   _barChart = QB.charts.createStackedBar(ctx, labels, [
     { label: 'Claude', data: claudeData, backgroundColor: 'rgba(218,120,91,0.85)',  borderRadius: 2 },
     { label: 'Codex',  data: codexData,  backgroundColor: 'rgba(75,85,200,0.85)',   borderRadius: 2 },
-  ], { yFormat: _chartMode === 'tokens' ? 'tokens' : 'cost' });
+  ], { yFormat: _chartMode === 'tokens' ? 'tokens' : 'cost', planChanges: changes });
 }
 
 function _bindChartToggles() {
@@ -309,6 +311,7 @@ function _renderResults(report, agg) {
   const rawRows = report.rows ?? [];
   const totals  = report.totals ?? {};
   // Chart uses gap-filled data; table/summaries use real data only
+  _lastReport = report;
   _lastRows = _showEmpty ? _fillEmptyBuckets(rawRows, agg ?? 'daily') : rawRows;
   const rows = rawRows;
 
