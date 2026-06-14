@@ -10,6 +10,17 @@ import type { TokensDaySummaryEvent, TokensUsageEvent } from "./debugEvents";
 import { log } from "./logging";
 import { loadManifest, saveManifest, fileSignature, diffSources, type BackfillManifest } from "./backfillManifest";
 
+/**
+ * Wird bei jedem Fix erhöht, der ein einmaliges Neuberechnen aller bereits
+ * geschriebenen Backfill-Tagessätze erfordert. Beim Start vergleicht main.ts diese
+ * Zahl mit der persistierten Reparatur-Version; bei Rückstand läuft einmalig ein
+ * Force-Rebuild.
+ *
+ * 1 = Partial-Rewrite-Bug behoben (Tagessätze wurden aus nur den geänderten
+ *     Quelldateien neu geschrieben → Datenverlust unveränderter Dateien).
+ */
+export const BACKFILL_REPAIR_VERSION = 1;
+
 export interface BackfillOptions {
   recorder: DebugRecorder;
   logDir: string;
@@ -56,21 +67,49 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
 
   // Nur geänderte/neue Dateien parsen (bzw. bei force: alle).
   const changedSet = new Set(opts.force ? Object.keys(currentSources) : changed);
-  const claudeToRead = claudeRefs.filter((r) => changedSet.has(r.file));
-  const codexToRead = codexRefs.filter((r) => changedSet.has(r.file));
+  const claudeChanged = claudeRefs.filter((r) => changedSet.has(r.file));
+  const codexChanged = codexRefs.filter((r) => changedSet.has(r.file));
 
-  const claudeEntries = await readClaudeUsageEntriesFromFiles(claudeToRead).catch((err: unknown) => {
+  const readClaude = (refs: SourceFileRef[]) => readClaudeUsageEntriesFromFiles(refs).catch((err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`Backfill: Claude reader failed: ${msg}`);
     errors.push(`claude: ${msg}`);
     return [] as ClaudeUsageEntry[];
   });
-  const codexEvents = await readCodexTokensFromFiles(codexToRead).catch((err: unknown) => {
+  const readCodex = (refs: CodexSourceFileRef[]) => readCodexTokensFromFiles(refs).catch((err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`Backfill: Codex reader failed: ${msg}`);
     errors.push(`codex: ${msg}`);
     return [] as CodexTokenEvent[];
   });
+
+  const claudeChangedEntries = await readClaude(claudeChanged);
+  const codexChangedEvents = await readCodex(codexChanged);
+
+  // Ein Tagessatz wird aus ALLEN Quelldateien dieses Tages aggregiert. Die geänderten
+  // Dateien bestimmen, welche Tage neu geschrieben werden; für genau diese Tage müssen
+  // aber auch die Beiträge UNVERÄNDERTER Dateien erneut gelesen werden — sonst gehen sie
+  // beim Löschen+Neuschreiben der Tagesdatei verloren (Tag wird sonst aus einer Teilmenge
+  // seiner Eingaben neu berechnet und schrumpft bei jedem inkrementellen Lauf).
+  // Der fingerprint-basierte Datei-Cache hält unveränderte Dateien im laufenden Prozess
+  // warm, daher bleibt der erneute Lesevorgang günstig.
+  const affectedDays = new Set<string>();
+  for (const e of claudeChangedEntries) { const k = utcDayKey(e.timestamp); if (k) affectedDays.add(k); }
+  for (const e of codexChangedEvents)   { const k = utcDayKey(e.timestamp); if (k) affectedDays.add(k); }
+
+  const onAffectedDay = (iso: string): boolean => {
+    const k = utcDayKey(iso);
+    return k !== null && affectedDays.has(k);
+  };
+  const claudeExtra = affectedDays.size > 0
+    ? (await readClaude(claudeRefs.filter((r) => !changedSet.has(r.file)))).filter((e) => onAffectedDay(e.timestamp))
+    : [];
+  const codexExtra = affectedDays.size > 0
+    ? (await readCodex(codexRefs.filter((r) => !changedSet.has(r.file)))).filter((e) => onAffectedDay(e.timestamp))
+    : [];
+
+  const claudeEntries = [...claudeChangedEntries, ...claudeExtra];
+  const codexEvents = [...codexChangedEvents, ...codexExtra];
 
   const byDay = new Map<string, { claude: ClaudeUsageEntry[]; codex: CodexTokenEvent[] }>();
   for (const entry of claudeEntries) {

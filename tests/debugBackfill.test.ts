@@ -144,6 +144,51 @@ describe("runBackfill", () => {
     expect(summary.perModel["claude-sonnet-4-5"].costUSD).toBeCloseTo(0.0111, 6);
   });
 
+  it("preserves contributions from unchanged source files when only one file of a day changes", async () => {
+    // Ein Tag (2026-05-20) wird von ZWEI Quelldateien gespeist.
+    const sessA = path.join(claudeDir, "proj-a", "session-1.jsonl");
+    const sessB = path.join(claudeDir, "proj-b", "session-2.jsonl");
+    await writeClaudeJsonl(sessA, [
+      { type: "assistant", timestamp: "2026-05-20T08:00:00Z",
+        message: { id: "m1", model: "claude-sonnet-4-6",
+          usage: { input_tokens: 100, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+    ]);
+    await writeClaudeJsonl(sessB, [
+      { type: "assistant", timestamp: "2026-05-20T09:00:00Z",
+        message: { id: "m2", model: "claude-haiku-4-5",
+          usage: { input_tokens: 500, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+    ]);
+    const logDir = path.join(tmpDir, "debug");
+    const recorder = new DebugRecorder({ enabled: true, logDir });
+    const opts = { recorder, logDir, claudeProjectsDirs: [claudeDir], codexSessionsDirs: [codexDir] };
+
+    // Erster Lauf: beide Dateien fließen in den Tagessatz ein (100 + 500 = 600).
+    await runBackfill(opts);
+    await recorder.flush();
+
+    // Nur session-1 ändert sich (zusätzlicher Eintrag am selben Tag); session-2 bleibt unverändert.
+    await writeClaudeJsonl(sessA, [
+      { type: "assistant", timestamp: "2026-05-20T08:00:00Z",
+        message: { id: "m1", model: "claude-sonnet-4-6",
+          usage: { input_tokens: 100, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+      { type: "assistant", timestamp: "2026-05-20T08:30:00Z",
+        message: { id: "m3", model: "claude-sonnet-4-6",
+          usage: { input_tokens: 10, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+    ]);
+
+    // Zweiter Lauf: session-1 gilt als geändert, session-2 als unverändert.
+    await runBackfill(opts);
+    await recorder.flush();
+
+    const summary = (await fs.readFile(path.join(logDir, "2026-05-20.backfill.jsonl"), "utf8"))
+      .trim().split("\n").map((l) => JSON.parse(l))
+      .find((e) => e.kind === "tokens.daySummary" && e.provider === "claude");
+    expect(summary).toBeDefined();
+    // Der Beitrag der unveränderten session-2 (Modell + 500 Tokens) darf NICHT verloren gehen.
+    expect(Object.keys(summary.perModel)).toContain("claude-haiku-4-5");
+    expect(summary.input).toBe(610); // 100 + 10 (session-1) + 500 (session-2)
+  });
+
   it("force=true regenerates existing backfill files", async () => {
     await writeClaudeJsonl(path.join(claudeDir, "proj", "session.jsonl"), [
       { type: "assistant", timestamp: "2026-05-20T14:00:00Z",
