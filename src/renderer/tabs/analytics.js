@@ -297,15 +297,14 @@ function _lineTitle() {
 }
 
 // Laufender ("kumulativer") ROI je Anbieter: an jedem Tag das Verhältnis der bis
-// dahin aufgelaufenen API-Kosten zu den anteiligen Abokosten (Monatsabo/30 × Tage).
-// Pendelt sich auf den Gesamt-ROI ein, den der Donut zeigt.
-function _cumulativeRoiSeries(buckets, costKey, monthlySub) {
-  const perDaySub = monthlySub / 30;
-  let cumCost = 0;
-  return buckets.map((b, i) => {
+// dahin aufgelaufenen API-Kosten zu den bis dahin aufgelaufenen Abokosten (USD).
+// Liefert null, solange keine Abo-Baseline existiert (kein Plan ⇒ Lücke).
+function _cumulativeRoiSeries(buckets, costKey, subKey) {
+  let cumCost = 0, cumSub = 0;
+  return buckets.map(b => {
     cumCost += b[costKey] ?? 0;
-    const cumSub = perDaySub * (i + 1);
-    return cumSub > 0 ? cumCost / cumSub : 0;
+    cumSub  += b[subKey]  ?? 0;
+    return cumSub > 0 ? cumCost / cumSub : null;
   });
 }
 
@@ -321,13 +320,20 @@ function _buildLineChart(data) {
   });
 
   const isRoi = _chartMode === 'roi';
-  const sub   = data.subscriptionCostUSD ?? { claude: 0, codex: 0 };
   const claudeData = isRoi
-    ? _cumulativeRoiSeries(buckets, 'claudeUSD', sub.claude ?? 0)
+    ? _cumulativeRoiSeries(buckets, 'claudeUSD', 'claudeSubUSD')
     : buckets.map(b => b.claudeUSD);
   const codexData = isRoi
-    ? _cumulativeRoiSeries(buckets, 'codexUSD', sub.codex ?? 0)
+    ? _cumulativeRoiSeries(buckets, 'codexUSD', 'codexSubUSD')
     : buckets.map(b => b.codexUSD);
+
+  // Plan-Wechsel-Marker (beide Modi): Bucket-Datum → Chart-Index.
+  const dayKeys = buckets.map(b => b.date);
+  const changes = QB.charts.mapChangesToIndex(data.planChanges || [], dayKeys);
+
+  // "Kein Abo"-Hinweis (nur ROI): keine Abo-Baseline im sichtbaren Bereich.
+  const totalSub = buckets.reduce((s, b) => s + (b.claudeSubUSD || 0) + (b.codexSubUSD || 0), 0);
+  _renderNoPlanChip(isRoi && totalSub === 0);
 
   _lineChart = QB.charts.createLine(ctx, labels, [
     {
@@ -352,7 +358,31 @@ function _buildLineChart(data) {
       tension: 0.3,
       fill: true,
     },
-  ], { yFormat: isRoi ? 'roi' : 'cost' });
+  ], { yFormat: isRoi ? 'roi' : 'cost', planChanges: changes });
+}
+
+// Zeigt/entfernt einen kleinen Hinweis-Chip über dem Linien-Chart, wenn im
+// ROI-Modus keine Abo-Baseline hinterlegt ist. Klick navigiert zum Abos-Tab.
+function _renderNoPlanChip(show) {
+  const existing = document.getElementById('an-noplan-chip');
+  if (!show) { existing?.remove(); return; }
+  if (existing) return;
+
+  const wrap = document.querySelector('.an-chart-wrap');
+  if (!wrap) return;
+
+  const chip = document.createElement('div');
+  chip.id = 'an-noplan-chip';
+  chip.className = 'an-noplan-chip';
+  chip.setAttribute('role', 'button');
+  chip.setAttribute('tabindex', '0');
+  chip.textContent = 'Kein Abo hinterlegt — im Tab ‚Abos‘ einrichten';
+  const go = () => document.getElementById('tab-plans')?.click();
+  chip.addEventListener('click', go);
+  chip.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+  });
+  wrap.parentNode.insertBefore(chip, wrap);
 }
 
 function _bindLineToggles() {
