@@ -20,6 +20,19 @@ export interface WindowBudgetSeries {
   fiveHourResets: string[];
 }
 
+export interface WeeklySeriesRequest {
+  provider: string;
+  windowStartMs: number;
+  planType?: string | null;
+}
+
+interface SeriesState {
+  buckets: Map<number, number>;
+  resets: string[];
+  prevFivePct: number | null;
+  prevFiveResetsAt: string | null;
+}
+
 /**
  * Liest die Weekly-Auslastung eines Providers aus den Live-Debug-Logs als
  * Zeitreihe (gebuckted) und markiert 5h-Fenster-Resets. Quelle sind die
@@ -33,14 +46,39 @@ export async function readWeeklySeries(
   bucketMinutes = 30,
   planType?: string | null,
 ): Promise<WindowBudgetSeries> {
-  const empty: WindowBudgetSeries = { points: [], fiveHourResets: [] };
+  const [series] = await readWeeklySeriesForProviders(
+    logDir,
+    [{ provider, windowStartMs, planType }],
+    nowMs,
+    bucketMinutes,
+  );
+  return series ?? { points: [], fiveHourResets: [] };
+}
+
+/**
+ * Wie {@link readWeeklySeries}, aber für mehrere (provider, planType)-Requests
+ * in einem einzigen Lese-/Parse-Durchlauf über die Log-Dateien. Jeder Snapshot
+ * wird nur einmal geparst und allen passenden Requests zugeordnet; das Ergebnis-
+ * Array ist parallel zum `requests`-Array indiziert.
+ */
+export async function readWeeklySeriesForProviders(
+  logDir: string,
+  requests: WeeklySeriesRequest[],
+  nowMs: number,
+  bucketMinutes = 30,
+): Promise<WindowBudgetSeries[]> {
+  if (requests.length === 0) return [];
+  const emptyAll = (): WindowBudgetSeries[] => requests.map(() => ({ points: [], fiveHourResets: [] }));
   let entries: string[];
   try {
     entries = await fs.readdir(logDir);
   } catch {
-    return empty;
+    return emptyAll();
   }
-  const startKey = utcDateKey(new Date(windowStartMs));
+  // Datei-Filter über das früheste Fenster aller Requests; die genaue
+  // tsMs-Grenze wird pro Request weiter unten geprüft.
+  const minStartMs = Math.min(...requests.map((r) => r.windowStartMs));
+  const startKey = utcDateKey(new Date(minStartMs));
   const files = entries
     .map((e) => LIVE_LOG_RE.exec(e))
     .filter((m): m is RegExpExecArray => m !== null && m[1] >= startKey)
@@ -48,10 +86,12 @@ export async function readWeeklySeries(
     .map((m) => path.join(logDir, m[0]));
 
   const bucketMs = bucketMinutes * 60_000;
-  const buckets = new Map<number, number>();
-  const resets: string[] = [];
-  let prevFivePct: number | null = null;
-  let prevFiveResetsAt: string | null = null;
+  const states: SeriesState[] = requests.map(() => ({
+    buckets: new Map<number, number>(),
+    resets: [],
+    prevFivePct: null,
+    prevFiveResetsAt: null,
+  }));
 
   for (const file of files) {
     try {
@@ -68,32 +108,38 @@ export async function readWeeklySeries(
         } catch {
           continue;
         }
-        if (event.kind !== "snapshot" || event.provider !== provider || event.status !== "ok") continue;
-        // Filter by planType before bucketing AND reset detection so that
-        // account-switches (different planType) are never mistaken for 5h resets.
-        if (typeof planType === "string" && event.planType !== planType) continue;
+        if (event.kind !== "snapshot" || event.status !== "ok") continue;
         const ts = typeof event.ts === "string" ? event.ts : null;
         if (!ts) continue;
         const tsMs = new Date(ts).getTime();
-        if (Number.isNaN(tsMs) || tsMs < windowStartMs || tsMs > nowMs) continue;
+        if (Number.isNaN(tsMs) || tsMs > nowMs) continue;
         const windows = Array.isArray(event.windows) ? (event.windows as Array<Record<string, unknown>>) : [];
         const weekly = windows.find((w) => w.name === "weekly");
         const five = windows.find((w) => w.name === "fiveHour");
-        if (typeof weekly?.usedPercent === "number") {
-          buckets.set(Math.floor(tsMs / bucketMs) * bucketMs, weekly.usedPercent);
-        }
-        if (typeof five?.usedPercent === "number") {
-          const fiveResetsAt = typeof five.resetsAt === "string" ? five.resetsAt : null;
-          // Codex idle windows roll resetsAt forward on every poll (ts+5h) while
-          // usage stays flat/rising — only count a resetsAt change as a genuine
-          // reset when usage also decreased (a real rollover empties the window).
-          if (resetsAtChanged(prevFiveResetsAt, fiveResetsAt) && prevFivePct !== null && five.usedPercent < prevFivePct) {
-            resets.push(ts);
-          } else if (prevFivePct !== null && five.usedPercent < prevFivePct - RESET_DROP_PCT) {
-            resets.push(ts);
+        for (let i = 0; i < requests.length; i++) {
+          const req = requests[i];
+          if (event.provider !== req.provider) continue;
+          // Filter by planType before bucketing AND reset detection so that
+          // account-switches (different planType) are never mistaken for 5h resets.
+          if (typeof req.planType === "string" && event.planType !== req.planType) continue;
+          if (tsMs < req.windowStartMs) continue;
+          const st = states[i];
+          if (typeof weekly?.usedPercent === "number") {
+            st.buckets.set(Math.floor(tsMs / bucketMs) * bucketMs, weekly.usedPercent);
           }
-          prevFivePct = five.usedPercent;
-          prevFiveResetsAt = fiveResetsAt;
+          if (typeof five?.usedPercent === "number") {
+            const fiveResetsAt = typeof five.resetsAt === "string" ? five.resetsAt : null;
+            // Codex idle windows roll resetsAt forward on every poll (ts+5h) while
+            // usage stays flat/rising — only count a resetsAt change as a genuine
+            // reset when usage also decreased (a real rollover empties the window).
+            if (resetsAtChanged(st.prevFiveResetsAt, fiveResetsAt) && st.prevFivePct !== null && five.usedPercent < st.prevFivePct) {
+              st.resets.push(ts);
+            } else if (st.prevFivePct !== null && five.usedPercent < st.prevFivePct - RESET_DROP_PCT) {
+              st.resets.push(ts);
+            }
+            st.prevFivePct = five.usedPercent;
+            st.prevFiveResetsAt = fiveResetsAt;
+          }
         }
       }
     } catch {
@@ -101,10 +147,12 @@ export async function readWeeklySeries(
     }
   }
 
-  const points = [...buckets.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([ms, pct]) => ({ t: new Date(ms).toISOString(), weeklyPct: pct }));
-  return { points: insertBreaks(removeSpikes(points)), fiveHourResets: resets };
+  return states.map((st) => {
+    const points = [...st.buckets.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([ms, pct]) => ({ t: new Date(ms).toISOString(), weeklyPct: pct }));
+    return { points: insertBreaks(removeSpikes(points)), fiveHourResets: st.resets };
+  });
 }
 
 /** Entfernt isolierte Ausreißer-Buckets (transiente weekly=100-Spikes der API). */

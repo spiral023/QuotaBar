@@ -17,7 +17,7 @@ import { dailySubCostUSD, periodSubCostUSD, planChangePoints, type PlanChangePoi
 import { makeFxLookup } from "../pricing/fx-fetcher";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
 import { buildWeeklyProfile, computeWeeklyForecast, type WeeklyForecastResult } from "./weeklyForecast";
-import { readWeeklySeries, type WindowBudgetSeries } from "./windowBudgetSeries";
+import { readWeeklySeriesForProviders, type WindowBudgetSeries } from "./windowBudgetSeries";
 import { readWindowHistoryObservations } from "./windowHistoryReader";
 import { buildWindowHistory, type WindowHistoryEntry } from "../usage/windowHistory";
 import type { UsagePace } from "../usage/usagePace";
@@ -199,10 +199,22 @@ async function buildWindowBudgetData(input: WindowBudgetTaskInput): Promise<Wind
   const now = new Date(input.nowMs);
   const records = await readBackfillDayRecords(input.logDir, new Date(input.nowMs - 28 * DAY_MS));
   const perProvider: Record<string, WindowBudgetProviderData> = {};
-  for (const p of input.providers) {
+  const windowStarts = input.providers.map((p) => {
     const resetMs = p.weeklyResetsAt ? new Date(p.weeklyResetsAt).getTime() : null;
-    const windowStartMs = resetMs !== null && !Number.isNaN(resetMs) ? resetMs - WEEK_MS : input.nowMs - WEEK_MS;
-    const series = await readWeeklySeries(input.logDir, p.provider, windowStartMs, input.nowMs, 30, p.planType);
+    return resetMs !== null && !Number.isNaN(resetMs) ? resetMs - WEEK_MS : input.nowMs - WEEK_MS;
+  });
+  // Alle Provider-Serien in einem einzigen Log-Durchlauf lesen, statt die
+  // Dateien pro Provider erneut zu parsen.
+  const seriesList = await readWeeklySeriesForProviders(
+    input.logDir,
+    input.providers.map((p, i) => ({ provider: p.provider, windowStartMs: windowStarts[i], planType: p.planType })),
+    input.nowMs,
+    30,
+  );
+  for (let i = 0; i < input.providers.length; i++) {
+    const p = input.providers[i];
+    const windowStartMs = windowStarts[i];
+    const series = seriesList[i];
     const profile = buildWeeklyProfile(records, p.provider, now);
     const windowStartKey = new Date(windowStartMs).toISOString().slice(0, 10);
     const tokensInCurrentWindow = records

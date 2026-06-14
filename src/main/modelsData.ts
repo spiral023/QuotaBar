@@ -165,14 +165,15 @@ async function readBenchmarks(file: string): Promise<{ benchmarks: Record<string
 async function collectPricing(days: ModelDay[], settings: Settings): Promise<Record<string, ModelPricingRate>> {
   const fetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
   const result: Record<string, ModelPricingRate> = {};
-  const models = new Set(days.map(d => d.model));
-  for (const model of models) {
-    const p = await fetcher.getModelPricing(model);
-    if (!p || typeof p.input_cost_per_token !== "number") continue;
+  const models = [...new Set(days.map(d => d.model))];
+  const pricings = await Promise.all(models.map(m => fetcher.getModelPricing(m)));
+  models.forEach((model, i) => {
+    const p = pricings[i];
+    if (!p || typeof p.input_cost_per_token !== "number") return;
     result[model] = {
       inputPerMTok: p.input_cost_per_token * 1e6,
       cacheReadPerMTok: (p.cache_read_input_token_cost ?? 0) * 1e6,
     };
-  }
+  });
   return result;
 }

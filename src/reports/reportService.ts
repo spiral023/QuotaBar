@@ -256,8 +256,7 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, fe
     byModel.set(entry.model, list);
   }
 
-  const breakdowns: ModelBreakdown[] = [];
-  for (const [model, list] of byModel) {
+  const breakdowns: ModelBreakdown[] = await Promise.all([...byModel].map(async ([model, list]) => {
     const totals = list.reduce((acc, entry) => addEntryTotals(acc, entry), { ...ZERO_TOTALS });
     let costUSD = 0;
     if (mode !== "calculate") {
@@ -276,8 +275,8 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, fe
         }, pricing);
       }
     }
-    breakdowns.push({ model, ...totals, costUSD });
-  }
+    return { model, ...totals, costUSD };
+  }));
   return { totals: sumBreakdowns(breakdowns), breakdowns };
 }
 
@@ -288,8 +287,7 @@ async function costCodexBreakdowns(events: CodexTokenEvent[], fetcher: LiteLLMFe
     list.push(event);
     byModel.set(event.model, list);
   }
-  const breakdowns: ModelBreakdown[] = [];
-  for (const [model, list] of byModel) {
+  const breakdowns: ModelBreakdown[] = await Promise.all([...byModel].map(async ([model, list]) => {
     const totals = list.reduce((acc, event) => ({
       // INPUT shows uncached tokens only (input − cached), consistent with the
       // Claude reader and the live-tab path in subscription-factor.ts.
@@ -300,12 +298,12 @@ async function costCodexBreakdowns(events: CodexTokenEvent[], fetcher: LiteLLMFe
       totalTokens: acc.totalTokens + event.totalTokens,
       costUSD: 0,
     }), { ...ZERO_TOTALS });
-    breakdowns.push({
+    return {
       model,
       ...totals,
       costUSD: await calculateCodexApiCost(list, fetcher, speed),
-    });
-  }
+    };
+  }));
   return breakdowns;
 }
 

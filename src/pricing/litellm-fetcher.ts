@@ -68,12 +68,20 @@ const FALLBACK_PRICES: Record<string, ModelPricing> = {
 
 export class LiteLLMFetcher {
   private cache: Map<string, ModelPricing> | null = null;
+  // Memoisiert das Lookup-Ergebnis je Modellname (inkl. negativer Treffer als
+  // `null`), damit der lineare Fuzzy-Scan über die große Preis-Map nicht pro
+  // Event erneut läuft. Die Preisdaten sind pro Prozesslauf stabil.
+  private readonly lookupCache = new Map<string, ModelPricing | null>();
 
   constructor(private readonly offlineMode: boolean = false) {}
 
   async getModelPricing(modelName: string): Promise<ModelPricing | null> {
+    const cached = this.lookupCache.get(modelName);
+    if (cached !== undefined) return cached;
     const map = await this.getPricingMap();
-    return this.lookup(modelName, map);
+    const result = this.lookup(modelName, map);
+    this.lookupCache.set(modelName, result);
+    return result;
   }
 
   private async getPricingMap(): Promise<Map<string, ModelPricing>> {

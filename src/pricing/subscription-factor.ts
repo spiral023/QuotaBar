@@ -51,9 +51,18 @@ export class PricingEngine {
 
     let apiCostUSD = 0;
     const missingPricingModels = new Set<string>();
-    const entriesWithoutCost = entries.filter((entry) => entry.costUSD === undefined);
-    apiCostUSD += entries.reduce((sum, entry) => sum + (entry.costUSD ?? 0), 0);
-    const tokensToCalculate = aggregateClaudeEntries(entriesWithoutCost);
+    // Ein Durchlauf trennt Einträge mit vorberechneten Kosten von solchen ohne
+    // und summiert die bekannten Kosten — ersetzt den separaten filter+reduce.
+    const entriesWithoutCost: typeof entries = [];
+    for (const entry of entries) {
+      if (entry.costUSD === undefined) entriesWithoutCost.push(entry);
+      else apiCostUSD += entry.costUSD ?? 0;
+    }
+    // Haben alle Einträge keine vorberechneten Kosten (Claude-Normalfall), ist
+    // die Token-Aggregation identisch mit `tokens` — den zweiten Durchlauf sparen.
+    const tokensToCalculate = entriesWithoutCost.length === entries.length
+      ? tokens
+      : aggregateClaudeEntries(entriesWithoutCost);
     for (const [modelName, modelTokens] of Object.entries(tokensToCalculate.perModel)) {
       const pricing = await this.fetcher.getModelPricing(modelName);
       if (!pricing) { missingPricingModels.add(modelName); continue; }
