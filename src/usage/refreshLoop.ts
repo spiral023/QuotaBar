@@ -7,6 +7,7 @@ import { BurnRateTracker } from "./burnRateTracker";
 import type { PricingEngine } from "../pricing/subscription-factor";
 import type { DebugRecorder } from "../main/debugRecorder";
 import type { WindowRatioTracker } from "./windowRatio";
+import type { BonusResetTracker } from "./bonusReset";
 import { snapshotEvent } from "../main/debugEvents";
 import { computeBackoffMs } from "./backoff";
 import { classifyFetchError } from "./fetchErrorClassifier";
@@ -31,7 +32,8 @@ export class RefreshLoop {
     private readonly timeoutMs: number,
     private readonly pricingEngine?: PricingEngine,
     private readonly recorder?: DebugRecorder,
-    private readonly windowRatioTracker?: WindowRatioTracker
+    private readonly windowRatioTracker?: WindowRatioTracker,
+    private readonly bonusTracker?: BonusResetTracker
   ) {}
 
   onRefresh(listener: RefreshListener): () => void {
@@ -105,18 +107,34 @@ export class RefreshLoop {
             window.safetyGapSeconds = computeSafetyGap(window.resetsAt, window.pace, now);
           }
         }
-        if (this.windowRatioTracker && snapshot.status === "ok") {
+        if (snapshot.status === "ok") {
           const five = snapshot.windows.find((w) => w.name === "fiveHour");
           const weekly = snapshot.windows.find((w) => w.name === "weekly");
           if (typeof five?.usedPercent === "number" && typeof weekly?.usedPercent === "number") {
-            this.windowRatioTracker.record(snapshot.provider, {
-              fivePct: five.usedPercent,
-              weeklyPct: weekly.usedPercent,
-              fiveResetsAt: five.resetsAt ?? null,
-              planType: snapshot.planType ?? null,
-              ts: now.toISOString(),
-            });
-            snapshot.windowBudget = this.windowRatioTracker.getBudget(snapshot.provider, snapshot.planType ?? null, weekly.usedPercent);
+            if (this.windowRatioTracker) {
+              this.windowRatioTracker.record(snapshot.provider, {
+                fivePct: five.usedPercent,
+                weeklyPct: weekly.usedPercent,
+                fiveResetsAt: five.resetsAt ?? null,
+                planType: snapshot.planType ?? null,
+                ts: now.toISOString(),
+              });
+              snapshot.windowBudget = this.windowRatioTracker.getBudget(snapshot.provider, snapshot.planType ?? null, weekly.usedPercent);
+            }
+            if (this.bonusTracker) {
+              this.bonusTracker.record(snapshot.provider, snapshot.planType ?? null, {
+                usedPercent: weekly.usedPercent,
+                resetsAt: weekly.resetsAt ?? null,
+              });
+              // Bonus nur anhängen, wenn ein belastbares Budget vorliegt (nicht im Lernmodus).
+              if (snapshot.windowBudget && !snapshot.windowBudget.learning) {
+                const bonus = this.bonusTracker.getBonus(
+                  snapshot.provider, snapshot.planType ?? null,
+                  weekly.resetsAt ?? null, now.getTime(), snapshot.windowBudget.windowsPerWeek,
+                );
+                if (bonus) snapshot.windowBudget.bonus = bonus;
+              }
+            }
           }
         }
         if (this.pricingEngine) {

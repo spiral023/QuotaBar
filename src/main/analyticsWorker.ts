@@ -18,6 +18,8 @@ import { makeFxLookup } from "../pricing/fx-fetcher";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
 import { buildWeeklyProfile, computeWeeklyForecast, type WeeklyForecastResult } from "./weeklyForecast";
 import { readWeeklySeries, type WindowBudgetSeries } from "./windowBudgetSeries";
+import { readWindowHistoryObservations } from "./windowHistoryReader";
+import { buildWindowHistory, type WindowHistoryEntry } from "../usage/windowHistory";
 import type { UsagePace } from "../usage/usagePace";
 
 interface AnalyticsTaskInput {
@@ -63,14 +65,28 @@ export interface WindowBudgetData {
   perProvider: Record<string, WindowBudgetProviderData>;
 }
 
-type WorkerInput = AnalyticsTaskInput | ModelsTaskInput | WindowBudgetTaskInput;
+interface WindowHistoryTaskInput {
+  task: "windowHistory";
+  logDir: string;
+  nowMs: number;
+}
 
-async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData | ModelsData | WindowBudgetData> {
+export interface WindowHistoryData {
+  entries: WindowHistoryEntry[];
+}
+
+type WorkerInput = AnalyticsTaskInput | ModelsTaskInput | WindowBudgetTaskInput | WindowHistoryTaskInput;
+
+async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData | ModelsData | WindowBudgetData | WindowHistoryData> {
   if (input.task === "models") {
     return buildModelsData({ settings: input.settings });
   }
   if (input.task === "windowBudget") {
     return buildWindowBudgetData(input);
+  }
+  if (input.task === "windowHistory") {
+    const observations = await readWindowHistoryObservations(input.logDir);
+    return { entries: buildWindowHistory(observations, input.nowMs) };
   }
 
   const periodStart = new Date(input.periodStartMs);

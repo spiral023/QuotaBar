@@ -193,6 +193,20 @@ function windowBudgetRowHtml(snap) {
       <span>5h-Fenster: ${fmtWindows(wb.usedWindows)} verbraucht</span>
       <span>${fmtWindows(wb.remainingWindows)} übrig</span>
     </div>
+  </div>${bonusBadgeHtml(wb)}`;
+}
+
+function bonusBadgeHtml(wb) {
+  if (!wb.bonus || !wb.bonus.active) return '';
+  const extra = wb.bonus.estimatedExtraWindows;
+  const tip = 'Außerplanmäßiger Reset erkannt: Das Weekly-Budget wurde erneuert, ohne den '
+    + '7d-Reset-Zeitpunkt zu verschieben. Bis dahin steht effektiv zusätzliches Budget bereit.\n'
+    + 'Die Zahl ist eine grobe Schätzung und durch die verbleibende Zeit begrenzt.';
+  return `<div class="wb-bonus" data-tip="${QB.esc(tip)}">
+    <span class="wb-bonus-icon" aria-hidden="true">⚡</span>
+    <span class="wb-bonus-text">Bonus-Woche${extra >= 0.1
+      ? ` · ≈ +<span class="wb-bonus-num">${fmtWindows(extra)}</span> 5h-Fenster`
+      : ''}</span>
   </div>`;
 }
 

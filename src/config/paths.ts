@@ -43,6 +43,14 @@ export function getWindowRatioPath(): string {
   return path.join(getAppConfigDir(), "window-ratio.json");
 }
 
+export function getBonusStatePath(): string {
+  return path.join(getAppConfigDir(), "bonus-state.json");
+}
+
+export function getWindowHistoryPath(): string {
+  return path.join(getAppConfigDir(), "window-history.json");
+}
+
 export function getInstalledMarkerPath(): string {
   return path.join(getAppConfigDir(), ".installed");
 }

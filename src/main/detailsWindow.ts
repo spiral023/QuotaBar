@@ -6,11 +6,12 @@ import { loadSettings, saveSettings, normalizeNotificationSettings } from "../co
 import { log } from "./logging";
 import { generateUsageReport } from "../reports/reportService";
 import type { ReportRequest } from "../reports/types";
-import { getClaudeProjectsDirs, getCodexSessionsDirs, getDebugLogDir } from "../config/paths";
+import { getClaudeProjectsDirs, getCodexSessionsDirs, getDebugLogDir, getWindowHistoryPath } from "../config/paths";
+import { loadWindowHistoryFile, saveWindowHistoryFile, mergeWindowHistory } from "../usage/windowHistoryStore";
 import type { CostWindow, ViewMode } from "../config/settings";
 import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
 import type { ModelsData } from "./modelsData";
-import type { WindowBudgetData } from "./analyticsWorker";
+import type { WindowBudgetData, WindowHistoryData } from "./analyticsWorker";
 import type { NotificationService } from "./notifications";
 import type { DebugRecorder } from "./debugRecorder";
 import { AsyncResultCache } from "./asyncResultCache";
@@ -39,6 +40,7 @@ export class DetailsWindowController {
   private readonly analyticsDataCache = new AsyncResultCache<AnalyticsData>();
   private readonly modelsDataCache = new AsyncResultCache<ModelsData>();
   private readonly windowBudgetCache = new AsyncResultCache<WindowBudgetData>();
+  private readonly windowHistoryCache = new AsyncResultCache<WindowHistoryData>();
   private notificationService: NotificationService | null = null;
 
   constructor(
@@ -127,6 +129,7 @@ export class DetailsWindowController {
     this.analyticsDataCache.clear();
     this.modelsDataCache.clear();
     this.windowBudgetCache.clear();
+    this.windowHistoryCache.clear();
   }
 
   private pushUpdate(): void {
@@ -348,6 +351,32 @@ export class DetailsWindowController {
           providers,
         }) as Promise<WindowBudgetData>
       );
+    });
+
+    ipcMain.handle("windowHistory:get", async () => {
+      const settings = await loadSettings();
+      // Aus den Logs berechnete, abgeschlossene 7d-Fenster (gecached).
+      const computed = await this.windowHistoryCache.get("windowHistory", () =>
+        runAnalyticsWorker({
+          task: "windowHistory",
+          logDir: getDebugLogDir(),
+          nowMs: Date.now(),
+        }) as Promise<WindowHistoryData>
+      );
+      // Mit dem persistenten Store vereinen (überlebt gelöschte Logs) und speichern.
+      const histPath = getWindowHistoryPath();
+      const stored = await loadWindowHistoryFile(histPath);
+      const entries = mergeWindowHistory(stored.entries, computed.entries);
+      await saveWindowHistoryFile(histPath, { version: 2, entries }).catch((err: unknown) => {
+        log.warn(`Window-history save failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+      const sinceDay = entries[0]?.weekStart?.slice(0, 10);
+      const untilDay = new Date().toISOString().slice(0, 10);
+      const planChanges = sinceDay ? [
+        ...planChangePoints(settings.plans, "claude", sinceDay, untilDay),
+        ...planChangePoints(settings.plans, "codex", sinceDay, untilDay),
+      ] : [];
+      return { entries, planChanges };
     });
 
     ipcMain.handle("system:get", async () => {

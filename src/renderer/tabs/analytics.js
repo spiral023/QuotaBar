@@ -20,6 +20,10 @@ let _lastData     = null;     // aktuell gerendertes AnalyticsData (für Chart-T
 let _chartMode    = 'cost';   // 'cost' | 'roi'
 let _agg          = 'daily';  // 'daily' | 'weekly' | 'monthly' (Auflösung des Linien-Charts)
 const _cache      = new Map(); // `${from}:${to}` → AnalyticsData
+let _whChart      = null;      // Chart-Instanz der 5h-Fenster-Historie
+let _whData       = null;      // { entries, planChanges } (zeitraum-unabhängig gecacht)
+let _whMode       = 'util';    // 'util' | 'used' | 'max'
+let _whGen        = 0;         // Race-Schutz für den asynchron geladenen Verlauf
 
 const PRESETS = [
   { id: '7d',    label: 'Letzte 7 Tage' },
@@ -62,6 +66,7 @@ QB.prefetchAnalytics = function prefetchAnalytics() {
 
 QB.clearAnalyticsCache = function clearAnalyticsCache() {
   _cache.clear();
+  _whData = null; // Plan-/Settings-Änderung → Fenster-Historie neu laden
 };
 
 async function _fetchMinDate() {
@@ -195,6 +200,9 @@ function _buildControls(container) {
       _agg = btn.dataset.agg;
       _updateLineTitle();
       if (_lastData) _buildLineChart(_lastData);
+      // Auch die 5h-Fenster-Historie folgt der Auflösung (Woche ↔ Monat).
+      _updateWhTitle();
+      _buildWindowHistoryChart();
     });
   });
 }
@@ -299,6 +307,26 @@ function _renderResults(data) {
         <div id="an-roi-tiers"></div>
       </div>
     </div>
+
+    <div class="an-section">
+      <div class="an-section-head">
+        <span class="an-section-title" id="an-wh-title">${_whTitle()}</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <div class="an-window-pills" id="an-wh-pills">
+            <button class="pill${_whMode === 'util' ? ' active' : ''}" data-whmode="util">% genutzt</button>
+            <button class="pill${_whMode === 'used' ? ' active' : ''}" data-whmode="used">Genutzt</button>
+            <button class="pill${_whMode === 'max'  ? ' active' : ''}" data-whmode="max">Möglich</button>
+          </div>
+          <div class="hr-chart-legend">
+            <span class="hr-legend-dot" style="background:var(--claude-col)"></span><span>Claude</span>
+            <span class="hr-legend-dot" style="background:var(--codex-col)"></span><span>Codex</span>
+          </div>
+        </div>
+      </div>
+      <div class="an-wh-sub">5h-Fenster genutzt (≥5 %) vs. laut Nutzung mögliche Fenster je 7d-Fenster — zeigt, ob der Plan ausgereizt wird.</div>
+      <div class="an-chart-wrap"><canvas id="an-wh-canvas"></canvas></div>
+      <div id="an-wh-note" class="an-wh-empty" hidden></div>
+    </div>
   `;
 
   _lastData = data;
@@ -313,6 +341,7 @@ function _renderResults(data) {
   _buildFiveHourPeak(data);
   _buildWeeklySummary(data);
   _buildCostEfficiency(data);
+  void _renderWindowHistory();
 }
 
 function _lineTitle() {
@@ -737,6 +766,200 @@ function _buildCostEfficiency(data) {
       </table>
     `;
   }
+}
+
+// ── 5h-Fenster-Historie: ein Chart, beide Anbieter, umschaltbare Metrik ──────
+// Folgt dem Muster des Kosten/ROI-Linien-Charts: reagiert auf Datumswahl
+// (_from/_to) und Auflösung (_agg), umschaltbar zwischen Auslastung %, genutzten
+// und möglichen Fenstern.
+
+const _WH_SERIES = [
+  { id: 'claude', label: 'Claude', color: '#DA785B', bg: 'rgba(218,120,91,0.08)' },
+  { id: 'codex',  label: 'Codex',  color: '#4B55C8', bg: 'rgba(75,85,200,0.07)' },
+];
+
+function _whTitle() {
+  const m = _whMode === 'used' ? 'GENUTZTE 5H-FENSTER'
+          : _whMode === 'max'  ? 'MÖGLICHE 5H-FENSTER'
+          : '5H-FENSTER-AUSLASTUNG';
+  // Bewusst zeitraum-unabhängig (gesamter Verlauf); nur die Auflösung greift.
+  const unit = _agg === 'monthly' ? 'PRO MONAT' : 'PRO WOCHE';
+  return `${m} · ${unit}`;
+}
+
+function _updateWhTitle() {
+  const el = document.getElementById('an-wh-title');
+  if (el) el.textContent = _whTitle();
+}
+
+async function _renderWindowHistory() {
+  const canvas = document.getElementById('an-wh-canvas');
+  if (!canvas) return;
+  const token = ++_whGen;
+
+  if (!_whData) {
+    try {
+      _whData = await QB.ipc.invoke('windowHistory:get');
+    } catch (e) {
+      if (token !== _whGen) return;
+      console.error('windowHistory:get failed', e);
+      _whData = { entries: [], planChanges: [] };
+    }
+  }
+  if (token !== _whGen) return; // veralteter Load
+  _buildWindowHistoryChart();
+  _bindWhToggles();
+}
+
+// Gemeinsame Buckets über beide Anbieter, da deren 7d-Reset-Zeitpunkte nicht
+// aligned sind: monthly → Kalendermonat, sonst ISO-Kalenderwoche.
+function _whBucketKey(weekEndIso) {
+  const day = weekEndIso.slice(0, 10);
+  return _agg === 'monthly' ? day.slice(0, 7) : _isoWeekStart(day);
+}
+
+function _whBucketLabel(key) {
+  if (/^\d{4}-\d{2}$/.test(key)) {
+    const d = new Date(key + '-01T00:00:00Z');
+    return d.toLocaleDateString('de-AT', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+  }
+  return 'KW ' + _isoWeekNum(key);
+}
+
+function _buildWindowHistoryChart() {
+  if (_whChart) { _whChart.destroy(); _whChart = null; }
+  const ctx = document.getElementById('an-wh-canvas');
+  const note = document.getElementById('an-wh-note');
+  if (!ctx || typeof Chart === 'undefined') return;
+
+  const entries = (_whData && _whData.entries) || [];
+  const planChanges = (_whData && _whData.planChanges) || [];
+
+  // Bewusst NICHT nach dem Analytics-Zeitraum gefiltert: Diese Historie ist als
+  // Langzeit-Trend gedacht ("wird der Plan über die Wochen ausgereizt?") und
+  // zeigt alle erfassten 7d-Fenster. Nur die Auflösung (Woche/Monat) greift.
+
+  // Pro (Bucket, Anbieter) aggregieren: Ø genutzte, Ø mögliche Fenster, Bonus.
+  const buckets = new Map();
+  for (const e of entries) {
+    const key = _whBucketKey(e.weekEnd);
+    let b = buckets.get(key);
+    if (!b) { b = { key, repDay: e.weekStart.slice(0, 10), prov: {} }; buckets.set(key, b); }
+    if (e.weekStart.slice(0, 10) < b.repDay) b.repDay = e.weekStart.slice(0, 10);
+    let pp = b.prov[e.provider];
+    if (!pp) { pp = { used: 0, n: 0, max: 0, maxN: 0, bonus: false }; b.prov[e.provider] = pp; }
+    pp.used += e.usedWindows; pp.n += 1;
+    if (typeof e.maxWindows === 'number') { pp.max += e.maxWindows; pp.maxN += 1; }
+    if (e.bonus) pp.bonus = true;
+  }
+
+  const keys = [...buckets.keys()].sort();
+  if (!keys.length) {
+    if (note) { note.hidden = false; note.textContent = 'Noch keine abgeschlossene Woche erfasst — der Verlauf füllt sich mit der Zeit.'; }
+    return;
+  }
+  if (note) note.hidden = true;
+
+  const labels  = keys.map(_whBucketLabel);
+  const dayKeys = keys.map(k => buckets.get(k).repDay);
+  const isPct   = _whMode === 'util';
+
+  const valueOf = (pp) => {
+    if (!pp || pp.n === 0) return null;
+    const avgUsed = pp.used / pp.n;
+    const avgMax = pp.maxN > 0 ? pp.max / pp.maxN : null;
+    if (_whMode === 'used') return avgUsed;
+    if (_whMode === 'max') return avgMax;
+    return avgMax && avgMax > 0 ? (avgUsed / avgMax) * 100 : null;
+  };
+
+  const datasets = _WH_SERIES.map(s => {
+    const data = keys.map(k => {
+      const v = valueOf(buckets.get(k).prov[s.id]);
+      return v == null ? null : Number(v.toFixed(2));
+    });
+    const bonusFlags = keys.map(k => !!(buckets.get(k).prov[s.id] && buckets.get(k).prov[s.id].bonus));
+    return {
+      label: s.label,
+      data,
+      borderColor: s.color,
+      backgroundColor: s.bg,
+      borderWidth: 1.5,
+      tension: 0.3,
+      fill: false,
+      spanGaps: true,
+      pointRadius: bonusFlags.map(b => b ? 4 : 2),
+      pointHoverRadius: 5,
+      pointBackgroundColor: bonusFlags.map(b => b ? '#52d017' : s.color),
+      pointBorderColor: bonusFlags.map(b => b ? '#52d017' : s.color),
+    };
+  });
+
+  const changes = QB.charts.mapChangesToIndex(planChanges, dayKeys);
+
+  _whChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    plugins: [QB.charts.planChangePlugin],
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0f1319', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1,
+          titleColor: '#b4c8d8', bodyColor: '#8298aa', padding: 8,
+          callbacks: {
+            label: (item) => {
+              const v = item.parsed.y;
+              if (v == null) return ` ${item.dataset.label}: —`;
+              return isPct
+                ? ` ${item.dataset.label}: ${v.toFixed(0)} %`
+                : ` ${item.dataset.label}: ${_fmtWin(v)} Fenster`;
+            },
+            afterLabel: (item) => {
+              const b = buckets.get(keys[item.dataIndex]);
+              const s = _WH_SERIES[item.datasetIndex];
+              return (b && b.prov[s.id] && b.prov[s.id].bonus) ? '⚡ Bonus-Woche' : '';
+            },
+          },
+        },
+        planChanges: { changes },
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(255,255,255,0.04)' }, border: { color: 'rgba(255,255,255,0.07)' },
+          ticks: { color: QB.charts.mutedTextColor, font: { family: "'IBM Plex Mono', monospace", size: 9 },
+                   maxTicksLimit: 10, maxRotation: 0 },
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: 'rgba(255,255,255,0.04)' }, border: { color: 'rgba(255,255,255,0.07)' },
+          ticks: { color: QB.charts.mutedTextColor, font: { family: "'IBM Plex Mono', monospace", size: 9 },
+                   callback: (val) => isPct ? val + ' %' : _fmtWin(Number(val)) },
+        },
+      },
+    },
+  });
+}
+
+function _bindWhToggles() {
+  document.querySelectorAll('#an-wh-pills .pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('active')) return;
+      document.querySelectorAll('#an-wh-pills .pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _whMode = btn.dataset.whmode;
+      _updateWhTitle();
+      _buildWindowHistoryChart();
+    });
+  });
+}
+
+function _fmtWin(n) {
+  return n.toFixed(1).replace('.', ',');
 }
 
 })();

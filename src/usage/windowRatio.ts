@@ -143,6 +143,12 @@ export interface WindowBudget {
   usedWindows: number;
   remainingWindows: number;
   sampleFivePct: number;
+  /**
+   * Gesetzt, wenn in der laufenden 7d-Periode ein außerplanmäßiger Reset
+   * erkannt wurde (Weekly fiel, aber der 7d-Reset-Zeitpunkt blieb). Wird vom
+   * BonusResetTracker befüllt, nicht von computeBudget.
+   */
+  bonus?: { active: boolean; estimatedExtraWindows: number };
 }
 
 export interface WindowBudgetLearning {

@@ -15,9 +15,11 @@ import { initializeUpdater } from "./updater";
 import { NotificationService } from "./notifications";
 import { DebugRecorder } from "./debugRecorder";
 import { runBackfill } from "./debugBackfill";
-import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath } from "../config/paths";
+import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
 import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
+import { BonusResetTracker } from "../usage/bonusReset";
+import { loadBonusStateFile, saveBonusStateFile } from "../usage/bonusStateStore";
 import { seedFromDebugLogs } from "./windowRatioSeeder";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { loadCachedSnapshots, markSnapshotsFromCache, saveCachedSnapshots } from "../usage/snapshotCache";
@@ -105,7 +107,9 @@ if (!app.requestSingleInstanceLock()) {
             log.warn(`Window-ratio seed failed: ${err instanceof Error ? err.message : String(err)}`);
           });
       }
-      const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder, windowRatioTracker);
+      const bonusStatePath = getBonusStatePath();
+      const bonusTracker = new BonusResetTracker(await loadBonusStateFile(bonusStatePath));
+      const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder, windowRatioTracker, bonusTracker);
       const backfillFetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
       const tray = new TrayController(providers, refreshLoop, async () => {
         await runBackfill({
@@ -157,6 +161,9 @@ if (!app.requestSingleInstanceLock()) {
         });
         void saveWindowRatioFile(windowRatioPath, windowRatioTracker.getFile()).catch((err: unknown) => {
           log.warn(`Window-ratio save failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+        void saveBonusStateFile(bonusStatePath, bonusTracker.getFile()).catch((err: unknown) => {
+          log.warn(`Bonus-state save failed: ${err instanceof Error ? err.message : String(err)}`);
         });
       });
       refreshLoop.start();
