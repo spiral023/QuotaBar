@@ -21,6 +21,8 @@
   &middot;
   <a href="#provider-data">Provider Data</a>
   &middot;
+  <a href="#data-lifecycle">Data Lifecycle</a>
+  &middot;
   <a href="#dashboard-and-reports">Dashboard</a>
   &middot;
   <a href="#models-tab">Models</a>
@@ -108,6 +110,37 @@ QuotaBar reads credentials only from known provider paths:
 | <img src="logos/codex.png" width="18" alt="Codex logo"> Codex | `${CODEX_HOME:-~/.codex}/auth.json` plus usage endpoint | `${CODEX_HOME:-~/.codex}/sessions/**/*.jsonl` |
 
 Claude and Codex quota windows are fetched through unofficial provider endpoints. Those integrations are isolated in provider/auth modules and are treated as best-effort data sources.
+
+> **⚠️ Providers delete their usage logs over time.** QuotaBar can only see logs a provider still keeps on disk. **Claude** removes session transcripts older than `cleanupPeriodDays` (**default: 30 days**) — raise it in `~/.claude/settings.json` (e.g. `{ "cleanupPeriodDays": 1095 }` for ~3 years) to keep more. **Codex** currently keeps all sessions, but the same rules apply if that ever changes. See [Data Lifecycle](#data-lifecycle) for how QuotaBar makes history permanent despite this.
+
+## Data Lifecycle
+
+Providers (Claude, Codex) write raw usage logs locally and **delete them after a while** (Claude: 30 days by default). QuotaBar reads those logs once, aggregates each day into its own **permanent backfill store** (`%APPDATA%\quotabar-win\debug\<date>.backfill.jsonl`), and serves the dashboard from there. A day that has been aggregated survives even after the provider deletes the original log.
+
+```mermaid
+flowchart TD
+  start([QuotaBar starts / hourly tick]) --> scan[Scan provider logs<br/>Claude + Codex JSONL]
+  scan --> diff{File new or changed<br/>since last run?}
+  diff -->|no| keep[Keep existing days]
+  diff -->|yes| agg[Aggregate affected days]
+  agg --> store[(Permanent backfill store<br/>1 record per day)]
+  keep --> store
+  store --> ui[Dashboard · History · Models · Reports]
+  gc[/Provider garbage collection<br/>deletes logs older than retention/]
+  gc -.->|raw log removed| scan
+  store -. already-aggregated days stay .-> store
+```
+
+What this means in practice:
+
+| Scenario | What happens |
+| --- | --- |
+| **First start** | QuotaBar imports everything the provider *still has on disk*. With Claude's 30-day default, that's only the last ~30 days — anything older was already deleted by the provider and **cannot be recovered**. |
+| **Daily use** | On each start/tick QuotaBar checks only new or changed log files and writes any missing days into the permanent store. Cheap and incremental. |
+| **A few days without QuotaBar** | On the next start, backfill automatically catches up **all missed days** — as long as the provider hasn't deleted those logs yet (i.e. you're back within the retention window). |
+| **Provider deletes old logs (GC)** | Days already aggregated into the backfill store stay intact. Only days that were *never* aggregated — because QuotaBar didn't run during the whole retention window — are lost for good. |
+
+> **Takeaway:** Run QuotaBar regularly and history grows permanently. The only way to lose data is leaving QuotaBar off longer than the provider's retention window. Raising `cleanupPeriodDays` widens that safety margin.
 
 ## Dashboard and Reports
 

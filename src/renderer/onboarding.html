@@ -202,6 +202,38 @@
       text-wrap: pretty;
     }
 
+    /* ── Hinweis-Box ──────────────────────────────────────── */
+    .notice {
+      display: flex; align-items: flex-start; gap: 11px;
+      background: rgba(255,215,0,0.06);
+      border: 1px solid rgba(255,215,0,0.22);
+      border-radius: var(--r-card);
+      padding: 11px 13px;
+    }
+    .notice-icon {
+      width: 28px; height: 28px; flex-shrink: 0;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(255,215,0,0.1);
+      border: 1px solid rgba(255,215,0,0.2);
+      color: var(--yellow);
+    }
+    .notice-body { flex: 1; min-width: 0; }
+    .notice-cat {
+      font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--yellow);
+      margin-bottom: 2px;
+    }
+    .notice-text {
+      font-size: 11.5px; color: var(--t200); line-height: 1.5;
+      text-wrap: pretty;
+    }
+    .notice-text code {
+      font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;
+      background: rgba(255,255,255,0.06); padding: 1px 4px; border-radius: 4px;
+      color: var(--t100);
+    }
+
     /* ── Stagger-Einblendung ──────────────────────────────── */
     @keyframes enter { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
     .stagger > * { animation: enter 360ms cubic-bezier(0.2, 0, 0, 1) both; }
@@ -376,6 +408,27 @@
           </div>
         </div>
 
+      </div>
+    </div>
+
+    <!-- ── Hinweis: Claude Log-Aufbewahrung ──────────────── -->
+    <div class="section">
+      <div class="section-title">Wichtig für deine Historie</div>
+      <div class="notice">
+        <div class="notice-icon">
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7.5 1.5 14 13H1Z"/>
+            <path d="M7.5 6v3.2"/>
+            <circle cx="7.5" cy="11" r="0.4" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="notice-body">
+          <div class="notice-cat">Provider löschen alte Logs mit der Zeit</div>
+          <div class="notice-text">
+            Beim ersten Start siehst du nur, was der jeweilige Provider noch lokal gespeichert hat — bei <strong>Claude</strong> standardmäßig die letzten <strong>30&nbsp;Tage</strong> (Einstellung <code>cleanupPeriodDays</code>; setze z.&nbsp;B. <code>"cleanupPeriodDays": 1095</code> in <code>~/.claude/settings.json</code> für ~3&nbsp;Jahre). <strong>Codex</strong> behält aktuell alle Sessions.
+            QuotaBar sichert jeden erfassten Tag dauerhaft und holt verpasste Tage beim nächsten Start automatisch nach — solange du es regelmäßig laufen lässt, wächst die Historie lückenlos, auch wenn ein Provider aufräumt.
+          </div>
+        </div>
       </div>
     </div>
   </div>
