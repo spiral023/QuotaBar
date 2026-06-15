@@ -97,6 +97,7 @@ export interface Settings {
   providerTimeoutMs: number;
   plans: PlanPeriod[];
   pricingOfflineMode: boolean;
+  anonymizeAccounts: boolean;
   costWindow: CostWindow;
   viewMode: ViewMode;
   insightsPanelOpen: boolean;
@@ -110,6 +111,7 @@ export const defaultSettings: Settings = {
   providerTimeoutMs: 10_000,
   plans: [],
   pricingOfflineMode: false,
+  anonymizeAccounts: false,
   costWindow: "30d",
   viewMode: "dashboard",
   insightsPanelOpen: false,
@@ -168,6 +170,7 @@ export function normalizeSettings(settings: Settings): Settings {
     providerTimeoutMs: Math.max(1000, Math.floor(Number(settings.providerTimeoutMs) || defaultSettings.providerTimeoutMs)),
     plans,
     pricingOfflineMode: Boolean(settings.pricingOfflineMode),
+    anonymizeAccounts: Boolean(settings.anonymizeAccounts),
     costWindow,
     viewMode,
     insightsPanelOpen: Boolean(settings.insightsPanelOpen),

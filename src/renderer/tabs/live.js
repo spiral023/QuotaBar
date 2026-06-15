@@ -389,12 +389,12 @@ function renderTip(snapshots) {
   if (!worstStage || worstStage === 'onTrack') return '';
   const name = worstProvider ? worstProvider.charAt(0).toUpperCase() + worstProvider.slice(1) : '';
   const tips = {
-    farBehind:`You're far behind on ${name}. Your usage is well above the expected pace.`,
+    farBehind:`You're far behind on ${name}. Your usage is well below the expected pace.`,
     behind:`${name} usage is running behind the expected weekly pace.`,
-    slightlyBehind:`${name} is slightly behind pace — you may hit limits before reset.`,
+    slightlyBehind:`${name} is slightly below pace — your quota has plenty of room left.`,
     slightlyAhead:`${name} usage is slightly ahead of pace this week.`,
-    ahead:`${name} is well ahead of pace — quota should last until reset.`,
-    farAhead:`${name} quota is very underutilized this week.`,
+    ahead:`${name} is well ahead of pace — quota may run tight before the weekly reset.`,
+    farAhead:`${name} is consuming quota much faster than expected this week.`,
   };
   const text = tips[worstStage] || '';
   if (!text) return '';
@@ -408,7 +408,7 @@ function renderTip(snapshots) {
 }
 
 // ── Standard provider card ─────────────────────────────────────────────
-function renderStandard(snap, name, delay) {
+function renderStandard(snap, name, delay, acctIdx) {
   const fiveH  = snap.windows.find(w => w.name === 'fiveHour');
   const weekly = snap.windows.find(w => w.name === 'weekly');
   const rawPct = fiveH?.usedPercent;
@@ -474,7 +474,7 @@ function renderStandard(snap, name, delay) {
             <span class="card-chevron">›</span>
           </div>
         </div>
-        ${snap.identity?.email ? `<div class="prov-account" title="Aktives Konto">${QB.esc(snap.identity.email)}</div>` : ''}
+        ${snap.identity?.email ? (QB.settings?.anonymizeAccounts ? `<div class="prov-account" title="${QB.esc(snap.identity.email)}">Konto ${acctIdx}</div>` : `<div class="prov-account" title="Aktives Konto">${QB.esc(snap.identity.email)}</div>`) : ''}
         ${bars}
         ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
         ${windowBudgetCollapseHtml(snap)}
@@ -506,7 +506,7 @@ function renderGemini(snap, name, delay) {
   </div>`;
 }
 
-function renderCard(snap, idx) {
+function renderCard(snap, idx, acctIdx) {
   const name  = snap.provider.charAt(0).toUpperCase() + snap.provider.slice(1);
   const delay = `animation-delay:${idx * 65}ms`;
   if (snap.status === 'not_authenticated') {
@@ -517,7 +517,7 @@ function renderCard(snap, idx) {
     return `<div class="card card-status-row has-accent" style="--card-accent:var(--red);${delay}"><span class="prov-name">${QB.esc(name)}</span><span class="badge b-error">${QB.esc(msg)}</span></div>`;
   }
   if (snap.provider === 'gemini') return renderGemini(snap, name, delay);
-  return renderStandard(snap, name, delay);
+  return renderStandard(snap, name, delay, acctIdx);
 }
 
 // ── Main render ───────────────────────────────────────────────────────
@@ -554,7 +554,11 @@ QB.renderLive = function renderLive(snapshots) {
     return;
   }
   const overview = renderOverview(snapshots);
-  const cards    = snapshots.map((snap, i) => renderCard(snap, i + 1)).join('');
+  const providerSeq = {};
+  const cards    = snapshots.map((snap, i) => {
+    providerSeq[snap.provider] = (providerSeq[snap.provider] || 0) + 1;
+    return renderCard(snap, i + 1, providerSeq[snap.provider]);
+  }).join('');
   const tip      = renderTip(snapshots);
   el.innerHTML   = overview + cards + tip;
   _wbDataPromise = null; // neue Snapshots → Budget-Daten neu laden

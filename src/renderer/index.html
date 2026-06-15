@@ -2527,6 +2527,13 @@
             <span class="tgl-track"></span>
           </label>
         </div>
+        <div class="toggle-row">
+          <span class="toggle-label">E-Mail-Adressen verbergen</span>
+          <label class="tgl">
+            <input type="checkbox" id="tog-anonymize">
+            <span class="tgl-track"></span>
+          </label>
+        </div>
       </div>
 
       <button class="save-btn" id="btn-save">Save Settings</button>
@@ -2557,6 +2564,7 @@
     let lastRefreshedAt = null;
     let footerTimer     = null;
     let activePillVal    = 60;
+    let _lastSnapshots   = null;
     let inSettings       = false;
 
     let activeTab = 'live';
@@ -2620,6 +2628,7 @@
       document.body.classList.toggle('view-dashboard', data.viewMode === 'dashboard');
       document.body.classList.toggle('view-compact',   data.viewMode !== 'dashboard');
       const s = await QB.ipc.invoke('settings:get');
+      QB.settings = s;
       pollIntervalSec = s.pollIntervalSeconds ?? 60;
       restartRefreshFuse();
       // Cost Window initialisieren
@@ -2692,7 +2701,9 @@
     async function loadSettingsUI() {
       try {
         const s = await QB.ipc.invoke('settings:get');
-        document.getElementById('tog-offline').checked = !!s.pricingOfflineMode;
+        document.getElementById('tog-offline').checked   = !!s.pricingOfflineMode;
+        document.getElementById('tog-anonymize').checked = !!s.anonymizeAccounts;
+        QB.settings = s;
 
         activePillVal = s.pollIntervalSeconds ?? 60;
         const stdVals = [30, 60, 120, 300];
@@ -2715,7 +2726,8 @@
 
       const payload = {
         pollIntervalSeconds: activePillVal,
-        pricingOfflineMode: document.getElementById('tog-offline').checked,
+        pricingOfflineMode:  document.getElementById('tog-offline').checked,
+        anonymizeAccounts:   document.getElementById('tog-anonymize').checked,
       };
 
       try {
@@ -2724,6 +2736,8 @@
         restartRefreshFuse();
         clearDashboardDataCache();
         if (QB.clearAnalyticsCache) QB.clearAnalyticsCache();
+        QB.settings = { ...(QB.settings || {}), ...payload };
+        if (_lastSnapshots) render(_lastSnapshots);
         btn.textContent = '✓ Saved';
         setTimeout(() => { btn.textContent = 'Save Settings'; btn.disabled = false; }, 1800);
       } catch {
@@ -2734,6 +2748,7 @@
     // ── Render ────────────────────────────────────────────
 
     function render(snapshots) {
+      _lastSnapshots = snapshots;
       QB.renderLive(snapshots);
     }
 
