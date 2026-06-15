@@ -13,6 +13,7 @@
     "claude-sonnet-4-6": 54,
     "gpt-5.2": 51,
     "gpt-5.1": 48,
-    "gpt-5": 45
+    "gpt-5": 45,
+    "claude-haiku-4-5": 34
   }
 }
