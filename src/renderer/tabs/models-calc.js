@@ -210,7 +210,7 @@
 
   // Bubble-Radius: 4–18px, skaliert mit Wurzel des Kostenanteils.
   function scatterPoints(rows) {
-    return rows
+    const candidates = rows
       .filter((r) => r.score != null && r.effPerMTok != null)
       .map((r) => ({
         model: r.model, provider: r.provider,
@@ -218,6 +218,77 @@
         r: 4 + Math.sqrt(Math.max(r.sharePct, 0)) * 1.4,
         sharePct: r.sharePct,
       }));
+    const costs = candidates.map((p) => p.x);
+    const scores = candidates.map((p) => p.y);
+    const minCost = Math.min(...costs);
+    const maxCost = Math.max(...costs);
+    const minScore = Math.min(...scores);
+    const maxScore = Math.max(...scores);
+    return candidates.map((p) => {
+      const cheapness = 1 - normalizeRange(p.x, minCost, maxCost);
+      const intelligence = normalizeRange(p.y, minScore, maxScore);
+      const value = (cheapness + intelligence) / 2;
+      return { ...p, valueScore: value, valueColor: valueColor(value) };
+    });
+  }
+
+  function scatterBubbleColors(points, colorForProvider) {
+    return {
+      backgroundColor: points.map((p) => colorForProvider(p.provider) + 'CC'),
+      borderColor: points.map((p) => colorForProvider(p.provider)),
+    };
+  }
+
+  function scatterAxisColorScale(points) {
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const minCost = Math.min(...xs);
+    const maxCost = Math.max(...xs);
+    const minScore = Math.min(...ys);
+    const maxScore = Math.max(...ys);
+    return {
+      costColor: (value) => axisValueColor(1 - normalizeRange(Number(value), minCost, maxCost)),
+      scoreColor: (value) => axisValueColor(normalizeRange(Number(value), minScore, maxScore)),
+    };
+  }
+
+  function normalizeRange(value, min, max) {
+    if (!Number.isFinite(value) || !Number.isFinite(min) || !Number.isFinite(max)) return 0.5;
+    if (max <= min) return 0.5;
+    return Math.max(0, Math.min(1, (value - min) / (max - min)));
+  }
+
+  function valueColor(value) {
+    const v = Math.max(0, Math.min(1, value));
+    if (v <= 0) return '#ff4b5c';
+    if (v >= 1) return '#52d017';
+    if (Math.abs(v - 0.5) < 1e-9) return '#ff9f1a';
+    if (v < 0.5) return mixHex('#ff4b5c', '#ff9f1a', v / 0.5);
+    return mixHex('#ff9f1a', '#52d017', (v - 0.5) / 0.5);
+  }
+
+  function axisValueColor(value) {
+    const v = Math.max(0, Math.min(1, value));
+    if (v <= 0) return '#ff4b5c';
+    if (v >= 1) return '#52d017';
+    if (Math.abs(v - 0.5) < 1e-9) return '#ffd21a';
+    if (v < 0.5) return mixHex('#ff4b5c', '#ffd21a', v / 0.5);
+    return mixHex('#ffd21a', '#52d017', (v - 0.5) / 0.5);
+  }
+
+  function mixHex(a, b, t) {
+    const ca = hexToRgb(a);
+    const cb = hexToRgb(b);
+    const ch = (from, to) => Math.round(from + (to - from) * t).toString(16).padStart(2, '0');
+    return '#' + ch(ca[0], cb[0]) + ch(ca[1], cb[1]) + ch(ca[2], cb[2]);
+  }
+
+  function hexToRgb(hex) {
+    return [
+      parseInt(hex.slice(1, 3), 16),
+      parseInt(hex.slice(3, 5), 16),
+      parseInt(hex.slice(5, 7), 16),
+    ];
   }
 
   // Pro Modell: Monate mit Deckkraft relativ zum stärksten Monat.
@@ -269,5 +340,5 @@
       .map(([bucket, e]) => ({ bucket, claudeShare: e.total > 0 ? e.claude / e.total : 0 }));
   }
 
-  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, adoptionTimeline, cacheEfficiency, providerRibbon };
+  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon };
 });

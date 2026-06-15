@@ -131,6 +131,7 @@ window.QB = window.QB || {};
           <div class="mod-scatter-wrap"><canvas id="mod-scatter-canvas"></canvas></div>
           <div class="mod-note" id="mod-scatter-empty" hidden></div>
           <div class="mod-scatter-note">x: effektiver $/MTok basierend auf deiner echten Nutzung (inkl. Cache) &middot;
+            Skala: grün = besser, rot = schlechter &middot;
             Quelle: ${_data.benchmarksAsOf ? 'Artificial Analysis Intelligence Index, Stand ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
         </div>` : `
         <div class="an-section"><div class="mod-note">Benchmark-Daten nicht verfügbar — Scatter ausgeblendet.</div></div>`}
@@ -238,7 +239,7 @@ window.QB = window.QB || {};
   }
 
   function shortName(model) {
-    return model.replace(/^claude-/, '').replace(/^gpt-/, 'gpt-');
+    return QB.shortModelName(model);
   }
 
   function renderStack(initial) {
@@ -323,37 +324,26 @@ window.QB = window.QB || {};
       datasets: [{
         data: pts.map((p) => ({ x: p.x, y: p.y, r: p.r })),
         pointsMeta: pts,
-        backgroundColor: pts.map((p) => QB.providerColor(p.provider) + 'CC'),
-        borderColor: pts.map((p) => QB.providerColor(p.provider)),
+        ...calc.scatterBubbleColors(pts, QB.providerColor),
         borderWidth: 1,
         hoverRadius: 2,
       }],
     };
+    const axisColors = calc.scatterAxisColorScale(pts);
     // Beim (Neu-)Aufbau der UI ist das Canvas-Element frisch — ein zuvor an das
     // alte (jetzt detachte) Canvas gebundenes Chart würde sonst ins Leere
     // zeichnen. Daher bei initial=true zerstören und neu erstellen.
     if (_scatterChart && !initial) {
       _scatterChart.data = data;
+      applyScatterAxisColors(_scatterChart, axisColors);
       _scatterChart.update();
       return;
     }
     if (_scatterChart) _scatterChart.destroy();
     const ctx = canvas.getContext('2d');
-    const quadrant = {
-      id: 'modQuadrant',
-      beforeDraw(chart) {
-        const { ctx: c, chartArea: a } = chart;
-        if (!a) return;
-        const g = c.createLinearGradient(a.left, a.top, a.right, a.bottom);
-        g.addColorStop(0, 'rgba(82,208,23,0.05)');
-        g.addColorStop(0.5, 'rgba(82,208,23,0)');
-        c.save(); c.fillStyle = g; c.fillRect(a.left, a.top, a.right - a.left, a.bottom - a.top); c.restore();
-      },
-    };
     _scatterChart = new Chart(ctx, {
       type: 'bubble',
       data,
-      plugins: [quadrant],
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -375,17 +365,26 @@ window.QB = window.QB || {};
           x: {
             title: { display: true, text: '$ / MTok (effektiv)', color: '#708090', font: { size: 9 } },
             grid: { color: 'rgba(255,255,255,0.04)' }, border: { display: false },
-            ticks: { color: '#708090', font: { family: "'IBM Plex Mono', monospace", size: 9 },
+            ticks: { color: (ctx) => axisColors.costColor(tickValue(ctx)), font: { family: "'IBM Plex Mono', monospace", size: 9 },
                      callback: (v) => '$' + Number(v).toFixed(1) },
           },
           y: {
             title: { display: true, text: 'Intelligence Index', color: '#708090', font: { size: 9 } },
             grid: { color: 'rgba(255,255,255,0.04)' }, border: { display: false },
-            ticks: { color: '#708090', font: { family: "'IBM Plex Mono', monospace", size: 9 } },
+            ticks: { color: (ctx) => axisColors.scoreColor(tickValue(ctx)), font: { family: "'IBM Plex Mono', monospace", size: 9 } },
           },
         },
       },
     });
+  }
+
+  function applyScatterAxisColors(chart, axisColors) {
+    chart.options.scales.x.ticks.color = (ctx) => axisColors.costColor(tickValue(ctx));
+    chart.options.scales.y.ticks.color = (ctx) => axisColors.scoreColor(tickValue(ctx));
+  }
+
+  function tickValue(ctx) {
+    return ctx && ctx.tick ? ctx.tick.value : 0;
   }
 
   const COLUMNS = [

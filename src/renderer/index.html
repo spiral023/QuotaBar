@@ -2883,7 +2883,7 @@
       }
       tbody.innerHTML = s.topModels.map(m =>
         `<tr>
-          <td class="model-name" title="${QB.esc(m.model)}">${QB.esc(m.model.replace(/^claude-|^gpt-/,''))}</td>
+          <td class="model-name" title="${QB.esc(m.model)}">${QB.esc(QB.shortModelName(m.model))}</td>
           <td>$${(m.costUSD).toFixed(2)}</td>
           <td>${(m.pctOfTotal * 100).toFixed(0)}%</td>
         </tr>`

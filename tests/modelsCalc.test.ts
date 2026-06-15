@@ -225,6 +225,53 @@ describe("scatterPoints", () => {
     expect(pts[0]).toMatchObject({ model: "claude-opus-4-8", x: 3, y: 61 });
     expect(pts[0].r).toBeGreaterThan(0);
   });
+
+  it("colors visible points by value: cheap high-score green, expensive low-score red", () => {
+    const pts = calc.scatterPoints([
+      { model: "best", provider: "codex", effPerMTok: 1, score: 90, sharePct: 10 },
+      { model: "mixed", provider: "codex", effPerMTok: 5, score: 70, sharePct: 10 },
+      { model: "worst", provider: "codex", effPerMTok: 9, score: 50, sharePct: 10 },
+    ]);
+
+    expect(pts.map((p: any) => p.valueColor)).toEqual(["#52d017", "#ff9f1a", "#ff4b5c"]);
+  });
+
+  it("keeps scatter bubble colors tied to provider brand colors", () => {
+    const pts = [
+      { provider: "claude" },
+      { provider: "codex" },
+    ];
+    const colorForProvider = (provider: string) => provider === "claude" ? "#DA785B" : "#4B55C8";
+
+    expect(calc.scatterBubbleColors(pts, colorForProvider)).toEqual({
+      backgroundColor: ["#DA785BCC", "#4B55C8CC"],
+      borderColor: ["#DA785B", "#4B55C8"],
+    });
+  });
+
+  it("colors score axis text from low red through yellow to high green", () => {
+    const scale = calc.scatterAxisColorScale([
+      { x: 1, y: 50 },
+      { x: 5, y: 70 },
+      { x: 9, y: 90 },
+    ]);
+
+    expect(scale.scoreColor(50)).toBe("#ff4b5c");
+    expect(scale.scoreColor(70)).toBe("#ffd21a");
+    expect(scale.scoreColor(90)).toBe("#52d017");
+  });
+
+  it("colors cost axis text from cheap green through yellow to expensive red", () => {
+    const scale = calc.scatterAxisColorScale([
+      { x: 1, y: 50 },
+      { x: 5, y: 70 },
+      { x: 9, y: 90 },
+    ]);
+
+    expect(scale.costColor(1)).toBe("#52d017");
+    expect(scale.costColor(5)).toBe("#ffd21a");
+    expect(scale.costColor(9)).toBe("#ff4b5c");
+  });
 });
 
 describe("adoptionTimeline", () => {

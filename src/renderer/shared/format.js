@@ -37,3 +37,7 @@ QB.fmtUSD = function fmtUSD(n) {
   if (typeof n !== 'number') return '—';
   return '$' + n.toFixed(2);
 };
+
+QB.shortModelName = function shortModelName(model) {
+  return String(model).replace(/^claude-/, '');
+};
