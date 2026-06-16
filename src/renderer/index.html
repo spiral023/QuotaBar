@@ -887,20 +887,37 @@
     }
 
     /* ══ ANALYTICS PHASE 3 ═════════════════════════════════════ */
-    .an-heatmap { display: flex; flex-direction: column; gap: 2px; }
-    .an-heatmap-row { display: flex; align-items: center; gap: 5px; }
-    .an-heatmap-lbl {
-      width: 26px; flex-shrink: 0; text-align: right;
-      font-family: 'IBM Plex Mono', monospace; font-size: 8px; color: var(--t400);
+    /* Stunden-Aktivitätsuhr — radialer 24h-Dial (löst die alte Balkenliste ab) */
+    .an-clock {
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 7px;
+      padding: 2px 0 2px;
     }
-    .an-heatmap-track {
-      flex: 1; height: 7px; background: rgba(255,255,255,0.04); border-radius: 2px;
+    .an-clock-canvas { display: block; max-width: 100%; cursor: crosshair; }
+    .an-clock-cap {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px; color: var(--t400); letter-spacing: 0.02em;
+      text-align: center;
     }
-    .an-heatmap-fill { height: 100%; border-radius: 2px; background: #DA785B; opacity: 0.75; }
-    .an-heatmap-count {
-      width: 32px; flex-shrink: 0; text-align: right;
-      font-family: 'IBM Plex Mono', monospace; font-size: 8px; color: var(--t400);
+    .an-clock-cap b { color: var(--claude-col); font-weight: 600; }
+    .an-clock-tip {
+      position: absolute; left: 0; top: 0;
+      pointer-events: none; z-index: 5;
+      background: var(--bg-surface, #11161c);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--r-badge);
+      padding: 4px 7px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9.5px; line-height: 1.35;
+      color: var(--t100); white-space: nowrap;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+      opacity: 0; transform: translateY(2px);
+      transition: opacity 120ms ease, transform 120ms ease;
     }
+    .an-clock-tip.show { opacity: 1; transform: translateY(0); }
+    .an-clock-tip b { color: var(--claude-col); font-weight: 600; }
+    .an-clock-tip-sub { color: var(--t400); }
 
     .an-wkday-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
     .an-wkday-lbl { width: 56px; flex-shrink: 0; font-size: 9.5px; color: var(--t300); }

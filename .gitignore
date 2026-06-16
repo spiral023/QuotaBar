@@ -53,3 +53,6 @@ docs/screenshots/
 
 # Dev-only CDP screenshot scripts
 scripts/
+
+# Temporäre Vorschau-Dateien
+tmp_*.html
