@@ -16,7 +16,6 @@ let _tokenMode   = 'output'; // 'total' | 'input' | 'output' | 'cache'
 let _minDate      = null;
 let _activePreset = null;
 let _showEmpty    = false;
-let _weeklyGen    = 0; // Race-Schutz für den asynchron geladenen Wochenverlauf
 
 QB.renderHistory = async function renderHistory() {
   const container = document.getElementById('history-content');
@@ -453,68 +452,10 @@ function _renderResults(report, agg) {
       </div>
     </div>
 
-    <div class="hr-table-section">
-      <div class="hr-section-head">
-        <span class="hr-section-title">WÖCHENTLICHER VERLAUF</span>
-      </div>
-      <div id="hr-weekly"></div>
-    </div>
   `;
 
   _renderChart();
   _bindChartToggles();
-  void _renderWeeklySummary();
-}
-
-// Wöchentlicher Verlauf (aus den Analytics-Daten) für den aktuellen Zeitraum.
-// Eigener IPC-Aufruf, da reports:get diese Message-/Event-Kennzahlen nicht liefert.
-async function _renderWeeklySummary() {
-  const el = document.getElementById('hr-weekly');
-  if (!el) return;
-  const from = document.getElementById('hr-from')?.value;
-  const to   = document.getElementById('hr-to')?.value;
-
-  el.innerHTML = '<div style="color:var(--t400);font-size:10px;padding:4px 0">Lädt…</div>';
-  const token = ++_weeklyGen;
-
-  let data;
-  try {
-    data = await QB.ipc.invoke('analytics:get', { since: from || undefined, until: to || undefined });
-  } catch (e) {
-    if (token !== _weeklyGen) return;
-    console.error('weekly summary failed', e);
-    el.innerHTML = '<div style="color:var(--t400);font-size:10px;padding:4px 0">Wochenverlauf nicht verfügbar.</div>';
-    return;
-  }
-  if (token !== _weeklyGen) return; // ein neuerer Load hat übernommen
-
-  const weeks = data.weeklySummary ?? [];
-  if (!weeks.length) {
-    el.innerHTML = '<div style="color:var(--t400);font-size:10px;padding:4px 0">Keine Daten.</div>';
-    return;
-  }
-  el.innerHTML = `
-    <table class="an-weekly-table">
-      <thead>
-        <tr><th>Woche ab</th><th>Claude Msg</th><th>Claude Token</th><th>Kosten</th><th>Codex Ev.</th></tr>
-      </thead>
-      <tbody>
-        ${weeks.map(w => {
-          const d = new Date(w.weekStart + 'T00:00:00Z');
-          const label = d.toLocaleDateString('de-AT', { day: '2-digit', month: 'short', timeZone: 'UTC' });
-          return `
-            <tr>
-              <td>${QB.esc(label)}</td>
-              <td>${w.claudeMessages}</td>
-              <td>${QB.fmtTokens(w.claudeTokens)}</td>
-              <td>$${w.claudeCostUSD.toFixed(2)}</td>
-              <td>${w.codexEvents}</td>
-            </tr>
-          `;
-        }).join('')}
-      </tbody>
-    </table>
-  `;
 }
 
 // ── Gap filling ───────────────────────────────────────────────────────────────
