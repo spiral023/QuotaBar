@@ -1,5 +1,5 @@
 import { resetsAtChanged } from "./windowRatio";
-import { BONUS_NEXT_MAX_PCT, BONUS_PREV_MIN_PCT } from "./bonusReset";
+import { isBonusReset, isTransientWeeklySpike, type WeeklyObservation } from "./bonusReset";
 
 /**
  * Historie „genutzte vs. mögliche 5h-Fenster pro 7d-Fenster". Aus den
@@ -132,10 +132,8 @@ function buildEntry(provider: string, p: Period): WindowHistoryEntry {
   flushFive();
 
   // maxWindows: periodenspezifisches windowsPerWeek aus validen Paaren.
-  // bonus: Weekly fiel innerhalb der Periode stark (resetsAt blieb per Definition gleich).
   let sumFive = 0;
   let sumWeekly = 0;
-  let bonus = false;
   for (let i = 1; i < p.obs.length; i++) {
     const prev = p.obs[i - 1];
     const cur = p.obs[i];
@@ -146,11 +144,23 @@ function buildEntry(provider: string, p: Period): WindowHistoryEntry {
       sumFive += dFive;
       sumWeekly += dWeekly;
     }
-    if (prev.weeklyPct >= BONUS_PREV_MIN_PCT && cur.weeklyPct < BONUS_NEXT_MAX_PCT) {
-      bonus = true;
-    }
   }
   const maxWindows = sumWeekly >= MIN_PERIOD_WEEKLY_PCT ? sumFive / sumWeekly : null;
+
+  // bonus: außerplanmäßiger Reset innerhalb der Periode (Weekly fiel deutlich,
+  // resetsAt blieb). Transiente Weekly-Spikes (Skalen-Artefakte) werden
+  // verworfen statt als Anker zu dienen — sonst sieht der Abfall vom
+  // aufgeblähten Wert wie ein Reset aus. Vgl. windowBudgetRollup.
+  let bonus = false;
+  let prevValid: WeeklyObservation | null = null;
+  for (const o of p.obs) {
+    const cur: WeeklyObservation = { usedPercent: o.weeklyPct, resetsAt: o.weeklyResetsAt, fivePercent: o.fivePct };
+    if (prevValid) {
+      if (isTransientWeeklySpike(prevValid, cur)) continue;
+      if (isBonusReset(prevValid, cur)) bonus = true;
+    }
+    prevValid = cur;
+  }
 
   return { provider, weekStart, weekEnd, usedWindows, maxWindows, bonus };
 }

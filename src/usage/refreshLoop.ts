@@ -125,6 +125,7 @@ export class RefreshLoop {
               this.bonusTracker.record(snapshot.provider, snapshot.planType ?? null, {
                 usedPercent: weekly.usedPercent,
                 resetsAt: weekly.resetsAt ?? null,
+                fivePercent: five.usedPercent,
               });
               // Bonus nur anhängen, wenn ein belastbares Budget vorliegt (nicht im Lernmodus).
               if (snapshot.windowBudget && !snapshot.windowBudget.learning) {

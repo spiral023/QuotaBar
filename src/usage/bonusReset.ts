@@ -10,9 +10,14 @@ import { ratioKey, resetsAtChanged } from "./windowRatio";
  * regulären Reset effektiv erneut Budget zur Verfügung — „Bonus-Fenster".
  */
 
-/** Vorheriger Weekly-%-Wert muss mindestens so hoch gewesen sein. */
-export const BONUS_PREV_MIN_PCT = 20;
-/** Aktueller Weekly-%-Wert muss darunter gefallen sein. */
+/**
+ * Mindest-Abfall (Prozentpunkte) des Weekly-Werts, der als außerplanmäßiger
+ * Reset zählt. Ein Kulanz-Reset ist stand-unabhängig (kann bei 12 % genauso
+ * passieren wie bei 80 %), daher wird der ABFALL bewertet, nicht der absolute
+ * Vorstand. Liegt über dem Ganzzahl-Rundungsrauschen (z. B. 3 → 0 zählt nicht).
+ */
+export const BONUS_DROP_MIN_PCT = 10;
+/** Aktueller Weekly-%-Wert muss darunter gefallen sein (Budget effektiv freigegeben). */
 export const BONUS_NEXT_MAX_PCT = 5;
 /**
  * Springt der 7d-`resetsAt` um mindestens so viel nach vorn, war es ein
@@ -21,20 +26,49 @@ export const BONUS_NEXT_MAX_PCT = 5;
  */
 export const BONUS_RESET_ADVANCE_MIN_MS = 6 * 24 * 60 * 60 * 1000;
 
+/** Ab diesem Weekly-%-Wert gilt next als Sättigungs-Ausreißer-Kandidat. */
+export const WEEKLY_SPIKE_MIN_PCT = 99.5;
+/** Mindest-Sprunghöhe (Prozentpunkte) eines verdächtigen Aufwärts-Spikes. */
+export const WEEKLY_SPIKE_DELTA_PCT = 20;
+
 const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
 
 export interface WeeklyObservation {
   usedPercent: number;
   resetsAt: string | null;
+  /**
+   * 5h-Auslastung desselben Snapshots. Optional, dient als Plausibilitätsanker:
+   * ein Weekly-Sprung, der die physikalische Invariante ΔWeekly ≤ Δ5h verletzt,
+   * ist ein API-Artefakt und kein echter Verbrauch.
+   */
+  fivePercent?: number | null;
+}
+
+/**
+ * true, wenn next ein transienter Weekly-Aufwärts-Spike ggü. prev ist: Weekly
+ * springt auf ~100 %, der Sprung ist groß UND übersteigt die parallele 5h-
+ * Bewegung. Genau dieses Muster erzeugte die alte utilization-Skala (1 % → 100 %
+ * direkt nach einem Reset) — der hohe Wert ist physikalisch unmöglich, weil das
+ * 5h-Fenster dann noch fast leer ist. Ohne 5h-Wert wird konservativ allein der
+ * implausible Sprung auf Sättigung bewertet.
+ */
+export function isTransientWeeklySpike(prev: WeeklyObservation, next: WeeklyObservation): boolean {
+  const dWeekly = next.usedPercent - prev.usedPercent;
+  if (next.usedPercent < WEEKLY_SPIKE_MIN_PCT || dWeekly <= WEEKLY_SPIKE_DELTA_PCT) return false;
+  if (typeof prev.fivePercent !== "number" || typeof next.fivePercent !== "number") return true;
+  const dFive = next.fivePercent - prev.fivePercent;
+  return dWeekly > dFive;
 }
 
 /**
  * true, wenn der Übergang prev→next ein außerplanmäßiger Reset ist: Weekly fiel
- * deutlich, aber der 7d-Reset-Zeitpunkt ist NICHT um ~eine volle Periode
- * weitergesprungen.
+ * deutlich (auf ~0), aber der 7d-Reset-Zeitpunkt ist NICHT um ~eine volle
+ * Periode weitergesprungen. Transiente Spikes werden vorgelagert gefiltert
+ * (siehe BonusResetTracker.record), sodass prev hier ein plausibler Stand ist.
  */
 export function isBonusReset(prev: WeeklyObservation, next: WeeklyObservation): boolean {
-  const weeklyDropped = prev.usedPercent >= BONUS_PREV_MIN_PCT && next.usedPercent < BONUS_NEXT_MAX_PCT;
+  const drop = prev.usedPercent - next.usedPercent;
+  const weeklyDropped = drop >= BONUS_DROP_MIN_PCT && next.usedPercent < BONUS_NEXT_MAX_PCT;
   if (!weeklyDropped) return false;
   // Kein resetsAt bekannt → nicht entscheidbar, konservativ kein Bonus.
   if (prev.resetsAt == null || next.resetsAt == null) return false;
@@ -58,24 +92,33 @@ export function estimateBonusWindows(weeklyResetsAt: string | null, nowMs: numbe
   return Math.max(0, Math.min(windowsPerWeek, byTime));
 }
 
-interface BonusProviderState {
+export interface BonusProviderState {
   lastWeeklyPct: number | null;
   lastWeeklyResetsAt: string | null;
+  /** 5h-Wert der letzten plausiblen Beobachtung (Anker für den Spike-Filter). */
+  lastFivePct: number | null;
   /** resetsAt der Periode, für die der Bonus gilt; null = kein aktiver Bonus. */
   bonusForResetsAt: string | null;
 }
 
+/**
+ * Aktuelle Schemaversion. v2 führte `lastFivePct` (Spike-Filter-Anker) ein;
+ * beim Laden einer v1-Datei werden Bonus-Marker verworfen, da sie noch mit der
+ * spike-anfälligen Erkennung (vor dem utilization-Skalen-Fix) gesetzt wurden.
+ */
+export const BONUS_STATE_VERSION = 2;
+
 export interface BonusStateFile {
-  version: 1;
+  version: typeof BONUS_STATE_VERSION;
   providers: Record<string, BonusProviderState>;
 }
 
 export function emptyBonusStateFile(): BonusStateFile {
-  return { version: 1, providers: {} };
+  return { version: BONUS_STATE_VERSION, providers: {} };
 }
 
 function emptyBonusProviderState(): BonusProviderState {
-  return { lastWeeklyPct: null, lastWeeklyResetsAt: null, bonusForResetsAt: null };
+  return { lastWeeklyPct: null, lastWeeklyResetsAt: null, lastFivePct: null, bonusForResetsAt: null };
 }
 
 /**
@@ -92,7 +135,15 @@ export class BonusResetTracker {
     const s = this.file.providers[key] ?? emptyBonusProviderState();
 
     if (s.lastWeeklyPct !== null) {
-      const prev: WeeklyObservation = { usedPercent: s.lastWeeklyPct, resetsAt: s.lastWeeklyResetsAt };
+      const prev: WeeklyObservation = {
+        usedPercent: s.lastWeeklyPct,
+        resetsAt: s.lastWeeklyResetsAt,
+        fivePercent: s.lastFivePct,
+      };
+      // Transiente Weekly-Spikes (API-Artefakte wie das frühere 1 % → 100 %)
+      // verwerfen, BEVOR sie zum Vergleichsanker werden — sonst sieht der
+      // anschließende Abfall 100 → 2 wie ein außerplanmäßiger Reset aus.
+      if (isTransientWeeklySpike(prev, obs)) return;
       if (isBonusReset(prev, obs)) {
         // Bonus gilt für die nun laufende Periode (deren resetsAt).
         s.bonusForResetsAt = obs.resetsAt;
@@ -104,6 +155,7 @@ export class BonusResetTracker {
 
     s.lastWeeklyPct = obs.usedPercent;
     s.lastWeeklyResetsAt = obs.resetsAt;
+    s.lastFivePct = typeof obs.fivePercent === "number" ? obs.fivePercent : null;
     this.file.providers[key] = s;
   }
 
