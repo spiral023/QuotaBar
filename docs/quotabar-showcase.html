@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuotaBar — KI-Nutzung auf einen Blick</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:         #07090d;
+  --bg-s:       #0b0e14;
+  --bg-c:       #0f1319;
+  --bg-ch:      #121720;
+  --border:     rgba(255,255,255,0.07);
+  --border-mid: rgba(255,255,255,0.13);
+  --t100: #e6eff6;
+  --t200: #b4c8d8;
+  --t300: #8298aa;
+  --t400: #7e92a4;
+  --green:  #52d017;
+  --yellow: #ffd700;
+  --orange: #ff8c00;
+  --red:    #ff4444;
+  --claude: #DA785B;
+  --codex:  #4B55C8;
+  --r-card: 11px;
+  --r-btn:  7px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--t200);
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* ─── SCROLLBAR ─── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
+
+/* ─── GRID BACKGROUND ─── */
+body::before {
+  content: '';
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(82,208,23,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(82,208,23,0.025) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ─── LAYOUT ─── */
+.container { max-width: 1120px; margin: 0 auto; padding: 0 32px; position: relative; z-index: 1; }
+section { padding: 96px 0; }
+
+/* ─── NAV ─── */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(7,9,13,0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 32px;
+}
+.nav-inner {
+  max-width: 1120px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 56px;
+}
+.nav-logo {
+  font-family: 'Syne', sans-serif;
+  font-weight: 700; font-size: 15px;
+  letter-spacing: 0.15em;
+  color: var(--t100);
+  text-decoration: none;
+  display: flex; align-items: center; gap: 9px;
+}
+.nav-logo-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(82,208,23,0.7);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+.nav-links { display: flex; gap: 6px; }
+.nav-link {
+  padding: 5px 12px;
+  font-size: 12px; font-weight: 500;
+  color: var(--t300);
+  text-decoration: none;
+  border-radius: var(--r-btn);
+  border: 1px solid transparent;
+  transition: color 150ms, border-color 150ms, background 150ms;
+}
+.nav-link:hover { color: var(--t100); background: rgba(255,255,255,0.04); border-color: var(--border); }
+
+/* ─── HERO ─── */
+.hero {
+  padding: 120px 0 96px;
+  text-align: center;
+  position: relative;
+}
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 14px;
+  background: rgba(82,208,23,0.08);
+  border: 1px solid rgba(82,208,23,0.22);
+  border-radius: 100px;
+  font-size: 11px; font-weight: 500; color: #72e832;
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.04em;
+  margin-bottom: 28px;
+}
+.hero-badge-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--green);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+.hero h1 {
+  font-family: 'Syne', sans-serif;
+  font-weight: 800; font-size: clamp(42px, 6vw, 72px);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--t100);
+  margin-bottom: 20px;
+}
+.hero h1 .accent { color: var(--green); }
+.hero-sub {
+  font-size: 18px; line-height: 1.6; color: var(--t300);
+  max-width: 560px; margin: 0 auto 44px;
+}
+.hero-ctas { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 11px 22px; border-radius: var(--r-btn);
+  font-size: 13px; font-weight: 600; font-family: 'DM Sans', sans-serif;
+  text-decoration: none; cursor: pointer;
+  transition: all 150ms; border: 1px solid transparent;
+}
+.btn:active { transform: scale(0.97); }
+.btn-primary {
+  background: rgba(82,208,23,0.12);
+  border-color: rgba(82,208,23,0.35);
+  color: #72e832;
+  box-shadow: 0 0 20px rgba(82,208,23,0.1);
+}
+.btn-primary:hover {
+  background: rgba(82,208,23,0.18);
+  border-color: rgba(82,208,23,0.5);
+  box-shadow: 0 0 30px rgba(82,208,23,0.18);
+}
+.btn-secondary {
+  background: rgba(255,255,255,0.04);
+  border-color: var(--border-mid);
+  color: var(--t200);
+}
+.btn-secondary:hover { background: rgba(255,255,255,0.07); color: var(--t100); }
+
+/* ─── TRAY MOCKUP ─── */
+.hero-tray {
+  margin: 56px auto 0;
+  max-width: 420px;
+  background: var(--bg-c);
+  border: 1px solid var(--border-mid);
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.5), 0 0 40px rgba(82,208,23,0.06);
+}
+.tray-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.tray-title {
+  font-family: 'Syne', sans-serif;
+  font-weight: 700; font-size: 11px;
+  letter-spacing: 0.14em; color: var(--t400);
+  text-transform: uppercase;
+}
+.tray-time {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px; color: var(--t400);
+}
+.tray-provider {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px;
+}
+.tray-provider:last-child { margin-bottom: 0; }
+.prov-logo {
+  width: 22px; height: 22px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; font-family: 'Syne', sans-serif;
+  letter-spacing: 0.06em; flex-shrink: 0;
+}
+.prov-logo.claude { background: rgba(218,120,91,0.15); color: var(--claude); border: 1px solid rgba(218,120,91,0.25); }
+.prov-logo.codex  { background: rgba(75,85,200,0.15);  color: var(--codex);  border: 1px solid rgba(75,85,200,0.25); }
+.prov-info { flex: 1; }
+.prov-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 5px;
+}
+.prov-name {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px; font-weight: 500; color: var(--t200);
+  letter-spacing: 0.04em;
+}
+.prov-pct {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px; font-weight: 500; color: var(--green);
+}
+.prov-pct.yellow { color: var(--yellow); }
+.prov-pct.orange { color: var(--orange); }
+.bar-track {
+  height: 5px; background: rgba(255,255,255,0.06);
+  border-radius: 3px; overflow: hidden;
+}
+.bar-fill {
+  height: 100%; border-radius: 3px;
+  transition: width 1.2s cubic-bezier(0.4,0,0.2,1);
+}
+.bar-fill.green  { background: var(--green);  box-shadow: 0 0 8px rgba(82,208,23,0.5); }
+.bar-fill.yellow { background: var(--yellow); box-shadow: 0 0 8px rgba(255,215,0,0.45); }
+.bar-fill.orange { background: var(--orange); box-shadow: 0 0 8px rgba(255,140,0,0.5); }
+.prov-meta {
+  display: flex; gap: 8px; margin-top: 5px;
+}
+.prov-badge {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px; padding: 2px 6px;
+  border-radius: 4px;
+}
+.pb-green { background: rgba(82,208,23,0.1); color: #72e832; border: 1px solid rgba(82,208,23,0.22); }
+.pb-gray  { background: rgba(255,255,255,0.05); color: var(--t300); border: 1px solid var(--border); }
+.pb-warn  { background: rgba(255,215,0,0.1); color: var(--yellow); border: 1px solid rgba(255,215,0,0.24); }
+
+/* ─── FEATURE SECTIONS ─── */
+.features { display: flex; flex-direction: column; gap: 0; }
+
+.feature {
+  padding: 80px 0;
+  border-top: 1px solid var(--border);
+}
+.feature-inner {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 64px; align-items: center;
+}
+.feature-inner.rev { direction: rtl; }
+.feature-inner.rev > * { direction: ltr; }
+
+.feature-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px; font-weight: 500;
+  color: var(--t400); letter-spacing: 0.08em;
+  margin-bottom: 14px;
+}
+.feature-tag-num {
+  width: 18px; height: 18px; border-radius: 4px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; color: var(--t300);
+}
+.feature h2 {
+  font-family: 'Syne', sans-serif;
+  font-weight: 700; font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.15; letter-spacing: -0.01em;
+  color: var(--t100); margin-bottom: 16px;
+}
+.feature h2 .g { color: var(--green); }
+.feature h2 .c { color: var(--claude); }
+.feature h2 .co { color: var(--codex); }
+.feature p { font-size: 15px; line-height: 1.65; color: var(--t300); margin-bottom: 20px; }
+.feature-bullets { list-style: none; display: flex; flex-direction: column; gap: 9px; margin-bottom: 24px; }
+.feature-bullets li {
+  display: flex; align-items: flex-start; gap: 10px;
+  font-size: 13.5px; color: var(--t200);
+}
+.feature-bullets li::before {
+  content: '';
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0; margin-top: 6px;
+  box-shadow: 0 0 6px rgba(82,208,23,0.5);
+}
+
+/* ─── MOCKUP CARDS ─── */
+.mockup {
+  background: var(--bg-c);
+  border: 1px solid var(--border-mid);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  position: relative;
+}
+.mockup::after {
+  content: '';
+  position: absolute; inset: 0; pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+}
+.mockup-titlebar {
+  background: var(--bg-s);
+  border-bottom: 1px solid var(--border);
+  padding: 9px 14px;
+  display: flex; align-items: center; gap: 8px;
+}
+.mockup-dots { display: flex; gap: 5px; }
+.mockup-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  opacity: 0.5;
+}
+.md-red { background: #ff5f57; }
+.md-yellow { background: #febc2e; }
+.md-green { background: #28c840; }
+.mockup-tab-row {
+  display: flex; gap: 3px; padding: 8px 12px;
+  background: var(--bg-s); border-bottom: 1px solid var(--border);
+}
+.mockup-tab {
+  padding: 4px 10px;
+  font-size: 10px; font-weight: 500; font-family: 'DM Sans', sans-serif;
+  color: var(--t400); border-radius: 6px;
+  border: 1px solid transparent;
+}
+.mockup-tab.active {
+  color: var(--t100); background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.12);
+}
+.mockup-body { padding: 14px; }
+
+/* ─── DASHBOARD KPI MOCKUP ─── */
+.kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; margin-bottom: 12px; }
+.kpi-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px; padding: 10px 11px;
+}
+.kpi-label { font-size: 8.5px; color: var(--t400); font-family: 'DM Sans', sans-serif; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
+.kpi-val {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 15px; font-weight: 500; color: var(--t100);
+}
+.kpi-val.green { color: var(--green); }
+.kpi-val.claude { color: var(--claude); }
+.kpi-delta {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px; color: #72e832; margin-top: 2px;
+}
+
+/* ─── WINDOW BUDGET MOCKUP ─── */
+.window-chart {
+  height: 80px; position: relative;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden; margin-bottom: 10px;
+}
+.window-chart-path {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 100%;
+}
+.window-grid-line {
+  position: absolute; left: 0; right: 0; height: 1px;
+  background: rgba(255,255,255,0.05);
+}
+.sparkline-area {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 60%;
+  background: linear-gradient(to top, rgba(82,208,23,0.2), rgba(82,208,23,0.05));
+  clip-path: polygon(0% 50%, 5% 45%, 15% 55%, 25% 35%, 35% 30%, 45% 40%, 55% 20%, 65% 25%, 75% 15%, 85% 10%, 95% 20%, 100% 15%, 100% 100%, 0% 100%);
+}
+.sparkline-line {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 60%;
+  border-top: 1.5px solid rgba(82,208,23,0.7);
+  clip-path: polygon(0% 50%, 5% 45%, 15% 55%, 25% 35%, 35% 30%, 45% 40%, 55% 20%, 65% 25%, 75% 15%, 85% 10%, 95% 20%, 100% 15%, 100% 100%, 0% 100%);
+}
+
+/* ─── ROI MOCKUP ─── */
+.roi-meter {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px; padding: 13px 14px;
+  margin-bottom: 9px;
+}
+.roi-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 9px;
+}
+.roi-label { font-size: 10px; color: var(--t400); }
+.roi-value {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px; color: var(--t100); font-weight: 500;
+}
+.roi-factor {
+  text-align: center; padding: 10px 0;
+}
+.roi-factor-num {
+  font-family: 'Syne', sans-serif;
+  font-size: 36px; font-weight: 800;
+  color: var(--green);
+  text-shadow: 0 0 30px rgba(82,208,23,0.4);
+}
+.roi-factor-label { font-size: 10px; color: var(--t400); margin-top: 2px; }
+.roi-bar-track {
+  height: 6px; background: rgba(255,255,255,0.05);
+  border-radius: 3px; overflow: hidden; margin-top: 9px;
+}
+.roi-bar-fill {
+  height: 100%; width: 73%; border-radius: 3px;
+  background: linear-gradient(to right, var(--green), #86ef4a);
+  box-shadow: 0 0 8px rgba(82,208,23,0.4);
+  animation: roi-grow 2s 0.5s cubic-bezier(0.4,0,0.2,1) both;
+}
+@keyframes roi-grow {
+  from { width: 0%; }
+  to   { width: 73%; }
+}
+
+/* ─── SCATTER PLOT MOCKUP ─── */
+.scatter-wrap {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px; padding: 12px;
+  position: relative; height: 200px;
+}
+.scatter-axis-y {
+  position: absolute; left: 28px; top: 8px; bottom: 24px;
+  width: 1px; background: var(--border);
+}
+.scatter-axis-x {
+  position: absolute; left: 28px; right: 8px; bottom: 24px;
+  height: 1px; background: var(--border);
+}
+.scatter-label-y {
+  position: absolute; left: 4px; top: 50%;
+  transform: rotate(-90deg) translateX(50%);
+  font-size: 8px; color: var(--t400); font-family: 'IBM Plex Mono', monospace;
+  white-space: nowrap;
+}
+.scatter-label-x {
+  position: absolute; bottom: 4px; right: 8px;
+  font-size: 8px; color: var(--t400); font-family: 'IBM Plex Mono', monospace;
+}
+.scatter-bubble {
+  position: absolute; border-radius: 50%;
+  transform: translate(-50%, 50%);
+  opacity: 0.85;
+  transition: transform 0.3s, opacity 0.3s;
+}
+.scatter-bubble:hover { opacity: 1; transform: translate(-50%, 50%) scale(1.15); z-index: 10; }
+.sb-claude { background: rgba(218,120,91,0.7); border: 1.5px solid var(--claude); }
+.sb-codex  { background: rgba(75,85,200,0.7);  border: 1.5px solid var(--codex); }
+.sb-big    { width: 32px; height: 32px; }
+.sb-med    { width: 22px; height: 22px; }
+.sb-sm     { width: 14px; height: 14px; }
+.scatter-bubble[title]:hover::after {
+  content: attr(title);
+  position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%);
+  background: var(--bg-c); border: 1px solid var(--border-mid);
+  border-radius: 5px; padding: 4px 7px;
+  font-size: 9px; font-family: 'IBM Plex Mono', monospace;
+  color: var(--t100); white-space: nowrap; pointer-events: none;
+}
+.scatter-quadrant {
+  position: absolute; left: 28px; bottom: 24px;
+  width: 34%; height: 40%;
+  background: rgba(82,208,23,0.03);
+  border: 1px dashed rgba(82,208,23,0.12);
+  border-radius: 4px;
+}
+.scatter-quadrant-label {
+  font-size: 7.5px; color: rgba(82,208,23,0.5);
+  font-family: 'IBM Plex Mono', monospace;
+  position: absolute; top: 4px; left: 5px;
+}
+
+/* ─── NOTIFICATIONS MOCKUP ─── */
+.notif-stack { display: flex; flex-direction: column; gap: 6px; }
+.notif-card {
+  background: var(--bg);
+  border-radius: 10px; border: 1px solid var(--border);
+  padding: 10px 12px;
+  display: flex; align-items: flex-start; gap: 10px;
+  animation: card-in 0.3s ease both;
+}
+.notif-icon {
+  width: 28px; height: 28px; border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; flex-shrink: 0;
+}
+.ni-info    { background: rgba(75,85,200,0.15);  border: 1px solid rgba(75,85,200,0.3); }
+.ni-warn    { background: rgba(255,215,0,0.1);   border: 1px solid rgba(255,215,0,0.25); }
+.ni-crit    { background: rgba(255,68,68,0.1);   border: 1px solid rgba(255,68,68,0.25); }
+.ni-ok      { background: rgba(82,208,23,0.1);   border: 1px solid rgba(82,208,23,0.25); }
+.notif-content { flex: 1; }
+.notif-title { font-size: 11px; font-weight: 600; color: var(--t100); margin-bottom: 2px; }
+.notif-msg   { font-size: 10px; color: var(--t300); line-height: 1.4; }
+.notif-time  { font-size: 9px; color: var(--t400); font-family: 'IBM Plex Mono', monospace; margin-top: 3px; }
+
+/* ─── HISTORY MOCKUP ─── */
+.history-chart {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 9px; padding: 12px; margin-bottom: 9px;
+}
+.history-bars {
+  display: flex; align-items: flex-end; gap: 3px;
+  height: 60px; margin-bottom: 6px;
+}
+.h-bar {
+  flex: 1; border-radius: 3px 3px 0 0;
+  background: rgba(218,120,91,0.4);
+  position: relative; overflow: hidden;
+  transition: background 150ms;
+}
+.h-bar::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 40%; background: rgba(218,120,91,0.3);
+}
+.h-bar:hover { background: rgba(218,120,91,0.6); }
+.h-bar.codex-bar { background: rgba(75,85,200,0.4); }
+.h-bar.codex-bar::after { background: rgba(75,85,200,0.3); }
+.h-bar.codex-bar:hover { background: rgba(75,85,200,0.6); }
+.history-labels {
+  display: flex; justify-content: space-between;
+  font-size: 8px; color: var(--t400);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* ─── HEATMAP MOCKUP (Models Timeline) ─── */
+.heatmap-wrap {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 9px; padding: 11px;
+}
+.heatmap-row {
+  display: flex; align-items: center; gap: 4px; margin-bottom: 3px;
+}
+.heatmap-label {
+  font-size: 8px; color: var(--t400);
+  font-family: 'IBM Plex Mono', monospace;
+  width: 90px; flex-shrink: 0; text-align: right;
+  padding-right: 6px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.heatmap-cell {
+  width: 16px; height: 14px; border-radius: 2px;
+  background: rgba(218,120,91, var(--op, 0.08));
+  border: 1px solid rgba(218,120,91, calc(var(--op, 0.08) + 0.05));
+}
+.heatmap-cell.codex-cell {
+  background: rgba(75,85,200, var(--op, 0.08));
+  border-color: rgba(75,85,200, calc(var(--op, 0.08) + 0.05));
+}
+
+/* ─── STATS BAR ─── */
+.stats-bar {
+  background: var(--bg-s); border: 1px solid var(--border);
+  border-radius: 14px; padding: 32px 48px;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 32px; text-align: center; margin: 0 0 80px;
+}
+.stat-num {
+  font-family: 'Syne', sans-serif; font-weight: 800;
+  font-size: 32px; color: var(--t100); margin-bottom: 6px;
+}
+.stat-num .green { color: var(--green); }
+.stat-label { font-size: 12px; color: var(--t400); }
+
+/* ─── PROVIDERS SECTION ─── */
+.providers { display: flex; gap: 16px; margin-top: 48px; }
+.provider-card {
+  flex: 1; background: var(--bg-c); border: 1px solid var(--border);
+  border-radius: 12px; padding: 22px; display: flex; align-items: flex-start; gap: 14px;
+}
+.provider-icon {
+  width: 36px; height: 36px; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Syne', sans-serif; font-weight: 700; font-size: 11px;
+  letter-spacing: 0.06em; flex-shrink: 0;
+}
+.pi-claude { background: rgba(218,120,91,0.15); color: var(--claude); border: 1px solid rgba(218,120,91,0.25); }
+.pi-codex  { background: rgba(75,85,200,0.15);  color: var(--codex);  border: 1px solid rgba(75,85,200,0.25); }
+.provider-name { font-size: 14px; font-weight: 600; color: var(--t100); margin-bottom: 4px; }
+.provider-desc { font-size: 12px; color: var(--t400); line-height: 1.5; }
+
+/* ─── FOOTER / CTA ─── */
+.cta-section {
+  border-top: 1px solid var(--border);
+  padding: 80px 0;
+  text-align: center;
+}
+.cta-section h2 {
+  font-family: 'Syne', sans-serif; font-weight: 800;
+  font-size: 40px; color: var(--t100); margin-bottom: 14px;
+  letter-spacing: -0.015em;
+}
+.cta-section p { font-size: 16px; color: var(--t400); margin-bottom: 36px; }
+.code-block {
+  display: inline-block; text-align: left;
+  background: var(--bg-c); border: 1px solid var(--border-mid);
+  border-radius: 10px; padding: 16px 22px; margin-bottom: 36px;
+  font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+  color: var(--t200); min-width: 280px;
+}
+.code-block .cmd { color: var(--t400); user-select: none; margin-right: 8px; }
+.code-block .line { display: flex; margin-bottom: 5px; }
+.code-block .line:last-child { margin-bottom: 0; }
+.code-block .green-text { color: #72e832; }
+
+footer {
+  background: var(--bg-s); border-top: 1px solid var(--border);
+  padding: 24px 32px; text-align: center;
+  font-size: 11px; color: var(--t400);
+}
+
+/* ─── ANIMATIONS ─── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.5; box-shadow: 0 0 4px rgba(82,208,23,0.3); }
+  50% { opacity: 1; box-shadow: 0 0 10px rgba(82,208,23,0.7); }
+}
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes bar-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+/* Animate bars on load */
+.bar-fill { animation: bar-grow 1.5s cubic-bezier(0.4,0,0.2,1) both; }
+@keyframes bar-grow {
+  from { width: 0 !important; }
+}
+.bar-fill:nth-child(1) { animation-delay: 0.3s; }
+.bar-fill:nth-child(2) { animation-delay: 0.5s; }
+
+/* Scroll-in animations */
+.fade-up {
+  opacity: 0; transform: translateY(24px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.fade-up.visible { opacity: 1; transform: translateY(0); }
+
+/* ─── SCREENSHOT WRAPS ─── */
+.screenshot-wrap {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border-mid);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.45), 0 0 50px rgba(82,208,23,0.06);
+  position: relative;
+}
+.screenshot-wrap::after {
+  content: '';
+  position: absolute; inset: 0; pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+}
+.screenshot-wrap img {
+  width: 100%;
+  display: block;
+}
+
+/* ─── RESPONSIVE ─── */
+@media (max-width: 768px) {
+  .feature-inner { grid-template-columns: 1fr; gap: 36px; }
+  .feature-inner.rev { direction: ltr; }
+  .stats-bar { grid-template-columns: 1fr 1fr; gap: 20px; padding: 24px; }
+  .kpi-grid { grid-template-columns: 1fr 1fr; }
+  .providers { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <a class="nav-logo" href="#top">
+      <div class="nav-logo-dot"></div>
+      QUOTABAR
+    </a>
+    <div class="nav-links">
+      <a class="nav-link" href="#tray">Tray</a>
+      <a class="nav-link" href="#fenster">Fenster</a>
+      <a class="nav-link" href="#roi">ROI</a>
+      <a class="nav-link" href="#models">Models</a>
+      <a class="nav-link" href="#alerts">Alerts</a>
+      <a class="nav-link" href="#start">Start</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero" id="top">
+  <div class="container">
+    <div class="hero-badge">
+      <div class="hero-badge-dot"></div>
+      Windows Tray · Claude · Codex
+    </div>
+    <h1>KI-Nutzung<br><span class="accent">auf einen Blick</span></h1>
+    <p class="hero-sub">Quota-Fortschritt, API-Äquivalentkosten und vollständige Nutzungshistorie für Claude und Codex — direkt im Windows-Tray.</p>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="#start">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Quick Start
+      </a>
+      <a class="btn btn-secondary" href="#roi">ROI berechnen</a>
+    </div>
+
+    <!-- TRAY MOCKUP -->
+    <div class="hero-tray fade-up">
+      <div class="tray-header">
+        <span class="tray-title">QuotaBar</span>
+        <span class="tray-time">14:23 · 5h-Fenster</span>
+      </div>
+
+      <div class="tray-provider">
+        <div class="prov-logo claude">CL</div>
+        <div class="prov-info">
+          <div class="prov-row">
+            <span class="prov-name">Claude</span>
+            <span class="prov-pct yellow">68 %</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill yellow" style="width:68%"></div>
+          </div>
+          <div class="prov-meta">
+            <span class="prov-badge pb-warn">+4.2 %/h</span>
+            <span class="prov-badge pb-gray">Reset in 2h 14m</span>
+            <span class="prov-badge pb-gray">7.3× Abo</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tray-provider">
+        <div class="prov-logo codex">CX</div>
+        <div class="prov-info">
+          <div class="prov-row">
+            <span class="prov-name">Codex</span>
+            <span class="prov-pct green">31 %</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill green" style="width:31%"></div>
+          </div>
+          <div class="prov-meta">
+            <span class="prov-badge pb-green">+1.8 %/h</span>
+            <span class="prov-badge pb-gray">Reset in 5h 02m</span>
+            <span class="prov-badge pb-gray">3.1× Abo</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- STATS BAR -->
+<div class="container">
+  <div class="stats-bar fade-up">
+    <div>
+      <div class="stat-num"><span class="green">18</span></div>
+      <div class="stat-label">Benachrichtigungs-<br>regeln</div>
+    </div>
+    <div>
+      <div class="stat-num">2</div>
+      <div class="stat-label">Provider<br>Claude + Codex</div>
+    </div>
+    <div>
+      <div class="stat-num"><span class="green">∞</span></div>
+      <div class="stat-label">Verlaufshistorie<br>(permanent)</div>
+    </div>
+    <div>
+      <div class="stat-num">0</div>
+      <div class="stat-label">Cloud-Uploads<br>100% lokal</div>
+    </div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<div class="container features">
+
+  <!-- 1. TRAY + BURNRATE -->
+  <div class="feature" id="tray">
+    <div class="feature-inner fade-up">
+      <div>
+        <div class="feature-tag">
+          <div class="feature-tag-num">01</div>
+          LIVE-MONITORING
+        </div>
+        <h2>Quota-Verbrauch<br>per <span class="g">%/Stunde</span></h2>
+        <p>Das Tray-Icon zeigt zwei übereinander gelegte Fortschrittsbalken für Claude und Codex — farbcodiert von Grün über Gelb bis Rot. Mit einem Blick siehst du, wie schnell du dein Kontingent verbrauchst.</p>
+        <ul class="feature-bullets">
+          <li>Burnrate in %/Stunde über die letzten 3–5 Snapshots</li>
+          <li>ETA bis zur Erschöpfung: "Quota reicht noch 1h 42m"</li>
+          <li>Pace-Einschätzung: on track · ahead · far ahead · behind</li>
+          <li>Stale-Indikator wenn Live-Daten älter als 10 Minuten</li>
+        </ul>
+        <a class="btn btn-secondary" href="#fenster">Fenster-Tracking →</a>
+      </div>
+      <div class="screenshot-wrap fade-up">
+        <img src="screenshots/live.png" alt="QuotaBar Live Tab — Quota-Verbrauch und Burnrate">
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. 5H FENSTER + BUDGET -->
+  <div class="feature" id="fenster">
+    <div class="feature-inner rev fade-up">
+      <div>
+        <div class="feature-tag">
+          <div class="feature-tag-num">02</div>
+          FENSTER-PLANUNG
+        </div>
+        <h2>5h-Fenster &amp;<br><span class="g">Wochenbudget</span></h2>
+        <p>Claude arbeitet mit einem rollierenden 5-Stunden-Fenster und einem wöchentlichen Gesamtlimit. QuotaBar visualisiert beide Fenster gleichzeitig und berechnet, wie viele 5h-Slots noch im Wochenbudget übrig sind.</p>
+        <ul class="feature-bullets">
+          <li>Rollierende 5h- und 7d-Quotas in Echtzeit</li>
+          <li>Fenster-Korrelation: 5h% vs. Woche% automatisch abgeglichen</li>
+          <li>Bonus-Reset-Erkennung für außerplanmäßige Quota-Erhöhungen</li>
+          <li>Sparkline-Verlauf über die letzten Stunden</li>
+          <li>Prognose: "Wöchentliches Budget hält noch 3,2 Tage"</li>
+        </ul>
+      </div>
+      <div class="screenshot-wrap fade-up">
+        <img src="screenshots/analytics.png" alt="QuotaBar Analytics — 5h-Fenster und Wochenbudget">
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. ROI -->
+  <div class="feature" id="roi">
+    <div class="feature-inner fade-up">
+      <div>
+        <div class="feature-tag">
+          <div class="feature-tag-num">03</div>
+          COST ANALYTICS
+        </div>
+        <h2>API-Äquivalent &amp;<br><span class="g">ROI-Faktor</span></h2>
+        <p>Weißt du, wie viel dein Abo tatsächlich wert ist? QuotaBar berechnet den API-Äquivalentpreis deiner Nutzung in USD — und setzt ihn ins Verhältnis zu deinen Abokosten.</p>
+        <ul class="feature-bullets">
+          <li>Echtzeit-Preise via LiteLLM (online) oder lokaler Cache (offline)</li>
+          <li>Subscription Factor: API-Kosten ÷ Abokosten (normiert auf 30 Tage)</li>
+          <li>10× bedeutet: du bekommst das 10-fache deines Abopreises in API-Wert</li>
+          <li>Alle 4 Token-Typen: Input, Output, Cache-Create, Cache-Read</li>
+          <li>ROI-Meilenstein-Alerts bei 2×, 5×, 10×</li>
+        </ul>
+      </div>
+      <div class="screenshot-wrap fade-up">
+        <img src="screenshots/live.png" alt="QuotaBar Live Tab — ROI-Faktor und API-Äquivalentkosten">
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. MODELS / SCATTER -->
+  <div class="feature" id="models">
+    <div class="feature-inner rev fade-up">
+      <div>
+        <div class="feature-tag">
+          <div class="feature-tag-num">04</div>
+          MODEL INTELLIGENCE
+        </div>
+        <h2>Preis pro<br><span class="g">Intelligenz</span></h2>
+        <p>Der Scatter-Plot visualisiert jedes genutzte Modell nach zwei Achsen: effektive Kosten ($/MTok) vs. Benchmark-Score aus dem Artificial Analysis Intelligence Index. Modelle oben-links sind die besten.</p>
+        <ul class="feature-bullets">
+          <li>X-Achse: effektive $/MTok aus deiner echten Nutzung</li>
+          <li>Y-Achse: Artificial Analysis Intelligence Index Score</li>
+          <li>Blasengröße = Kostenanteil am Gesamtbudget</li>
+          <li>Ideal-Quadrant (oben-links) für beste Preis/Leistung</li>
+          <li>Adoption-Heatmap: wann wurde welches Modell eingeführt?</li>
+          <li>Cache-Effizienz und Einsparungen pro Modell</li>
+        </ul>
+      </div>
+      <div class="screenshot-wrap fade-up">
+        <img src="screenshots/models.png" alt="QuotaBar Models Tab — Preis-pro-Intelligenz Scatter-Plot">
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. ALERTS -->
+  <div class="feature" id="alerts">
+    <div class="feature-inner fade-up">
+      <div>
+        <div class="feature-tag">
+          <div class="feature-tag-num">05</div>
+          NOTIFICATION ENGINE
+        </div>
+        <h2>18 intelligente<br><span class="g">Alert-Regeln</span></h2>
+        <p>QuotaBar überwacht kontinuierlich deine Nutzung und sendet Windows-Toast-Notifications mit kontextsensitiven Hinweisen — konfigurierbar mit Cooldowns, Quiet Hours und Pro-Regel-Steuerung.</p>
+        <ul class="feature-bullets">
+          <li>Reset-Erkennung: planned, unexpected, und Bonus-Resets</li>
+          <li>Quota-Warnungen: high (80%), critical (95%), projectedDepletion</li>
+          <li>Pace-Alerts: farAhead / farBehind bei anomaler Burnrate</li>
+          <li>Burnrate-Spikes: >2× Baseline löst Alert aus</li>
+          <li>ROI-Meilensteine: 2×, 5×, 10× Abo-Kosten</li>
+          <li>Quiet Hours und globales Mindest-Gap konfigurierbar</li>
+        </ul>
+      </div>
+      <div class="screenshot-wrap fade-up">
+        <img src="screenshots/alerts.png" alt="QuotaBar Benachrichtigungen — Alert-Regeln und Konfiguration">
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. HISTORY -->
+  <div class="feature" id="history">
+    <div class="feature-inner rev fade-up">
+      <div>
+        <div class="feature-tag">
+          <div class="feature-tag-num">06</div>
+          PERMANENTE HISTORY
+        </div>
+        <h2>Verlauf bleibt<br><span class="g">für immer</span></h2>
+        <p>Claude löscht Logs standardmäßig nach 30 Tagen. QuotaBar liest JSONL-Logs einmalig, aggregiert jeden Tag in einen permanenten Backfill-Store und bewahrt die History — unabhängig vom Provider-Cleanup.</p>
+        <ul class="feature-bullets">
+          <li>Inkrementeller Backfill: nur neue/geänderte Dateien werden verarbeitet</li>
+          <li>Daily, Weekly, Monthly und Session-Reports</li>
+          <li>Projekt- und Instanzfilterung, Zeitzonenauswahl</li>
+          <li>Verlaufsschart: USD-Kosten oder Token-Volumen (wählbar)</li>
+          <li>JSON-Export für externe Analyse</li>
+          <li>Gespeichert in <code style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--t200);background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">~/.quotabar-win/debug/</code></li>
+        </ul>
+      </div>
+      <div class="screenshot-wrap fade-up">
+        <img src="screenshots/history.png" alt="QuotaBar History Tab — permanenter Nutzungsverlauf">
+      </div>
+    </div>
+  </div>
+
+</div><!-- /features -->
+
+<!-- PROVIDERS -->
+<section style="border-top:1px solid var(--border);">
+  <div class="container">
+    <div style="text-align:center;margin-bottom:48px;">
+      <div class="feature-tag" style="justify-content:center;">
+        <div class="feature-tag-num">07</div>
+        MULTI-PROVIDER
+      </div>
+      <h2 style="font-family:'Syne',sans-serif;font-weight:700;font-size:clamp(24px,3vw,34px);color:var(--t100);letter-spacing:-0.01em;">Zwei Provider.<br>Eine Oberfläche.</h2>
+    </div>
+    <div class="providers fade-up">
+      <div class="provider-card">
+        <div class="provider-icon pi-claude">CL</div>
+        <div>
+          <div class="provider-name" style="color:var(--claude);">Claude by Anthropic</div>
+          <div class="provider-desc">5h-Fenster, Wochenquota, OAuth-Token-Refresh. Logs aus <code style="font-size:10px;font-family:'IBM Plex Mono',monospace;background:rgba(255,255,255,0.04);padding:1px 4px;border-radius:3px;">~/.claude/projects/</code>. Unterstützt <code style="font-size:10px;font-family:'IBM Plex Mono',monospace;background:rgba(255,255,255,0.04);padding:1px 4px;border-radius:3px;">CLAUDE_CONFIG_DIR</code> für mehrere Accounts.</div>
+        </div>
+      </div>
+      <div class="provider-card">
+        <div class="provider-icon pi-codex">CX</div>
+        <div>
+          <div class="provider-name" style="color:var(--codex);">Codex by OpenAI</div>
+          <div class="provider-desc">Credits-Tracking, Speed-Tier (standard/fast) mit automatischer Preisanpassung. Logs aus <code style="font-size:10px;font-family:'IBM Plex Mono',monospace;background:rgba(255,255,255,0.04);padding:1px 4px;border-radius:3px;">~/.codex/sessions/</code>. <code style="font-size:10px;font-family:'IBM Plex Mono',monospace;background:rgba(255,255,255,0.04);padding:1px 4px;border-radius:3px;">CODEX_HOME</code> wird respektiert.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA / START -->
+<section class="cta-section" id="start">
+  <div class="container">
+    <h2>In 3 Befehlen <span style="color:var(--green);">starten</span></h2>
+    <p>Node.js und npm erforderlich. Claude CLI oder Codex CLI muss eingerichtet sein.</p>
+    <div class="code-block">
+      <div class="line"><span class="cmd">$</span><span>npm install</span></div>
+      <div class="line"><span class="cmd">$</span><span>npm run build</span></div>
+      <div class="line"><span class="cmd">$</span><span class="green-text">npm run dev</span></div>
+    </div>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="https://github.com" target="_blank">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z" fill="currentColor"/></svg>
+        GitHub
+      </a>
+      <a class="btn btn-secondary" href="#">Dokumentation</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div>QuotaBar for Windows · MIT License · Läuft vollständig lokal — keine Cloud, keine Telemetrie</div>
+</footer>
+
+<script>
+// Scroll-in animation
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.1 });
+
+document.querySelectorAll('.fade-up').forEach(el => observer.observe(el));
+
+// Animate progress bars when visible
+const barObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.querySelectorAll('.bar-fill').forEach((bar, i) => {
+        const targetWidth = bar.style.width;
+        bar.style.width = '0%';
+        setTimeout(() => {
+          bar.style.transition = 'width 1.2s cubic-bezier(0.4,0,0.2,1)';
+          bar.style.width = targetWidth;
+        }, 200 + i * 150);
+      });
+      barObserver.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.3 });
+
+document.querySelectorAll('.mockup, .hero-tray').forEach(el => barObserver.observe(el));
+
+// Bubble pulse on hover
+document.querySelectorAll('.scatter-bubble').forEach(b => {
+  b.addEventListener('mouseover', () => {
+    b.style.boxShadow = `0 0 16px rgba(255,255,255,0.25)`;
+  });
+  b.addEventListener('mouseleave', () => {
+    b.style.boxShadow = '';
+  });
+});
+</script>
+</body>
+</html>

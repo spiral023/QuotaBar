@@ -29,11 +29,13 @@ export interface PersistedNotificationState {
   lastFired: Record<string, number>;
   lastGlobalFiredAt: number;
   lastPercent?: Record<string, number>; // undefined-Werte werden weggelassen
+  lastResetsAt?: Record<string, string>; // geplanter Reset-Zeitpunkt (ISO) des zuletzt gesehenen Fensters
 }
 
 export class NotificationStateStore {
   private readonly lastFired       = new Map<string, number>();
   private readonly lastPercent     = new Map<string, number | undefined>();
+  private readonly lastResetsAt    = new Map<string, string | undefined>();
   private readonly lastPaceStage   = new Map<string, PaceStage | null | undefined>();
   private readonly lastStatus      = new Map<string, string>();
   private readonly staleStartedAt  = new Map<string, number>();
@@ -52,6 +54,11 @@ export class NotificationStateStore {
         this.lastPercent.set(k, v);
       }
     }
+    if (saved.lastResetsAt) {
+      for (const [k, v] of Object.entries(saved.lastResetsAt)) {
+        this.lastResetsAt.set(k, v);
+      }
+    }
   }
 
   serialize(): PersistedNotificationState {
@@ -59,10 +66,15 @@ export class NotificationStateStore {
     for (const [k, v] of this.lastPercent) {
       if (typeof v === "number") lastPercent[k] = v;
     }
+    const lastResetsAt: Record<string, string> = {};
+    for (const [k, v] of this.lastResetsAt) {
+      if (typeof v === "string") lastResetsAt[k] = v;
+    }
     return {
       lastFired: Object.fromEntries(this.lastFired),
       lastGlobalFiredAt: this.lastGlobalFiredAt,
       lastPercent,
+      lastResetsAt,
     };
   }
 
@@ -86,6 +98,14 @@ export class NotificationStateStore {
 
   setLastPercent(provider: string, windowName: string, value: number | undefined): void {
     this.lastPercent.set(`${provider}:${windowName}`, value);
+  }
+
+  getLastResetsAt(provider: string, windowName: string): string | undefined {
+    return this.lastResetsAt.get(`${provider}:${windowName}`);
+  }
+
+  setLastResetsAt(provider: string, windowName: string, value: string | undefined): void {
+    this.lastResetsAt.set(`${provider}:${windowName}`, value);
   }
 
   getLastPaceStage(provider: string, windowName: string): PaceStage | null | undefined {
@@ -191,8 +211,10 @@ function evaluateProvider(
 
     events.push(...evaluateWindowRules(next, win, prevWin, settings, state, now));
 
-    // Update per-window state after evaluating all rules
+    // Update per-window state after evaluating all rules (NACH evaluateWindowRules,
+    // damit die Regeln noch den vorherigen resetsAt-Wert lesen können).
     state.setLastPercent(next.provider, win.name, win.usedPercent);
+    state.setLastResetsAt(next.provider, win.name, win.resetsAt);
     state.setLastPaceStage(next.provider, win.name, win.pace?.stage ?? null);
   }
 
@@ -213,24 +235,38 @@ function evaluateWindowRules(
   const pPrev = prevWin !== undefined ? cap(prevWin.usedPercent ?? 0) : state.getLastPercent(snap.provider, win.name);
   const key = `${snap.provider}:${win.name}`;
 
+  // War zum Beobachtungszeitpunkt bereits ein PLANMÄSSIGER Reset fällig? Der
+  // geplante Reset-Zeitpunkt stammt aus dem vorherigen Fenster (in-memory oder
+  // persistiert) — NICHT aus win.resetsAt, das nach dem Reset bereits auf den
+  // nächsten Zyklus zeigt. Tritt auf, wenn die Maschine über den Reset hinweg
+  // offline war und ihn erst verspätet sieht: dann ist der Abfall erwartbar und
+  // darf NICHT als „außerplanmäßiger Reset" fehlalarmiert werden.
+  const prevResetIso = prevWin?.resetsAt ?? state.getLastResetsAt(snap.provider, win.name);
+  const prevResetMs = prevResetIso !== undefined ? new Date(prevResetIso).getTime() : NaN;
+  const scheduledResetDue = !Number.isNaN(prevResetMs) && prevResetMs <= now.getTime();
+
+  const fireConfirmedReset = (reason: string): void => {
+    if (!rules.confirmedReset.enabled) return;
+    if (!state.canFire("confirmedReset", key, rules.confirmedReset.cooldownMinutes)) return;
+    events.push({
+      ruleId: "confirmedReset",
+      provider: snap.provider, windowName: win.name,
+      severity: "info",
+      title: `${cap1(snap.provider)} ${windowLabel(win.name)} zurückgesetzt`,
+      body: `Das Kontingent ist zurück auf 0 %.`,
+      firedAt: localISOString(now),
+      reason,
+    });
+    state.recordFired("confirmedReset", key);
+    state.setResetDetectedAt(snap.provider, win.name, now.getTime());
+  };
+
   // Rule 1: Confirmed limit reset (previous >= 99.5%, current <= 1%)
-  if (rules.confirmedReset.enabled && p <= 1 && pPrev !== undefined && pPrev >= 99.5) {
-    if (state.canFire("confirmedReset", key, rules.confirmedReset.cooldownMinutes)) {
-      events.push({
-        ruleId: "confirmedReset",
-        provider: snap.provider, windowName: win.name,
-        severity: "info",
-        title: `${cap1(snap.provider)} ${windowLabel(win.name)} zurückgesetzt`,
-        body: `Das Kontingent ist zurück auf 0 %.`,
-        firedAt: localISOString(now),
-        reason: `usedPercent ${pPrev?.toFixed(0)}% → ${p.toFixed(0)}%`,
-      });
-      state.recordFired("confirmedReset", key);
-      state.setResetDetectedAt(snap.provider, win.name, now.getTime());
-    }
+  if (p <= 1 && pPrev !== undefined && pPrev >= 99.5) {
+    fireConfirmedReset(`usedPercent ${pPrev.toFixed(0)}% → ${p.toFixed(0)}%`);
   }
 
-  // Rule 2: Unexpected limit reset (significant drop, not a normal 99.5 reset)
+  // Rule 2: Significant drop, not a normal 99.5 reset.
   const cfg2 = rules.unexpectedReset;
   if (
     cfg2.enabled &&
@@ -239,7 +275,11 @@ function evaluateWindowRules(
     p <= cfg2.maxNextPercent &&
     !(pPrev >= 99.5) // not handled by rule 1
   ) {
-    if (state.canFire("unexpectedReset", key, cfg2.cooldownMinutes)) {
+    if (scheduledResetDue) {
+      // Planmäßiger Reset, nur verspätet beobachtet → freundliche „zurückgesetzt"-Info
+      // statt Fehlalarm „außerplanmäßiger Reset".
+      fireConfirmedReset(`usedPercent ${pPrev.toFixed(0)}% → ${p.toFixed(0)}% (geplanter Reset, verspätet erkannt)`);
+    } else if (state.canFire("unexpectedReset", key, cfg2.cooldownMinutes)) {
       events.push({
         ruleId: "unexpectedReset",
         provider: snap.provider, windowName: win.name,

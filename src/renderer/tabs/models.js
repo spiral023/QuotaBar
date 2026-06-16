@@ -21,8 +21,16 @@ window.QB = window.QB || {};
   let _sortDesc = true;
 
   const METRIC_LABELS = [
-    ['output', 'Output'], ['input', 'Input'], ['cacheRead', 'Cache Read'],
-    ['cacheCreation', 'Cache Creation'], ['total', 'Total'], ['cost', 'Kosten'],
+    ['output', 'Out'], ['input', 'In'], ['cacheRead', 'CR'],
+    ['cacheCreation', 'CC'], ['total', '∑'], ['cost', '$'],
+  ];
+
+  const COLUMNS_COMPACT = [
+    ['model', 'Modell', 'txt'],
+    ['outputTokens', 'Output', 'num'],
+    ['costUSD', 'Kosten', 'num'],
+    ['effPerMTok', '$/MTok', 'num'],
+    ['sharePct', 'Anteil', 'num'],
   ];
   const CLAUDE_PALETTE = ['#DA785B', '#E89B6F', '#C05A45', '#F0B27A', '#A8442F', '#F5D0A9'];
   const CODEX_PALETTE  = ['#4B55C8', '#6E8EE8', '#56C8D8', '#3A3F8F', '#7A6FF0', '#2E6FBF'];
@@ -99,30 +107,30 @@ window.QB = window.QB || {};
       <div class="${_animated ? '' : 'mod-stagger'}" id="mod-root">
         <div class="mod-kpi-grid" id="mod-kpis"></div>
 
-        <div class="an-section">
-          <div class="an-section-head">
-            <span class="an-section-title">MODELL-VERTEILUNG</span>
-            <div class="an-window-pills mod-pills" id="mod-win-pills">
-              <button class="pill" data-win="30d">30D</button>
-              <button class="pill" data-win="90d">90D</button>
-              <button class="pill" data-win="all">Alles</button>
+        <div class="an-section mod-chart-sec">
+          <div class="mod-chart-hd">
+            <span class="mod-chart-ttl">VERTEILUNG</span>
+            <div class="mod-chart-segs">
+              <div class="mod-seg" id="mod-win-pills">
+                <button data-win="30d">30T</button>
+                <button data-win="90d">90T</button>
+                <button data-win="all">∞</button>
+              </div>
+              <div class="mod-seg" id="mod-provider-pills">
+                <button data-prov="all">Alle</button>
+                <button data-prov="claude">Claude</button>
+                <button data-prov="codex">Codex</button>
+              </div>
             </div>
           </div>
-          <div class="mod-head-rows">
-            <div class="mod-pills" id="mod-metric-pills">
-              ${METRIC_LABELS.map(([k, l]) => `<button class="pill" data-metric="${k}">${l}</button>`).join('')}
-            </div>
-            <div class="mod-pills" id="mod-provider-pills">
-              <button class="pill" data-prov="all">Alle</button>
-              <button class="pill" data-prov="claude">Claude</button>
-              <button class="pill" data-prov="codex">Codex</button>
-            </div>
+          <div class="mod-seg mod-metric-seg" id="mod-metric-pills">
+            ${METRIC_LABELS.map(([k, l]) => `<button data-metric="${k}">${l}</button>`).join('')}
           </div>
           <div class="mod-hero-wrap"><canvas id="mod-stack-canvas"></canvas></div>
           <div class="mod-ribbon" id="mod-ribbon"></div>
           <div class="mod-legend" id="mod-legend"></div>
           <div class="mod-note" id="mod-stack-note" hidden></div>
-          <div class="mod-note">Historie ab ${_data.days.length > 0 ? _data.days[0].date : '—'}</div>
+          <div class="mod-note">Ab ${_data.days.length > 0 ? _data.days[0].date : '—'}</div>
         </div>
 
         ${hasBenchmarks ? `
@@ -130,26 +138,12 @@ window.QB = window.QB || {};
           <div class="an-section-head"><span class="an-section-title">PREIS vs. INTELLIGENZ</span></div>
           <div class="mod-scatter-wrap"><canvas id="mod-scatter-canvas"></canvas></div>
           <div class="mod-note" id="mod-scatter-empty" hidden></div>
-          <div class="mod-scatter-note">x: effektiver $/MTok basierend auf deiner echten Nutzung (inkl. Cache) &middot;
-            Skala: grün = besser, rot = schlechter &middot;
-            Quelle: ${_data.benchmarksAsOf ? 'Artificial Analysis Intelligence Index, Stand ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
-        </div>` : `
-        <div class="an-section"><div class="mod-note">Benchmark-Daten nicht verfügbar — Scatter ausgeblendet.</div></div>`}
+          <div class="mod-scatter-note">x = $/MTok effektiv (inkl. Cache) · grün = besser, rot = schlechter · ${_data.benchmarksAsOf ? 'Stand ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
+        </div>` : ''}
 
         <div class="an-section">
           <div class="an-section-head"><span class="an-section-title">MODELLE IM DETAIL</span></div>
           <div class="mod-table-scroll"><table class="mod-table" id="mod-table"></table></div>
-        </div>
-
-        <div class="an-row2">
-          <div class="an-section">
-            <div class="an-section-head"><span class="an-section-title">MODELL-ADOPTION</span></div>
-            <div id="mod-adoption"></div>
-          </div>
-          <div class="an-section">
-            <div class="an-section-head"><span class="an-section-title">CACHE-EFFIZIENZ</span></div>
-            <div id="mod-cache"></div>
-          </div>
         </div>
       </div>`;
     _animated = true;
@@ -160,23 +154,21 @@ window.QB = window.QB || {};
     renderStack(true);
     if (hasBenchmarks) renderScatter(true);
     renderTable();
-    renderAdoption();
-    renderCache();
   }
 
   function bindPills() {
-    document.querySelectorAll('#mod-win-pills .pill').forEach((p) =>
+    document.querySelectorAll('#mod-win-pills button').forEach((p) =>
       p.addEventListener('click', () => { _win = p.dataset.win; refreshLocal(); }));
-    document.querySelectorAll('#mod-metric-pills .pill').forEach((p) =>
+    document.querySelectorAll('#mod-metric-pills button').forEach((p) =>
       p.addEventListener('click', () => { _metric = p.dataset.metric; refreshLocal(); }));
-    document.querySelectorAll('#mod-provider-pills .pill').forEach((p) =>
+    document.querySelectorAll('#mod-provider-pills button').forEach((p) =>
       p.addEventListener('click', () => { _provider = p.dataset.prov; refreshLocal(); }));
   }
 
   function syncPills() {
-    document.querySelectorAll('#mod-win-pills .pill').forEach((p) => p.classList.toggle('active', p.dataset.win === _win));
-    document.querySelectorAll('#mod-metric-pills .pill').forEach((p) => p.classList.toggle('active', p.dataset.metric === _metric));
-    document.querySelectorAll('#mod-provider-pills .pill').forEach((p) => p.classList.toggle('active', p.dataset.prov === _provider));
+    document.querySelectorAll('#mod-win-pills button').forEach((p) => p.classList.toggle('active', p.dataset.win === _win));
+    document.querySelectorAll('#mod-metric-pills button').forEach((p) => p.classList.toggle('active', p.dataset.metric === _metric));
+    document.querySelectorAll('#mod-provider-pills button').forEach((p) => p.classList.toggle('active', p.dataset.prov === _provider));
   }
 
   function refreshLocal() {
@@ -185,8 +177,6 @@ window.QB = window.QB || {};
     renderStack(false);
     renderScatter(false);
     renderTable();
-    renderAdoption();
-    renderCache();
   }
 
   function renderKpis() {
@@ -397,6 +387,9 @@ window.QB = window.QB || {};
 
   function renderTable() {
     const table = document.getElementById('mod-table');
+    const compact = document.body.classList.contains('view-compact');
+    const cols = compact ? COLUMNS_COMPACT : COLUMNS;
+
     const rows = calc.tableRows(visibleDays(), _data.benchmarks);
     rows.sort((a, b) => {
       const av = a[_sortKey], bv = b[_sortKey];
@@ -433,22 +426,28 @@ window.QB = window.QB || {};
       costUSD: acc.costUSD + r.costUSD,
     }), { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0, costUSD: 0 });
 
+    const totalRow = compact
+      ? `<td class="txt">Σ ${rows.length}</td>
+         <td>${QB.fmtTokens(totals.outputTokens)}</td>
+         <td>$${totals.costUSD.toFixed(2)}</td>
+         <td>${totals.totalTokens > 0 ? '$' + ((totals.costUSD / totals.totalTokens) * 1e6).toFixed(2) : '—'}</td>
+         <td></td>`
+      : `<td class="txt">Σ ${rows.length} Modelle</td>
+         <td>${QB.fmtTokens(totals.inputTokens)}</td><td>${QB.fmtTokens(totals.outputTokens)}</td>
+         <td>${QB.fmtTokens(totals.cacheReadTokens)}</td><td>${QB.fmtTokens(totals.cacheCreationTokens)}</td>
+         <td>${QB.fmtTokens(totals.totalTokens)}</td><td>$${totals.costUSD.toFixed(2)}</td>
+         <td>${totals.totalTokens > 0 ? '$' + ((totals.costUSD / totals.totalTokens) * 1e6).toFixed(2) : '—'}</td>
+         <td colspan="6"></td>`;
+
     table.innerHTML = `
-      <thead><tr>${COLUMNS.map(([key, label, cls]) => `
+      <thead><tr>${cols.map(([key, label, cls]) => `
         <th class="${cls === 'txt' ? 'txt' : ''} ${_sortKey === key ? (_sortDesc ? 'sorted-desc' : 'sorted-asc') : ''}" data-key="${key}">
           ${label}${_sortKey === key ? '<span class="sort-caret">▾</span>' : ''}
         </th>`).join('')}</tr></thead>
       <tbody>
-        ${rows.map((r) => `<tr>${COLUMNS.map(([key, , cls]) =>
+        ${rows.map((r) => `<tr>${cols.map(([key, , cls]) =>
           `<td class="${cls === 'txt' ? 'txt' : ''}">${fmt[key](r)}</td>`).join('')}</tr>`).join('')}
-        <tr class="mod-total">
-          <td class="txt">Σ ${rows.length} Modelle</td>
-          <td>${QB.fmtTokens(totals.inputTokens)}</td><td>${QB.fmtTokens(totals.outputTokens)}</td>
-          <td>${QB.fmtTokens(totals.cacheReadTokens)}</td><td>${QB.fmtTokens(totals.cacheCreationTokens)}</td>
-          <td>${QB.fmtTokens(totals.totalTokens)}</td><td>$${totals.costUSD.toFixed(2)}</td>
-          <td>${totals.totalTokens > 0 ? '$' + ((totals.costUSD / totals.totalTokens) * 1e6).toFixed(2) : '—'}</td>
-          <td colspan="6"></td>
-        </tr>
+        <tr class="mod-total">${totalRow}</tr>
       </tbody>`;
 
     table.querySelectorAll('th').forEach((th) => th.addEventListener('click', () => {
@@ -458,45 +457,4 @@ window.QB = window.QB || {};
     }));
   }
 
-  function renderAdoption() {
-    const el = document.getElementById('mod-adoption');
-    const timeline = calc.adoptionTimeline(visibleDays());
-    if (timeline.length === 0) { el.innerHTML = '<div class="mod-note">Keine Daten.</div>'; return; }
-    const first = timeline.reduce((min, t) => (t.first < min ? t.first : min), timeline[0].first);
-    const last = timeline.reduce((max, t) => (t.last > max ? t.last : max), timeline[0].last);
-    const allMonths = [];
-    for (let m = first; m <= last; m = nextMonth(m)) allMonths.push(m);
-
-    el.innerHTML = timeline.map((t) => {
-      const byMonth = new Map(t.months.map((x) => [x.month, x.intensity]));
-      return `
-        <div class="mod-adopt-row">
-          <div class="mod-adopt-lbl" title="${QB.esc(t.model)}">${QB.esc(t.model)}</div>
-          <div class="mod-adopt-track">${allMonths.map((m) => {
-            const i = byMonth.get(m);
-            return `<div class="mod-adopt-seg" style="background:${i != null
-              ? QB.providerColor(t.provider) : 'rgba(255,255,255,0.03)'};opacity:${i != null ? (0.25 + i * 0.75).toFixed(2) : 1}"></div>`;
-          }).join('')}</div>
-        </div>`;
-    }).join('');
-  }
-
-  function nextMonth(ym) {
-    const [y, m] = ym.split('-').map(Number);
-    return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
-  }
-
-  function renderCache() {
-    const el = document.getElementById('mod-cache');
-    const eff = calc.cacheEfficiency(visibleDays(), _data.pricing);
-    if (eff.length === 0) { el.innerHTML = '<div class="mod-note">Keine Cache-Daten oder Preise verfügbar.</div>'; return; }
-    el.innerHTML = eff.map((e) => `
-      <div class="mod-cache-row">
-        <div class="mod-cache-lbl" title="${QB.esc(e.model)}">${QB.esc(e.model)}</div>
-        <div class="mod-cache-track">
-          <div class="mod-cache-fill" style="width:${(e.hitRate * 100).toFixed(1)}%;background:${QB.providerColor(e.provider)};opacity:0.75"></div>
-        </div>
-        <div class="mod-cache-val">${(e.hitRate * 100).toFixed(0)}% · spart $${e.savedUSD.toFixed(0)}</div>
-      </div>`).join('');
-  }
 })();

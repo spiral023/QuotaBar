@@ -142,5 +142,13 @@ function numberFrom(value: unknown): number | undefined {
 function percentFromUtilization(value: unknown): number | undefined {
   const num = numberFrom(value);
   if (num === undefined) return undefined;
-  return num > 0 && num <= 1 ? num * 100 : num;
+  // Die Claude-OAuth-Usage-API liefert `utilization` als Prozentwert auf der
+  // 0–100-Skala (1 = 1 %, 98 = 98 %), NICHT als 0–1-Bruch. Eine frühere
+  // Heuristik multiplizierte Werte ≤ 1 mit 100, um eine vermeintliche Bruchform
+  // zu unterstützen — dabei wurde ein echtes 1-%-Reading zu 100 %. Genau das
+  // trat direkt nach einem 7d-Fenster-Reset auf (reale Nutzung ~1 %, angezeigt
+  // 100 %), während das 5h-Fenster erst bei ~8 % stand (physikalisch kann das
+  // 7d-Fenster dann nicht bei 100 % liegen). Werte werden in toClaudeWindow auf
+  // [0, 100] geklemmt.
+  return num;
 }

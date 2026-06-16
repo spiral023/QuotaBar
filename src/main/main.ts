@@ -29,6 +29,7 @@ import { registerLifecycleEvents } from "./lifecycleEvents";
 interface CliOptions {
   debug: boolean;
   noWindow: boolean;
+  openWindow: boolean;
   pollIntervalSeconds?: number;
   startupAction: "install" | "uninstall" | null;
 }
@@ -132,6 +133,12 @@ if (!app.requestSingleInstanceLock()) {
         detailsWindow.notifyUpdate(cachedSnapshots);
       }
       await tray.rebuildMenu();
+      if (cli.openWindow) {
+        setTimeout(() => detailsWindow.open(
+          () => void refreshLoop.refreshNow("dashboard"),
+          () => void refreshLoop.recomputeCost(),
+        ), 1500);
+      }
       const notificationService = new NotificationService(settings.notifications);
       detailsWindow.setNotificationService(notificationService);
       notificationService.setActionHandlers({
@@ -239,11 +246,12 @@ app.on("window-all-closed", () => {
 });
 
 function parseCliArgs(args: string[]): CliOptions {
-  const options: CliOptions = { debug: false, noWindow: false, startupAction: null };
+  const options: CliOptions = { debug: false, noWindow: false, openWindow: false, startupAction: null };
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (arg === "--log-debug" || arg === "--debug") options.debug = true;
     else if (arg === "--no-window") options.noWindow = true;
+    else if (arg === "--open-window") options.openWindow = true;
     else if (arg === "--install-startup") options.startupAction = "install";
     else if (arg === "--uninstall-startup") options.startupAction = "uninstall";
     else if (arg === "--poll-interval-seconds") {

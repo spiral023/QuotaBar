@@ -143,26 +143,29 @@ function _buildControls(container) {
 
   container.innerHTML = `
     <div class="hr-controls">
-      <div class="hr-select-wrap">
-        <select class="hr-preset-select" id="an-preset" aria-label="Zeitraum" title="Zeitraum wählen">
-          <option value="custom" hidden${_activePreset ? '' : ' selected'}>Eigene Auswahl</option>
-          ${presetOptions}
-        </select>
-        <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
-             stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M1.5 3 4 5.5 6.5 3"/>
-        </svg>
+      <div class="hr-ctrl-row1">
+        <div class="hr-select-wrap">
+          <select class="hr-preset-select" id="an-preset" aria-label="Zeitraum" title="Zeitraum wählen">
+            <option value="custom" hidden${_activePreset ? '' : ' selected'}>Eigene Auswahl</option>
+            ${presetOptions}
+          </select>
+          <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
+               stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1.5 3 4 5.5 6.5 3"/>
+          </svg>
+        </div>
+        <div class="hr-date-pair">
+          <input class="hr-date-input" type="date" id="an-from" value="${_from ?? ninetyAgo}" aria-label="Von" title="Startdatum">
+          <span class="hr-date-sep" aria-hidden="true">–</span>
+          <input class="hr-date-input" type="date" id="an-to" value="${_to ?? today}" aria-label="Bis" title="Enddatum">
+        </div>
       </div>
-      <div class="hr-date-pair">
-        <input class="hr-date-input" type="date" id="an-from" value="${_from ?? ninetyAgo}" aria-label="Von" title="Startdatum">
-        <span class="hr-date-sep" aria-hidden="true">–</span>
-        <input class="hr-date-input" type="date" id="an-to" value="${_to ?? today}" aria-label="Bis" title="Enddatum">
-      </div>
-      <div class="hr-tb-sep" aria-hidden="true"></div>
-      <div class="hr-seg" id="an-agg-pills" role="group" aria-label="Auflösung">
-        <button class="hr-seg-btn${_agg === 'daily'   ? ' active' : ''}" data-agg="daily"   title="Täglich">Tag</button>
-        <button class="hr-seg-btn${_agg === 'weekly'  ? ' active' : ''}" data-agg="weekly"  title="Wöchentlich">Wo</button>
-        <button class="hr-seg-btn${_agg === 'monthly' ? ' active' : ''}" data-agg="monthly" title="Monatlich">Mon</button>
+      <div class="hr-ctrl-row2">
+        <div class="hr-seg an-agg-seg" id="an-agg-pills" role="group" aria-label="Auflösung">
+          <button class="hr-seg-btn${_agg === 'daily'   ? ' active' : ''}" data-agg="daily"   title="Täglich">Tag</button>
+          <button class="hr-seg-btn${_agg === 'weekly'  ? ' active' : ''}" data-agg="weekly"  title="Wöchentlich">Wo</button>
+          <button class="hr-seg-btn${_agg === 'monthly' ? ' active' : ''}" data-agg="monthly" title="Monatlich">Mon</button>
+        </div>
       </div>
     </div>
     <div id="an-results"></div>
@@ -237,14 +240,14 @@ function _renderResults(data) {
     <div class="an-section">
       <div class="an-section-head">
         <span class="an-section-title" id="an-line-title">${_lineTitle()}</span>
-        <div style="display:flex;gap:6px;align-items:center">
-          <div class="an-window-pills" id="an-ctype-pills">
-            <button class="pill${_chartMode === 'cost' ? ' active' : ''}" data-ctype="cost">Kosten</button>
-            <button class="pill${_chartMode === 'roi'  ? ' active' : ''}" data-ctype="roi">ROI</button>
+        <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+          <div class="mod-seg" id="an-ctype-pills">
+            <button class="${_chartMode === 'cost' ? 'active' : ''}" data-ctype="cost">$</button>
+            <button class="${_chartMode === 'roi'  ? 'active' : ''}" data-ctype="roi">ROI</button>
           </div>
           <div class="hr-chart-legend">
-            <span class="hr-legend-dot" style="background:var(--claude-col)"></span><span>Claude</span>
-            <span class="hr-legend-dot" style="background:var(--codex-col)"></span><span>Codex</span>
+            <span class="hr-legend-dot" style="background:var(--claude-col)"></span>
+            <span class="hr-legend-dot" style="background:var(--codex-col)"></span>
           </div>
         </div>
       </div>
@@ -292,11 +295,6 @@ function _renderResults(data) {
       <div id="an-peak"></div>
     </div>
 
-    <div class="an-section">
-      <div class="an-section-head"><span class="an-section-title">WÖCHENTLICHER VERLAUF (${winLabel})</span></div>
-      <div id="an-weekly"></div>
-    </div>
-
     <div class="an-row2">
       <div class="an-section">
         <div class="an-section-head"><span class="an-section-title">KOSTENEFFIZIENZ</span></div>
@@ -312,14 +310,14 @@ function _renderResults(data) {
       <div class="an-section-head">
         <span class="an-section-title" id="an-wh-title">${_whTitle()}</span>
         <div style="display:flex;gap:6px;align-items:center">
-          <div class="an-window-pills" id="an-wh-pills">
-            <button class="pill${_whMode === 'util' ? ' active' : ''}" data-whmode="util">% genutzt</button>
-            <button class="pill${_whMode === 'used' ? ' active' : ''}" data-whmode="used">Genutzt</button>
-            <button class="pill${_whMode === 'max'  ? ' active' : ''}" data-whmode="max">Möglich</button>
+          <div class="mod-seg" id="an-wh-pills">
+            <button class="${_whMode === 'util' ? 'active' : ''}" data-whmode="util">%</button>
+            <button class="${_whMode === 'used' ? 'active' : ''}" data-whmode="used">Anz.</button>
+            <button class="${_whMode === 'max'  ? 'active' : ''}" data-whmode="max">Max</button>
           </div>
           <div class="hr-chart-legend">
-            <span class="hr-legend-dot" style="background:var(--claude-col)"></span><span>Claude</span>
-            <span class="hr-legend-dot" style="background:var(--codex-col)"></span><span>Codex</span>
+            <span class="hr-legend-dot" style="background:var(--claude-col)"></span>
+            <span class="hr-legend-dot" style="background:var(--codex-col)"></span>
           </div>
         </div>
       </div>
@@ -339,7 +337,6 @@ function _renderResults(data) {
   _buildWeekdayBars(data);
   _buildTopDays(data);
   _buildFiveHourPeak(data);
-  _buildWeeklySummary(data);
   _buildCostEfficiency(data);
   void _renderWindowHistory();
 }
@@ -496,10 +493,10 @@ function _renderNoPlanChip(show) {
 }
 
 function _bindLineToggles() {
-  document.querySelectorAll('#an-ctype-pills .pill').forEach(btn => {
+  document.querySelectorAll('#an-ctype-pills button').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.classList.contains('active')) return;
-      document.querySelectorAll('#an-ctype-pills .pill').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#an-ctype-pills button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       _chartMode = btn.dataset.ctype;
       _updateLineTitle();
@@ -686,43 +683,6 @@ function _buildFiveHourPeak(data) {
   `;
 }
 
-function _buildWeeklySummary(data) {
-  const el = document.getElementById('an-weekly');
-  if (!el) return;
-  const weeks = data.weeklySummary ?? [];
-  if (!weeks.length) {
-    el.innerHTML = '<div style="color:var(--t400);font-size:10px;padding:4px 0">Keine Daten</div>';
-    return;
-  }
-  el.innerHTML = `
-    <table class="an-weekly-table">
-      <thead>
-        <tr>
-          <th>Woche ab</th>
-          <th>Claude Msg</th>
-          <th>Claude Token</th>
-          <th>Kosten</th>
-          <th>Codex Ev.</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${weeks.map(w => {
-          const d = new Date(w.weekStart + 'T00:00:00Z');
-          const label = d.toLocaleDateString('de-AT', { day: '2-digit', month: 'short', timeZone: 'UTC' });
-          return `
-            <tr>
-              <td>${QB.esc(label)}</td>
-              <td>${w.claudeMessages}</td>
-              <td>${QB.fmtTokens(w.claudeTokens)}</td>
-              <td>$${w.claudeCostUSD.toFixed(2)}</td>
-              <td>${w.codexEvents}</td>
-            </tr>
-          `;
-        }).join('')}
-      </tbody>
-    </table>
-  `;
-}
 
 function _buildCostEfficiency(data) {
   const elTiles = document.getElementById('an-cost-eff');
@@ -946,10 +906,10 @@ function _buildWindowHistoryChart() {
 }
 
 function _bindWhToggles() {
-  document.querySelectorAll('#an-wh-pills .pill').forEach(btn => {
+  document.querySelectorAll('#an-wh-pills button').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.classList.contains('active')) return;
-      document.querySelectorAll('#an-wh-pills .pill').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#an-wh-pills button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       _whMode = btn.dataset.whmode;
       _updateWhTitle();

@@ -158,6 +158,61 @@ describe("rule: unexpectedReset", () => {
   });
 });
 
+// ── Verspätet beobachteter, aber planmäßiger Reset ───────────────────────
+// Regression: Wenn die Maschine über den geplanten Reset-Zeitpunkt hinweg
+// offline war, sah QuotaBar nur den fertigen Abfall (z. B. 98% → 0%) und
+// meldete fälschlich „außerplanmäßiger Reset". Liegt der geplante Reset-
+// Zeitpunkt (resetsAt des Vor-Fensters) bereits in der Vergangenheit, ist der
+// Abfall erwartbar → freundliche „zurückgesetzt"-Info statt Fehlalarm.
+
+describe("scheduled reset observed late (machine was offline)", () => {
+  let engine: NotificationEngine;
+  let state: NotificationStateStore;
+
+  beforeEach(() => { engine = new NotificationEngine(); state = new NotificationStateStore(); });
+
+  const PAST   = "2020-01-01T00:00:00.000Z"; // resetsAt liegt sicher in der Vergangenheit
+  const FUTURE = "2999-01-01T00:00:00.000Z"; // resetsAt liegt sicher in der Zukunft
+
+  it("fires confirmedReset, not unexpectedReset, when the scheduled reset time has passed", () => {
+    const current  = [snap("claude", [{ name: "weekly", usedPercent: 0 }])];
+    const previous = [snap("claude", [{ name: "weekly", usedPercent: 98, resetsAt: PAST }])];
+    const events = engine.evaluate(ctx(current, previous), state);
+    expect(events.some(e => e.ruleId === "confirmedReset")).toBe(true);
+    expect(events.some(e => e.ruleId === "unexpectedReset")).toBe(false);
+  });
+
+  it("still fires unexpectedReset when the scheduled reset is still in the future", () => {
+    const current  = [snap("claude", [{ name: "weekly", usedPercent: 0 }])];
+    const previous = [snap("claude", [{ name: "weekly", usedPercent: 98, resetsAt: FUTURE }])];
+    const events = engine.evaluate(ctx(current, previous), state);
+    expect(events.some(e => e.ruleId === "unexpectedReset")).toBe(true);
+    expect(events.some(e => e.ruleId === "confirmedReset")).toBe(false);
+  });
+
+  it("uses the persisted resetsAt to suppress the false alarm after a restart (no in-memory previous)", () => {
+    // Maschine war aus: kein in-memory previous, aber lastPercent/lastResetsAt aus
+    // dem letzten Lauf wurden von der Platte geladen.
+    state.loadPersisted({
+      lastFired: {},
+      lastGlobalFiredAt: 0,
+      lastPercent: { "claude:weekly": 98 },
+      lastResetsAt: { "claude:weekly": PAST },
+    });
+    const current = [snap("claude", [{ name: "weekly", usedPercent: 0 }])];
+    const events = engine.evaluate(ctx(current, []), state);
+    expect(events.some(e => e.ruleId === "confirmedReset")).toBe(true);
+    expect(events.some(e => e.ruleId === "unexpectedReset")).toBe(false);
+  });
+
+  it("round-trips lastResetsAt through serialize/loadPersisted", () => {
+    state.setLastResetsAt("claude", "weekly", PAST);
+    const restored = new NotificationStateStore();
+    restored.loadPersisted(JSON.parse(JSON.stringify(state.serialize())));
+    expect(restored.getLastResetsAt("claude", "weekly")).toBe(PAST);
+  });
+});
+
 // ── Rule 4: High usage crossed ────────────────────────────────────────────
 
 describe("rule: highUsage", () => {

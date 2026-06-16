@@ -124,30 +124,59 @@
     /* ══ TAB NAVIGATION ════════════════════════════════════════ */
     .tab-nav {
       display: flex;
-      align-items: center;
-      gap: 2px;
-      margin: 0 6px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      flex-shrink: 0;
       -webkit-app-region: no-drag;
+    }
+    /* Sliding active indicator */
+    .tab-nav::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0;
+      width: calc(100% / 7);
+      height: 2px;
+      background: var(--green);
+      border-radius: 1px 1px 0 0;
+      box-shadow: 0 0 10px color-mix(in srgb, var(--green) 55%, transparent);
+      transform: translateX(calc(var(--nav-idx, 0) * 100%));
+      transition: transform 230ms cubic-bezier(0.4, 0, 0.2, 1);
+      pointer-events: none;
     }
     .tab-btn {
-      padding: 4px 11px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      padding: 6px 2px 8px;
+      height: 38px;
       background: none;
-      border: 1px solid transparent;
-      border-radius: var(--r-btn);
+      border: none;
       color: var(--t400);
       font-family: 'DM Sans', system-ui, sans-serif;
-      font-size: 10.5px;
-      font-weight: 500;
       cursor: pointer;
       outline: none;
-      transition-property: background, border-color, color;
-      transition-duration: 120ms;
+      transition: color 140ms, background 140ms;
       -webkit-app-region: no-drag;
+      position: relative;
     }
-    .tab-btn:hover  { color: var(--t200); background: rgba(255,255,255,0.04); }
+    .tab-btn:hover  { color: var(--t200); background: rgba(255,255,255,0.03); }
     .tab-btn:active { scale: 0.97; }
-    .tab-btn.active { color: var(--t100); border-color: rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); }
-    .view-compact .tab-nav { display: none; }
+    .tab-btn.active { color: var(--t100); }
+    .tab-btn.active .tab-icon { color: var(--green); }
+    .tab-icon { flex-shrink: 0; transition: transform 140ms; }
+    .tab-btn:active .tab-icon { transform: scale(0.88); }
+    .tab-lbl {
+      font-size: 7px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+    /* tab-nav is shown in all modes — it's the primary navigation */
 
     /* ══ VIEWS ══════════════════════════════════════════════ */
     .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -769,7 +798,7 @@
 
     /* ══ ANALYTICS ═════════════════════════════════════════════ */
     .analytics-wrap {
-      flex: 1; overflow-y: auto; padding: 8px 10px;
+      flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px 10px;
     }
 
     .an-section {
@@ -781,14 +810,19 @@
     }
     .an-section-head {
       display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 4px 8px;
       margin-bottom: 8px;
     }
     .an-section-title {
       font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
-      text-transform: uppercase; color: var(--t400);
+      text-transform: uppercase; color: var(--t300);
+      min-width: 0; flex-shrink: 1;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .an-window-pills { display: flex; gap: 3px; }
     .an-window-pills .pill { padding: 3px 10px; font-size: 10px; height: auto; }
+    .view-compact .an-section-head { flex-wrap: nowrap; }
+    .view-compact .an-section-title { max-width: 160px; }
     .an-chart-wrap { height: 140px; position: relative; }
     .an-wh-sub { font-size: 10px; color: var(--t400); margin: -2px 0 8px; line-height: 1.45; text-wrap: pretty; }
     .an-wh-empty { font-size: 10px; color: var(--t400); padding: 6px 0; }
@@ -807,6 +841,8 @@
     .an-row2 {
       display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;
     }
+    .an-row2 > .an-section { min-width: 0; overflow: hidden; }
+    .view-compact .an-row2 { grid-template-columns: 1fr; }
     .an-donut-wrap { position: relative; height: 130px; margin-bottom: 8px; }
     .an-donut-center {
       position: absolute; top: 50%; left: 50%;
@@ -834,6 +870,11 @@
     .an-stat-tile {
       background: var(--bg-surface); border: 1px solid var(--border);
       border-radius: var(--r-inner); padding: 7px 9px;
+      transition: border-color 140ms, background 140ms;
+    }
+    .an-stat-tile:hover {
+      border-color: var(--border-mid);
+      background: var(--bg-card-hover, var(--bg-surface));
     }
     .an-stat-lbl {
       font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
@@ -1093,7 +1134,7 @@
 
     /* Top Models Tabelle */
     .top-models-table {
-      width: 100%; border-collapse: collapse;
+      width: 100%; border-collapse: collapse; table-layout: fixed;
       font-size: 10.5px; margin-bottom: 8px;
     }
     .top-models-table th {
@@ -1102,6 +1143,8 @@
       padding: 4px 6px; text-align: left;
       border-bottom: 1px solid var(--border);
     }
+    .top-models-table th:nth-child(2) { width: 68px; }
+    .top-models-table th:nth-child(3) { width: 32px; }
     .top-models-table td {
       padding: 5px 6px; color: var(--t200);
       font-family: 'IBM Plex Mono', monospace;
@@ -1111,7 +1154,7 @@
     .top-models-table tr:last-child td { border-bottom: none; }
     .top-models-table .model-name {
       font-family: 'DM Sans', system-ui, sans-serif;
-      font-size: 10px; max-width: 130px;
+      font-size: 10px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
 
@@ -1371,7 +1414,7 @@
     .notif-times[hidden] { display: none; }
     .notif-time-field { width: 96px; }
     .notif-time-field .cost-field { width: 100%; text-align: left; }
-    .notif-gap { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 8px; }
+    .notif-gap { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; margin-top: 8px; }
     .notif-test-btn {
       width: 100%; margin-top: 9px; padding: 8px 12px; min-height: 34px;
       background: var(--bg-input); border: 1px solid var(--border-mid); border-radius: var(--r-btn);
@@ -1520,14 +1563,24 @@
 
     /* ══ HISTORY TAB ════════════════════════════════════════════ */
     .hr-wrap {
-      flex: 1; overflow-y: auto; padding: 8px 10px 10px;
+      flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px 10px 10px;
     }
 
     .hr-controls {
-      display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+      display: flex; flex-direction: column; gap: 5px;
       background: var(--bg-card); border: 1px solid var(--border);
       border-radius: var(--r-card); padding: 7px 9px; margin-bottom: 6px;
     }
+    .hr-ctrl-row1 { display: flex; align-items: center; gap: 4px; }
+    .hr-ctrl-row2 { display: flex; align-items: center; gap: 4px; }
+    .hr-ctrl-row1 .hr-reload { margin-left: auto; }
+    .an-agg-seg { flex: 1; }
+    .an-agg-seg .hr-seg-btn { flex: 1; justify-content: center; }
+
+    /* Compact analytics: Datumseingaben ausblenden, Select nimmt volle Breite */
+    .view-compact #analytics-content .hr-date-pair { display: none; }
+    .view-compact #analytics-content .hr-select-wrap { flex: 1; }
+    .view-compact #analytics-content .hr-preset-select { width: 100%; max-width: 100%; }
     .hr-tb-sep {
       width: 1px; align-self: stretch; margin: 3px 0;
       background: var(--border); flex-shrink: 0;
@@ -1644,13 +1697,16 @@
       flex: 1; min-width: 80px;
       background: var(--bg-card); border: 1px solid var(--border);
       border-radius: var(--r-card); padding: 9px 12px;
+      transition: border-color 140ms;
     }
+    .hr-kpi:hover { border-color: var(--border-mid); }
     .hr-kpi-provider {
       border-color: color-mix(in srgb, var(--prov-col) 30%, var(--border));
     }
     .hr-kpi-lbl {
-      font-size: 8px; font-weight: 600; letter-spacing: 0.1em;
+      font-size: 8px; font-weight: 600; letter-spacing: 0.07em;
       text-transform: uppercase; color: var(--t400); margin-bottom: 4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .hr-kpi-val {
       font-family: 'IBM Plex Mono', monospace;
@@ -1663,16 +1719,26 @@
       border-radius: var(--r-card); padding: 10px 12px; margin-bottom: 6px;
     }
     .hr-section-head {
-      display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 4px 8px; margin-bottom: 8px;
     }
     .hr-section-title {
       font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
-      text-transform: uppercase; color: var(--t400);
+      text-transform: uppercase; color: var(--t300);
+      min-width: 0; flex-shrink: 1;
     }
-    .hr-chart-legend { display: flex; align-items: center; gap: 10px; }
-    .hr-chart-legend span { font-size: 10px; color: var(--t300); }
-    .hr-legend-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-    .hr-chart-wrap { height: 160px; position: relative; }
+    /* Chart-Section eigener Head (kompakter als hr-section-head) */
+    .hr-chart-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px; margin-bottom: 6px;
+    }
+    .hr-chart-head-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .hr-chart-legend { display: flex; align-items: center; gap: 5px; }
+    .hr-legend-dot { width: 7px; height: 7px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
+    .hr-chart-wrap { height: 155px; position: relative; }
+    /* Kompakte KPI-Tiles im narrow Modus */
+    .view-compact .hr-kpi { padding: 7px 10px; }
+    .view-compact .hr-kpi-val { font-size: 14px; }
     .hr-row-count { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--t400); }
 
     /* Ein Container für beide Scroll-Richtungen — nur so haften die
@@ -1748,10 +1814,14 @@
 
     /* ══ MODELS TAB ════════════════════════════════════════════ */
     .mod-kpi-grid {
-      display: grid; grid-template-columns: 2fr repeat(5, 1fr); gap: 5px; margin-bottom: 6px;
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-bottom: 6px;
+    }
+    .mod-kpi-lead {
+      border-color: color-mix(in srgb, var(--green) 28%, var(--border));
+      background: color-mix(in srgb, var(--green) 4%, var(--bg-surface));
     }
     .mod-kpi-lead .an-stat-val {
-      font-size: 24px;
+      font-size: 22px;
     }
     .mod-kpi-trend {
       display: inline-block; margin-left: 6px;
@@ -1764,6 +1834,8 @@
     .mod-kpi-sub { font-size: 8.5px; color: var(--t400); margin-top: 3px; }
 
     .mod-hero-wrap { height: 200px; position: relative; }
+    .view-compact .mod-hero-wrap { height: 160px; }
+    .view-compact .mod-scatter-wrap { height: 175px; }
     .mod-ribbon { display: flex; gap: 1px; height: 3px; margin-top: 4px; }
     .mod-ribbon-cell { flex: 1; display: flex; border-radius: 1px; overflow: hidden; }
     .mod-ribbon-claude { background: var(--claude-col); height: 100%; }
@@ -1777,6 +1849,17 @@
     .mod-pills { display: flex; gap: 3px; flex-wrap: wrap; }
     .mod-pills .pill { padding: 3px 10px; font-size: 10px; height: auto; position: relative; }
     .mod-pills .pill::before { content: ''; position: absolute; inset: -4px 0; }
+
+    /* Kompakte Controls-Leiste (ersetzt mod-head-rows im neuen Template) */
+    .mod-ctrl { margin-bottom: 8px; }
+    .mod-ctrl-row {
+      display: flex; gap: 6px; margin-bottom: 5px;
+      align-items: center; justify-content: space-between; flex-wrap: wrap;
+    }
+    .mod-ctrl-row .mod-pills { flex-shrink: 0; }
+    .view-compact .mod-adopt-lbl { width: 110px; }
+    .view-compact .mod-cache-lbl { width: 100px; }
+    .view-compact .mod-cache-val { width: 80px; }
 
     .mod-scatter-wrap { height: 220px; position: relative; }
     .mod-scatter-note { font-size: 8.5px; color: var(--t400); margin-top: 6px; }
@@ -1832,6 +1915,45 @@
     }
 
     .mod-note { font-size: 9.5px; color: var(--t400); padding: 4px 0; }
+
+    /* ── Models: segmentierte Controls ──────────────────────── */
+    .mod-chart-sec { padding: 8px 10px; }
+    .mod-chart-hd {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px; margin-bottom: 6px; flex-wrap: wrap;
+    }
+    .mod-chart-ttl {
+      font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--t300);
+    }
+    .mod-chart-segs { display: flex; gap: 4px; flex-shrink: 0; }
+
+    .mod-seg {
+      display: inline-flex;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border); border-radius: 5px; overflow: hidden;
+    }
+    .mod-seg button {
+      padding: 3px 9px;
+      font-size: 9.5px; font-weight: 600; letter-spacing: 0.03em;
+      font-family: 'IBM Plex Mono', monospace;
+      background: none; border: none; color: var(--t300); cursor: pointer;
+      transition-property: color, background; transition-duration: 100ms;
+      white-space: nowrap;
+    }
+    .mod-seg button + button { border-left: 1px solid var(--border); }
+    .mod-seg button:hover { color: var(--t100); background: rgba(255,255,255,0.05); }
+    .mod-seg button.active { color: var(--green); background: rgba(82,208,23,0.1); }
+    .mod-seg button:active { scale: 0.95; }
+
+    .mod-metric-seg { display: flex; width: 100%; margin-bottom: 8px; }
+    .mod-metric-seg button { flex: 1; text-align: center; }
+
+    /* Compact: KPI-Tiles enger */
+    .view-compact .mod-kpi-grid { gap: 4px; margin-bottom: 4px; }
+    .view-compact .mod-kpi-grid .an-stat-tile { padding: 5px 7px; }
+    .view-compact .mod-kpi-lead .an-stat-val { font-size: 18px; }
+    .view-compact .mod-kpi-grid:not(.mod-kpi-lead) .an-stat-val { font-size: 12px; }
 
     @keyframes modEnter { from { opacity: 0; translate: 0 4px; } to { opacity: 1; translate: 0 0; } }
     .mod-stagger > * { animation: modEnter 360ms cubic-bezier(0.2, 0, 0, 1) both; }
@@ -2091,7 +2213,14 @@
     .pl-row:last-child { border-bottom: none; }
     .pl-row:hover { background: rgba(255,255,255,0.022); }
     /* active period: left accent stripe in provider colour */
-    .pl-row.is-active { padding-left: 14px; }
+    .pl-row.is-active {
+      padding-left: 14px;
+      grid-template-columns: 1fr auto;
+      grid-template-rows: auto auto;
+    }
+    .pl-row.is-active .pl-row-info { grid-column: 1; grid-row: 1; }
+    .pl-row.is-active .pl-row-amt  { grid-column: 2; grid-row: 1; }
+    .pl-row.is-active .pl-row-actions { grid-column: 1 / -1; grid-row: 2; justify-content: flex-end; }
     .pl-row.is-active::before {
       content: ''; position: absolute; left: 0; top: 6px; bottom: 6px;
       width: 3px; border-radius: 0 2px 2px 0;
@@ -2117,6 +2246,7 @@
       margin-top: 2px;
       font-family: 'IBM Plex Mono', monospace; font-size: 9.5px;
       color: var(--t400); font-variant-numeric: tabular-nums;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .pl-row-dash { opacity: 0.55; padding: 0 1px; }
     .pl-row-open { color: var(--t300); }
@@ -2362,15 +2492,6 @@
       </svg>
       <span class="logo-name">QuotaBar</span>
     </div>
-    <nav class="tab-nav">
-      <button class="tab-btn active" id="tab-live"          data-tab="live">Live</button>
-      <button class="tab-btn"        id="tab-analytics"    data-tab="analytics">Analytics</button>
-      <button class="tab-btn" id="tab-models" data-tab="models">Models</button>
-      <button class="tab-btn"        id="tab-notifications" data-tab="notifications">Alerts</button>
-      <button class="tab-btn"        id="tab-history"      data-tab="history">History</button>
-      <button class="tab-btn"        id="tab-plans"        data-tab="plans">Abos</button>
-      <button class="tab-btn"        id="tab-system"       data-tab="system">System</button>
-    </nav>
     <div class="titlebar-btns">
       <button class="tbtn" id="btn-refresh" title="Refresh now">
         <svg class="icon-r" width="14" height="14" viewBox="0 0 14 14" fill="none"
@@ -2407,6 +2528,73 @@
       </button>
     </div>
   </div>
+
+  <!-- ── Tab Navigation ────────────────────────────────── -->
+  <nav class="tab-nav">
+    <button class="tab-btn active" id="tab-live" data-tab="live" data-idx="0">
+      <svg class="tab-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="1,6.5 3,6.5 4.5,3 6,10 7.5,4.5 8.5,8 10,8 12,6.5"/>
+      </svg>
+      <span class="tab-lbl">Live</span>
+    </button>
+    <button class="tab-btn" id="tab-analytics" data-tab="analytics" data-idx="1">
+      <svg class="tab-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="1" y1="12" x2="12" y2="12"/>
+        <line x1="2.5" y1="12" x2="2.5" y2="7"/>
+        <line x1="5.5" y1="12" x2="5.5" y2="4.5"/>
+        <line x1="8.5" y1="12" x2="8.5" y2="7.5"/>
+        <line x1="11" y1="12" x2="11" y2="1.5"/>
+      </svg>
+      <span class="tab-lbl">Analytics</span>
+    </button>
+    <button class="tab-btn" id="tab-models" data-tab="models" data-idx="2">
+      <svg class="tab-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6.5" cy="6.5" r="1.8"/>
+        <circle cx="2" cy="2.5" r="1"/>
+        <circle cx="11" cy="2.5" r="1"/>
+        <circle cx="2" cy="10.5" r="1"/>
+        <circle cx="11" cy="10.5" r="1"/>
+        <line x1="3" y1="3.2" x2="5.3" y2="5.3"/>
+        <line x1="10" y1="3.2" x2="7.7" y2="5.3"/>
+        <line x1="3" y1="9.8" x2="5.3" y2="7.7"/>
+        <line x1="10" y1="9.8" x2="7.7" y2="7.7"/>
+      </svg>
+      <span class="tab-lbl">Models</span>
+    </button>
+    <button class="tab-btn" id="tab-notifications" data-tab="notifications" data-idx="3">
+      <svg class="tab-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6.5 1C4.3 1 2.5 2.9 2.5 5.5V8.5H10.5V5.5C10.5 2.9 8.7 1 6.5 1Z"/>
+        <path d="M5 8.5C5 9.6 8 9.6 8 8.5"/>
+      </svg>
+      <span class="tab-lbl">Alerts</span>
+    </button>
+    <button class="tab-btn" id="tab-history" data-tab="history" data-idx="4">
+      <svg class="tab-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6.5" cy="6.5" r="5"/>
+        <polyline points="6.5,3.5 6.5,6.5 8.5,8"/>
+      </svg>
+      <span class="tab-lbl">History</span>
+    </button>
+    <button class="tab-btn" id="tab-plans" data-tab="plans" data-idx="5">
+      <svg class="tab-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="1.5" y="3.5" width="10" height="6.5" rx="1.2"/>
+        <line x1="1.5" y1="5.8" x2="11.5" y2="5.8"/>
+        <line x1="3" y1="8" x2="5.5" y2="8"/>
+      </svg>
+      <span class="tab-lbl">Abos</span>
+    </button>
+    <button class="tab-btn" id="tab-system" data-tab="system" data-idx="6">
+      <svg class="tab-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+        <line x1="1.5" y1="3.5" x2="11.5" y2="3.5"/>
+        <line x1="1.5" y1="6.5" x2="11.5" y2="6.5"/>
+        <line x1="1.5" y1="9.5" x2="11.5" y2="9.5"/>
+        <circle cx="4.5" cy="3.5" r="1.5"/>
+        <circle cx="8.5" cy="6.5" r="1.5"/>
+        <circle cx="5.5" cy="9.5" r="1.5"/>
+      </svg>
+      <span class="tab-lbl">System</span>
+    </button>
+  </nav>
 
   <!-- ── Dashboard View ─────────────────────────────────── -->
   <div class="view" id="view-dashboard">
@@ -2569,6 +2757,8 @@
 
     let activeTab = 'live';
 
+    const TAB_ORDER = ['live', 'analytics', 'models', 'notifications', 'history', 'plans', 'system'];
+
     function switchTab(tab) {
       if (inSettings) {
         inSettings = false;
@@ -2586,6 +2776,8 @@
       document.querySelectorAll('.tab-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.tab === tab)
       );
+      const idx = TAB_ORDER.indexOf(tab);
+      if (idx >= 0) document.querySelector('.tab-nav').style.setProperty('--nav-idx', idx);
       if (tab === 'analytics')     QB.renderAnalytics();
       if (tab === 'models')        QB.renderModels();
       if (tab === 'notifications') QB.renderNotifications();

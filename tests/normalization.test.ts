@@ -41,7 +41,7 @@ describe("provider snapshot normalization", () => {
 
   it("normalizes Claude five-hour and weekly windows", () => {
     const snapshot = normalizeClaudeUsageResponse({
-      fiveHour: { utilization: 0.42, resetsAt: "2026-05-18T12:15:00.000Z" },
+      fiveHour: { utilization: 42, resetsAt: "2026-05-18T12:15:00.000Z" },
       sevenDay: { utilization: 18 }
     }, { rateLimitTier: "Max" });
 
@@ -54,8 +54,8 @@ describe("provider snapshot normalization", () => {
 
   it("normalizes current Claude Code OAuth snake_case windows", () => {
     const snapshot = normalizeClaudeUsageResponse({
-      five_hour: { utilization: 0.25, resets_at: null },
-      seven_day: { utilization: 0.5, resets_at: "2026-05-19T11:00:01.185904+00:00" },
+      five_hour: { utilization: 25, resets_at: null },
+      seven_day: { utilization: 50, resets_at: "2026-05-19T11:00:01.185904+00:00" },
       extra_usage: { used_credits: 10, monthly_limit: 40 }
     }, { rateLimitTier: "default_raven" });
 
@@ -66,5 +66,28 @@ describe("provider snapshot normalization", () => {
       resetsAt: "2026-05-19T11:00:01.185904+00:00"
     });
     expect(snapshot.windows[2]).toMatchObject({ name: "credits", usedPercent: 25 });
+  });
+
+  // Regression: utilization ist eine Prozentskala (0–100). Ein 1-%-Reading darf
+  // NICHT als 0–1-Bruch fehlinterpretiert und auf 100 % hochskaliert werden —
+  // genau dieser Bug zeigte direkt nach einem 7d-Reset 100 % statt ~1 % an.
+  it("treats sub-1% utilization as a percentage, not a 0–1 fraction", () => {
+    const snapshot = normalizeClaudeUsageResponse({
+      five_hour: { utilization: 8 },
+      seven_day: { utilization: 1 }
+    }, { rateLimitTier: "default_raven" });
+
+    expect(snapshot.windows[0]).toMatchObject({ name: "fiveHour", usedPercent: 8 });
+    expect(snapshot.windows[1]).toMatchObject({ name: "weekly", usedPercent: 1 });
+  });
+
+  it("normalizes a fractional-percent utilization without inflating it", () => {
+    const snapshot = normalizeClaudeUsageResponse({
+      five_hour: { utilization: 3 },
+      seven_day: { utilization: 0.5 }
+    });
+
+    // 0.5 bedeutet 0,5 % — nicht 50 %.
+    expect(snapshot.windows[1]).toMatchObject({ name: "weekly", usedPercent: 0.5 });
   });
 });

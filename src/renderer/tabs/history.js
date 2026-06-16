@@ -96,52 +96,53 @@ function _buildControls(container, minDate) {
 
   container.innerHTML = `
     <div class="hr-controls">
-      <div class="hr-select-wrap">
-        <select class="hr-preset-select" id="hr-preset" aria-label="Zeitraum" title="Zeitraum wählen">
-          <option value="custom" hidden${_activePreset ? '' : ' selected'}>Eigene Auswahl</option>
-          ${presetOptions}
-        </select>
-        <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
-             stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M1.5 3 4 5.5 6.5 3"/>
-        </svg>
+      <div class="hr-ctrl-row1">
+        <div class="hr-select-wrap">
+          <select class="hr-preset-select" id="hr-preset" aria-label="Zeitraum" title="Zeitraum wählen">
+            <option value="custom" hidden${_activePreset ? '' : ' selected'}>Eigene Auswahl</option>
+            ${presetOptions}
+          </select>
+          <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
+               stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1.5 3 4 5.5 6.5 3"/>
+          </svg>
+        </div>
+        <div class="hr-date-pair">
+          <input class="hr-date-input" type="date" id="hr-from" value="${fromDate}" aria-label="Von" title="Startdatum">
+          <span class="hr-date-sep" aria-hidden="true">–</span>
+          <input class="hr-date-input" type="date" id="hr-to" value="${today}" aria-label="Bis" title="Enddatum">
+        </div>
+        <button class="hr-reload" id="hr-load-btn" title="Neu laden" aria-label="Neu laden">
+          <svg width="12" height="12" viewBox="0 0 14 14" fill="none"
+               stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1.5 7a5.5 5.5 0 0 1 9.9-3.3"/>
+            <path d="M12.5 7a5.5 5.5 0 0 1-9.9 3.3"/>
+            <path d="M11 2.2 13 4l-2 1.8"/>
+            <path d="M3 11.8 1 10l2-1.8"/>
+          </svg>
+        </button>
       </div>
-      <div class="hr-date-pair">
-        <input class="hr-date-input" type="date" id="hr-from" value="${fromDate}" aria-label="Von" title="Startdatum">
-        <span class="hr-date-sep" aria-hidden="true">–</span>
-        <input class="hr-date-input" type="date" id="hr-to" value="${today}" aria-label="Bis" title="Enddatum">
+      <div class="hr-ctrl-row2">
+        <div class="hr-seg" id="hr-agg-pills" role="group" aria-label="Auflösung">
+          <button class="hr-seg-btn"        data-agg="hourly"  title="Stündlich">Std</button>
+          <button class="hr-seg-btn active" data-agg="daily"   title="Täglich">Tag</button>
+          <button class="hr-seg-btn"        data-agg="weekly"  title="Wöchentlich">Wo</button>
+          <button class="hr-seg-btn"        data-agg="monthly" title="Monatlich">Mon</button>
+        </div>
+        <div class="hr-seg" id="hr-prov-pills" role="group" aria-label="Anbieter">
+          <button class="hr-seg-btn active" data-prov="all">Alle</button>
+          <button class="hr-seg-btn hr-seg-claude" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
+          <button class="hr-seg-btn hr-seg-codex"  data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
+        </div>
+        <button class="hr-tgl${_showEmpty ? ' active' : ''}" id="hr-empty-toggle"
+                title="Leere Zeiteinheiten einblenden" aria-pressed="${_showEmpty}">
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
+               stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+            <path d="M1.5 9.5V5"/><path d="M5.5 9.5V7" stroke-dasharray="1.5 1.5"/><path d="M9.5 9.5V2.5"/>
+          </svg>
+          Lücken
+        </button>
       </div>
-      <div class="hr-tb-sep" aria-hidden="true"></div>
-      <div class="hr-seg" id="hr-agg-pills" role="group" aria-label="Auflösung">
-        <button class="hr-seg-btn"        data-agg="hourly"  title="Stündlich">Std</button>
-        <button class="hr-seg-btn active" data-agg="daily"   title="Täglich">Tag</button>
-        <button class="hr-seg-btn"        data-agg="weekly"  title="Wöchentlich">Wo</button>
-        <button class="hr-seg-btn"        data-agg="monthly" title="Monatlich">Mon</button>
-      </div>
-      <div class="hr-tb-sep" aria-hidden="true"></div>
-      <div class="hr-seg" id="hr-prov-pills" role="group" aria-label="Anbieter">
-        <button class="hr-seg-btn active" data-prov="all">Alle</button>
-        <button class="hr-seg-btn hr-seg-claude" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
-        <button class="hr-seg-btn hr-seg-codex"  data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
-      </div>
-      <div class="hr-tb-sep" aria-hidden="true"></div>
-      <button class="hr-tgl${_showEmpty ? ' active' : ''}" id="hr-empty-toggle"
-              title="Leere Zeiteinheiten einblenden" aria-pressed="${_showEmpty}">
-        <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
-             stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
-          <path d="M1.5 9.5V5"/><path d="M5.5 9.5V7" stroke-dasharray="1.5 1.5"/><path d="M9.5 9.5V2.5"/>
-        </svg>
-        Lücken
-      </button>
-      <button class="hr-reload" id="hr-load-btn" title="Neu laden" aria-label="Neu laden">
-        <svg width="12" height="12" viewBox="0 0 14 14" fill="none"
-             stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M1.5 7a5.5 5.5 0 0 1 9.9-3.3"/>
-          <path d="M12.5 7a5.5 5.5 0 0 1-9.9 3.3"/>
-          <path d="M11 2.2 13 4l-2 1.8"/>
-          <path d="M3 11.8 1 10l2-1.8"/>
-        </svg>
-      </button>
     </div>
     <div id="hr-results"></div>
   `;
@@ -264,10 +265,10 @@ function _renderChart() {
 }
 
 function _bindChartToggles() {
-  const ctypePills = document.querySelectorAll('#hr-chart-type-pills .pill');
-  ctypePills.forEach(btn => {
+  const ctypeBtns = document.querySelectorAll('#hr-chart-type-pills button');
+  ctypeBtns.forEach(btn => {
     btn.addEventListener('click', () => {
-      ctypePills.forEach(b => b.classList.remove('active'));
+      ctypeBtns.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       _chartMode = btn.dataset.ctype;
       const tokenRow = document.getElementById('hr-token-type-row');
@@ -276,9 +277,9 @@ function _bindChartToggles() {
     });
   });
 
-  document.querySelectorAll('#hr-token-type-row .pill').forEach(btn => {
+  document.querySelectorAll('#hr-token-type-row button').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('#hr-token-type-row .pill').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#hr-token-type-row button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       _tokenMode = btn.dataset.ttype;
       _renderChart();
@@ -380,22 +381,25 @@ function _renderResults(report, agg) {
     </div>
 
     <div class="hr-chart-section">
-      <div class="hr-section-head">
+      <div class="hr-chart-head">
         <span class="hr-section-title" id="hr-chart-title">${chartTitle}</span>
-        <div style="display:flex;gap:6px;align-items:center">
-          <div class="hr-pill-group hr-chart-pills" id="hr-chart-type-pills">
-            <button class="pill${_chartMode === 'cost' ? ' active' : ''}" data-ctype="cost">Kosten</button>
-            <button class="pill${_chartMode === 'tokens' ? ' active' : ''}" data-ctype="tokens">Tokens</button>
+        <div class="hr-chart-head-right">
+          <div class="mod-seg" id="hr-chart-type-pills">
+            <button ${_chartMode === 'cost'   ? 'class="active"' : ''} data-ctype="cost">$</button>
+            <button ${_chartMode === 'tokens' ? 'class="active"' : ''} data-ctype="tokens">Token</button>
           </div>
           <div class="hr-chart-legend">
-            <span class="hr-legend-dot" style="background:var(--claude-col)"></span><span>Claude</span>
-            <span class="hr-legend-dot" style="background:var(--codex-col)"></span><span>Codex</span>
+            <span class="hr-legend-dot" style="background:var(--claude-col)"></span>
+            <span class="hr-legend-dot" style="background:var(--codex-col)"></span>
           </div>
         </div>
       </div>
-      <div class="hr-pill-group hr-chart-pills" id="hr-token-type-row"
+      <div class="mod-seg mod-metric-seg" id="hr-token-type-row"
            style="display:${_chartMode === 'tokens' ? 'flex' : 'none'};margin-bottom:6px">
-        ${tokenTypePillsHtml}
+        <button ${_tokenMode === 'total'  ? 'class="active"' : ''} data-ttype="total">Gesamt</button>
+        <button ${_tokenMode === 'input'  ? 'class="active"' : ''} data-ttype="input">In</button>
+        <button ${_tokenMode === 'output' ? 'class="active"' : ''} data-ttype="output">Out</button>
+        <button ${_tokenMode === 'cache'  ? 'class="active"' : ''} data-ttype="cache">Cache</button>
       </div>
       <div class="hr-chart-wrap">
         <canvas id="hr-bar-canvas"></canvas>

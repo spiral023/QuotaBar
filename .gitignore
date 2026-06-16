@@ -47,3 +47,9 @@ tests/**/*.test.js
 # Local agent/tool state
 .claude/
 .superpowers/
+
+# Generated screenshots (Playwright/CDP dev tooling)
+docs/screenshots/
+
+# Dev-only CDP screenshot scripts
+scripts/
