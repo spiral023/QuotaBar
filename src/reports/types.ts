@@ -20,7 +20,15 @@ export interface ReportRequest {
   limit?: number;
 }
 
-export interface ModelBreakdown {
+/** Kosten je Token-Typ; Summe == costUSD. Optional, da nicht jeder Erzeuger sie füllt. */
+export interface CostComponents {
+  inputCostUSD?: number;
+  outputCostUSD?: number;
+  cacheCreationCostUSD?: number;
+  cacheReadCostUSD?: number;
+}
+
+export interface ModelBreakdown extends CostComponents {
   model: string;
   inputTokens: number;
   outputTokens: number;
@@ -58,7 +66,7 @@ export interface ReportResult {
   generatedAt: string;
 }
 
-export interface BackfillPerModelEntry {
+export interface BackfillPerModelEntry extends CostComponents {
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;

@@ -2,7 +2,8 @@ import { describe, expect, it, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { calculateCodexApiCost, readCodexSpeedTier, readCodexSpeedTierFromPaths } from "../src/pricing/codex-cost-calculator";
+import { calculateCodexApiCost, calculateCodexApiCostBreakdown, readCodexSpeedTier, readCodexSpeedTierFromPaths } from "../src/pricing/codex-cost-calculator";
+import { sumBreakdown } from "../src/pricing/cost-calculator";
 import { LiteLLMFetcher } from "../src/pricing/litellm-fetcher";
 import type { CodexTokenEvent } from "../src/pricing/codex-log-reader";
 
@@ -93,6 +94,26 @@ describe("calculateCodexApiCost", () => {
     const combined = await calculateCodexApiCost(events, fetcher, "standard");
     const single = await calculateCodexApiCost([makeEvent({ inputTokens: 1_000_000, cachedInputTokens: 0, outputTokens: 0 })], fetcher, "standard");
     expect(combined).toBeCloseTo(single, 6);
+  });
+});
+
+describe("calculateCodexApiCostBreakdown", () => {
+  it("Summe der Komponenten == calculateCodexApiCost", async () => {
+    const fetcher = new LiteLLMFetcher(true);
+    const events = [makeEvent({ inputTokens: 1_000_000, cachedInputTokens: 200_000, outputTokens: 500_000 })];
+    const b = await calculateCodexApiCostBreakdown(events, fetcher, "standard");
+    const total = await calculateCodexApiCost(events, fetcher, "standard");
+    expect(sumBreakdown(b)).toBeCloseTo(total, 9);
+  });
+
+  it("trennt Input/Output/Cache-Read; Cache-Creation immer 0", async () => {
+    const fetcher = new LiteLLMFetcher(true);
+    const events = [makeEvent({ inputTokens: 1_000_000, cachedInputTokens: 0, outputTokens: 1_000_000 })];
+    const b = await calculateCodexApiCostBreakdown(events, fetcher, "standard");
+    // gpt-4o: input 2.5e-6 → $2.50, output 1e-5 → $10.00
+    expect(b.inputCostUSD).toBeCloseTo(2.5, 4);
+    expect(b.outputCostUSD).toBeCloseTo(10.0, 4);
+    expect(b.cacheCreationCostUSD).toBe(0);
   });
 });
 

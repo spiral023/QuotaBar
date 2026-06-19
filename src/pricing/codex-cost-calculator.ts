@@ -1,36 +1,43 @@
 import fs from "node:fs/promises";
 import type { CodexTokenEvent } from "./codex-log-reader";
 import type { LiteLLMFetcher } from "./litellm-fetcher";
+import { type CostBreakdown, sumBreakdown } from "./cost-calculator";
 
 const MODEL_ALIASES: Record<string, string> = {
   "gpt-5-codex": "gpt-5",
   "gpt-5.3-codex": "gpt-5.2-codex",
 };
 
-export async function calculateCodexApiCost(
+/**
+ * Codex-Kosten in die vier Einzelposten zerlegt (Cache-Creation gibt es bei
+ * Codex nicht → immer 0). Summe == {@link calculateCodexApiCost}.
+ */
+export async function calculateCodexApiCostBreakdown(
   events: CodexTokenEvent[],
   fetcher: LiteLLMFetcher,
   speedTier: "standard" | "fast",
-): Promise<number> {
-  let total = 0;
+): Promise<CostBreakdown> {
+  let inputCostUSD = 0, outputCostUSD = 0, cacheReadCostUSD = 0;
   for (const event of events) {
     const modelName = MODEL_ALIASES[event.model] ?? event.model;
     const pricing = await fetcher.getModelPricing(modelName);
     if (!pricing) continue;
 
+    const mult = speedTier === "fast" ? (pricing.provider_specific_entry?.fast ?? 2) : 1;
     const nonCachedInput = Math.max(event.inputTokens - event.cachedInputTokens, 0);
-    let cost =
-      nonCachedInput * (pricing.input_cost_per_token ?? 0) +
-      event.cachedInputTokens * (pricing.cache_read_input_token_cost ?? pricing.input_cost_per_token ?? 0) +
-      event.outputTokens * (pricing.output_cost_per_token ?? 0);
-
-    if (speedTier === "fast") {
-      cost *= pricing.provider_specific_entry?.fast ?? 2;
-    }
-
-    total += cost;
+    inputCostUSD     += nonCachedInput * (pricing.input_cost_per_token ?? 0) * mult;
+    cacheReadCostUSD += event.cachedInputTokens * (pricing.cache_read_input_token_cost ?? pricing.input_cost_per_token ?? 0) * mult;
+    outputCostUSD    += event.outputTokens * (pricing.output_cost_per_token ?? 0) * mult;
   }
-  return total;
+  return { inputCostUSD, outputCostUSD, cacheCreationCostUSD: 0, cacheReadCostUSD };
+}
+
+export async function calculateCodexApiCost(
+  events: CodexTokenEvent[],
+  fetcher: LiteLLMFetcher,
+  speedTier: "standard" | "fast",
+): Promise<number> {
+  return sumBreakdown(await calculateCodexApiCostBreakdown(events, fetcher, speedTier));
 }
 
 /**

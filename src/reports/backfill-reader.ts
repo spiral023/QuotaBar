@@ -95,6 +95,11 @@ function parseDaySummary(
         cacheReadTokens,
         totalTokens,
         costUSD: num(p.costUSD),
+        // Per-Typ-Kosten: erst seit BACKFILL_REPAIR_VERSION 2 geschrieben; Altsätze → 0.
+        inputCostUSD: num(p.inputCostUSD),
+        outputCostUSD: num(p.outputCostUSD),
+        cacheCreationCostUSD: num(p.cacheCreationCostUSD),
+        cacheReadCostUSD: num(p.cacheReadCostUSD),
       };
     }
   }

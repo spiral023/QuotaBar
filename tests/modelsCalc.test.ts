@@ -316,55 +316,55 @@ describe("providerRibbon", () => {
   });
 });
 
-describe("effRateComposition", () => {
+describe("providerCostBreakdown", () => {
   const days = [
-    // Claude: teuer pro Token
-    day("2026-01-05", "claude-opus-4-8", { totalTokens: 1_000_000, costUSD: 5 }),
-    // Codex: günstiger pro Token, mehr Tokens
-    day("2026-01-05", "gpt-5.5",         { totalTokens: 3_000_000, costUSD: 3 }),
+    day("2026-01-05", "claude-opus-4-8", {
+      inputTokens: 100_000, outputTokens: 50_000, cacheReadTokens: 200_000, cacheCreationTokens: 10_000,
+      totalTokens: 360_000, costUSD: 6,
+      inputCostUSD: 1, outputCostUSD: 4, cacheReadCostUSD: 0.5, cacheCreationCostUSD: 0.5,
+    }),
+    day("2026-01-05", "gpt-5.5", {
+      inputTokens: 300_000, outputTokens: 100_000, cacheReadTokens: 0, cacheCreationTokens: 0,
+      totalTokens: 400_000, costUSD: 2,
+      inputCostUSD: 0.5, outputCostUSD: 1.5, cacheReadCostUSD: 0, cacheCreationCostUSD: 0,
+    }),
   ];
 
-  it("Beiträge summieren sich exakt zum blended effPerMTok", () => {
-    const c = calc.effRateComposition(days, "provider");
-    // total: $8 / 4M Tokens = $2.00 / MTok
-    expect(c.effPerMTok).toBeCloseTo(2.0, 9);
-    const sum = c.rows.reduce((s, r) => s + r.contribution, 0);
-    expect(sum).toBeCloseTo(c.effPerMTok!, 9);
+  it("je Provider ein Block, nach Gesamtkosten absteigend", () => {
+    const res = calc.providerCostBreakdown(days);
+    expect(res.map((p) => p.provider)).toEqual(["claude", "codex"]);
   });
 
-  it("Eigenrate × Anteil = Beitrag je Gruppe", () => {
-    const c = calc.effRateComposition(days, "provider");
-    const claude = c.rows.find((r) => r.key === "claude")!;
-    // Eigenrate $5/MTok, Anteil 25% → Beitrag $1.25
-    expect(claude.effPerMTok).toBeCloseTo(5, 9);
-    expect(claude.tokenShare).toBeCloseTo(0.25, 9);
-    expect(claude.contribution).toBeCloseTo(1.25, 9);
+  it("Σ Typ-Kosten == Gesamtkosten je Provider", () => {
+    const res = calc.providerCostBreakdown(days);
+    for (const p of res) {
+      const sum = p.rows.reduce((s, r) => s + r.costUSD, 0);
+      expect(sum).toBeCloseTo(p.totalCostUSD, 9);
+    }
   });
 
-  it("absteigend nach Beitrag sortiert", () => {
-    const c = calc.effRateComposition(days, "provider");
-    expect(c.rows[0].contribution).toBeGreaterThanOrEqual(c.rows[1].contribution);
+  it("blendet Token-Typen mit 0 Tokens aus (Codex hat keinen Cache)", () => {
+    const codex = calc.providerCostBreakdown(days).find((p) => p.provider === "codex")!;
+    expect(codex.rows.map((r) => r.key)).toEqual(["input", "output"]);
   });
 
-  it("bündelt Überhang nach maxGroups zu 'Andere'", () => {
-    const many = [
-      day("2026-01-05", "claude-a", { totalTokens: 1e6, costUSD: 4 }),
-      day("2026-01-05", "claude-b", { totalTokens: 1e6, costUSD: 3 }),
-      day("2026-01-05", "claude-c", { totalTokens: 1e6, costUSD: 2 }),
-      day("2026-01-05", "claude-d", { totalTokens: 1e6, costUSD: 1 }),
-    ];
-    const c = calc.effRateComposition(many, "model", 3);
-    expect(c.rows).toHaveLength(3);
-    const andere = c.rows.find((r) => r.key === "Andere")!;
-    expect(andere.grouped).toBe(2);
-    // gebündelt: claude-c + claude-d = $3 / 2M = $1.50 Eigenrate
-    expect(andere.effPerMTok).toBeCloseTo(1.5, 9);
-    // Summe bleibt invariant
-    const sum = c.rows.reduce((s, r) => s + r.contribution, 0);
-    expect(sum).toBeCloseTo(c.effPerMTok!, 9);
+  it("perMTok je Zeile = Kosten/Tokens·1e6; Gesamt = blended Eigenrate", () => {
+    const claude = calc.providerCostBreakdown(days).find((p) => p.provider === "claude")!;
+    const output = claude.rows.find((r) => r.key === "output")!;
+    // Output: $4 / 50k = $80 / MTok
+    expect(output.perMTok).toBeCloseTo(80, 6);
+    // Gesamt: $6 / 360k = $16.667 / MTok
+    expect(claude.effPerMTok).toBeCloseTo((6 / 360_000) * 1e6, 6);
   });
 
-  it("leeres/kostenloses Fenster → effPerMTok null", () => {
-    expect(calc.effRateComposition([], "provider").effPerMTok).toBeNull();
+  it("hasCostBreakdown=false, wenn keine Per-Typ-Kosten geliefert wurden", () => {
+    const stale = [day("2026-01-05", "claude-opus-4-8", { totalTokens: 1e6, costUSD: 5 })];
+    const res = calc.providerCostBreakdown(stale);
+    expect(res[0].hasCostBreakdown).toBe(false);
+    expect(res[0].totalCostUSD).toBeCloseTo(5, 9);
+  });
+
+  it("leeres Fenster → leeres Array", () => {
+    expect(calc.providerCostBreakdown([])).toEqual([]);
   });
 });

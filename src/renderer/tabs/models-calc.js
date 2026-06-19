@@ -340,52 +340,64 @@
       .map(([bucket, e]) => ({ bucket, claudeShare: e.total > 0 ? e.claude / e.total : 0 }));
   }
 
+  // Token-Typen für die Kostentabelle; Reihenfolge = Anzeigereihenfolge.
+  const COST_TYPES = [
+    { key: 'input',         label: 'Input',        tokensKey: 'inputTokens',         costKey: 'inputCostUSD' },
+    { key: 'output',        label: 'Output',       tokensKey: 'outputTokens',        costKey: 'outputCostUSD' },
+    { key: 'cacheRead',     label: 'Cache Read',   tokensKey: 'cacheReadTokens',     costKey: 'cacheReadCostUSD' },
+    { key: 'cacheCreation', label: 'Cache Create', tokensKey: 'cacheCreationTokens', costKey: 'cacheCreationCostUSD' },
+  ];
+
   /**
-   * Zerlegt den gewichteten Mittelwert „$/MTok effektiv" (Gesamtkosten ÷
-   * Gesamttokens) in additive Beiträge je Gruppe (Provider oder Modell).
-   *
-   * Kerngleichung pro Gruppe g:
-   *   beitrag_g = (kosten_g / tokens_gesamt) · 1e6 = eigenrate_g · tokenanteil_g
-   * Summe aller Beiträge = effPerMTok (exakt) → erklärt, „wie man auf $X kommt".
-   *
-   * groupKey: 'provider' | 'model'
-   * maxGroups: optional; Überhang nach Beitrag wird zu „Andere" gebündelt.
+   * Aufschlüsselung „echte Nutzung" je Provider: pro Token-Typ Menge + Kosten +
+   * effektiver $/MTok, plus Provider-Gesamtzeile. Die Per-Typ-Kosten stammen
+   * exakt aus dem Backend (Summe == costUSD), sodass die Rechnung Zeile für Zeile
+   * aufgeht: Σ Typ-Kosten = Gesamtkosten, Gesamt-$/MTok = blended Eigenrate.
    */
-  function effRateComposition(days, groupKey, maxGroups) {
-    const keyOf = groupKey === 'model' ? (d) => d.model : (d) => d.provider;
+  function providerCostBreakdown(days) {
     const map = new Map();
-    let totalCost = 0, totalTokens = 0;
     for (const d of days) {
-      const k = keyOf(d);
-      let e = map.get(k);
-      if (!e) { e = { key: k, provider: d.provider, costUSD: 0, totalTokens: 0 }; map.set(k, e); }
-      e.costUSD += d.costUSD;
+      let e = map.get(d.provider);
+      if (!e) {
+        e = {
+          provider: d.provider,
+          inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+          totalTokens: 0, costUSD: 0,
+          inputCostUSD: 0, outputCostUSD: 0, cacheReadCostUSD: 0, cacheCreationCostUSD: 0,
+        };
+        map.set(d.provider, e);
+      }
+      e.inputTokens += d.inputTokens;
+      e.outputTokens += d.outputTokens;
+      e.cacheReadTokens += d.cacheReadTokens;
+      e.cacheCreationTokens += d.cacheCreationTokens;
       e.totalTokens += d.totalTokens;
-      totalCost += d.costUSD;
-      totalTokens += d.totalTokens;
+      e.costUSD += d.costUSD;
+      e.inputCostUSD += d.inputCostUSD || 0;
+      e.outputCostUSD += d.outputCostUSD || 0;
+      e.cacheReadCostUSD += d.cacheReadCostUSD || 0;
+      e.cacheCreationCostUSD += d.cacheCreationCostUSD || 0;
     }
-    const effPerMTok = totalTokens > 0 ? (totalCost / totalTokens) * 1e6 : null;
-    const mkRow = (e, grouped) => ({
-      key: e.key,
-      provider: e.provider,
-      costUSD: e.costUSD,
-      totalTokens: e.totalTokens,
-      tokenShare: totalTokens > 0 ? e.totalTokens / totalTokens : 0,
-      effPerMTok: e.totalTokens > 0 ? (e.costUSD / e.totalTokens) * 1e6 : null,
-      contribution: totalTokens > 0 ? (e.costUSD / totalTokens) * 1e6 : 0,
-      grouped: grouped || 0,
-    });
-    let rows = Array.from(map.values()).map((e) => mkRow(e)).sort((a, b) => b.contribution - a.contribution);
-    if (maxGroups && rows.length > maxGroups) {
-      const head = rows.slice(0, maxGroups - 1);
-      const tail = rows.slice(maxGroups - 1);
-      const folded = tail.reduce((acc, r) => {
-        acc.costUSD += r.costUSD; acc.totalTokens += r.totalTokens; return acc;
-      }, { key: 'Andere', provider: 'other', costUSD: 0, totalTokens: 0 });
-      head.push(mkRow(folded, tail.length));
-      rows = head;
-    }
-    return { totalCost, totalTokens, effPerMTok, rows };
+    const perMTok = (cost, tokens) => tokens > 0 ? (cost / tokens) * 1e6 : null;
+    return Array.from(map.values()).map((e) => {
+      const componentSum = e.inputCostUSD + e.outputCostUSD + e.cacheReadCostUSD + e.cacheCreationCostUSD;
+      const rows = COST_TYPES
+        .map((t) => ({
+          key: t.key, label: t.label,
+          tokens: e[t.tokensKey], costUSD: e[t.costKey],
+          perMTok: perMTok(e[t.costKey], e[t.tokensKey]),
+        }))
+        .filter((r) => r.tokens > 0);
+      return {
+        provider: e.provider,
+        rows,
+        totalTokens: e.totalTokens,
+        totalCostUSD: e.costUSD,
+        effPerMTok: perMTok(e.costUSD, e.totalTokens),
+        // true, sobald das Backend Per-Typ-Kosten geliefert hat (nach v2-Rebuild).
+        hasCostBreakdown: componentSum > 0,
+      };
+    }).sort((a, b) => b.totalCostUSD - a.totalCostUSD);
   }
 
   function tokenTypeBreakdown(days) {
@@ -405,5 +417,5 @@
     };
   }
 
-  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown, effRateComposition };
+  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown, providerCostBreakdown };
 });

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { calculateTieredCost, calculateCostFromTokens } from "../src/pricing/cost-calculator";
+import {
+  calculateTieredCost, calculateCostFromTokens, calculateCostBreakdown,
+  scaleBreakdownTo, sumBreakdown,
+} from "../src/pricing/cost-calculator";
 import type { ModelPricing } from "../src/pricing/cost-calculator";
 
 describe("calculateTieredCost", () => {
@@ -72,5 +75,58 @@ describe("calculateCostFromTokens", () => {
     };
     const cost = calculateCostFromTokens({ input_tokens: 1000, output_tokens: 100, speed: "standard" }, pricing);
     expect(cost).toBeCloseTo(1000 * 3e-6 + 100 * 15e-6);
+  });
+});
+
+describe("calculateCostBreakdown", () => {
+  const pricing: ModelPricing = {
+    input_cost_per_token: 3e-6,
+    output_cost_per_token: 15e-6,
+    cache_creation_input_token_cost: 3.75e-6,
+    cache_read_input_token_cost: 0.3e-6,
+  };
+  const tokens = {
+    input_tokens: 100, output_tokens: 100,
+    cache_creation_input_tokens: 500, cache_read_input_tokens: 1000,
+  };
+
+  it("Summe der Komponenten == calculateCostFromTokens", () => {
+    const b = calculateCostBreakdown(tokens, pricing);
+    expect(sumBreakdown(b)).toBeCloseTo(calculateCostFromTokens(tokens, pricing));
+  });
+
+  it("ordnet jedem Typ seinen Posten zu", () => {
+    const b = calculateCostBreakdown(tokens, pricing);
+    expect(b.inputCostUSD).toBeCloseTo(100 * 3e-6);
+    expect(b.outputCostUSD).toBeCloseTo(100 * 15e-6);
+    expect(b.cacheCreationCostUSD).toBeCloseTo(500 * 3.75e-6);
+    expect(b.cacheReadCostUSD).toBeCloseTo(1000 * 0.3e-6);
+  });
+
+  it("Fast-Multiplikator wirkt auf jede Komponente", () => {
+    const fastPricing: ModelPricing = { ...pricing, provider_specific_entry: { fast: 4 } };
+    const normal = calculateCostBreakdown(tokens, fastPricing);
+    const fast = calculateCostBreakdown({ ...tokens, speed: "fast" }, fastPricing);
+    expect(fast.outputCostUSD).toBeCloseTo(normal.outputCostUSD * 4);
+  });
+});
+
+describe("scaleBreakdownTo", () => {
+  const b = { inputCostUSD: 1, outputCostUSD: 2, cacheCreationCostUSD: 0, cacheReadCostUSD: 1 }; // Σ=4
+
+  it("skaliert exakt auf die Zielsumme, Verhältnisse bleiben", () => {
+    const scaled = scaleBreakdownTo(b, 8); // Faktor 2
+    expect(sumBreakdown(scaled)).toBeCloseTo(8, 9);
+    expect(scaled.outputCostUSD).toBeCloseTo(4, 9);
+  });
+
+  it("Faktor 1 bei identischer Summe (rein berechnete Kosten → exakt)", () => {
+    const scaled = scaleBreakdownTo(b, 4);
+    expect(scaled).toEqual(b);
+  });
+
+  it("Nullsumme → alles 0 (kein Pricing)", () => {
+    const zero = scaleBreakdownTo({ inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 }, 5);
+    expect(sumBreakdown(zero)).toBe(0);
   });
 });

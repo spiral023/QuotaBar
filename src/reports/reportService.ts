@@ -1,9 +1,9 @@
 import { getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs, getDebugLogDir } from "../config/paths";
 import type { Settings } from "../config/settings";
 import { defaultSettings } from "../config/settings";
-import { calculateCodexApiCost, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
+import { calculateCodexApiCostBreakdown, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
 import { readCodexTokensForPeriod, type CodexTokenEvent } from "../pricing/codex-log-reader";
-import { calculateCostFromTokens } from "../pricing/cost-calculator";
+import { calculateCostBreakdown, scaleBreakdownTo, sumBreakdown, ZERO_BREAKDOWN } from "../pricing/cost-calculator";
 import { readClaudeUsageEntriesForPeriod, type ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { readBackfillDayRecords } from "./backfill-reader";
@@ -212,7 +212,7 @@ function buildRowsFromBackfill(
     for (const r of list) {
       r.models.forEach((m) => modelSet.add(m));
       for (const [model, pm] of Object.entries(r.perModel)) {
-        const acc = modelAgg.get(model) ?? { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0 };
+        const acc = modelAgg.get(model) ?? { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 };
         modelAgg.set(model, {
           inputTokens: acc.inputTokens + pm.inputTokens,
           outputTokens: acc.outputTokens + pm.outputTokens,
@@ -220,6 +220,10 @@ function buildRowsFromBackfill(
           cacheReadTokens: acc.cacheReadTokens + pm.cacheReadTokens,
           totalTokens: acc.totalTokens + pm.totalTokens,
           costUSD: acc.costUSD + pm.costUSD,
+          inputCostUSD: (acc.inputCostUSD ?? 0) + (pm.inputCostUSD ?? 0),
+          outputCostUSD: (acc.outputCostUSD ?? 0) + (pm.outputCostUSD ?? 0),
+          cacheCreationCostUSD: (acc.cacheCreationCostUSD ?? 0) + (pm.cacheCreationCostUSD ?? 0),
+          cacheReadCostUSD: (acc.cacheReadCostUSD ?? 0) + (pm.cacheReadCostUSD ?? 0),
         });
       }
     }
@@ -240,6 +244,10 @@ function buildRowsFromBackfill(
         cacheReadTokens: pm.cacheReadTokens,
         totalTokens: pm.totalTokens,
         costUSD: pm.costUSD,
+        inputCostUSD: pm.inputCostUSD,
+        outputCostUSD: pm.outputCostUSD,
+        cacheCreationCostUSD: pm.cacheCreationCostUSD,
+        cacheReadCostUSD: pm.cacheReadCostUSD,
       }));
     }
 
@@ -259,23 +267,31 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, fe
   const breakdowns: ModelBreakdown[] = await Promise.all([...byModel].map(async ([model, list]) => {
     const totals = list.reduce((acc, entry) => addEntryTotals(acc, entry), { ...ZERO_TOTALS });
     let costUSD = 0;
+    const pricing = await fetcher.getModelPricing(model);
     if (mode !== "calculate") {
       costUSD += list.reduce((sum, entry) => sum + (entry.costUSD ?? 0), 0);
     }
     if (mode !== "display") {
       const missing = mode === "calculate" ? list : list.filter((entry) => entry.costUSD === undefined);
       const tokens = missing.reduce((acc, entry) => addEntryTotals(acc, entry), { ...ZERO_TOTALS });
-      const pricing = await fetcher.getModelPricing(model);
       if (pricing) {
-        costUSD += calculateCostFromTokens({
+        costUSD += sumBreakdown(calculateCostBreakdown({
           input_tokens: tokens.inputTokens,
           output_tokens: tokens.outputTokens,
           cache_creation_input_tokens: tokens.cacheCreationTokens,
           cache_read_input_tokens: tokens.cacheReadTokens,
-        }, pricing);
+        }, pricing));
       }
     }
-    return { model, ...totals, costUSD };
+    // Per-Typ-Kosten: rate-basiert über alle Tokens des Modells, exakt auf costUSD skaliert.
+    const rateBreakdown = pricing ? calculateCostBreakdown({
+      input_tokens: totals.inputTokens,
+      output_tokens: totals.outputTokens,
+      cache_creation_input_tokens: totals.cacheCreationTokens,
+      cache_read_input_tokens: totals.cacheReadTokens,
+    }, pricing) : ZERO_BREAKDOWN;
+    const c = scaleBreakdownTo(rateBreakdown, costUSD);
+    return { model, ...totals, costUSD, ...c };
   }));
   return { totals: sumBreakdowns(breakdowns), breakdowns };
 }
@@ -298,10 +314,12 @@ async function costCodexBreakdowns(events: CodexTokenEvent[], fetcher: LiteLLMFe
       totalTokens: acc.totalTokens + event.totalTokens,
       costUSD: 0,
     }), { ...ZERO_TOTALS });
+    const c = await calculateCodexApiCostBreakdown(list, fetcher, speed);
     return {
       model,
       ...totals,
-      costUSD: await calculateCodexApiCost(list, fetcher, speed),
+      costUSD: sumBreakdown(c),
+      ...c,
     };
   }));
   return breakdowns;

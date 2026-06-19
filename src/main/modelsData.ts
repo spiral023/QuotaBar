@@ -21,6 +21,11 @@ export interface ModelDay {
   cacheReadTokens: number;
   totalTokens: number;
   costUSD: number;
+  // Kosten je Token-Typ (Summe == costUSD). 0 für vor v2 geschriebene Backfill-Tage.
+  inputCostUSD: number;
+  outputCostUSD: number;
+  cacheCreationCostUSD: number;
+  cacheReadCostUSD: number;
 }
 
 export interface ModelPricingRate {
@@ -63,6 +68,10 @@ export async function buildModelsData(deps: ModelsDataDeps = {}): Promise<Models
         cacheReadTokens: pm.cacheReadTokens,
         totalTokens: pm.totalTokens,
         costUSD: pm.costUSD,
+        inputCostUSD: pm.inputCostUSD ?? 0,
+        outputCostUSD: pm.outputCostUSD ?? 0,
+        cacheCreationCostUSD: pm.cacheCreationCostUSD ?? 0,
+        cacheReadCostUSD: pm.cacheReadCostUSD ?? 0,
       });
     }
   }
@@ -98,6 +107,10 @@ function addDay(
     existing.cacheReadTokens += totals.cacheReadTokens;
     existing.totalTokens += totals.totalTokens;
     existing.costUSD += totals.costUSD;
+    existing.inputCostUSD += totals.inputCostUSD;
+    existing.outputCostUSD += totals.outputCostUSD;
+    existing.cacheCreationCostUSD += totals.cacheCreationCostUSD;
+    existing.cacheReadCostUSD += totals.cacheReadCostUSD;
   } else {
     map.set(key, { date, provider, model, ...totals });
   }
@@ -140,6 +153,10 @@ async function mergeLiveTail(
           cacheReadTokens: b.cacheReadTokens,
           totalTokens: b.totalTokens,
           costUSD: b.costUSD,
+          inputCostUSD: b.inputCostUSD ?? 0,
+          outputCostUSD: b.outputCostUSD ?? 0,
+          cacheCreationCostUSD: b.cacheCreationCostUSD ?? 0,
+          cacheReadCostUSD: b.cacheReadCostUSD ?? 0,
         });
       }
     }

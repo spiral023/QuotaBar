@@ -75,7 +75,13 @@ export interface TokensDaySummaryEvent {
   totalCostUSD: number;
   sessionCount: number;
   models: string[];
-  perModel: Record<string, { input: number; output: number; cacheCreation?: number; cacheRead?: number; cachedInput?: number; reasoningOutput?: number; costUSD: number }>;
+  perModel: Record<string, {
+    input: number; output: number; cacheCreation?: number; cacheRead?: number;
+    cachedInput?: number; reasoningOutput?: number; costUSD: number;
+    // Kosten je Token-Typ (Summe == costUSD); seit BACKFILL_REPAIR_VERSION 2.
+    inputCostUSD?: number; outputCostUSD?: number;
+    cacheCreationCostUSD?: number; cacheReadCostUSD?: number;
+  }>;
 }
 
 export interface BackfillStartEvent { kind: "backfill.start"; days: string[]; }

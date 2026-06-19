@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { listClaudeSourceFiles, readClaudeUsageEntriesFromFiles, type ClaudeUsageEntry, type SourceFileRef } from "../pricing/jsonl-reader";
 import { listCodexSourceFiles, readCodexTokensFromFiles, type CodexTokenEvent, type CodexSourceFileRef } from "../pricing/codex-log-reader";
-import { calculateCodexApiCost, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
-import { calculateCostFromTokens } from "../pricing/cost-calculator";
+import { calculateCodexApiCost, calculateCodexApiCostBreakdown, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
+import { calculateCostFromTokens, calculateCostBreakdown, scaleBreakdownTo, ZERO_BREAKDOWN } from "../pricing/cost-calculator";
 import type { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import type { DebugRecorder } from "./debugRecorder";
 import type { TokensDaySummaryEvent, TokensUsageEvent } from "./debugEvents";
@@ -18,8 +18,10 @@ import { loadManifest, saveManifest, fileSignature, diffSources, type BackfillMa
  *
  * 1 = Partial-Rewrite-Bug behoben (Tagessätze wurden aus nur den geänderten
  *     Quelldateien neu geschrieben → Datenverlust unveränderter Dateien).
+ * 2 = Per-Token-Typ-Kosten (input/output/cacheCreation/cacheRead CostUSD) je
+ *     Modell ergänzt → historische Tagessätze einmalig neu berechnen.
  */
-export const BACKFILL_REPAIR_VERSION = 1;
+export const BACKFILL_REPAIR_VERSION = 2;
 
 export interface BackfillOptions {
   recorder: DebugRecorder;
@@ -212,6 +214,20 @@ async function summarizeClaude(date: string, entries: ClaudeUsageEntry[], fetche
       totalCostUSD += cost;
       perModel[model].costUSD += cost;
     }
+    // Kosten je Token-Typ: rate-basiert je Modell, exakt auf den (ggf. aus Quell-
+    // kosten gemischten) costUSD skaliert → Komponenten summieren auf costUSD.
+    for (const [model, pm] of Object.entries(perModel)) {
+      const pricing = await fetcher.getModelPricing(model);
+      const breakdown = pricing ? calculateCostBreakdown({
+        input_tokens: pm.input, output_tokens: pm.output,
+        cache_creation_input_tokens: pm.cacheCreation ?? 0, cache_read_input_tokens: pm.cacheRead ?? 0,
+      }, pricing) : ZERO_BREAKDOWN;
+      const scaled = scaleBreakdownTo(breakdown, pm.costUSD);
+      pm.inputCostUSD = scaled.inputCostUSD;
+      pm.outputCostUSD = scaled.outputCostUSD;
+      pm.cacheCreationCostUSD = scaled.cacheCreationCostUSD;
+      pm.cacheReadCostUSD = scaled.cacheReadCostUSD;
+    }
   }
   return {
     kind: "tokens.daySummary", provider: "claude", date,
@@ -245,8 +261,14 @@ async function summarizeCodex(date: string, events: CodexTokenEvent[], fetcher?:
   let totalCostUSD = 0;
   if (fetcher) {
     for (const [model, modelEvents] of byModel) {
-      const cost = await calculateCodexApiCost(modelEvents, fetcher, speedTier);
-      perModel[model].costUSD = cost;
+      const b = await calculateCodexApiCostBreakdown(modelEvents, fetcher, speedTier);
+      const pm = perModel[model];
+      pm.inputCostUSD = b.inputCostUSD;
+      pm.outputCostUSD = b.outputCostUSD;
+      pm.cacheCreationCostUSD = b.cacheCreationCostUSD;
+      pm.cacheReadCostUSD = b.cacheReadCostUSD;
+      const cost = b.inputCostUSD + b.outputCostUSD + b.cacheCreationCostUSD + b.cacheReadCostUSD;
+      pm.costUSD = cost;
       totalCostUSD += cost;
     }
   }

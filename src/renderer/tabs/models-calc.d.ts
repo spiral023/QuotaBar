@@ -10,6 +10,10 @@ export interface Day {
   cacheReadTokens: number;
   totalTokens: number;
   costUSD: number;
+  inputCostUSD?: number;
+  outputCostUSD?: number;
+  cacheCreationCostUSD?: number;
+  cacheReadCostUSD?: number;
 }
 
 export interface ModelTableRow extends Day {
@@ -33,29 +37,24 @@ export interface ScatterPoint {
   valueColor: string;
 }
 
-export interface EffRateCompositionRow {
+export interface ProviderCostRow {
   key: string;
-  provider: string;
+  label: string;
+  tokens: number;
   costUSD: number;
-  totalTokens: number;
-  tokenShare: number;
-  effPerMTok: number | null;
-  contribution: number;
-  grouped: number;
+  perMTok: number | null;
 }
 
-export interface EffRateComposition {
-  totalCost: number;
+export interface ProviderCostBreakdown {
+  provider: string;
+  rows: ProviderCostRow[];
   totalTokens: number;
+  totalCostUSD: number;
   effPerMTok: number | null;
-  rows: EffRateCompositionRow[];
+  hasCostBreakdown: boolean;
 }
 
-export function effRateComposition(
-  days: Day[],
-  groupKey: 'provider' | 'model',
-  maxGroups?: number,
-): EffRateComposition;
+export function providerCostBreakdown(days: Day[]): ProviderCostBreakdown[];
 
 export function isoAddDays(iso: string, delta: number): string;
 export function filterWindow(days: Day[], win: '30d' | '90d' | 'all', today: string): Day[];
