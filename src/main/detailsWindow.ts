@@ -70,10 +70,10 @@ export class DetailsWindowController {
       this.isPinned = settings.pinned;
       const isDashboard = settings.viewMode !== "compact";
       this.win = new BrowserWindow({
-        width:      isDashboard ? 900 : 340,
-        height:     isDashboard ? 660 : 560,
-        minWidth:   isDashboard ? 750 : 340,
-        minHeight:  isDashboard ? 520 : 560,
+        width:      isDashboard ? 900 : 411,
+        height:     isDashboard ? 660 : 672,
+        minWidth:   isDashboard ? 750 : 411,
+        minHeight:  isDashboard ? 520 : 672,
         frame:      false,
         resizable:  isDashboard,
         movable:    true,

@@ -14,7 +14,7 @@ window.QB = window.QB || {};
   let _animated = false;
 
   // UI-State (lokales Recompute, kein IPC bei Wechsel)
-  let _win = 'all';
+  let _win = '30d';
   let _metric = 'output';
   let _provider = 'all';
   let _sortKey = 'costUSD';
@@ -133,6 +133,8 @@ window.QB = window.QB || {};
           <div class="mod-note">Ab ${_data.days.length > 0 ? _data.days[0].date : '—'}</div>
         </div>
 
+        <div id="mod-tt-section" hidden></div>
+
         ${hasBenchmarks ? `
         <div class="an-section">
           <div class="an-section-head"><span class="an-section-title">PREIS vs. INTELLIGENZ</span></div>
@@ -152,6 +154,7 @@ window.QB = window.QB || {};
     syncPills();
     renderKpis();
     renderStack(true);
+    renderTokenTypes();
     if (hasBenchmarks) renderScatter(true);
     renderTable();
   }
@@ -175,6 +178,7 @@ window.QB = window.QB || {};
     syncPills();
     renderKpis();
     renderStack(false);
+    renderTokenTypes();
     renderScatter(false);
     renderTable();
   }
@@ -198,31 +202,37 @@ window.QB = window.QB || {};
     el.innerHTML = `
       <div class="an-stat-tile mod-kpi-lead">
         <div class="an-stat-lbl">Ø $/MTok effektiv</div>
+        <span class="kv-fill"></span>
         <div class="an-stat-val">${k.effPerMTok != null ? '$' + k.effPerMTok.toFixed(2) : '—'}${trend(k.effPerMTokDeltaPct, true)}</div>
         <div class="mod-kpi-sub">Gesamtkosten ÷ Gesamttokens, inkl. Cache</div>
       </div>
       <div class="an-stat-tile">
         <div class="an-stat-lbl">Aktive Modelle</div>
+        <span class="kv-fill"></span>
         <div class="an-stat-val">${k.activeModels}${k.activeModelsDelta != null
           ? `<span class="mod-kpi-trend flat">${k.activeModelsDelta >= 0 ? '+' : ''}${k.activeModelsDelta}</span>` : ''}</div>
       </div>
       <div class="an-stat-tile">
         <div class="an-stat-lbl">Top nach Kosten</div>
+        <span class="kv-fill"></span>
         <div class="an-stat-val" title="${k.topCost ? QB.esc(k.topCost.model) : ''}">${k.topCost ? QB.esc(shortName(k.topCost.model)) : '—'}</div>
         <div class="mod-kpi-sub">${k.topCost ? '$' + k.topCost.costUSD.toFixed(0) + ' · ' + k.topCost.sharePct.toFixed(0) + '%' : ''}</div>
       </div>
       <div class="an-stat-tile">
         <div class="an-stat-lbl">Top nach Output</div>
+        <span class="kv-fill"></span>
         <div class="an-stat-val" title="${k.topOutput ? QB.esc(k.topOutput.model) : ''}">${k.topOutput ? QB.esc(shortName(k.topOutput.model)) : '—'}</div>
         <div class="mod-kpi-sub">${k.topOutput ? QB.fmtTokens(k.topOutput.outputTokens) : ''}</div>
       </div>
       <div class="an-stat-tile">
         <div class="an-stat-lbl">Preis/Leistung</div>
+        <span class="kv-fill"></span>
         <div class="an-stat-val" title="${k.bestValue ? QB.esc(k.bestValue.model) : ''}">${k.bestValue ? QB.esc(shortName(k.bestValue.model)) : '—'}</div>
         <div class="mod-kpi-sub">${k.bestValue ? 'Score/$ am höchsten' : 'kein Score verfügbar'}</div>
       </div>
       <div class="an-stat-tile">
         <div class="an-stat-lbl">Top-3-Anteil</div>
+        <span class="kv-fill"></span>
         <div class="an-stat-val">${k.top3SharePct.toFixed(0)}%</div>
         <div class="mod-kpi-sub">Kosten-Konzentration</div>
       </div>`;
@@ -247,26 +257,17 @@ window.QB = window.QB || {};
         : 'Keine Daten im gewählten Fenster.';
     }
 
-    const totals = stack.buckets.map((_, i) => stack.series.reduce((s, x) => s + x.values[i], 0));
     const datasets = stack.series.map((s) => ({
       label: s.model,
-      data: s.values.map((v, i) => (totals[i] > 0 ? (v / totals[i]) * 100 : 0)),
-      rawValues: s.values,
+      data: s.values,
       backgroundColor: colorFor(s.model, s.provider, _colorOrder),
       hoverBackgroundColor: colorFor(s.model, s.provider, _colorOrder) + 'E6',
     }));
 
-    if (_stackChart && !initial) {
-      _stackChart.data.labels = stack.buckets;
-      _stackChart.data.datasets = datasets;
-      _stackChart.options.qbFormat = _metric === 'cost' ? 'cost' : 'tokens';
-      _stackChart.update();
-    } else {
-      if (_stackChart) _stackChart.destroy();
-      const ctx = document.getElementById('mod-stack-canvas').getContext('2d');
-      _stackChart = QB.charts.createStacked100(ctx, stack.buckets, datasets,
-        { format: _metric === 'cost' ? 'cost' : 'tokens' });
-    }
+    if (_stackChart) { _stackChart.destroy(); _stackChart = null; }
+    const ctx = document.getElementById('mod-stack-canvas').getContext('2d');
+    _stackChart = QB.charts.createStackedBar(ctx, stack.buckets, datasets,
+      { yFormat: _metric === 'cost' ? 'cost' : 'tokens' });
 
     renderRibbon(days, granularity);
     renderLegend(stack.series);
@@ -455,6 +456,33 @@ window.QB = window.QB || {};
       if (_sortKey === key) { _sortDesc = !_sortDesc; } else { _sortKey = key; _sortDesc = true; }
       renderTable();
     }));
+  }
+
+  const TOKEN_TYPE_META = [
+    { pctKey: 'inputPct',         absKey: 'input',         label: 'Input',   col: '#6E8EE8' },
+    { pctKey: 'outputPct',        absKey: 'output',        label: 'Output',  col: '#52d017' },
+    { pctKey: 'cacheReadPct',     absKey: 'cacheRead',     label: 'Cache R', col: '#56C8D8' },
+    { pctKey: 'cacheCreationPct', absKey: 'cacheCreation', label: 'Cache C', col: '#E89B6F' },
+  ];
+
+  function renderTokenTypes() {
+    const el = document.getElementById('mod-tt-section');
+    if (!el) return;
+    const b = calc.tokenTypeBreakdown(visibleDays());
+    if (b.total === 0) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.className = 'an-section';
+    el.innerHTML = `
+      <div class="an-section-head"><span class="an-section-title">TOKEN-TYPEN</span></div>
+      <div class="mod-tt-grid">
+        ${TOKEN_TYPE_META.map((t) => `
+          <div class="an-stat-tile mod-tt-tile" style="--tt-col:${t.col}">
+            <div class="an-stat-lbl"><span class="mod-tt-dot"></span>${QB.esc(t.label)}</div>
+            <span class="kv-fill"></span>
+            <div class="an-stat-val">${b[t.pctKey].toFixed(2)}%</div>
+            <div class="mod-tt-abs">${QB.fmtTokens(b[t.absKey])}</div>
+          </div>`).join('')}
+      </div>`;
   }
 
 })();

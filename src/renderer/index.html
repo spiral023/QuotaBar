@@ -1575,10 +1575,17 @@
     .an-agg-seg { flex: 1; }
     .an-agg-seg .hr-seg-btn { flex: 1; justify-content: center; }
 
-    /* Compact analytics: Datumseingaben ausblenden, Select nimmt volle Breite */
-    .view-compact #analytics-content .hr-date-pair { display: none; }
-    .view-compact #analytics-content .hr-select-wrap { flex: 1; }
-    .view-compact #analytics-content .hr-preset-select { width: 100%; max-width: 100%; }
+    /* Compact analytics + history: Datumseingaben ausblenden, Select nimmt volle Breite */
+    .view-compact #analytics-content .hr-date-pair,
+    .view-compact #history-content .hr-date-pair { display: none; }
+    .view-compact #analytics-content .hr-select-wrap,
+    .view-compact #history-content .hr-select-wrap { flex: 1; }
+    .view-compact #analytics-content .hr-preset-select,
+    .view-compact #history-content .hr-preset-select { width: 100%; max-width: 100%; }
+    /* Compact history Zeile 2: Lücken als Icon-only, ans rechte Ende schieben */
+    .view-compact #history-content .hr-tgl-label { display: none; }
+    .view-compact #history-content .hr-tgl { margin-left: auto; padding: 0 6px; }
+    .view-compact #history-content .hr-ctrl-row2 { gap: 3px; }
     .hr-tb-sep {
       width: 1px; align-self: stretch; margin: 3px 0;
       background: var(--border); flex-shrink: 0;
@@ -1734,6 +1741,24 @@
     .hr-chart-legend { display: flex; align-items: center; gap: 5px; }
     .hr-legend-dot { width: 7px; height: 7px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
     .hr-chart-wrap { height: 155px; position: relative; }
+    /* Token-Breakdown-Tooltip (Portal, an <body> gerendert) */
+    .hr-kpi-tok-tip {
+      position: fixed; z-index: 9999; min-width: 150px;
+      background: #0d1119; border: 1px solid var(--border-mid); border-radius: var(--r-btn);
+      padding: 8px 10px; font-size: 10px; line-height: 1.4; color: var(--t200);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.4);
+      opacity: 0; scale: 0.96; filter: blur(4px); pointer-events: none;
+      transition-property: opacity, scale, filter; transition-duration: 160ms;
+      transition-timing-function: cubic-bezier(0.2,0,0,1);
+    }
+    .hr-kpi-tok-tip.is-visible { opacity: 1; scale: 1; filter: blur(0); }
+    .hr-tok-tip-row { display: flex; justify-content: space-between; gap: 16px; }
+    .hr-tok-tip-row + .hr-tok-tip-row { margin-top: 3px; }
+    .hr-tok-tip-lbl { color: var(--t400); }
+    .hr-tok-tip-val { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+    .hr-tok-tip-divider { border: none; border-top: 1px solid var(--border); margin: 5px 0; }
+    .hr-tok-tip-total .hr-tok-tip-lbl,
+    .hr-tok-tip-total .hr-tok-tip-val { color: var(--t100); font-weight: 600; }
     /* Kompakte KPI-Tiles im narrow Modus */
     .view-compact .hr-kpi { padding: 7px 10px; }
     .view-compact .hr-kpi-val { font-size: 14px; }
@@ -1947,11 +1972,15 @@
     .mod-metric-seg { display: flex; width: 100%; margin-bottom: 8px; }
     .mod-metric-seg button { flex: 1; text-align: center; }
 
-    /* Compact: KPI-Tiles enger */
-    .view-compact .mod-kpi-grid { gap: 4px; margin-bottom: 4px; }
-    .view-compact .mod-kpi-grid .an-stat-tile { padding: 5px 7px; }
-    .view-compact .mod-kpi-lead .an-stat-val { font-size: 18px; }
-    .view-compact .mod-kpi-grid:not(.mod-kpi-lead) .an-stat-val { font-size: 12px; }
+    /* Compact: KPI als Dense Key-Value (2 Spalten × 3 Reihen) */
+    .kv-fill { display: none; }
+    .view-compact .mod-kpi-grid { grid-template-columns: 1fr 1fr; gap: 3px; margin-bottom: 4px; }
+    .view-compact .mod-kpi-grid .an-stat-tile { padding: 5px 8px; display: flex; align-items: baseline; min-width: 0; overflow: hidden; }
+    .view-compact .mod-kpi-grid .an-stat-lbl { flex-shrink: 0; font-size: 7.5px; margin-bottom: 0; white-space: nowrap; }
+    .view-compact .mod-kpi-grid .kv-fill { display: block; flex: 1; min-width: 6px; height: 0; border-bottom: 1px dotted rgba(255,255,255,0.11); margin: 0 5px 2px; align-self: flex-end; }
+    .view-compact .mod-kpi-grid .an-stat-val { flex-shrink: 0; font-size: 11px; white-space: nowrap; }
+    .view-compact .mod-kpi-trend { display: none; }
+    .view-compact .mod-kpi-sub { display: none; }
 
     @keyframes modEnter { from { opacity: 0; translate: 0 4px; } to { opacity: 1; translate: 0 0; } }
     .mod-stagger > * { animation: modEnter 360ms cubic-bezier(0.2, 0, 0, 1) both; }
@@ -1960,6 +1989,28 @@
     .mod-stagger > *:nth-child(3) { animation-delay: 140ms; }
     .mod-stagger > *:nth-child(4) { animation-delay: 210ms; }
     .mod-stagger > *:nth-child(5) { animation-delay: 280ms; }
+
+    /* ── Models: Token-Typ-Kacheln ──────────────────────────── */
+    .mod-tt-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px;
+    }
+    .mod-tt-tile {
+      border-color: color-mix(in srgb, var(--tt-col) 22%, var(--border));
+      background: color-mix(in srgb, var(--tt-col) 4%, var(--bg-surface));
+    }
+    .mod-tt-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--tt-col); margin-right: 4px; vertical-align: middle; margin-bottom: 1px;
+    }
+    .mod-tt-abs {
+      font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--t400); margin-top: 2px;
+    }
+    .view-compact .mod-tt-grid { grid-template-columns: repeat(2, 1fr); gap: 3px; }
+    .view-compact .mod-tt-grid .an-stat-tile { display: flex; align-items: baseline; min-width: 0; overflow: hidden; }
+    .view-compact .mod-tt-grid .an-stat-lbl { flex-shrink: 0; font-size: 7.5px; margin-bottom: 0; white-space: nowrap; }
+    .view-compact .mod-tt-grid .kv-fill { display: block; flex: 1; min-width: 6px; height: 0; border-bottom: 1px dotted rgba(255,255,255,0.11); margin: 0 5px 2px; align-self: flex-end; }
+    .view-compact .mod-tt-grid .an-stat-val { flex-shrink: 0; font-size: 11px; white-space: nowrap; }
+    .view-compact .mod-tt-abs { display: none; }
 
     /* ══ SYSTEM TAB ════════════════════════════════════════════ */
     .sys-wrap {

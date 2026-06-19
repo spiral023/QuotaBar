@@ -11,11 +11,11 @@ let _barChart    = null;
 let _initialized = false;
 let _lastRows    = [];
 let _lastReport  = null;
-let _chartMode   = 'cost';   // 'cost' | 'tokens'
+let _chartMode   = 'tokens'; // 'cost' | 'tokens'
 let _tokenMode   = 'output'; // 'total' | 'input' | 'output' | 'cache'
 let _minDate      = null;
 let _activePreset = null;
-let _showEmpty    = false;
+let _showEmpty    = true;
 
 QB.renderHistory = async function renderHistory() {
   const container = document.getElementById('history-content');
@@ -82,12 +82,10 @@ function _presetDates(preset) {
 }
 
 function _buildControls(container, minDate) {
-  const today     = new Date().toISOString().slice(0, 10);
-  const ninetyAgo = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
-  const fromDate  = minDate ?? ninetyAgo;
+  const today = new Date().toISOString().slice(0, 10);
 
-  // Initial range (minDate → heute) entspricht dem Preset "Gesamt"
-  if (_activePreset === null) _activePreset = 'all';
+  if (_activePreset === null) _activePreset = '30d';
+  const { from: fromDate } = _presetDates(_activePreset);
 
   const presetOptions = PRESETS.map(p =>
     `<option value="${p.id}"${_activePreset === p.id ? ' selected' : ''}>${p.label}</option>`
@@ -139,7 +137,7 @@ function _buildControls(container, minDate) {
                stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
             <path d="M1.5 9.5V5"/><path d="M5.5 9.5V7" stroke-dasharray="1.5 1.5"/><path d="M9.5 9.5V2.5"/>
           </svg>
-          Lücken
+          <span class="hr-tgl-label">Lücken</span>
         </button>
       </div>
     </div>
@@ -345,7 +343,6 @@ function _renderResults(report, agg) {
 
   const claudeCost  = claudeSums?.costUSD  ?? 0;
   const codexCost   = codexSums?.costUSD   ?? 0;
-  const periodCount = [...new Set(rows.map(r => r.bucket))].length;
 
   const tTypeLabels = { total: 'Gesamt', input: 'Input', output: 'Output', cache: 'Cache' };
   const tokenTypePillsHtml = Object.keys(tTypeLabels).map(t =>
@@ -369,13 +366,14 @@ function _renderResults(report, agg) {
         <div class="hr-kpi-lbl">Codex</div>
         <div class="hr-kpi-val">$${codexCost.toFixed(2)}</div>
       </div>
-      <div class="hr-kpi">
+      <div class="hr-kpi" id="hr-kpi-tokens"
+           data-inp="${totals.inputTokens ?? 0}"
+           data-out="${totals.outputTokens ?? 0}"
+           data-cread="${totals.cacheReadTokens ?? 0}"
+           data-ccreate="${totals.cacheCreationTokens ?? 0}"
+           style="cursor:default">
         <div class="hr-kpi-lbl">Tokens</div>
         <div class="hr-kpi-val">${QB.fmtTokens(totals.totalTokens ?? 0)}</div>
-      </div>
-      <div class="hr-kpi">
-        <div class="hr-kpi-lbl">Perioden</div>
-        <div class="hr-kpi-val">${periodCount}</div>
       </div>
     </div>
 
@@ -456,6 +454,7 @@ function _renderResults(report, agg) {
 
   _renderChart();
   _bindChartToggles();
+  _bindTokenKpiTooltip();
 }
 
 // ── Gap filling ───────────────────────────────────────────────────────────────
@@ -545,6 +544,80 @@ function _isoWeekBucketFromDate(date) {
   const yearStart = new Date(Date.UTC(thu.getUTCFullYear(), 0, 1));
   const week = Math.ceil(((thu - yearStart) / 86400000 + 1) / 7);
   return `${thu.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+// ── Token-KPI-Tooltip ─────────────────────────────────────────────────────────
+
+function _bindTokenKpiTooltip() {
+  const card = document.getElementById('hr-kpi-tokens');
+  if (!card) return;
+
+  let tip = document.getElementById('hr-kpi-tok-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'hr-kpi-tok-tip';
+    tip.className = 'hr-kpi-tok-tip';
+    document.body.appendChild(tip);
+  }
+
+  function show() {
+    const inp     = parseInt(card.dataset.inp,     10) || 0;
+    const out     = parseInt(card.dataset.out,     10) || 0;
+    const cread   = parseInt(card.dataset.cread,   10) || 0;
+    const ccreate = parseInt(card.dataset.ccreate, 10) || 0;
+    const total   = inp + out + cread + ccreate;
+
+    tip.innerHTML = `
+      <div class="hr-tok-tip-row">
+        <span class="hr-tok-tip-lbl">Input</span>
+        <span class="hr-tok-tip-val">${QB.fmtTokens(inp)}</span>
+      </div>
+      <div class="hr-tok-tip-row">
+        <span class="hr-tok-tip-lbl">Output</span>
+        <span class="hr-tok-tip-val">${QB.fmtTokens(out)}</span>
+      </div>
+      <div class="hr-tok-tip-row">
+        <span class="hr-tok-tip-lbl">Cache Read</span>
+        <span class="hr-tok-tip-val">${QB.fmtTokens(cread)}</span>
+      </div>
+      ${ccreate > 0 ? `
+      <div class="hr-tok-tip-row">
+        <span class="hr-tok-tip-lbl">Cache Create</span>
+        <span class="hr-tok-tip-val">${QB.fmtTokens(ccreate)}</span>
+      </div>` : ''}
+      <hr class="hr-tok-tip-divider">
+      <div class="hr-tok-tip-row hr-tok-tip-total">
+        <span class="hr-tok-tip-lbl">Gesamt</span>
+        <span class="hr-tok-tip-val">${QB.fmtTokens(total)}</span>
+      </div>
+    `;
+
+    const r  = card.getBoundingClientRect();
+    tip.style.visibility = 'hidden';
+    tip.style.opacity    = '0';
+    tip.classList.add('is-visible');
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    tip.classList.remove('is-visible');
+    tip.style.visibility = '';
+    tip.style.opacity    = '';
+
+    let left = r.left + r.width / 2 - tw / 2;
+    left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
+    let top = r.top - th - 9;
+    tip.style.transformOrigin = 'bottom center';
+    if (top < 6) { top = r.bottom + 9; tip.style.transformOrigin = 'top center'; }
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top  = `${Math.round(top)}px`;
+    tip.classList.add('is-visible');
+  }
+
+  function hide() {
+    tip.classList.remove('is-visible');
+  }
+
+  card.addEventListener('mouseenter', show);
+  card.addEventListener('mouseleave', hide);
 }
 
 })();

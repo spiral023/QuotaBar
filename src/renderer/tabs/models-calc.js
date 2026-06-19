@@ -340,5 +340,22 @@
       .map(([bucket, e]) => ({ bucket, claudeShare: e.total > 0 ? e.claude / e.total : 0 }));
   }
 
-  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon };
+  function tokenTypeBreakdown(days) {
+    let input = 0, output = 0, cacheRead = 0, cacheCreation = 0;
+    for (const d of days) {
+      input         += d.inputTokens;
+      output        += d.outputTokens;
+      cacheRead     += d.cacheReadTokens;
+      cacheCreation += d.cacheCreationTokens;
+    }
+    const total = input + output + cacheRead + cacheCreation;
+    const pct = (v) => total > 0 ? (v / total) * 100 : 0;
+    return {
+      input, output, cacheRead, cacheCreation, total,
+      inputPct: pct(input), outputPct: pct(output),
+      cacheReadPct: pct(cacheRead), cacheCreationPct: pct(cacheCreation),
+    };
+  }
+
+  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown };
 });
