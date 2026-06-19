@@ -107,6 +107,8 @@ window.QB = window.QB || {};
       <div class="${_animated ? '' : 'mod-stagger'}" id="mod-root">
         <div class="mod-kpi-grid" id="mod-kpis"></div>
 
+        <div id="mod-comp-section" hidden></div>
+
         <div class="an-section mod-chart-sec">
           <div class="mod-chart-hd">
             <span class="mod-chart-ttl">VERTEILUNG</span>
@@ -153,6 +155,7 @@ window.QB = window.QB || {};
     bindPills();
     syncPills();
     renderKpis();
+    renderComposition();
     renderStack(true);
     renderTokenTypes();
     if (hasBenchmarks) renderScatter(true);
@@ -177,6 +180,7 @@ window.QB = window.QB || {};
   function refreshLocal() {
     syncPills();
     renderKpis();
+    renderComposition();
     renderStack(false);
     renderTokenTypes();
     renderScatter(false);
@@ -456,6 +460,75 @@ window.QB = window.QB || {};
       if (_sortKey === key) { _sortDesc = !_sortDesc; } else { _sortKey = key; _sortDesc = true; }
       renderTable();
     }));
+  }
+
+  const PROVIDER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', other: 'Andere' };
+
+  // Zerlegt den blended „$/MTok effektiv" in additive Beiträge je Gruppe.
+  // Provider-Aufschlüsselung, sobald >1 Provider sichtbar ist — sonst nach Modell.
+  function renderComposition() {
+    const el = document.getElementById('mod-comp-section');
+    if (!el) return;
+    const days = visibleDays();
+    const providerCount = new Set(days.map((d) => d.provider)).size;
+    const groupBy = (_provider === 'all' && providerCount > 1) ? 'provider' : 'model';
+    const comp = calc.effRateComposition(days, groupBy, groupBy === 'model' ? 6 : undefined);
+
+    if (comp.effPerMTok == null || comp.rows.length === 0) {
+      el.hidden = true; el.innerHTML = '';
+      return;
+    }
+    el.hidden = false;
+    el.className = 'an-section';
+
+    const labelOf = (r) => r.key === 'Andere'
+      ? `Andere${r.grouped ? `<span class="mod-comp-grouped"> ·${r.grouped}</span>` : ''}`
+      : groupBy === 'provider' ? QB.esc(PROVIDER_LABELS[r.key] || r.key) : QB.esc(shortName(r.key));
+    const colorOf = (r) => r.key === 'Andere' ? OTHER_COLOR
+      : groupBy === 'provider' ? QB.providerColor(r.key) : colorFor(r.key, r.provider, _colorOrder);
+
+    const eff = comp.effPerMTok;
+    const segs = comp.rows.map((r) => {
+      const w = eff > 0 ? (r.contribution / eff) * 100 : 0;
+      const title = `${r.key === 'Andere' ? 'Andere' : (PROVIDER_LABELS[r.key] || shortName(r.key))}: `
+        + `+$${r.contribution.toFixed(2)}/MTok (${(r.tokenShare * 100).toFixed(0)}% der Tokens)`;
+      return `<div class="mod-comp-seg" style="width:${w.toFixed(2)}%;background:${colorOf(r)}" title="${QB.esc(title)}"></div>`;
+    }).join('');
+
+    const rowsHtml = comp.rows.map((r) => `
+      <div class="mod-comp-row">
+        <span class="mod-comp-lbl"><span class="mod-comp-dot" style="background:${colorOf(r)}"></span>${labelOf(r)}</span>
+        <span class="mod-comp-num">${r.effPerMTok != null ? '$' + r.effPerMTok.toFixed(2) : '—'}</span>
+        <span class="mod-comp-op">×</span>
+        <span class="mod-comp-num mod-comp-share">${(r.tokenShare * 100).toFixed(0)}%</span>
+        <span class="mod-comp-op">=</span>
+        <span class="mod-comp-contrib" style="color:${colorOf(r)}">+$${r.contribution.toFixed(2)}</span>
+      </div>`).join('');
+
+    el.innerHTML = `
+      <div class="an-section-head">
+        <span class="an-section-title">$/MTok-ZUSAMMENSETZUNG</span>
+        <span class="mod-comp-result">$${eff.toFixed(2)}<span class="mod-comp-result-unit">/MTok</span></span>
+      </div>
+      <div class="mod-comp-sub">Gewichteter Mittelwert: Eigenrate × Token-Anteil je ${groupBy === 'provider' ? 'Provider' : 'Modell'}</div>
+      <div class="mod-comp-bar">${segs}</div>
+      <div class="mod-comp-rows">
+        <div class="mod-comp-row mod-comp-head">
+          <span></span>
+          <span class="mod-comp-mlbl">Eigenrate</span>
+          <span></span>
+          <span class="mod-comp-mlbl">Anteil</span>
+          <span></span>
+          <span class="mod-comp-mlbl">Beitrag</span>
+        </div>
+        ${rowsHtml}
+        <div class="mod-comp-row mod-comp-total">
+          <span class="mod-comp-lbl">Ø effektiv</span>
+          <span></span><span></span><span></span>
+          <span class="mod-comp-op">=</span>
+          <span class="mod-comp-contrib">$${eff.toFixed(2)}</span>
+        </div>
+      </div>`;
   }
 
   const TOKEN_TYPE_META = [

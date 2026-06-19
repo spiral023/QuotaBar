@@ -340,6 +340,54 @@
       .map(([bucket, e]) => ({ bucket, claudeShare: e.total > 0 ? e.claude / e.total : 0 }));
   }
 
+  /**
+   * Zerlegt den gewichteten Mittelwert „$/MTok effektiv" (Gesamtkosten ÷
+   * Gesamttokens) in additive Beiträge je Gruppe (Provider oder Modell).
+   *
+   * Kerngleichung pro Gruppe g:
+   *   beitrag_g = (kosten_g / tokens_gesamt) · 1e6 = eigenrate_g · tokenanteil_g
+   * Summe aller Beiträge = effPerMTok (exakt) → erklärt, „wie man auf $X kommt".
+   *
+   * groupKey: 'provider' | 'model'
+   * maxGroups: optional; Überhang nach Beitrag wird zu „Andere" gebündelt.
+   */
+  function effRateComposition(days, groupKey, maxGroups) {
+    const keyOf = groupKey === 'model' ? (d) => d.model : (d) => d.provider;
+    const map = new Map();
+    let totalCost = 0, totalTokens = 0;
+    for (const d of days) {
+      const k = keyOf(d);
+      let e = map.get(k);
+      if (!e) { e = { key: k, provider: d.provider, costUSD: 0, totalTokens: 0 }; map.set(k, e); }
+      e.costUSD += d.costUSD;
+      e.totalTokens += d.totalTokens;
+      totalCost += d.costUSD;
+      totalTokens += d.totalTokens;
+    }
+    const effPerMTok = totalTokens > 0 ? (totalCost / totalTokens) * 1e6 : null;
+    const mkRow = (e, grouped) => ({
+      key: e.key,
+      provider: e.provider,
+      costUSD: e.costUSD,
+      totalTokens: e.totalTokens,
+      tokenShare: totalTokens > 0 ? e.totalTokens / totalTokens : 0,
+      effPerMTok: e.totalTokens > 0 ? (e.costUSD / e.totalTokens) * 1e6 : null,
+      contribution: totalTokens > 0 ? (e.costUSD / totalTokens) * 1e6 : 0,
+      grouped: grouped || 0,
+    });
+    let rows = Array.from(map.values()).map((e) => mkRow(e)).sort((a, b) => b.contribution - a.contribution);
+    if (maxGroups && rows.length > maxGroups) {
+      const head = rows.slice(0, maxGroups - 1);
+      const tail = rows.slice(maxGroups - 1);
+      const folded = tail.reduce((acc, r) => {
+        acc.costUSD += r.costUSD; acc.totalTokens += r.totalTokens; return acc;
+      }, { key: 'Andere', provider: 'other', costUSD: 0, totalTokens: 0 });
+      head.push(mkRow(folded, tail.length));
+      rows = head;
+    }
+    return { totalCost, totalTokens, effPerMTok, rows };
+  }
+
   function tokenTypeBreakdown(days) {
     let input = 0, output = 0, cacheRead = 0, cacheCreation = 0;
     for (const d of days) {
@@ -357,5 +405,5 @@
     };
   }
 
-  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown };
+  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown, effRateComposition };
 });

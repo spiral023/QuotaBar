@@ -315,3 +315,56 @@ describe("providerRibbon", () => {
     expect(r).toEqual([{ bucket: "2026-01-05", claudeShare: 0.75 }]);
   });
 });
+
+describe("effRateComposition", () => {
+  const days = [
+    // Claude: teuer pro Token
+    day("2026-01-05", "claude-opus-4-8", { totalTokens: 1_000_000, costUSD: 5 }),
+    // Codex: günstiger pro Token, mehr Tokens
+    day("2026-01-05", "gpt-5.5",         { totalTokens: 3_000_000, costUSD: 3 }),
+  ];
+
+  it("Beiträge summieren sich exakt zum blended effPerMTok", () => {
+    const c = calc.effRateComposition(days, "provider");
+    // total: $8 / 4M Tokens = $2.00 / MTok
+    expect(c.effPerMTok).toBeCloseTo(2.0, 9);
+    const sum = c.rows.reduce((s, r) => s + r.contribution, 0);
+    expect(sum).toBeCloseTo(c.effPerMTok!, 9);
+  });
+
+  it("Eigenrate × Anteil = Beitrag je Gruppe", () => {
+    const c = calc.effRateComposition(days, "provider");
+    const claude = c.rows.find((r) => r.key === "claude")!;
+    // Eigenrate $5/MTok, Anteil 25% → Beitrag $1.25
+    expect(claude.effPerMTok).toBeCloseTo(5, 9);
+    expect(claude.tokenShare).toBeCloseTo(0.25, 9);
+    expect(claude.contribution).toBeCloseTo(1.25, 9);
+  });
+
+  it("absteigend nach Beitrag sortiert", () => {
+    const c = calc.effRateComposition(days, "provider");
+    expect(c.rows[0].contribution).toBeGreaterThanOrEqual(c.rows[1].contribution);
+  });
+
+  it("bündelt Überhang nach maxGroups zu 'Andere'", () => {
+    const many = [
+      day("2026-01-05", "claude-a", { totalTokens: 1e6, costUSD: 4 }),
+      day("2026-01-05", "claude-b", { totalTokens: 1e6, costUSD: 3 }),
+      day("2026-01-05", "claude-c", { totalTokens: 1e6, costUSD: 2 }),
+      day("2026-01-05", "claude-d", { totalTokens: 1e6, costUSD: 1 }),
+    ];
+    const c = calc.effRateComposition(many, "model", 3);
+    expect(c.rows).toHaveLength(3);
+    const andere = c.rows.find((r) => r.key === "Andere")!;
+    expect(andere.grouped).toBe(2);
+    // gebündelt: claude-c + claude-d = $3 / 2M = $1.50 Eigenrate
+    expect(andere.effPerMTok).toBeCloseTo(1.5, 9);
+    // Summe bleibt invariant
+    const sum = c.rows.reduce((s, r) => s + r.contribution, 0);
+    expect(sum).toBeCloseTo(c.effPerMTok!, 9);
+  });
+
+  it("leeres/kostenloses Fenster → effPerMTok null", () => {
+    expect(calc.effRateComposition([], "provider").effPerMTok).toBeNull();
+  });
+});

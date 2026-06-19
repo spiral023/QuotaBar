@@ -33,6 +33,30 @@ export interface ScatterPoint {
   valueColor: string;
 }
 
+export interface EffRateCompositionRow {
+  key: string;
+  provider: string;
+  costUSD: number;
+  totalTokens: number;
+  tokenShare: number;
+  effPerMTok: number | null;
+  contribution: number;
+  grouped: number;
+}
+
+export interface EffRateComposition {
+  totalCost: number;
+  totalTokens: number;
+  effPerMTok: number | null;
+  rows: EffRateCompositionRow[];
+}
+
+export function effRateComposition(
+  days: Day[],
+  groupKey: 'provider' | 'model',
+  maxGroups?: number,
+): EffRateComposition;
+
 export function isoAddDays(iso: string, delta: number): string;
 export function filterWindow(days: Day[], win: '30d' | '90d' | 'all', today: string): Day[];
 export function previousWindow(days: Day[], win: '30d' | '90d' | 'all', today: string): Day[];

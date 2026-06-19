@@ -15,6 +15,16 @@ Dieses Repository enthaelt eine Electron/TypeScript Windows-Tray-App fuer QuotaB
 - Build-Artefakte, `node_modules`, `dist`, `release` und `package-output` nicht committen.
 - Deutsche Umlaute in Textdateien korrekt schreiben (`ä`, `ö`, `ü`, `Ä`, `Ö`, `Ü`, `ß`), nicht als `ae`, `oe`, `ue` usw.
 
+## UI-Konventionen
+
+### Tooltips
+Neue Tooltips werden als **Portal-Elemente** direkt an `<body>` gehängt (nicht als Child des auslösenden Elements), damit sie nicht durch `overflow: hidden` oder `z-index`-Stacking abgeschnitten werden. Orientierung am bestehenden Token-Breakdown-Tooltip in [history.js](src/renderer/tabs/history.js):
+
+- CSS-Klasse `.hr-kpi-tok-tip` in [index.html](src/renderer/index.html) als Vorlage für Aussehen und Einblend-Animation (`opacity + scale + filter: blur`, 160 ms)
+- Tooltip-Element beim ersten Aufruf erzeugen (`document.createElement`, `document.body.appendChild`), ID vergeben, bei späteren Aufrufen per `getElementById` wiederverwenden
+- Position über `getBoundingClientRect()` des Anker-Elements berechnen; zentriert oberhalb, bei zu wenig Platz unterhalb — mit `transformOrigin` entsprechend wechseln
+- Einblenden durch `.classList.add('is-visible')`, Ausblenden durch `.classList.remove('is-visible')`
+
 ## Hinweise zur Preisdaten-Quelle
 
 - Die LiteLLM-Preisdatei (`model_prices_and_context_window.json`) ist ca. **1,5 MB** groß und enthält hunderte Einträge. Nicht vollständig einlesen oder parsen, wenn nur einzelne Modelle gesucht werden – gezielt suchen oder die bereits implementierte `LiteLLMFetcher`-Klasse nutzen.
