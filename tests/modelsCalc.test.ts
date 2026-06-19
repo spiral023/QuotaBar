@@ -112,6 +112,81 @@ describe("buildStack", () => {
   });
 });
 
+describe("buildStack granularity (monthly/hourly)", () => {
+  it("groups by month when granularity is 'monthly'", () => {
+    const days = [
+      day("2026-01-05", "claude-opus-4-8", { outputTokens: 30 }),
+      day("2026-01-20", "claude-opus-4-8", { outputTokens: 20 }),
+      day("2026-02-03", "claude-opus-4-8", { outputTokens: 10 }),
+    ];
+    const s = calc.buildStack(days, "output", "monthly", 0);
+    expect(s.buckets).toEqual(["2026-01", "2026-02"]);
+    expect(s.series[0].values).toEqual([50, 10]);
+  });
+
+  it("uses the date verbatim as bucket when granularity is 'hourly'", () => {
+    const cells = [
+      day("2026-01-05 09:00", "claude-opus-4-8", { outputTokens: 5 }),
+      day("2026-01-05 10:00", "claude-opus-4-8", { outputTokens: 7 }),
+    ];
+    const s = calc.buildStack(cells, "output", "hourly", 0);
+    expect(s.buckets).toEqual(["2026-01-05 09:00", "2026-01-05 10:00"]);
+    expect(s.series[0].values).toEqual([5, 7]);
+  });
+});
+
+describe("filterRange / previousRange", () => {
+  const days = [
+    day("2026-03-01", "gpt-5.5"),
+    day("2026-03-05", "gpt-5.5"),
+    day("2026-03-10", "gpt-5.5"),
+    day("2026-03-20", "gpt-5.5"),
+  ];
+
+  it("filterRange keeps days within [from, to] inclusive", () => {
+    expect(calc.filterRange(days, "2026-03-05", "2026-03-10").map((d: any) => d.date))
+      .toEqual(["2026-03-05", "2026-03-10"]);
+  });
+
+  it("previousRange returns the equal-length window immediately before", () => {
+    // [03-05 .. 03-10] = 6 Tage → Vorperiode [02-27 .. 03-04]
+    const prev = calc.previousRange(days, "2026-03-05", "2026-03-10");
+    expect(prev.map((d: any) => d.date)).toEqual(["2026-03-01"]);
+  });
+
+  it("previousRange is empty without a range", () => {
+    expect(calc.previousRange(days, "", "")).toEqual([]);
+  });
+});
+
+describe("buildRateSeries", () => {
+  it("computes effective $/MTok per provider and total per bucket", () => {
+    const days = [
+      // Tag 1: Claude $2 / 1M = $2/MTok; Codex $1 / 2M = $0.5/MTok
+      day("2026-03-01", "claude-opus-4-8", { totalTokens: 1_000_000, costUSD: 2 }),
+      day("2026-03-01", "gpt-5.5",         { totalTokens: 2_000_000, costUSD: 1 }),
+      // Tag 2: nur Claude $9 / 3M = $3/MTok
+      day("2026-03-02", "claude-opus-4-8", { totalTokens: 3_000_000, costUSD: 9 }),
+    ];
+    const r = calc.buildRateSeries(days, "daily");
+    expect(r.buckets).toEqual(["2026-03-01", "2026-03-02"]);
+    expect(r.claude[0]).toBeCloseTo(2);
+    expect(r.codex[0]).toBeCloseTo(0.5);
+    expect(r.claude[1]).toBeCloseTo(3);
+    // Codex hatte an Tag 2 keine Tokens → Lücke (null)
+    expect(r.codex[1]).toBeNull();
+    // Gesamt Tag 1: $3 / 3M = $1/MTok
+    expect(r.total[0]).toBeCloseTo(1);
+  });
+
+  it("yields null for buckets without tokens (chart gap)", () => {
+    const days = [day("2026-03-01", "claude-opus-4-8", { totalTokens: 0, costUSD: 0 })];
+    const r = calc.buildRateSeries(days, "daily");
+    expect(r.claude[0]).toBeNull();
+    expect(r.total[0]).toBeNull();
+  });
+});
+
 describe("modelColorOrder", () => {
   it("orders models by first appearance date", () => {
     const days2 = [
@@ -173,6 +248,32 @@ describe("computeKpis", () => {
     const k = calc.computeKpis(cur, prev, BENCH);
     expect(k.top3SharePct).toBe(100); // nur 2 Modelle
   });
+
+  describe("bestValue mit Mindest-Token-Anteil", () => {
+    // Haiku: top Score/$ (40/1=40), aber nur ~1 % Token-Anteil.
+    // Opus: 61/3 ≈ 20.3, ~99 % Token-Anteil.
+    const days = [
+      day("2026-03-01", "claude-opus-4-8",  { totalTokens: 1_000_000, costUSD: 3 }),
+      day("2026-03-02", "claude-haiku-4-5", { totalTokens: 10_000,    costUSD: 0.01 }),
+    ];
+    const bench = { "claude-opus-4-8": 61, "claude-haiku-4-5": 40 };
+
+    it("ohne Schwelle gewinnt das kaum genutzte Haiku auf Score/$", () => {
+      const k = calc.computeKpis(days, [], bench);
+      expect(k.bestValue.model).toBe("claude-haiku-4-5");
+    });
+
+    it("ab 5 % Schwelle fällt Haiku raus → Opus gewinnt", () => {
+      const k = calc.computeKpis(days, [], bench, 5);
+      expect(k.bestValue.model).toBe("claude-opus-4-8");
+    });
+
+    it("Schwelle 0 verhält sich wie ohne Filter (Default)", () => {
+      const k0 = calc.computeKpis(days, [], bench, 0);
+      const kDef = calc.computeKpis(days, [], bench);
+      expect(k0.bestValue.model).toBe(kDef.bestValue.model);
+    });
+  });
 });
 
 describe("tableRows", () => {
@@ -212,6 +313,17 @@ describe("tableRows", () => {
     ], BENCH);
     expect(rows[0].model).toBe("claude-opus-4-8");
   });
+
+  it("berechnet tokenSharePct je Modell (Anteil an Gesamt-Tokens)", () => {
+    const rows = calc.tableRows([
+      day("2026-03-01", "claude-opus-4-8", { totalTokens: 900_000, costUSD: 9 }),
+      day("2026-03-01", "gpt-5.5",         { totalTokens: 100_000, costUSD: 1 }),
+    ], BENCH);
+    const opus = rows.find((r) => r.model === "claude-opus-4-8")!;
+    const gpt = rows.find((r) => r.model === "gpt-5.5")!;
+    expect(opus.tokenSharePct).toBeCloseTo(90);
+    expect(gpt.tokenSharePct).toBeCloseTo(10);
+  });
 });
 
 describe("scatterPoints", () => {
@@ -224,6 +336,18 @@ describe("scatterPoints", () => {
     expect(pts).toHaveLength(1);
     expect(pts[0]).toMatchObject({ model: "claude-opus-4-8", x: 3, y: 61 });
     expect(pts[0].r).toBeGreaterThan(0);
+  });
+
+  it("blendet Modelle unter dem Mindest-Token-Anteil aus", () => {
+    const rows = calc.tableRows([
+      day("2026-03-01", "claude-opus-4-8",  { totalTokens: 990_000, costUSD: 3 }),
+      day("2026-03-01", "claude-haiku-4-5", { totalTokens: 10_000,  costUSD: 0.01 }),
+    ], { "claude-opus-4-8": 61, "claude-haiku-4-5": 40 });
+    // Haiku ~1 % → ab 5 % Schwelle nicht mehr im Scatter.
+    const all = calc.scatterPoints(rows);
+    const filtered = calc.scatterPoints(rows, 5);
+    expect(all.map((p: any) => p.model).sort()).toEqual(["claude-haiku-4-5", "claude-opus-4-8"]);
+    expect(filtered.map((p: any) => p.model)).toEqual(["claude-opus-4-8"]);
   });
 
   it("colors visible points by value: cheap high-score green, expensive low-score red", () => {
@@ -355,6 +479,15 @@ describe("providerCostBreakdown", () => {
     expect(output.perMTok).toBeCloseTo(80, 6);
     // Gesamt: $6 / 360k = $16.667 / MTok
     expect(claude.effPerMTok).toBeCloseTo((6 / 360_000) * 1e6, 6);
+  });
+
+  it("tokenPct je Zeile = Anteil an Gesamt-Tokens des Providers", () => {
+    const claude = calc.providerCostBreakdown(days).find((p) => p.provider === "claude")!;
+    // Cache Read: 200k / 360k ≈ 55.56 %
+    expect(claude.rows.find((r) => r.key === "cacheRead")!.tokenPct).toBeCloseTo((200_000 / 360_000) * 100, 6);
+    // Σ Anteile == 100 %
+    const sum = claude.rows.reduce((s, r) => s + r.tokenPct, 0);
+    expect(sum).toBeCloseTo(100, 6);
   });
 
   it("hasCostBreakdown=false, wenn keine Per-Typ-Kosten geliefert wurden", () => {

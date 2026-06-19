@@ -43,9 +43,14 @@ QB.charts.mapChangesToIndex = function(changes, dayKeys) {
 
 QB.charts.createLine = function(ctx, labels, datasets, opts) {
   const isRoi  = opts?.yFormat === 'roi';
-  const yFmt   = isRoi ? (v) => Number(v).toFixed(1) + '×' : (v) => '$' + Number(v).toFixed(0);
+  const isRate = opts?.yFormat === 'rate';
+  const yFmt   = isRoi  ? (v) => Number(v).toFixed(1) + '×'
+               : isRate ? (v) => '$' + Number(v).toFixed(2)
+               :          (v) => '$' + Number(v).toFixed(0);
   const tipFmt = isRoi
     ? (item) => ` ${item.dataset.label}: ${item.parsed.y.toFixed(1)}×`
+    : isRate
+    ? (item) => ` ${item.dataset.label}: $${item.parsed.y.toFixed(2)} /MTok`
     : (item) => ` ${item.dataset.label}: $${item.parsed.y.toFixed(2)}`;
   return new Chart(ctx, {
     type: 'line',

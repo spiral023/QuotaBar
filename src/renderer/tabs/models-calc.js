@@ -38,6 +38,20 @@
     return days.filter((d) => d.date >= start && d.date <= end);
   }
 
+  // Tage im geschlossenen Datumsintervall [from, to] (YYYY-MM-DD, String-Vergleich).
+  function filterRange(days, from, to) {
+    return days.filter((d) => (!from || d.date >= from) && (!to || d.date <= to));
+  }
+
+  // Gleich langes Intervall unmittelbar vor [from, to] — für KPI-Vorperiode.
+  function previousRange(days, from, to) {
+    if (!from || !to) return [];
+    const lenDays = Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000) + 1;
+    const prevTo = isoAddDays(from, -1);
+    const prevFrom = isoAddDays(from, -lenDays);
+    return days.filter((d) => d.date >= prevFrom && d.date <= prevTo);
+  }
+
   function metricOf(d, metric) {
     switch (metric) {
       case 'input':         return d.inputTokens;
@@ -60,14 +74,24 @@
     return date.getUTCFullYear() + '-W' + weekStr;
   }
 
+  // Bucket-Schlüssel je Auflösung. 'hourly'-Datensätze tragen den Stunden-Bucket
+  // bereits in d.date (z.B. "2026-06-19 14:00"), daher Identität.
+  function bucketFnFor(granularity) {
+    if (granularity === 'weekly')  return (d) => isoWeek(d.date);
+    if (granularity === 'monthly') return (d) => d.date.slice(0, 7);
+    if (granularity === 'hourly')  return (d) => d.date;
+    return (d) => d.date;
+  }
+
   /**
-   * Stellt Tages- oder Wochendaten für Stacked Bar Charts zusammen.
+   * Stellt Daten je Auflösung (hourly/daily/weekly/monthly) für Stacked Bar
+   * Charts zusammen.
    * → { buckets: string[], series: [{ model, provider, values: number[] }], othersGrouped: string[] }
    * series enthält absolute Werte; die 100%-Normalisierung passiert beim Chart-Aufbau.
    * othersThreshold: Anteil am Gesamtwert des Fensters, unter dem ein Modell in „Andere" fällt (z.B. 0.01).
    */
   function buildStack(days, metric, granularity, othersThreshold) {
-    const bucketOf = granularity === 'weekly' ? (d) => isoWeek(d.date) : (d) => d.date;
+    const bucketOf = bucketFnFor(granularity);
     const buckets = Array.from(new Set(days.map(bucketOf))).sort();
     const idx = new Map(buckets.map((b, i) => [b, i]));
 
@@ -101,6 +125,28 @@
     if (others) series.push(others);
     othersGrouped.sort();
     return { buckets, series, othersGrouped };
+  }
+
+  /**
+   * Effektiver $/MTok (API-Äquivalent aus realer Token-Verteilung) je Zeit-Bucket,
+   * getrennt nach Provider plus Gesamt. → { buckets, claude[], codex[], total[] }
+   * Werte sind null, wenn im Bucket für den Provider keine Tokens anfielen
+   * (Chart.js zeichnet dort eine Lücke). Rate = Σ Kosten ÷ Σ Tokens × 1e6.
+   */
+  function buildRateSeries(days, granularity) {
+    const bucketOf = bucketFnFor(granularity);
+    const buckets = Array.from(new Set(days.map(bucketOf))).sort();
+    const idx = new Map(buckets.map((b, i) => [b, i]));
+    const blank = () => buckets.map(() => ({ cost: 0, tokens: 0 }));
+    const acc = { claude: blank(), codex: blank(), total: blank() };
+    for (const d of days) {
+      const i = idx.get(bucketOf(d));
+      const lane = d.provider === 'claude' ? acc.claude : acc.codex;
+      lane[i].cost += d.costUSD; lane[i].tokens += d.totalTokens;
+      acc.total[i].cost += d.costUSD; acc.total[i].tokens += d.totalTokens;
+    }
+    const rate = (lane) => lane.map((x) => x.tokens > 0 ? (x.cost / x.tokens) * 1e6 : null);
+    return { buckets, claude: rate(acc.claude), codex: rate(acc.codex), total: rate(acc.total) };
   }
 
   // Reihenfolge des ERSTEN Auftretens über die GESAMTE Historie — Basis für
@@ -146,7 +192,7 @@
     return costUSD > 0 && totalTokens > 0 ? (costUSD / totalTokens) * 1e6 : null;
   }
 
-  function computeKpis(days, prevDays, benchmarks) {
+  function computeKpis(days, prevDays, benchmarks, minTokenSharePct = 0) {
     const agg = aggregateByModel(days);
     const prevAgg = aggregateByModel(prevDays);
     const totalCost = agg.reduce((s, m) => s + m.costUSD, 0);
@@ -160,11 +206,15 @@
     const effPerMTok = effPerMTokOf(totalCost, totalTokens);
     const prevEff = effPerMTokOf(prevCost, prevTokens);
 
+    // "Preis/Leistung": kaum genutzte Modelle (Token-Anteil < Schwelle)
+    // ausschließen, damit ein 1-%-Modell die Wertung nicht dominiert.
     let bestValue = null;
     for (const m of agg) {
       const score = benchmarks[m.model];
       const eff = effPerMTokOf(m.costUSD, m.totalTokens);
       if (typeof score !== 'number' || !eff) continue;
+      const tokenSharePct = totalTokens > 0 ? (m.totalTokens / totalTokens) * 100 : 0;
+      if (tokenSharePct < minTokenSharePct) continue;
       const value = score / eff;
       if (!bestValue || value > bestValue.scorePerDollar) {
         bestValue = { model: m.model, provider: m.provider, scorePerDollar: value };
@@ -193,6 +243,7 @@
   function tableRows(days, benchmarks) {
     const agg = aggregateByModel(days);
     const totalCost = agg.reduce((s, m) => s + m.costUSD, 0);
+    const totalTokens = agg.reduce((s, m) => s + m.totalTokens, 0);
     return agg.map((m) => {
       const eff = effPerMTokOf(m.costUSD, m.totalTokens);
       const score = typeof benchmarks[m.model] === 'number' ? benchmarks[m.model] : null;
@@ -203,15 +254,16 @@
         score,
         scorePerDollar: score != null && eff ? score / eff : null,
         sharePct: totalCost > 0 ? (m.costUSD / totalCost) * 100 : 0,
+        tokenSharePct: totalTokens > 0 ? (m.totalTokens / totalTokens) * 100 : 0,
         cacheHitRate: cacheBase > 0 ? m.cacheReadTokens / cacheBase : null,
       };
     }).sort((a, b) => b.costUSD - a.costUSD);
   }
 
   // Bubble-Radius: 4–18px, skaliert mit Wurzel des Kostenanteils.
-  function scatterPoints(rows) {
+  function scatterPoints(rows, minTokenSharePct = 0) {
     const candidates = rows
-      .filter((r) => r.score != null && r.effPerMTok != null)
+      .filter((r) => r.score != null && r.effPerMTok != null && (r.tokenSharePct ?? 0) >= minTokenSharePct)
       .map((r) => ({
         model: r.model, provider: r.provider,
         x: r.effPerMTok, y: r.score,
@@ -325,7 +377,7 @@
 
   // Claude-Anteil je Bucket für das 3px-Ribbon unter dem Hero-Chart.
   function providerRibbon(days, metric, granularity) {
-    const bucketOf = granularity === 'weekly' ? (d) => isoWeek(d.date) : (d) => d.date;
+    const bucketOf = bucketFnFor(granularity);
     const map = new Map();
     for (const d of days) {
       const b = bucketOf(d);
@@ -386,6 +438,7 @@
           key: t.key, label: t.label,
           tokens: e[t.tokensKey], costUSD: e[t.costKey],
           perMTok: perMTok(e[t.costKey], e[t.tokensKey]),
+          tokenPct: e.totalTokens > 0 ? (e[t.tokensKey] / e.totalTokens) * 100 : 0,
         }))
         .filter((r) => r.tokens > 0);
       return {
@@ -417,5 +470,5 @@
     };
   }
 
-  return { isoAddDays, filterWindow, previousWindow, metricOf, isoWeek, buildStack, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown, providerCostBreakdown };
+  return { isoAddDays, filterWindow, previousWindow, filterRange, previousRange, metricOf, isoWeek, bucketFnFor, buildStack, buildRateSeries, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown, providerCostBreakdown };
 });

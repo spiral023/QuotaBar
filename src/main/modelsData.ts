@@ -38,6 +38,8 @@ export interface ModelsData {
   benchmarks: Record<string, number>;
   benchmarksAsOf: string;
   pricing: Record<string, ModelPricingRate>;
+  /** Mindest-Token-Anteil (%) für Berücksichtigung in KPI/Scatter (aus Settings). */
+  minModelTokenSharePct: number;
   generatedAt: string;
 }
 
@@ -84,7 +86,11 @@ export async function buildModelsData(deps: ModelsDataDeps = {}): Promise<Models
   const { benchmarks, benchmarksAsOf } = await readBenchmarks(deps.benchmarksFile ?? DEFAULT_BENCHMARKS_FILE);
   const pricing = await collectPricing(days, settings);
 
-  return { days, benchmarks, benchmarksAsOf, pricing, generatedAt: new Date().toISOString() };
+  return {
+    days, benchmarks, benchmarksAsOf, pricing,
+    minModelTokenSharePct: settings.minModelTokenSharePct,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 type DayTotals = Omit<ModelDay, "date" | "provider" | "model">;

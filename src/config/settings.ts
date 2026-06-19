@@ -102,6 +102,13 @@ export interface Settings {
   viewMode: ViewMode;
   insightsPanelOpen: boolean;
   pinned: boolean;
+  /**
+   * Mindest-Token-Anteil (0–100 %), den ein Modell im aktuellen Fenster
+   * erreichen muss, um beim KPI "Preis/Leistung" und im Scatter
+   * "Preis vs. Intelligenz" berücksichtigt zu werden. Verhindert, dass
+   * kaum genutzte Modelle (z. B. 1 % Anteil) die Wertung dominieren.
+   */
+  minModelTokenSharePct: number;
   debugLog: DebugLogSettings;
   notifications: NotificationSettings;
 }
@@ -116,6 +123,7 @@ export const defaultSettings: Settings = {
   viewMode: "dashboard",
   insightsPanelOpen: false,
   pinned: true,
+  minModelTokenSharePct: 0,
   debugLog: { enabled: true },
   notifications: defaultNotificationSettings,
 };
@@ -133,6 +141,13 @@ export async function loadSettings(overrides: Partial<Settings> = {}): Promise<S
 export async function saveSettings(settings: Settings): Promise<void> {
   await ensureConfigDir();
   await fs.writeFile(getSettingsPath(), `${JSON.stringify(normalizeSettings(settings), null, 2)}\n`, "utf8");
+}
+
+/** Begrenzt einen Prozentwert auf 0–100; bei ungültiger Eingabe → Fallback. */
+function clampPct(value: unknown, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(100, Math.max(0, n));
 }
 
 export function normalizeSettings(settings: Settings): Settings {
@@ -175,6 +190,7 @@ export function normalizeSettings(settings: Settings): Settings {
     viewMode,
     insightsPanelOpen: Boolean(settings.insightsPanelOpen),
     pinned: settings.pinned !== false,
+    minModelTokenSharePct: clampPct(settings.minModelTokenSharePct, defaultSettings.minModelTokenSharePct),
     debugLog: { enabled: settings.debugLog?.enabled !== false },
     notifications: normalizeNotificationSettings(settings.notifications),
   };

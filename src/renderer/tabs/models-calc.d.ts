@@ -23,6 +23,7 @@ export interface ModelTableRow extends Day {
   score: number | null;
   scorePerDollar: number | null;
   sharePct: number;
+  tokenSharePct: number;
   cacheHitRate: number | null;
 }
 
@@ -56,13 +57,29 @@ export interface ProviderCostBreakdown {
 
 export function providerCostBreakdown(days: Day[]): ProviderCostBreakdown[];
 
+export type Granularity = 'hourly' | 'daily' | 'weekly' | 'monthly';
+
+export interface RateSeries {
+  buckets: string[];
+  claude: Array<number | null>;
+  codex: Array<number | null>;
+  total: Array<number | null>;
+}
+
 export function isoAddDays(iso: string, delta: number): string;
 export function filterWindow(days: Day[], win: '30d' | '90d' | 'all', today: string): Day[];
 export function previousWindow(days: Day[], win: '30d' | '90d' | 'all', today: string): Day[];
+export function filterRange(days: Day[], from: string, to: string): Day[];
+export function previousRange(days: Day[], from: string, to: string): Day[];
 export function metricOf(d: Day, metric: 'input' | 'output' | 'cacheCreation' | 'cacheRead' | 'total' | 'cost'): number;
 export function isoWeek(iso: string): string;
+export function bucketFnFor(granularity: Granularity): (d: Day) => string;
+export function buildRateSeries(days: Day[], granularity: Granularity): RateSeries;
 export function tableRows(days: Day[], benchmarks: Record<string, number>): ModelTableRow[];
-export function scatterPoints(rows: Array<Pick<ModelTableRow, 'model' | 'provider' | 'effPerMTok' | 'score' | 'sharePct'>>): ScatterPoint[];
+export function scatterPoints(
+  rows: Array<Pick<ModelTableRow, 'model' | 'provider' | 'effPerMTok' | 'score' | 'sharePct' | 'tokenSharePct'>>,
+  minTokenSharePct?: number,
+): ScatterPoint[];
 export function scatterBubbleColors(
   points: Array<Pick<ScatterPoint, 'provider'>>,
   colorForProvider: (provider: string) => string,

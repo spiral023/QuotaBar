@@ -1575,13 +1575,16 @@
     .an-agg-seg { flex: 1; }
     .an-agg-seg .hr-seg-btn { flex: 1; justify-content: center; }
 
-    /* Compact analytics + history: Datumseingaben ausblenden, Select nimmt volle Breite */
+    /* Compact analytics + history + models: Datumseingaben ausblenden, Select nimmt volle Breite */
     .view-compact #analytics-content .hr-date-pair,
-    .view-compact #history-content .hr-date-pair { display: none; }
+    .view-compact #history-content .hr-date-pair,
+    .view-compact #models-content .hr-date-pair { display: none; }
     .view-compact #analytics-content .hr-select-wrap,
-    .view-compact #history-content .hr-select-wrap { flex: 1; }
+    .view-compact #history-content .hr-select-wrap,
+    .view-compact #models-content .hr-select-wrap { flex: 1; }
     .view-compact #analytics-content .hr-preset-select,
-    .view-compact #history-content .hr-preset-select { width: 100%; max-width: 100%; }
+    .view-compact #history-content .hr-preset-select,
+    .view-compact #models-content .hr-preset-select { width: 100%; max-width: 100%; }
     /* Compact history Zeile 2: Lücken als Icon-only, ans rechte Ende schieben */
     .view-compact #history-content .hr-tgl-label { display: none; }
     .view-compact #history-content .hr-tgl { margin-left: auto; padding: 0 6px; }
@@ -2053,6 +2056,7 @@
     }
     .mod-cost-tdot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
     .mod-cost-perm { color: var(--t400); }
+    .mod-cost-share { color: var(--t400); }
     .mod-cost-total td {
       border-top: 1px solid var(--border-mid); padding-top: 6px;
       color: var(--t100); font-weight: 600;
@@ -2832,6 +2836,20 @@
         </div>
       </div>
 
+      <div class="s-section">
+        <div class="s-section-title">Modelle</div>
+        <div class="cost-rows">
+          <div class="cost-row">
+            <span class="cost-label">Mindest-Token-Anteil</span>
+            <div class="cost-wrap">
+              <input type="number" class="cost-field" id="inp-min-share" min="0" max="100" step="1" inputmode="decimal">
+              <span class="cost-sym">%</span>
+            </div>
+          </div>
+        </div>
+        <div class="s-hint">Modelle unter diesem Token-Anteil werden bei „Preis/Leistung" und „Preis vs. Intelligenz" ausgeblendet, damit kaum genutzte Modelle die Wertung nicht verzerren. 0 % = aus.</div>
+      </div>
+
       <button class="save-btn" id="btn-save">Save Settings</button>
       <div class="save-note">Refresh interval changes take effect on restart</div>
     </div>
@@ -3003,6 +3021,7 @@
         const s = await QB.ipc.invoke('settings:get');
         document.getElementById('tog-offline').checked   = !!s.pricingOfflineMode;
         document.getElementById('tog-anonymize').checked = !!s.anonymizeAccounts;
+        document.getElementById('inp-min-share').value   = s.minModelTokenSharePct ?? 0;
         QB.settings = s;
 
         activePillVal = s.pollIntervalSeconds ?? 60;
@@ -3024,10 +3043,12 @@
       btn.disabled = true;
       btn.textContent = 'Saving…';
 
+      const rawShare = Number(document.getElementById('inp-min-share').value);
       const payload = {
         pollIntervalSeconds: activePillVal,
         pricingOfflineMode:  document.getElementById('tog-offline').checked,
         anonymizeAccounts:   document.getElementById('tog-anonymize').checked,
+        minModelTokenSharePct: Number.isFinite(rawShare) ? Math.min(100, Math.max(0, rawShare)) : 0,
       };
 
       try {
@@ -3036,6 +3057,7 @@
         restartRefreshFuse();
         clearDashboardDataCache();
         if (QB.clearAnalyticsCache) QB.clearAnalyticsCache();
+        if (QB.clearModelsCache) QB.clearModelsCache();
         QB.settings = { ...(QB.settings || {}), ...payload };
         if (_lastSnapshots) render(_lastSnapshots);
         btn.textContent = '✓ Saved';

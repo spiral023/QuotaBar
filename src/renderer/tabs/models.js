@@ -13,17 +13,57 @@ window.QB = window.QB || {};
   let _scatterChart = null;
   let _animated = false;
 
-  // UI-State (lokales Recompute, kein IPC bei Wechsel)
-  let _win = '30d';
+  // UI-State. Zeitraum (from/to) + Auflösung steuern den ganzen Tab (wie History).
+  // day/week/month rechnen lokal aus _data.days; nur 'hourly' holt per IPC nach.
+  let _preset = '30d';
+  let _from = null;
+  let _to = null;
+  let _resolution = 'daily';
   let _metric = 'output';
   let _provider = 'all';
   let _sortKey = 'costUSD';
   let _sortDesc = true;
+  // Cache für Stundendaten (reports:get live), Key = `${from}|${to}`.
+  let _hourlyCache = { key: null, cells: null };
 
   const METRIC_LABELS = [
     ['output', 'Out'], ['input', 'In'], ['cacheRead', 'CR'],
-    ['cacheCreation', 'CC'], ['total', '∑'], ['cost', '$'],
+    ['cacheCreation', 'CC'], ['total', '∑'], ['cost', '$'], ['rate', '$/MTok'],
   ];
+
+  const PRESETS = [
+    ['7d', 'Letzte 7 Tage'], ['30d', 'Letzte 30 Tage'], ['week', 'Diese Woche'],
+    ['month', 'Dieser Monat'], ['year', 'Dieses Jahr'], ['all', 'Gesamt'],
+  ];
+
+  const RESOLUTIONS = [
+    ['hourly', 'Std'], ['daily', 'Tag'], ['weekly', 'Wo'], ['monthly', 'Mon'],
+  ];
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
+
+  function minDataDate() {
+    return (_data && _data.days.length > 0) ? _data.days[0].date : null;
+  }
+
+  // Liefert { from, to } für ein Preset (analog History).
+  function presetDates(preset) {
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    switch (preset) {
+      case '7d':  return { from: new Date(now - 6  * 864e5).toISOString().slice(0, 10), to: today };
+      case '30d': return { from: new Date(now - 29 * 864e5).toISOString().slice(0, 10), to: today };
+      case 'week': {
+        const d = new Date(now); const day = d.getDay();
+        d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+        return { from: d.toISOString().slice(0, 10), to: today };
+      }
+      case 'month': return { from: `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`, to: today };
+      case 'year':  return { from: `${now.getFullYear()}-01-01`, to: today };
+      case 'all':
+      default:      return { from: minDataDate() ?? new Date(now - 89 * 864e5).toISOString().slice(0, 10), to: today };
+    }
+  }
 
   const COLUMNS_COMPACT = [
     ['model', 'Modell', 'txt'],
@@ -68,6 +108,7 @@ window.QB = window.QB || {};
     // → beim nächsten Render werden frische Daten geladen.
     _stale = true;
     _dataPromise = null;
+    _hourlyCache = { key: null, cells: null };
   };
 
   function loadData() {
@@ -80,11 +121,24 @@ window.QB = window.QB || {};
     return _dataPromise;
   }
 
-  function today() { return new Date().toISOString().slice(0, 10); }
+  // Stellt sicher, dass _from/_to gesetzt sind (aus aktivem Preset abgeleitet).
+  function ensureRange() {
+    if (!_from || !_to) {
+      const { from, to } = presetDates(_preset || '30d');
+      _from = from; _to = to;
+    }
+  }
 
+  // Alle Tage im Zeitraum, OHNE Provider-Filter (für $/MTok-Linie nötig).
+  function rangeDays() {
+    ensureRange();
+    return calc.filterRange(_data.days, _from, _to);
+  }
+
+  // Zeitraum + Provider-Filter — Basis für KPIs, Scatter, Tabelle, Stapelbalken.
   function visibleDays() {
-    const byWin = calc.filterWindow(_data.days, _win, today());
-    return _provider === 'all' ? byWin : byWin.filter((d) => d.provider === _provider);
+    const inRange = rangeDays();
+    return _provider === 'all' ? inRange : inRange.filter((d) => d.provider === _provider);
   }
 
   let _modelProvider = new Map();
@@ -99,6 +153,7 @@ window.QB = window.QB || {};
 
   function renderUI() {
     const container = document.getElementById('models-content');
+    ensureRange();
     _modelProvider = new Map(_data.days.map((d) => [d.model, d.provider]));
     _colorOrder = calc.modelColorOrder(_data.days);
     const hasBenchmarks = Object.keys(_data.benchmarks).length > 0;
@@ -107,21 +162,36 @@ window.QB = window.QB || {};
       <div class="${_animated ? '' : 'mod-stagger'}" id="mod-root">
         <div class="mod-kpi-grid" id="mod-kpis"></div>
 
-        <div id="mod-cost-section" hidden></div>
-
         <div class="an-section mod-chart-sec">
           <div class="mod-chart-hd">
             <span class="mod-chart-ttl">VERTEILUNG</span>
-            <div class="mod-chart-segs">
-              <div class="mod-seg" id="mod-win-pills">
-                <button data-win="30d">30T</button>
-                <button data-win="90d">90T</button>
-                <button data-win="all">∞</button>
+          </div>
+          <div class="hr-controls mod-chart-controls">
+            <div class="hr-ctrl-row1">
+              <div class="hr-select-wrap">
+                <select class="hr-preset-select" id="mod-preset" aria-label="Zeitraum" title="Zeitraum wählen">
+                  <option value="custom" hidden${_preset ? '' : ' selected'}>Eigene Auswahl</option>
+                  ${PRESETS.map(([id, label]) => `<option value="${id}"${_preset === id ? ' selected' : ''}>${label}</option>`).join('')}
+                </select>
+                <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
+                     stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1.5 3 4 5.5 6.5 3"/>
+                </svg>
               </div>
-              <div class="mod-seg" id="mod-provider-pills">
-                <button data-prov="all">Alle</button>
-                <button data-prov="claude">Claude</button>
-                <button data-prov="codex">Codex</button>
+              <div class="hr-date-pair">
+                <input class="hr-date-input" type="date" id="mod-from" value="${_from}" aria-label="Von" title="Startdatum">
+                <span class="hr-date-sep" aria-hidden="true">–</span>
+                <input class="hr-date-input" type="date" id="mod-to" value="${_to}" aria-label="Bis" title="Enddatum">
+              </div>
+            </div>
+            <div class="hr-ctrl-row2">
+              <div class="hr-seg" id="mod-agg-pills" role="group" aria-label="Auflösung">
+                ${RESOLUTIONS.map(([id, label]) => `<button class="hr-seg-btn${_resolution === id ? ' active' : ''}" data-agg="${id}">${label}</button>`).join('')}
+              </div>
+              <div class="hr-seg" id="mod-prov-pills" role="group" aria-label="Anbieter">
+                <button class="hr-seg-btn${_provider === 'all' ? ' active' : ''}" data-prov="all">Alle</button>
+                <button class="hr-seg-btn hr-seg-claude${_provider === 'claude' ? ' active' : ''}" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
+                <button class="hr-seg-btn hr-seg-codex${_provider === 'codex' ? ' active' : ''}" data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
               </div>
             </div>
           </div>
@@ -132,10 +202,8 @@ window.QB = window.QB || {};
           <div class="mod-ribbon" id="mod-ribbon"></div>
           <div class="mod-legend" id="mod-legend"></div>
           <div class="mod-note" id="mod-stack-note" hidden></div>
-          <div class="mod-note">Ab ${_data.days.length > 0 ? _data.days[0].date : '—'}</div>
+          <div class="mod-note" id="mod-stack-source"></div>
         </div>
-
-        <div id="mod-tt-section" hidden></div>
 
         ${hasBenchmarks ? `
         <div class="an-section">
@@ -144,6 +212,10 @@ window.QB = window.QB || {};
           <div class="mod-note" id="mod-scatter-empty" hidden></div>
           <div class="mod-scatter-note">x = $/MTok effektiv (inkl. Cache) · grün = besser, rot = schlechter · ${_data.benchmarksAsOf ? 'Stand ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
         </div>` : ''}
+
+        <div id="mod-tt-section" hidden></div>
+
+        <div id="mod-cost-section" hidden></div>
 
         <div class="an-section">
           <div class="an-section-head"><span class="an-section-title">MODELLE IM DETAIL</span></div>
@@ -156,44 +228,67 @@ window.QB = window.QB || {};
     syncPills();
     renderKpis();
     renderProviderCosts();
-    renderStack(true);
+    renderStack();
     renderTokenTypes();
     if (hasBenchmarks) renderScatter(true);
     renderTable();
   }
 
   function bindPills() {
-    document.querySelectorAll('#mod-win-pills button').forEach((p) =>
-      p.addEventListener('click', () => { _win = p.dataset.win; refreshLocal(); }));
+    const presetSel = document.getElementById('mod-preset');
+    presetSel?.addEventListener('change', () => {
+      if (presetSel.value === 'custom') return;
+      _preset = presetSel.value;
+      const { from, to } = presetDates(_preset);
+      _from = from; _to = to;
+      const fromEl = document.getElementById('mod-from');
+      const toEl = document.getElementById('mod-to');
+      if (fromEl) fromEl.value = from;
+      if (toEl) toEl.value = to;
+      refreshLocal();
+    });
+    ['mod-from', 'mod-to'].forEach((id) =>
+      document.getElementById(id)?.addEventListener('change', () => {
+        _preset = null;
+        _from = document.getElementById('mod-from')?.value || _from;
+        _to = document.getElementById('mod-to')?.value || _to;
+        if (presetSel) presetSel.value = 'custom';
+        refreshLocal();
+      }));
+    document.querySelectorAll('#mod-agg-pills .hr-seg-btn').forEach((b) =>
+      b.addEventListener('click', () => { if (_resolution === b.dataset.agg) return; _resolution = b.dataset.agg; syncPills(); refreshChart(); }));
     document.querySelectorAll('#mod-metric-pills button').forEach((p) =>
-      p.addEventListener('click', () => { _metric = p.dataset.metric; refreshLocal(); }));
-    document.querySelectorAll('#mod-provider-pills button').forEach((p) =>
-      p.addEventListener('click', () => { _provider = p.dataset.prov; refreshLocal(); }));
+      p.addEventListener('click', () => { _metric = p.dataset.metric; syncPills(); refreshChart(); }));
+    document.querySelectorAll('#mod-prov-pills .hr-seg-btn').forEach((b) =>
+      b.addEventListener('click', () => { _provider = b.dataset.prov; refreshLocal(); }));
   }
 
   function syncPills() {
-    document.querySelectorAll('#mod-win-pills button').forEach((p) => p.classList.toggle('active', p.dataset.win === _win));
     document.querySelectorAll('#mod-metric-pills button').forEach((p) => p.classList.toggle('active', p.dataset.metric === _metric));
-    document.querySelectorAll('#mod-provider-pills button').forEach((p) => p.classList.toggle('active', p.dataset.prov === _provider));
+    document.querySelectorAll('#mod-agg-pills .hr-seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.agg === _resolution));
+    document.querySelectorAll('#mod-prov-pills .hr-seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.prov === _provider));
   }
 
+  // Voller Refresh (Zeitraum-/Provider-Wechsel betreffen den ganzen Tab).
   function refreshLocal() {
     syncPills();
     renderKpis();
     renderProviderCosts();
-    renderStack(false);
+    renderStack();
     renderTokenTypes();
     renderScatter(false);
     renderTable();
   }
 
+  // Nur der Chart (Auflösung/Metrik sind reine Chart-Optionen).
+  function refreshChart() { renderStack(); }
+
   function renderKpis() {
     const el = document.getElementById('mod-kpis');
     const days = visibleDays();
-    const prev = _provider === 'all'
-      ? calc.previousWindow(_data.days, _win, today())
-      : calc.previousWindow(_data.days, _win, today()).filter((d) => d.provider === _provider);
-    const k = calc.computeKpis(days, prev, _data.benchmarks);
+    const prevAll = calc.previousRange(_data.days, _from, _to);
+    const prev = _provider === 'all' ? prevAll : prevAll.filter((d) => d.provider === _provider);
+    const k = calc.computeKpis(days, prev, _data.benchmarks, _data.minModelTokenSharePct || 0);
 
     const trend = (deltaPct, invert) => {
       if (deltaPct == null) return '';
@@ -246,26 +341,95 @@ window.QB = window.QB || {};
     return QB.shortModelName(model);
   }
 
-  function renderStack(initial) {
-    const note = document.getElementById('mod-stack-note');
-    const days = visibleDays();
-    const granularity = _win === 'all' ? 'weekly' : 'daily';
-    const stack = calc.buildStack(days, _metric, granularity, 0.01);
+  // reports:get-Zeilen (Stunde, live) → ModelDay-ähnliche Zellen für die calc-Funktionen.
+  function reportRowsToCells(rows) {
+    const cells = [];
+    for (const r of rows) {
+      for (const m of (r.modelBreakdowns || [])) {
+        cells.push({
+          date: r.bucket, provider: r.provider, model: m.model,
+          inputTokens: m.inputTokens, outputTokens: m.outputTokens,
+          cacheCreationTokens: m.cacheCreationTokens, cacheReadTokens: m.cacheReadTokens,
+          totalTokens: m.totalTokens, costUSD: m.costUSD,
+          inputCostUSD: m.inputCostUSD || 0, outputCostUSD: m.outputCostUSD || 0,
+          cacheCreationCostUSD: m.cacheCreationCostUSD || 0, cacheReadCostUSD: m.cacheReadCostUSD || 0,
+        });
+      }
+    }
+    return cells;
+  }
 
-    const empty = stack.series.length === 0
-      || stack.series.every((s) => s.values.every((v) => v === 0));
+  // Stundenraster gibt es nur über die Live-Quelle (Backfill ist tagesweise).
+  // max. 168 h wie im History-Tab. Cache pro Zeitraum.
+  async function getHourlyCells() {
+    const key = `${_from}|${_to}`;
+    if (_hourlyCache.key === key && _hourlyCache.cells) return _hourlyCache.cells;
+    const report = await QB.ipc.invoke('reports:get', {
+      source: 'live', type: 'hourly',
+      since: _from || undefined, until: _to || undefined,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      order: 'asc', breakdown: true, limit: 168,
+    });
+    const cells = reportRowsToCells(report.rows || []);
+    _hourlyCache = { key, cells };
+    return cells;
+  }
+
+  let _stackSeq = 0;
+
+  async function renderStack() {
+    const seq = ++_stackSeq;
+    const note = document.getElementById('mod-stack-note');
+    const srcNote = document.getElementById('mod-stack-source');
+    const granularity = _resolution;
+
+    let cells;
+    if (_resolution === 'hourly') {
+      try {
+        cells = await getHourlyCells();
+      } catch (e) {
+        console.error('models hourly fetch failed', e);
+        if (seq === _stackSeq && note) { note.hidden = false; note.textContent = 'Stundendaten konnten nicht geladen werden.'; }
+        return;
+      }
+      if (seq !== _stackSeq) return; // durch neuere Auswahl überholt
+      // Stundenmodelle (evtl. nicht normalisiert) für Farbzuordnung ergänzen.
+      for (const c of cells) if (!_modelProvider.has(c.model)) _modelProvider.set(c.model, c.provider);
+    } else {
+      cells = rangeDays();
+    }
+
+    if (srcNote) {
+      srcNote.textContent = _resolution === 'hourly'
+        ? `Stunde · Live-Quelle · max. 168 h · ${_from} – ${_to}`
+        : `${_from} – ${_to}`;
+    }
+
+    if (_metric === 'rate') {
+      renderRateLines(cells, granularity, note);
+    } else {
+      renderStackBars(cells, granularity, note);
+    }
+  }
+
+  function renderStackBars(cellsAll, granularity, note) {
+    const cells = _provider === 'all' ? cellsAll : cellsAll.filter((d) => d.provider === _provider);
+    const order = _resolution === 'hourly' ? calc.modelColorOrder(cells) : _colorOrder;
+    const stack = calc.buildStack(cells, _metric, granularity, 0.01);
+
+    const empty = stack.series.length === 0 || stack.series.every((s) => s.values.every((v) => v === 0));
     note.hidden = !empty;
     if (empty) {
       note.textContent = _metric === 'cacheCreation' && _provider === 'codex'
         ? 'Cache-Creation-Tokens gibt es nur bei Claude.'
-        : 'Keine Daten im gewählten Fenster.';
+        : 'Keine Daten im gewählten Zeitraum.';
     }
 
     const datasets = stack.series.map((s) => ({
       label: s.model,
       data: s.values,
-      backgroundColor: colorFor(s.model, s.provider, _colorOrder),
-      hoverBackgroundColor: colorFor(s.model, s.provider, _colorOrder) + 'E6',
+      backgroundColor: colorFor(s.model, s.provider, order),
+      hoverBackgroundColor: colorFor(s.model, s.provider, order) + 'E6',
     }));
 
     if (_stackChart) { _stackChart.destroy(); _stackChart = null; }
@@ -273,16 +437,53 @@ window.QB = window.QB || {};
     _stackChart = QB.charts.createStackedBar(ctx, stack.buckets, datasets,
       { yFormat: _metric === 'cost' ? 'cost' : 'tokens' });
 
-    renderRibbon(days, granularity);
-    renderLegend(stack.series);
+    renderRibbon(cells, granularity);
+    renderLegend(stack.series, order);
+  }
+
+  // $/MTok-Linie: effektiver Token-Preis je Bucket, getrennt nach Provider + Gesamt.
+  function renderRateLines(cellsAll, granularity, note) {
+    const rate = calc.buildRateSeries(cellsAll, granularity);
+
+    const lineDefs = [];
+    if (_provider === 'all' || _provider === 'claude') lineDefs.push({ label: 'Claude', values: rate.claude, color: QB.providerColor('claude') });
+    if (_provider === 'all' || _provider === 'codex')  lineDefs.push({ label: 'Codex',  values: rate.codex,  color: QB.providerColor('codex') });
+    if (_provider === 'all')                            lineDefs.push({ label: 'Gesamt', values: rate.total,  color: '#8298aa' });
+
+    const empty = lineDefs.every((l) => l.values.every((v) => v == null));
+    note.hidden = !empty;
+    if (empty) note.textContent = 'Keine Daten im gewählten Zeitraum.';
+
+    const datasets = lineDefs.map((l) => ({
+      label: l.label, data: l.values,
+      borderColor: l.color, backgroundColor: l.color,
+      pointRadius: 0, pointHoverRadius: 3, borderWidth: 2, tension: 0.25, spanGaps: false,
+    }));
+
+    if (_stackChart) { _stackChart.destroy(); _stackChart = null; }
+    const ctx = document.getElementById('mod-stack-canvas').getContext('2d');
+    _stackChart = QB.charts.createLine(ctx, rate.buckets, datasets, { yFormat: 'rate' });
+
+    // Ribbon ergibt für die Rate keinen Sinn → leeren; Provider-Legende zeigen.
+    const ribbonEl = document.getElementById('mod-ribbon');
+    if (ribbonEl) ribbonEl.innerHTML = '';
+    renderProviderLegend(lineDefs);
   }
 
   // Legende in Stapel-Reihenfolge; Farben identisch zu den Balkensegmenten.
-  function renderLegend(series) {
+  function renderLegend(series, order) {
     const el = document.getElementById('mod-legend');
     el.innerHTML = series.map((s) => `
       <div class="mod-legend-item" title="${QB.esc(s.model)}">
-        <span class="mod-legend-swatch" style="background:${colorFor(s.model, s.provider, _colorOrder)}"></span>${QB.esc(s.model)}
+        <span class="mod-legend-swatch" style="background:${colorFor(s.model, s.provider, order)}"></span>${QB.esc(s.model)}
+      </div>`).join('');
+  }
+
+  function renderProviderLegend(lineDefs) {
+    const el = document.getElementById('mod-legend');
+    el.innerHTML = lineDefs.map((l) => `
+      <div class="mod-legend-item" title="${QB.esc(l.label)}">
+        <span class="mod-legend-swatch" style="background:${l.color}"></span>${QB.esc(l.label)}
       </div>`).join('');
   }
 
@@ -301,7 +502,7 @@ window.QB = window.QB || {};
     if (!canvas) return; // Benchmark-Sektion nicht gerendert (keine Benchmarks)
 
     const rows = calc.tableRows(visibleDays(), _data.benchmarks);
-    const pts = calc.scatterPoints(rows);
+    const pts = calc.scatterPoints(rows, _data.minModelTokenSharePct || 0);
 
     // Hinweis statt leerem Graph, wenn im gewählten Fenster/Provider-Filter
     // kein Modell mit Benchmark-Score Kosten verursacht hat.
@@ -487,6 +688,7 @@ window.QB = window.QB || {};
       const bodyRows = p.rows.map((r) => `
         <tr>
           <td class="mod-cost-type"><span class="mod-cost-tdot" style="background:${COST_TYPE_COLORS[r.key] || OTHER_COLOR}"></span>${QB.esc(r.label)}</td>
+          <td class="mod-cost-share">${r.tokenPct.toFixed(1)}%</td>
           <td>${QB.fmtTokens(r.tokens)}</td>
           <td>${fmtUSD(r.costUSD)}</td>
           <td class="mod-cost-perm">${fmtRate(r.perMTok)}</td>
@@ -498,11 +700,12 @@ window.QB = window.QB || {};
             <span class="mod-cost-spend">${fmtUSD(p.totalCostUSD)}</span>
           </div>
           <table class="mod-cost-table">
-            <thead><tr><th>Token-Typ</th><th>Menge</th><th>Kosten</th><th class="mod-cost-perm">$/MTok</th></tr></thead>
+            <thead><tr><th>Token-Typ</th><th class="mod-cost-share">Anteil</th><th>Menge</th><th>Kosten</th><th class="mod-cost-perm">$/MTok</th></tr></thead>
             <tbody>
               ${bodyRows}
               <tr class="mod-cost-total">
                 <td>Gesamt</td>
+                <td class="mod-cost-share">100,0%</td>
                 <td>${QB.fmtTokens(p.totalTokens)}</td>
                 <td>${fmtUSD(p.totalCostUSD)}</td>
                 <td class="mod-cost-effcell">${fmtRate(p.effPerMTok)}</td>

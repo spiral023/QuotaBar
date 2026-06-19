@@ -65,3 +65,29 @@ describe("debugLog settings", () => {
     expect(out.debugLog).toEqual({ enabled: false });
   });
 });
+
+describe("normalizeSettings minModelTokenSharePct", () => {
+  it("defaults to 0 (filter disabled)", () => {
+    expect(defaultSettings.minModelTokenSharePct).toBe(0);
+  });
+
+  it("keeps a valid in-range value", () => {
+    const out = normalizeSettings({ ...defaultSettings, minModelTokenSharePct: 10 });
+    expect(out.minModelTokenSharePct).toBe(10);
+  });
+
+  it("clamps values above 100 and below 0", () => {
+    expect(normalizeSettings({ ...defaultSettings, minModelTokenSharePct: 150 }).minModelTokenSharePct).toBe(100);
+    expect(normalizeSettings({ ...defaultSettings, minModelTokenSharePct: -5 }).minModelTokenSharePct).toBe(0);
+  });
+
+  it("falls back to default for non-numeric input", () => {
+    const out = normalizeSettings({ ...defaultSettings, minModelTokenSharePct: "abc" as never });
+    expect(out.minModelTokenSharePct).toBe(0);
+  });
+
+  it("allows an explicit positive threshold", () => {
+    const out = normalizeSettings({ ...defaultSettings, minModelTokenSharePct: 5 });
+    expect(out.minModelTokenSharePct).toBe(5);
+  });
+});
