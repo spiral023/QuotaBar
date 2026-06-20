@@ -154,7 +154,7 @@ function buildEntry(provider: string, p: Period): WindowHistoryEntry {
   let bonus = false;
   let prevValid: WeeklyObservation | null = null;
   for (const o of p.obs) {
-    const cur: WeeklyObservation = { usedPercent: o.weeklyPct, resetsAt: o.weeklyResetsAt, fivePercent: o.fivePct };
+    const cur: WeeklyObservation = { usedPercent: o.weeklyPct, resetsAt: o.weeklyResetsAt, fivePercent: o.fivePct, ts: o.ts };
     if (prevValid) {
       if (isTransientWeeklySpike(prevValid, cur)) continue;
       if (isBonusReset(prevValid, cur)) bonus = true;

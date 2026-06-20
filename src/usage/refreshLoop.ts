@@ -126,6 +126,7 @@ export class RefreshLoop {
                 usedPercent: weekly.usedPercent,
                 resetsAt: weekly.resetsAt ?? null,
                 fivePercent: five.usedPercent,
+                ts: now.toISOString(),
               });
               // Bonus nur anhängen, wenn ein belastbares Budget vorliegt (nicht im Lernmodus).
               if (snapshot.windowBudget && !snapshot.windowBudget.learning) {

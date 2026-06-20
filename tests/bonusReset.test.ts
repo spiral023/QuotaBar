@@ -47,8 +47,24 @@ describe("isBonusReset", () => {
     expect(isBonusReset(prev, next)).toBe(true);
   });
 
-  it("kein Bonus ohne bekannte resetsAt-Werte", () => {
+  it("kein Bonus ohne bekannten prev-resetsAt (fehlender Bezugstermin)", () => {
     expect(isBonusReset({ usedPercent: 50, resetsAt: null }, { usedPercent: 1, resetsAt: null })).toBe(false);
+  });
+
+  it("erkennt einen Bonus, wenn resetsAt bei 0 % weggelassen wird (Drop VOR dem Termin)", () => {
+    // Realfall 2026-06-20: Verbrauch fiel mitten in der Periode auf 0; Claude
+    // lieferte dabei kein resetsAt. Der Drop liegt deutlich VOR dem geplanten
+    // Termin (23.06.) → außerplanmäßiger Reset.
+    const prev = { usedPercent: 61, resetsAt: "2026-06-23T11:00:00Z", ts: "2026-06-19T20:00:00Z" };
+    const next = { usedPercent: 0, resetsAt: null, ts: "2026-06-20T06:51:00Z" };
+    expect(isBonusReset(prev, next)).toBe(true);
+  });
+
+  it("kein Bonus, wenn der Drop AM Termin liegt und resetsAt fehlt (regulärer Reset)", () => {
+    // Regulärer Reset an der Periodengrenze; resetsAt bei 0 % weggelassen.
+    const prev = { usedPercent: 98, resetsAt: "2026-06-16T11:00:00Z", ts: "2026-06-16T10:00:00Z" };
+    const next = { usedPercent: 0, resetsAt: null, ts: "2026-06-16T16:30:00Z" };
+    expect(isBonusReset(prev, next)).toBe(false);
   });
 });
 

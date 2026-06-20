@@ -1,4 +1,4 @@
-import { ratioKey, resetsAtChanged } from "./windowRatio";
+import { ratioKey, resetsAtChanged, RESETS_AT_TOLERANCE_MS } from "./windowRatio";
 
 /**
  * Erkennung außerplanmäßiger ("Bonus-")Resets des Weekly-Fensters.
@@ -42,6 +42,13 @@ export interface WeeklyObservation {
    * ist ein API-Artefakt und kein echter Verbrauch.
    */
   fivePercent?: number | null;
+  /**
+   * Zeitstempel des Snapshots (ISO). Optional, dient als Reset-Anker: Claude
+   * lässt `resetsAt` bei 0 % weg (null) — genau am regulären Reset. Liegt der
+   * Drop am/nach dem zuvor geplanten Reset-Termin (prev.resetsAt), war es ein
+   * regulärer Reset; liegt er davor, ein außerplanmäßiger (Bonus-)Reset.
+   */
+  ts?: string | null;
 }
 
 /**
@@ -70,12 +77,26 @@ export function isBonusReset(prev: WeeklyObservation, next: WeeklyObservation): 
   const drop = prev.usedPercent - next.usedPercent;
   const weeklyDropped = drop >= BONUS_DROP_MIN_PCT && next.usedPercent < BONUS_NEXT_MAX_PCT;
   if (!weeklyDropped) return false;
-  // Kein resetsAt bekannt → nicht entscheidbar, konservativ kein Bonus.
-  if (prev.resetsAt == null || next.resetsAt == null) return false;
-  const advanceMs = new Date(next.resetsAt).getTime() - new Date(prev.resetsAt).getTime();
-  if (!Number.isFinite(advanceMs)) return false;
-  // Regulärer Reset: resetsAt springt ~+7 d nach vorn → kein Bonus.
-  return advanceMs < BONUS_RESET_ADVANCE_MIN_MS;
+  // Ohne prev.resetsAt fehlt der Bezugs-Termin → nicht entscheidbar, kein Bonus.
+  if (prev.resetsAt == null) return false;
+  // Regulärer Reset → kein Bonus.
+  return !isRegularWeeklyReset(prev, next);
+}
+
+/**
+ * Regulärer (geplanter) Weekly-Reset, wenn ENTWEDER der resetsAt um ~eine volle
+ * Periode nach vorn springt ODER der Abfall am/nach dem zuvor geplanten
+ * Reset-Termin (prev.resetsAt) auftritt. Letzteres ist nötig, weil Claude bei
+ * 0 % Verbrauch `resetsAt` weglässt (null) — genau am regulären Reset.
+ */
+function isRegularWeeklyReset(prev: WeeklyObservation, next: WeeklyObservation): boolean {
+  const prevMs = prev.resetsAt != null ? new Date(prev.resetsAt).getTime() : NaN;
+  const nextMs = next.resetsAt != null ? new Date(next.resetsAt).getTime() : NaN;
+  if (Number.isFinite(prevMs) && Number.isFinite(nextMs) && nextMs - prevMs >= BONUS_RESET_ADVANCE_MIN_MS) {
+    return true;
+  }
+  const dropMs = next.ts != null ? new Date(next.ts).getTime() : NaN;
+  return Number.isFinite(prevMs) && Number.isFinite(dropMs) && dropMs >= prevMs - RESETS_AT_TOLERANCE_MS;
 }
 
 /**
@@ -145,8 +166,10 @@ export class BonusResetTracker {
       // anschließende Abfall 100 → 2 wie ein außerplanmäßiger Reset aus.
       if (isTransientWeeklySpike(prev, obs)) return;
       if (isBonusReset(prev, obs)) {
-        // Bonus gilt für die nun laufende Periode (deren resetsAt).
-        s.bonusForResetsAt = obs.resetsAt;
+        // Bonus gilt für die laufende Periode. Claude lässt resetsAt bei 0 %
+        // weg (null) — dann den Periodentermin von prev übernehmen, sonst ginge
+        // der gerade erkannte Bonus-Marker (null = kein Bonus) sofort verloren.
+        s.bonusForResetsAt = obs.resetsAt ?? prev.resetsAt;
       } else if (s.bonusForResetsAt && resetsAtChanged(s.bonusForResetsAt, obs.resetsAt)) {
         // Periode regulär weitergesprungen → Bonus-Marker verfällt.
         s.bonusForResetsAt = null;

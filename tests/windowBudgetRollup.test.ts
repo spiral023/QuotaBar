@@ -14,6 +14,7 @@ function obs(
 describe("buildCurrentWindowUsage", () => {
   const windowsPerWeek = 8.338;
   const weeklyReset = "2026-06-16T11:00:00Z";
+  const weeklyReset_0623 = "2026-06-23T11:00:00Z";
 
   it("uses the current weekly percentage when no bonus reset happened", () => {
     const usage = buildCurrentWindowUsage([
@@ -73,5 +74,54 @@ describe("buildCurrentWindowUsage", () => {
     expect(usage.bonusResetCount).toBe(0);
     expect(usage.preResetWeeklyPercent).toBe(0);
     expect(usage.resetAdjustedWeeklyPercent).toBe(2);
+  });
+
+  // Claude lässt resetsAt bei 0 % weg (null). Ein regulärer Reset darf trotzdem
+  // nicht als Bonus zählen, wenn der Drop AM/NACH dem geplanten Reset-Termin liegt.
+  it("treats a regular reset as regular even when resetsAt is omitted at 0%", () => {
+    const prevReset = "2026-06-16T11:00:00Z";
+    const nextReset = "2026-06-23T11:00:00Z";
+    const usage = buildCurrentWindowUsage([
+      obs("2026-06-16T10:00:00Z", 90, "2026-06-16T11:00:00Z", 98, prevReset),
+      // Regulärer Reset an der Periodengrenze; resetsAt fehlt (null) bei 0 %.
+      obs("2026-06-16T16:30:00Z", 0, null, 0, null),
+      obs("2026-06-16T17:00:00Z", 20, "2026-06-16T21:00:00Z", 2, nextReset),
+      obs("2026-06-18T10:00:00Z", 80, "2026-06-18T14:00:00Z", 40, nextReset),
+    ], windowsPerWeek, 40);
+
+    expect(usage.bonusResetCount).toBe(0);
+    expect(usage.preResetWeeklyPercent).toBe(0);
+    expect(usage.resetAdjustedWeeklyPercent).toBe(40);
+  });
+
+  // Echter Kulanz-Reset MITTEN in der Periode: resetsAt bleibt (oder fehlt bei 0 %),
+  // der Drop liegt aber deutlich VOR dem geplanten Termin → Bonus.
+  it("detects a mid-period bonus reset even when resetsAt is omitted at 0%", () => {
+    const usage = buildCurrentWindowUsage([
+      obs("2026-06-19T20:00:00Z", 97, "2026-06-20T01:00:00Z", 61, weeklyReset_0623),
+      obs("2026-06-20T06:51:00Z", 0, null, 0, null),
+      obs("2026-06-20T09:12:00Z", 6, "2026-06-20T14:00:00Z", 1, weeklyReset_0623),
+    ], windowsPerWeek, 1);
+
+    expect(usage.bonusResetCount).toBe(1);
+    expect(usage.preResetWeeklyPercent).toBe(61);
+  });
+
+  // Screenshot-1-Szenario: Beobachtungen spannen die VORIGE Periode (regulärer
+  // Reset) UND den aktuellen Bonus. Nur der aktuelle Bonus (61) darf zählen –
+  // nicht 50 + 61. Der reguläre Reset setzt die Akkumulation zurück.
+  it("does not carry pre-reset usage across a regular period boundary", () => {
+    const prevReset = "2026-06-16T11:00:00Z";
+    const usage = buildCurrentWindowUsage([
+      obs("2026-06-13T10:00:00Z", 70, "2026-06-13T13:00:00Z", 50, prevReset),
+      obs("2026-06-16T16:30:00Z", 0, null, 0, null),               // regulärer Reset
+      obs("2026-06-18T10:00:00Z", 80, "2026-06-18T14:00:00Z", 40, weeklyReset_0623),
+      obs("2026-06-19T20:00:00Z", 97, "2026-06-20T01:00:00Z", 61, weeklyReset_0623),
+      obs("2026-06-20T06:51:00Z", 0, null, 0, null),               // Bonus-Reset
+      obs("2026-06-20T09:12:00Z", 6, "2026-06-20T14:00:00Z", 1, weeklyReset_0623),
+    ], windowsPerWeek, 1);
+
+    expect(usage.bonusResetCount).toBe(1);
+    expect(usage.preResetWeeklyPercent).toBe(61);
   });
 });
