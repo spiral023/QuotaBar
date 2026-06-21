@@ -305,6 +305,26 @@ renderer/tabs/
 | Disk access | QuotaBar does not scan the disk for auth files |
 | Provider isolation | Unofficial endpoints are kept inside provider/auth modules and handled defensively |
 
+## Release & Auto-Update
+
+QuotaBar aktualisiert sich im installierten Build automatisch über GitHub Releases.
+
+**Neuen Release veröffentlichen:**
+
+```bash
+npm version patch        # bumpt package.json + erstellt Tag vX.Y.Z
+git push --follow-tags   # löst den Release-Workflow aus
+```
+
+Die GitHub Action baut den NSIS-Installer und veröffentlicht ihn samt
+`latest.yml`. Installierte Clients prüfen beim Start und alle 6 Stunden, laden
+ein Update still herunter und installieren es beim nächsten Beenden (oder sofort
+über den Tray-Eintrag „Update bereit – jetzt neu starten").
+
+**SmartScreen:** Die Builds sind nicht signiert. Beim ersten Start zeigt Windows
+ggf. „Der Computer wurde durch Windows geschützt" → „Weitere Informationen" →
+„Trotzdem ausführen".
+
 ## License
 
 MIT
