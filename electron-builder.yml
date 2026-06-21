@@ -1,6 +1,9 @@
 appId: com.quotabar.windows
 productName: QuotaBar for Windows
-publish: null
+publish:
+  provider: github
+  owner: spiral023
+  repo: QuotaBar
 protocols:
   - name: QuotaBar Protocol
     schemes:
@@ -17,7 +20,6 @@ files:
 win:
   target:
     - nsis
-    - portable
   icon: assets/icon.ico
 nsis:
   oneClick: false
