@@ -328,10 +328,18 @@ window.QB = window.QB || {};
       showConfirmStep();
     });
 
-    wrap.querySelector('#sys-update-check')?.addEventListener('click', async (event) => {
-      const btn = event.currentTarget;
-      btn.disabled = true;
-      await loadUpdateState(true);
+    wrap.querySelector('#sys-update-check')?.addEventListener('click', async () => {
+      // Sofort optimistisch "Suche…" anzeigen
+      _update = { ...(_update || {}), status: 'checking', error: null };
+      if (_data) renderUI(wrap, _data);
+      // Check anstoßen (feuert asynchron im Main-Prozess)
+      try { await QB.ipc.invoke('update:check'); } catch (e) { console.error('update:check failed', e); }
+      // Ergebnis trifft asynchron ein → kurz nachpollen, bis sich der Status ändert
+      for (let i = 0; i < 6; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        await loadUpdateState(false);
+        if (!_update || _update.status !== 'checking') break;
+      }
       if (!_data) return;
       renderUI(wrap, _data);
     });
