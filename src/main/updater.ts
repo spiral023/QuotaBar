@@ -6,7 +6,7 @@ import { initialUpdateState, reduceUpdateState, UpdateUiState } from "./updateSt
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const START_DELAY_MS = 20_000; // App-Init nicht blockieren
 
-let state: UpdateUiState = initialUpdateState("0.0.0", false);
+let state: UpdateUiState = initialUpdateState(app.getVersion(), false);
 let notifyStateChange: ((state: UpdateUiState) => void) | null = null;
 
 function apply(event: Parameters<typeof reduceUpdateState>[1]): void {
