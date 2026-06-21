@@ -332,6 +332,7 @@ window.QB = window.QB || {};
       const btn = event.currentTarget;
       btn.disabled = true;
       await loadUpdateState(true);
+      if (!_data) return;
       renderUI(wrap, _data);
     });
 
