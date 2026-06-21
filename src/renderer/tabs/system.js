@@ -8,6 +8,53 @@ window.QB = window.QB || {};
   let _loading = null;
   let _animated = false;
 
+  let _update = null;
+
+  async function loadUpdateState(force) {
+    try {
+      _update = await QB.ipc.invoke(force ? 'update:check' : 'update:get-state');
+    } catch (e) {
+      console.error('update:get-state failed', e);
+      _update = null;
+    }
+    return _update;
+  }
+
+  function updatePanelHtml(u) {
+    if (!u) return '';
+    const map = {
+      disabled: ['Entwicklungs-Build', 'Auto-Updates sind nur im installierten Build aktiv.'],
+      idle: ['Aktuell', 'Du verwendest die neueste Version.'],
+      checking: ['Suche nach Updates…', ''],
+      available: [`Update ${u.newVersion || ''} gefunden`, 'Wird im Hintergrund geladen…'],
+      downloading: [`Lädt ${u.newVersion || ''}…`, `${u.downloadPercent}%`],
+      ready: [`Update ${u.newVersion || ''} bereit`, 'Wird beim Beenden installiert.'],
+      error: ['Update-Fehler', u.error || ''],
+    };
+    const [title, sub] = map[u.status] || ['—', ''];
+    const canCheck = u.status !== 'disabled' && u.status !== 'checking' && u.status !== 'downloading';
+    const canInstall = u.status === 'ready';
+    return `
+      <div class="sys-panel">
+        <div class="sys-section-head">
+          <span class="sys-section-title">Version & Updates</span>
+          <span class="sys-section-count">v${u.currentVersion}</span>
+        </div>
+        <div class="sys-update-row" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0">
+          <div>
+            <div class="sys-update-title" style="font-weight:600">${title}</div>
+            <div class="sys-update-sub" style="opacity:.7;font-size:11px">${sub}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="sys-action secondary" id="sys-update-check" ${canCheck ? '' : 'disabled'}
+              style="min-height:28px;padding:0 10px;font-size:9.5px">Auf Updates prüfen</button>
+            ${canInstall ? `<button class="sys-action" id="sys-update-install"
+              style="min-height:28px;padding:0 10px;font-size:9.5px">Jetzt neu starten</button>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }
+
   const DELETE_GROUPS = [
     {
       id: 'cache', label: 'Cache', note: 'Usage-Snapshots, FX-Kurse',
@@ -42,7 +89,8 @@ window.QB = window.QB || {};
     if (_data) { renderUI(wrap, _data); return; }
     wrap.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
     try {
-      _data = await loadData();
+      const [report] = await Promise.all([loadData(), loadUpdateState(false)]);
+      _data = report;
       renderUI(wrap, _data);
     } catch (e) {
       console.error('system:get failed', e);
@@ -70,6 +118,7 @@ window.QB = window.QB || {};
 
     wrap.innerHTML = `
       <div class="${_animated ? '' : 'sys-stagger'}">
+        ${updatePanelHtml(_update)}
         <div class="sys-toolbar">
           <div class="sys-toolbar-main">
             <div class="sys-title">Lokale Agent- und App-Daten</div>
@@ -277,6 +326,17 @@ window.QB = window.QB || {};
     });
     wrap.querySelector('#sys-delete-confirm')?.addEventListener('click', () => {
       showConfirmStep();
+    });
+
+    wrap.querySelector('#sys-update-check')?.addEventListener('click', async (event) => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      await loadUpdateState(true);
+      renderUI(wrap, _data);
+    });
+
+    wrap.querySelector('#sys-update-install')?.addEventListener('click', () => {
+      void QB.ipc.invoke('update:quit-and-install');
     });
   }
 
