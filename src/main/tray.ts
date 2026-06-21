@@ -5,6 +5,8 @@ import { UsageProvider, UsageSnapshot } from "../providers/types";
 import { RefreshLoop } from "../usage/refreshLoop";
 import { buildContextMenu } from "./menu";
 import type { DetailsWindowController } from "./detailsWindow";
+import { quitAndInstall } from "./updater";
+import type { UpdateUiState } from "./updateState";
 
 const STALE_RESUME_THRESHOLD_S = 300; // 5 Minuten Sleep → Stale-Indikator
 
@@ -13,6 +15,7 @@ export class TrayController {
   private snapshots: UsageSnapshot[] = [];
   private detailsWindow: DetailsWindowController | null = null;
   private isStaleAfterResume = false;
+  private updateState: UpdateUiState | null = null;
 
   constructor(
     private readonly providers: UsageProvider[],
@@ -44,6 +47,11 @@ export class TrayController {
     this.detailsWindow = dw;
   }
 
+  setUpdateState(state: UpdateUiState): void {
+    this.updateState = state;
+    void this.rebuildMenu();
+  }
+
   /** Zeigt "Aktualisiere…" im Tooltip nach einem langen Sleep. Wird beim nächsten Refresh automatisch gelöscht. */
   notifyStaleAfterResume(sleepSeconds: number): void {
     if (sleepSeconds >= STALE_RESUME_THRESHOLD_S) {
@@ -73,6 +81,9 @@ export class TrayController {
         );
       },
       regenerateBackfill: this.onRegenerateBackfill,
+      updateReady: this.updateState?.status === "ready",
+      updateVersion: this.updateState?.newVersion ?? null,
+      installUpdate: () => quitAndInstall(),
     }));
   }
 

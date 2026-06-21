@@ -232,7 +232,9 @@ if (!app.requestSingleInstanceLock()) {
           app.quit();
         });
       });
-      await initializeUpdater();
+      await initializeUpdater({
+        onStateChange: (updateState) => tray.setUpdateState(updateState),
+      });
       log.info(`QuotaBar started; poll interval ${settings.pollIntervalSeconds}s; noWindow=${cli.noWindow}`);
     })
     .catch((error: unknown) => {
