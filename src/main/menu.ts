@@ -11,6 +11,9 @@ export interface MenuActions {
   rebuildMenu(): void;
   openDashboard(): void;
   regenerateBackfill(): Promise<void>;
+  updateReady: boolean;
+  updateVersion: string | null;
+  installUpdate(): void;
 }
 
 export async function buildContextMenu(
@@ -53,6 +56,21 @@ export async function buildContextMenu(
     { label: "Open Log", click: () => void shell.openPath(getLogPath()) },
     { label: "Regenerate Debug Backfill", click: () => void actions.regenerateBackfill() },
     { label: "Open Config Folder", click: () => void shell.openPath(getAppConfigDir()) },
+  );
+
+  if (actions.updateReady) {
+    items.push(
+      { type: "separator" },
+      {
+        label: actions.updateVersion
+          ? `Update ${actions.updateVersion} bereit – jetzt neu starten`
+          : "Update bereit – jetzt neu starten",
+        click: () => actions.installUpdate(),
+      },
+    );
+  }
+
+  items.push(
     { type: "separator" },
     { label: "Exit", click: () => app.quit() }
   );
