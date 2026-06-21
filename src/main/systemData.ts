@@ -215,12 +215,16 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
 function buildAppSpecs(context: SystemDataContext): PathSpec[] {
   const appDir = context.appConfigDir ?? path.join(context.homeDir ?? getHomeDir(), ".quotabar-win");
   return [
-    { id: "app-settings", label: "Settings", category: "config", kind: "file", path: path.join(appDir, "settings.json") },
-    { id: "app-log", label: "App Log", category: "logs", kind: "file", path: path.join(appDir, "quotabar.log") },
-    { id: "app-notification-log", label: "Notification Log", category: "logs", kind: "file", path: path.join(appDir, "notifications.log") },
-    { id: "app-cache", label: "Usage Cache", category: "cache", kind: "file", path: path.join(appDir, "cache", "usage-snapshots.json") },
-    { id: "app-notification-state", label: "Notification State", category: "cache", kind: "file", path: path.join(appDir, "notification-state.json") },
-    { id: "app-debug", label: "Debug Logs", category: "logs", kind: "folder", path: path.join(appDir, "debug") },
+    { id: "app-settings",          label: "Settings",          category: "config", kind: "file",   path: path.join(appDir, "settings.json") },
+    { id: "app-log",               label: "App Log",           category: "logs",   kind: "file",   path: path.join(appDir, "quotabar.log") },
+    { id: "app-notification-log",  label: "Notification Log",  category: "logs",   kind: "file",   path: path.join(appDir, "notifications.log") },
+    { id: "app-cache",             label: "Usage Cache",       category: "cache",  kind: "file",   path: path.join(appDir, "cache", "usage-snapshots.json") },
+    { id: "app-fx-cache",          label: "FX Cache",          category: "cache",  kind: "file",   path: path.join(appDir, "cache", "fx-rates.json") },
+    { id: "app-window-history",    label: "Window History",    category: "cache",  kind: "file",   path: path.join(appDir, "window-history.json") },
+    { id: "app-window-ratio",      label: "Window Ratio",      category: "cache",  kind: "file",   path: path.join(appDir, "window-ratio.json") },
+    { id: "app-bonus-state",       label: "Bonus State",       category: "cache",  kind: "file",   path: path.join(appDir, "bonus-state.json") },
+    { id: "app-notification-state",label: "Notification State",category: "cache",  kind: "file",   path: path.join(appDir, "notification-state.json") },
+    { id: "app-debug",             label: "Debug Logs",        category: "logs",   kind: "folder", path: path.join(appDir, "debug") },
   ];
 }
 

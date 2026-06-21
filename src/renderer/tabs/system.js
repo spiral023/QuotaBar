@@ -8,6 +8,34 @@ window.QB = window.QB || {};
   let _loading = null;
   let _animated = false;
 
+  const DELETE_GROUPS = [
+    {
+      id: 'cache', label: 'Cache', note: 'Usage-Snapshots, FX-Kurse',
+      pathIds: ['app-cache', 'app-fx-cache'],
+      consequence: 'Wird beim nächsten App-Start aus den JSONL-Logs neu berechnet.',
+    },
+    {
+      id: 'logs', label: 'Logs', note: 'App-Log, Notification-Log',
+      pathIds: ['app-log', 'app-notification-log'],
+      consequence: 'Log-Einträge werden dauerhaft entfernt. Die App läuft weiter.',
+    },
+    {
+      id: 'state', label: 'Status-Daten', note: 'Window, Bonus, Notifications',
+      pathIds: ['app-window-history', 'app-window-ratio', 'app-bonus-state', 'app-notification-state'],
+      consequence: 'Window-Tracking und Bonus-Erkennung starten nach Neustart zurück.',
+    },
+    {
+      id: 'debug', label: 'Debug-Logs', note: 'Backfill-Daten, Manifeste',
+      pathIds: ['app-debug'],
+      consequence: 'Backfill wird beim nächsten Start vollständig neu aufgebaut.',
+    },
+  ];
+
+  function groupSizeBytes(pathIds, appPaths) {
+    const ids = new Set(pathIds);
+    return appPaths.filter((p) => ids.has(p.id) && p.exists).reduce((sum, p) => sum + p.totalBytes, 0);
+  }
+
   QB.renderSystem = async function renderSystem() {
     const wrap = document.getElementById('system-content');
     if (!wrap) return;
@@ -96,12 +124,33 @@ window.QB = window.QB || {};
             <div class="sys-panel">
               <div class="sys-section-head">
                 <span class="sys-section-title">QuotaBar</span>
-                <span class="sys-section-count">${fmtBytes(report.app.totals.totalBytes)}</span>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span class="sys-section-count">${fmtBytes(report.app.totals.totalBytes)}</span>
+                  <button class="sys-action secondary" id="sys-delete-toggle"
+                    style="min-height:26px;padding:0 8px;font-size:9.5px;gap:5px"
+                    title="QuotaBar-Daten löschen">
+                    ${trashIcon()} Löschen
+                  </button>
+                </div>
               </div>
               <div class="sys-path-list">
                 ${report.app.paths.map((item) => pathRow(item, 'QuotaBar')).join('')}
               </div>
               <div class="sys-note">Explorer öffnet nur Ordner aus dieser Liste. Nicht vorhandene Pfade bleiben gesperrt.</div>
+              <div class="sys-delete-panel" id="sys-delete-panel">
+                <div id="sys-del-step-select">
+                  <div class="sys-delete-title">Daten auswählen</div>
+                  ${DELETE_GROUPS.map((g) => deleteGroupRow(g, report.app.paths)).join('')}
+                  <div class="sys-del-footer">
+                    <div class="sys-del-result" id="sys-del-result"></div>
+                    <button class="sys-action secondary" id="sys-delete-cancel"
+                      style="min-height:28px;padding:0 10px;font-size:9.5px">Abbrechen</button>
+                    <button class="sys-action danger" id="sys-delete-confirm" disabled
+                      style="min-height:28px;padding:0 10px;font-size:9.5px">Jetzt löschen</button>
+                  </div>
+                </div>
+                <div id="sys-del-step-confirm" style="display:none"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -137,6 +186,127 @@ window.QB = window.QB || {};
         if (target) void openPath(target);
       });
     });
+
+    // Delete panel
+    const deletePanel = wrap.querySelector('#sys-delete-panel');
+    const stepSelect = wrap.querySelector('#sys-del-step-select');
+    const stepConfirm = wrap.querySelector('#sys-del-step-confirm');
+
+    function showSelectStep() {
+      stepSelect.style.display = '';
+      stepConfirm.style.display = 'none';
+    }
+
+    function showConfirmStep() {
+      const selected = [...wrap.querySelectorAll('.sys-delete-row.selected')];
+      const groups = selected.map((row) => DELETE_GROUPS.find((g) => g.id === row.dataset.deleteGroup)).filter(Boolean);
+      const totalBytes = groups.reduce((sum, g) => sum + groupSizeBytes(g.pathIds, _data?.app?.paths ?? []), 0);
+
+      const rows = groups.map((g) => {
+        const size = groupSizeBytes(g.pathIds, _data?.app?.paths ?? []);
+        return `<div class="sys-del-con-row">
+          <div class="sys-del-con-name">${QB.esc(g.label)}${size > 0 ? `<span class="sys-del-con-size">${fmtBytes(size)}</span>` : ''}</div>
+          <div class="sys-del-con-text">${QB.esc(g.consequence)}</div>
+        </div>`;
+      }).join('');
+
+      stepConfirm.innerHTML = `
+        <div class="sys-del-warn">
+          ${warnIcon()} Diese Aktion kann nicht rückgängig gemacht werden.
+        </div>
+        ${rows}
+        <div class="sys-del-footer" style="margin-top:8px">
+          <div class="sys-del-result" id="sys-del-result2"></div>
+          <button class="sys-action secondary" id="sys-del-back"
+            style="min-height:28px;padding:0 10px;font-size:9.5px">Zurück</button>
+          <button class="sys-action danger" id="sys-del-execute"
+            style="min-height:28px;padding:0 10px;font-size:9.5px">
+            Wirklich löschen · ${fmtBytes(totalBytes)}
+          </button>
+        </div>`;
+
+      stepSelect.style.display = 'none';
+      stepConfirm.style.display = '';
+
+      wrap.querySelector('#sys-del-back')?.addEventListener('click', showSelectStep);
+      wrap.querySelector('#sys-del-execute')?.addEventListener('click', async (event) => {
+        const btn = event.currentTarget;
+        btn.disabled = true;
+        wrap.querySelector('#sys-del-back').disabled = true;
+        const resultEl = wrap.querySelector('#sys-del-result2');
+        const groupIds = groups.map((g) => g.id);
+        try {
+          const result = await QB.ipc.invoke('system:delete-app-data', groupIds);
+          if (result?.ok) {
+            if (resultEl) resultEl.textContent = `${result.deleted.length} Datei(en) gelöscht`;
+            _data = null;
+            setTimeout(async () => {
+              try {
+                const report = await loadData(true);
+                renderUI(wrap, report);
+              } catch (e) { console.error('system refresh after delete failed', e); }
+            }, 1200);
+          } else {
+            if (resultEl) { resultEl.textContent = 'Fehler beim Löschen'; resultEl.classList.add('error'); }
+            btn.disabled = false;
+            wrap.querySelector('#sys-del-back').disabled = false;
+          }
+        } catch (e) {
+          console.error('system:delete-app-data failed', e);
+          if (resultEl) { resultEl.textContent = 'Fehler beim Löschen'; resultEl.classList.add('error'); }
+          btn.disabled = false;
+          wrap.querySelector('#sys-del-back').disabled = false;
+        }
+      });
+    }
+
+    wrap.querySelector('#sys-delete-toggle')?.addEventListener('click', () => {
+      const wasOpen = deletePanel.classList.contains('open');
+      deletePanel.classList.toggle('open');
+      if (!wasOpen) showSelectStep();
+    });
+    wrap.querySelector('#sys-delete-cancel')?.addEventListener('click', () => {
+      deletePanel.classList.remove('open');
+      showSelectStep();
+    });
+    wrap.querySelectorAll('.sys-delete-row').forEach((row) => {
+      row.addEventListener('click', () => {
+        row.classList.toggle('selected');
+        updateDeleteConfirmBtn(wrap);
+      });
+    });
+    wrap.querySelector('#sys-delete-confirm')?.addEventListener('click', () => {
+      showConfirmStep();
+    });
+  }
+
+  function updateDeleteConfirmBtn(wrap) {
+    const selected = [...wrap.querySelectorAll('.sys-delete-row.selected')];
+    const btn = wrap.querySelector('#sys-delete-confirm');
+    if (!btn) return;
+    const totalBytes = selected.reduce((sum, row) => {
+      const group = DELETE_GROUPS.find((g) => g.id === row.dataset.deleteGroup);
+      return group ? sum + groupSizeBytes(group.pathIds, _data?.app?.paths ?? []) : sum;
+    }, 0);
+    btn.disabled = selected.length === 0;
+    btn.textContent = selected.length === 0 ? 'Jetzt löschen' : `Jetzt löschen · ${fmtBytes(totalBytes)}`;
+  }
+
+  function deleteGroupRow(group, appPaths) {
+    const size = groupSizeBytes(group.pathIds, appPaths);
+    return `<div class="sys-delete-row" data-delete-group="${QB.esc(group.id)}">
+      <div class="sys-del-check-box">
+        <svg class="sys-del-check-mark" width="10" height="10" viewBox="0 0 10 10" fill="none"
+          stroke="var(--green)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 5l2.5 2.5L8 3"/>
+        </svg>
+      </div>
+      <div class="sys-del-info">
+        <div class="sys-del-label">${QB.esc(group.label)}</div>
+        <div class="sys-del-note">${QB.esc(group.note)}</div>
+      </div>
+      <div class="sys-del-size">${size > 0 ? fmtBytes(size) : '—'}</div>
+    </div>`;
   }
 
   async function openPath(target) {
@@ -270,6 +440,21 @@ window.QB = window.QB || {};
       <path d="M11 2.2 13 4l-2 1.8"/>
       <path d="M12.5 7a5.5 5.5 0 0 1-9.9 3.3"/>
       <path d="M3 11.8 1 10l2-1.8"/>
+    </svg>`;
+  }
+
+  function warnIcon() {
+    return `<svg width="13" height="13" viewBox="0 0 14 14" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M7 1.5L12.5 11H1.5L7 1.5Z"/>
+      <path d="M7 5.5v2.5M7 9.5v.5"/>
+    </svg>`;
+  }
+
+  function trashIcon() {
+    return `<svg width="12" height="12" viewBox="0 0 14 14" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M2 4h10M5 4V2.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V4M12 4l-.8 7.5a1 1 0 0 1-1 .9H3.8a1 1 0 0 1-1-.9L2 4"/>
     </svg>`;
   }
 })();

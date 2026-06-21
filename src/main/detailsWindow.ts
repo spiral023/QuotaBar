@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "path";
 import { Worker } from "node:worker_threads";
 import { BrowserWindow, ipcMain, screen, Tray, clipboard, shell } from "electron";
@@ -6,7 +7,11 @@ import { loadSettings, saveSettings, normalizeNotificationSettings } from "../co
 import { log } from "./logging";
 import { generateUsageReport } from "../reports/reportService";
 import type { ReportRequest } from "../reports/types";
-import { getClaudeProjectsDirs, getCodexSessionsDirs, getDebugLogDir, getWindowHistoryPath } from "../config/paths";
+import {
+  getClaudeProjectsDirs, getCodexSessionsDirs, getDebugLogDir, getWindowHistoryPath,
+  getAppConfigDir, getLogPath, getNotificationLogPath, getUsageSnapshotCachePath,
+  getFxCachePath, getWindowRatioPath, getBonusStatePath, getNotificationStatePath,
+} from "../config/paths";
 import { loadWindowHistoryFile, saveWindowHistoryFile, mergeWindowHistory } from "../usage/windowHistoryStore";
 import type { CostWindow, ViewMode } from "../config/settings";
 import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
@@ -395,6 +400,52 @@ export class DetailsWindowController {
       if (!openPath) return { ok: false, error: "path_not_allowed" };
       const error = await shell.openPath(openPath);
       return error ? { ok: false, error } : { ok: true };
+    });
+
+    ipcMain.handle("system:delete-app-data", async (_, groups: unknown) => {
+      if (!Array.isArray(groups)) return { ok: false, error: "invalid_groups" };
+      const allowed = new Set(["cache", "logs", "state", "debug"]);
+      const validGroups = groups.filter((g): g is string => typeof g === "string" && allowed.has(g));
+      if (validGroups.length === 0) return { ok: true, deleted: [], errors: [] };
+
+      const appDir = getAppConfigDir();
+      const targets: Array<{ path: string; recursive: boolean }> = [];
+      for (const group of validGroups) {
+        switch (group) {
+          case "cache":
+            targets.push({ path: getUsageSnapshotCachePath(), recursive: false });
+            targets.push({ path: getFxCachePath(), recursive: false });
+            break;
+          case "logs":
+            targets.push({ path: getLogPath(), recursive: false });
+            targets.push({ path: getNotificationLogPath(), recursive: false });
+            break;
+          case "state":
+            targets.push({ path: getWindowHistoryPath(), recursive: false });
+            targets.push({ path: getWindowRatioPath(), recursive: false });
+            targets.push({ path: getBonusStatePath(), recursive: false });
+            targets.push({ path: getNotificationStatePath(), recursive: false });
+            break;
+          case "debug":
+            targets.push({ path: path.join(appDir, "debug"), recursive: true });
+            break;
+        }
+      }
+
+      const deleted: string[] = [];
+      const errors: string[] = [];
+      for (const target of targets) {
+        try {
+          await fs.rm(target.path, { recursive: target.recursive, force: true });
+          deleted.push(target.path);
+          log.info(`system:delete-app-data removed ${target.path}`);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          errors.push(msg);
+          log.warn(`system:delete-app-data failed for ${target.path}: ${msg}`);
+        }
+      }
+      return { ok: errors.length === 0, deleted, errors };
     });
 
     ipcMain.handle("window:set-view", async (_, mode: string) => {

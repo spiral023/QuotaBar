@@ -2252,6 +2252,75 @@
       line-height: 1.45; text-wrap: pretty;
     }
 
+    .sys-delete-panel {
+      display: none; margin-top: 8px; padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .sys-delete-panel.open { display: block; }
+    .sys-delete-title {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--t400); margin-bottom: 5px;
+    }
+    .sys-delete-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 7px; border-radius: var(--r-inner);
+      background: var(--bg-surface); border: 1px solid var(--border);
+      margin-bottom: 3px; cursor: pointer;
+      transition-property: background, border-color; transition-duration: 100ms;
+    }
+    .sys-delete-row:hover { background: var(--bg-card-hover); border-color: rgba(255,255,255,0.1); }
+    .sys-delete-row.selected { border-color: rgba(82,208,23,0.25); background: rgba(82,208,23,0.05); }
+    .sys-del-check-box {
+      width: 14px; height: 14px; flex-shrink: 0;
+      border: 1.5px solid var(--border-mid); border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg-input);
+    }
+    .sys-delete-row.selected .sys-del-check-box { background: rgba(82,208,23,0.12); border-color: var(--green); }
+    .sys-del-check-mark { display: none; }
+    .sys-delete-row.selected .sys-del-check-mark { display: block; }
+    .sys-del-info { flex: 1; min-width: 0; }
+    .sys-del-label { font-size: 10.5px; font-weight: 600; color: var(--t200); }
+    .sys-del-note { font-size: 8.5px; color: var(--t400); margin-top: 1px; }
+    .sys-del-size {
+      font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+      font-variant-numeric: tabular-nums; color: var(--t400); white-space: nowrap;
+    }
+    .sys-del-footer {
+      display: flex; align-items: center; justify-content: flex-end;
+      gap: 5px; margin-top: 7px;
+    }
+    .sys-del-result { flex: 1; font-size: 10px; color: var(--green); font-weight: 500; }
+    .sys-del-result.error { color: #ff6060; }
+    .sys-action.danger {
+      background: rgba(255,70,70,0.08); border-color: rgba(255,70,70,0.22); color: #ff6060;
+    }
+    .sys-action.danger:hover { background: rgba(255,70,70,0.14); color: #ff7878; }
+    .sys-action.danger:disabled { opacity: 0.45; cursor: default; }
+
+    .sys-del-warn {
+      display: flex; align-items: center; gap: 7px;
+      padding: 7px 9px; margin-bottom: 6px;
+      background: rgba(255,190,0,0.07); border: 1px solid rgba(255,190,0,0.2);
+      border-radius: var(--r-inner); color: var(--yellow);
+      font-size: 10px; font-weight: 500; line-height: 1.35;
+    }
+    .sys-del-warn svg { flex-shrink: 0; }
+    .sys-del-con-row {
+      padding: 6px 9px; margin-bottom: 3px;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: var(--r-inner);
+    }
+    .sys-del-con-name {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 10.5px; font-weight: 600; color: var(--t200);
+    }
+    .sys-del-con-size {
+      font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+      font-variant-numeric: tabular-nums; color: var(--t400); font-weight: 400;
+    }
+    .sys-del-con-text { margin-top: 2px; font-size: 9px; color: var(--t400); line-height: 1.4; }
+
     @keyframes sysEnter { from { opacity: 0; translate: 0 5px; } to { opacity: 1; translate: 0 0; } }
     .sys-stagger > * { animation: sysEnter 320ms cubic-bezier(0.2, 0, 0, 1) both; }
     .sys-stagger > *:nth-child(1) { animation-delay: 0ms; }
