@@ -46,6 +46,14 @@ QuotaBar sits in the Windows system tray, reads credentials and usage logs from 
 
 > QuotaBar does not scan your disk for credentials. It reads only known provider paths and redacts sensitive values before logging.
 
+## Installation
+
+1. Go to [**Releases**](https://github.com/spiral023/QuotaBar/releases) and download the latest `QuotaBar-for-Windows-Setup-*.exe`.
+2. Run the installer — Windows may show a SmartScreen prompt since the app isn't signed; click **More info → Run anyway**.
+3. QuotaBar starts automatically and appears in the system tray.
+
+**Updates** are built in. Check for new versions in the **System** tab — the update downloads in the background and is applied on the next restart.
+
 ## Highlights
 
 | Tray-first monitoring | Usage analytics | Privacy-aware by design |
