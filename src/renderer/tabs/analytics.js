@@ -18,7 +18,8 @@ let _from         = null;
 let _to           = null;
 let _lastData     = null;     // aktuell gerendertes AnalyticsData (für Chart-Toggles)
 let _chartMode    = 'cost';   // 'cost' | 'roi'
-let _agg          = 'daily';  // 'daily' | 'weekly' | 'monthly' (Auflösung des Linien-Charts)
+let _agg          = 'daily';  // 'daily' | 'weekly' | 'monthly' | 'hourly'
+let _hourlyBuckets = null;    // gecachte Stunden-Daten für den Linien-Chart
 const _cache      = new Map(); // `${from}:${to}` → AnalyticsData
 let _whChart      = null;      // Chart-Instanz der 5h-Fenster-Historie
 let _whData       = null;      // { entries, planChanges } (zeitraum-unabhängig gecacht)
@@ -65,6 +66,7 @@ QB.prefetchAnalytics = function prefetchAnalytics() {
 
 QB.clearAnalyticsCache = function clearAnalyticsCache() {
   _cache.clear();
+  _hourlyBuckets = null;
   _whData = null; // Plan-/Settings-Änderung → Fenster-Historie neu laden
 };
 
@@ -161,6 +163,7 @@ function _buildControls(container) {
       </div>
       <div class="hr-ctrl-row2">
         <div class="hr-seg an-agg-seg" id="an-agg-pills" role="group" aria-label="Resolution">
+          <button class="hr-seg-btn${_agg === 'hourly'  ? ' active' : ''}" data-agg="hourly"  title="Hourly">Hr</button>
           <button class="hr-seg-btn${_agg === 'daily'   ? ' active' : ''}" data-agg="daily"   title="Daily">Day</button>
           <button class="hr-seg-btn${_agg === 'weekly'  ? ' active' : ''}" data-agg="weekly"  title="Weekly">Wk</button>
           <button class="hr-seg-btn${_agg === 'monthly' ? ' active' : ''}" data-agg="monthly" title="Monthly">Mo</button>
@@ -192,15 +195,15 @@ function _buildControls(container) {
     });
   });
 
-  // Auflösungs-Umschaltung (Tag/Woche/Monat): betrifft nur den Linien-Chart,
-  // daher nur lokal neu aggregieren statt erneut per IPC zu laden.
+  // Auflösungs-Umschaltung: betrifft nur den Linien-Chart.
   container.querySelectorAll('#an-agg-pills .hr-seg-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       if (btn.classList.contains('active')) return;
       container.querySelectorAll('#an-agg-pills .hr-seg-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       _agg = btn.dataset.agg;
       _updateLineTitle();
+      if (_agg === 'hourly') await _ensureHourlyBuckets();
       if (_lastData) _buildLineChart(_lastData);
       // Auch die 5h-Fenster-Historie folgt der Auflösung (Woche ↔ Monat).
       _updateWhTitle();
@@ -222,6 +225,8 @@ async function _loadAndRender() {
       data = await QB.ipc.invoke('analytics:get', { since: _from, until: _to });
       _cache.set(key, data);
     }
+    _hourlyBuckets = null; // Datumsbereich geändert → Stunden-Cache invalidieren
+    if (_agg === 'hourly') await _ensureHourlyBuckets();
     _renderResults(data);
   } catch (e) {
     console.error('analytics:get failed', e);
@@ -347,6 +352,7 @@ function _lineTitle() {
   }
   const per = _agg === 'monthly' ? 'AVG API COST/DAY · MONTH'
             : _agg === 'weekly'  ? 'AVG API COST/DAY · WEEK'
+            : _agg === 'hourly'  ? 'API COST PER HOUR'
             : 'API COST PER DAY';
   return `${per} (${winLabel})`;
 }
@@ -409,10 +415,33 @@ function _aggregateBuckets(daily, agg) {
 }
 
 function _bucketLabel(dateStr, agg) {
+  if (agg === 'hourly') return dateStr.slice(11, 16); // "HH:00"
   const d = new Date(dateStr + 'T00:00:00Z');
   if (agg === 'monthly') return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' });
   if (agg === 'weekly')  return 'W' + _isoWeekNum(dateStr);
   return d.toLocaleDateString('en-US', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+}
+
+async function _ensureHourlyBuckets() {
+  if (_hourlyBuckets !== null) return;
+  try {
+    const base = {
+      source: 'live', type: 'hourly', limit: 168,
+      since: _from || undefined, until: _to || undefined,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      order: 'asc', breakdown: false,
+    };
+    const [cr, xr] = await Promise.all([
+      QB.ipc.invoke('reports:get', { ...base, provider: 'claude' }),
+      QB.ipc.invoke('reports:get', { ...base, provider: 'codex' }),
+    ]);
+    const cm = new Map((cr.rows || []).map(r => [r.bucket, r.costUSD || 0]));
+    const xm = new Map((xr.rows || []).map(r => [r.bucket, r.costUSD || 0]));
+    const all = new Set([...cm.keys(), ...xm.keys()]);
+    _hourlyBuckets = Array.from(all).sort().map(b => ({
+      date: b, days: 1, claudeUSD: cm.get(b) || 0, codexUSD: xm.get(b) || 0,
+    }));
+  } catch { _hourlyBuckets = []; }
 }
 
 function _buildLineChart(data) {
@@ -420,7 +449,9 @@ function _buildLineChart(data) {
   const ctx = document.getElementById('an-line-canvas');
   if (!ctx || typeof Chart === 'undefined') return;
 
-  const buckets = _aggregateBuckets(data.dailyBuckets || [], _agg);
+  const buckets = _agg === 'hourly'
+    ? (_hourlyBuckets || [])
+    : _aggregateBuckets(data.dailyBuckets || [], _agg);
   const labels  = buckets.map(b => _bucketLabel(b.date, _agg));
 
   const isRoi = _chartMode === 'roi';
@@ -433,9 +464,11 @@ function _buildLineChart(data) {
     ? _cumulativeRoiSeries(buckets, 'codexUSD', 'codexSubUSD')
     : buckets.map(b => b.days > 0 ? b.codexUSD / b.days : 0);
 
-  // Plan-Wechsel-Marker (beide Modi): Bucket-Datum → Chart-Index.
+  // Plan-Wechsel-Marker (nur Tages/Wochen/Monats-Modus).
   const dayKeys = buckets.map(b => b.date);
-  const changes = QB.charts.mapChangesToIndex(data.planChanges || [], dayKeys);
+  const changes = _agg === 'hourly'
+    ? []
+    : QB.charts.mapChangesToIndex(data.planChanges || [], dayKeys);
 
   // "Kein Abo"-Hinweis (nur ROI): keine Abo-Baseline im sichtbaren Bereich.
   const totalSub = buckets.reduce((s, b) => s + (b.claudeSubUSD || 0) + (b.codexSubUSD || 0), 0);

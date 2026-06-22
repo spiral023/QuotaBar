@@ -1575,6 +1575,20 @@
     .an-agg-seg { flex: 1; }
     .an-agg-seg .hr-seg-btn { flex: 1; justify-content: center; }
 
+    /* Analytics / History / Models: Controls-Leiste in breiter Ansicht einzeilig */
+    #analytics-content .hr-controls,
+    #history-content   .hr-controls,
+    #models-content    .hr-controls { flex-direction: row; align-items: center; flex-wrap: wrap; }
+    #analytics-content .hr-ctrl-row2,
+    #history-content   .hr-ctrl-row2,
+    #models-content    .hr-ctrl-row2 { margin-left: auto; }
+    .view-compact #analytics-content .hr-controls,
+    .view-compact #history-content   .hr-controls,
+    .view-compact #models-content    .hr-controls { flex-direction: column; align-items: stretch; }
+    .view-compact #analytics-content .hr-ctrl-row2,
+    .view-compact #history-content   .hr-ctrl-row2,
+    .view-compact #models-content    .hr-ctrl-row2 { margin-left: 0; }
+
     /* Compact analytics + history + models: Datumseingaben ausblenden, Select nimmt volle Breite */
     .view-compact #analytics-content .hr-date-pair,
     .view-compact #history-content .hr-date-pair,
