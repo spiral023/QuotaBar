@@ -4,6 +4,9 @@
 
 <h1 align="center">QuotaBar for Windows</h1>
 
+> [!CAUTION]
+> **100% vibe-coded.** This app was built entirely with AI assistance — by someone who is not a programmer. It works surprisingly well for what it is, but bugs are not an exception here, they're part of the deal. Numbers may be wrong. Calculations may be off. Use at your own risk, and treat everything the app shows you with a healthy dose of skepticism.
+
 <p align="center">
   Know your AI spend at a glance — quota progress bars, API-equivalent costs, and usage history for Claude and Codex, right in the Windows tray.
 </p>
