@@ -26,7 +26,11 @@ const WEEKLY_SPIKE_MIN_PCT = 99.5;
 const WEEKLY_SPIKE_DELTA_PCT = 20;
 const BONUS_PREV_MIN_PCT = 20;
 const BONUS_NEXT_MAX_PCT = 5;
-const REGULAR_RESET_ADVANCE_MIN_MS = 6 * 24 * 60 * 60 * 1000;
+// Springt der 7d-resetsAt um mindestens so viel nach vorn, wurde ein neues
+// 7d-Fenster gestartet (geplanter ODER selbst eingelöster Reset) — kein Bonus.
+// Ein echter Kulanz-Bonus lässt resetsAt praktisch unverändert. Siehe
+// NEW_WINDOW_ADVANCE_MIN_MS in bonusReset.ts.
+const NEW_WINDOW_ADVANCE_MIN_MS = 60 * 60 * 1000;
 
 export function buildCurrentWindowUsage(
   observations: CurrentWindowObservation[],
@@ -154,17 +158,18 @@ function classifyWeeklyTransition(prev: CurrentWindowObservation, next: CurrentW
 }
 
 /**
- * Regulärer (geplanter) Weekly-Reset, wenn ENTWEDER der resetsAt um ~eine volle
- * Periode nach vorn springt ODER der Abfall am/nach dem zuvor geplanten
- * Reset-Termin auftritt. Letzteres ist nötig, weil Claude bei 0 % Verbrauch
- * `resetsAt` weglässt (null) — genau am regulären Reset. In diesem Fall lässt
- * sich nur über den Drop-Zeitstempel ggü. `prev.weeklyResetsAt` entscheiden,
- * ob die Periodengrenze erreicht wurde (regulär) oder der Drop davor liegt (Bonus).
+ * Neuer Fenster-Start statt Bonus, wenn ENTWEDER der resetsAt nennenswert nach
+ * vorn rückt (geplanter Reset ~7 d ODER selbst eingelöster Reset = Restzeit)
+ * ODER der Abfall am/nach dem zuvor geplanten Reset-Termin auftritt. Letzteres
+ * ist nötig, weil Claude bei 0 % Verbrauch `resetsAt` weglässt (null) — genau am
+ * regulären Reset. In diesem Fall lässt sich nur über den Drop-Zeitstempel ggü.
+ * `prev.weeklyResetsAt` entscheiden, ob die Periodengrenze erreicht wurde
+ * (regulär) oder der Drop davor liegt (Bonus).
  */
 function isRegularWeeklyReset(prev: CurrentWindowObservation, next: CurrentWindowObservation): boolean {
   const prevMs = prev.weeklyResetsAt != null ? new Date(prev.weeklyResetsAt).getTime() : NaN;
   const nextMs = next.weeklyResetsAt != null ? new Date(next.weeklyResetsAt).getTime() : NaN;
-  if (Number.isFinite(prevMs) && Number.isFinite(nextMs) && nextMs - prevMs >= REGULAR_RESET_ADVANCE_MIN_MS) {
+  if (Number.isFinite(prevMs) && Number.isFinite(nextMs) && nextMs - prevMs >= NEW_WINDOW_ADVANCE_MIN_MS) {
     return true;
   }
   const dropMs = next.ts != null ? new Date(next.ts).getTime() : NaN;

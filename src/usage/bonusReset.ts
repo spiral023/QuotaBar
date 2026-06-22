@@ -20,11 +20,15 @@ export const BONUS_DROP_MIN_PCT = 10;
 /** Aktueller Weekly-%-Wert muss darunter gefallen sein (Budget effektiv freigegeben). */
 export const BONUS_NEXT_MAX_PCT = 5;
 /**
- * Springt der 7d-`resetsAt` um mindestens so viel nach vorn, war es ein
- * regulärer Reset (kein Bonus). Knapp unter 7 d, um Jitter/Teilperioden zu
- * tolerieren.
+ * Springt der 7d-`resetsAt` um mindestens so viel NACH VORN, wurde ein neues
+ * 7d-Fenster gestartet — sei es der geplante Reset (~7 d Sprung) ODER ein vom
+ * Nutzer selbst eingelöster Reset (Sprung = Restzeit, kann deutlich < 7 d sein).
+ * Beides ist KEIN Bonus. Ein echter Kulanz-Bonus lässt `resetsAt` dagegen
+ * praktisch unverändert (nur Sekunden-Jitter). Schwelle deutlich über Codex'
+ * Minuten-„Treppung" des resetsAt, aber weit unter jedem realen Fenster-Sprung
+ * (Stunden bis Tage).
  */
-export const BONUS_RESET_ADVANCE_MIN_MS = 6 * 24 * 60 * 60 * 1000;
+export const NEW_WINDOW_ADVANCE_MIN_MS = 60 * 60 * 1000;
 
 /** Ab diesem Weekly-%-Wert gilt next als Sättigungs-Ausreißer-Kandidat. */
 export const WEEKLY_SPIKE_MIN_PCT = 99.5;
@@ -84,15 +88,16 @@ export function isBonusReset(prev: WeeklyObservation, next: WeeklyObservation): 
 }
 
 /**
- * Regulärer (geplanter) Weekly-Reset, wenn ENTWEDER der resetsAt um ~eine volle
- * Periode nach vorn springt ODER der Abfall am/nach dem zuvor geplanten
- * Reset-Termin (prev.resetsAt) auftritt. Letzteres ist nötig, weil Claude bei
- * 0 % Verbrauch `resetsAt` weglässt (null) — genau am regulären Reset.
+ * Neuer Fenster-Start statt Bonus, wenn ENTWEDER der resetsAt nennenswert nach
+ * vorn rückt (geplanter Reset ~7 d ODER selbst eingelöster Reset = Restzeit)
+ * ODER der Abfall am/nach dem zuvor geplanten Reset-Termin (prev.resetsAt)
+ * auftritt. Letzteres ist nötig, weil Claude bei 0 % Verbrauch `resetsAt`
+ * weglässt (null) — genau am regulären Reset.
  */
 function isRegularWeeklyReset(prev: WeeklyObservation, next: WeeklyObservation): boolean {
   const prevMs = prev.resetsAt != null ? new Date(prev.resetsAt).getTime() : NaN;
   const nextMs = next.resetsAt != null ? new Date(next.resetsAt).getTime() : NaN;
-  if (Number.isFinite(prevMs) && Number.isFinite(nextMs) && nextMs - prevMs >= BONUS_RESET_ADVANCE_MIN_MS) {
+  if (Number.isFinite(prevMs) && Number.isFinite(nextMs) && nextMs - prevMs >= NEW_WINDOW_ADVANCE_MIN_MS) {
     return true;
   }
   const dropMs = next.ts != null ? new Date(next.ts).getTime() : NaN;

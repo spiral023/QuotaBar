@@ -66,6 +66,15 @@ describe("isBonusReset", () => {
     const next = { usedPercent: 0, resetsAt: null, ts: "2026-06-16T16:30:00Z" };
     expect(isBonusReset(prev, next)).toBe(false);
   });
+
+  it("kein Bonus bei selbst eingelöstem Reset (resetsAt springt < 7d, aber > 0 nach vorn)", () => {
+    // Realfall 2026-06-21: Codex-Selbst-Reset. Weekly 100 → 0, resetsAt springt
+    // um ~3,7 Tage nach vorn (25.06. → 28.06.) — die Restzeit des alten Fensters,
+    // nicht volle 7 Tage. Das ist ein NEUES 7d-Fenster, kein Kulanz-Bonus.
+    const prev = { usedPercent: 100, resetsAt: "2026-06-25T00:53:07Z", ts: "2026-06-21T16:12:00Z" };
+    const next = { usedPercent: 0, resetsAt: "2026-06-28T17:45:32Z", ts: "2026-06-21T17:46:00Z" };
+    expect(isBonusReset(prev, next)).toBe(false);
+  });
 });
 
 describe("isTransientWeeklySpike", () => {
@@ -150,6 +159,16 @@ describe("BonusResetTracker", () => {
     t.record("claude", "max", { usedPercent: 46, resetsAt: reset });
     t.record("claude", "max", { usedPercent: 1, resetsAt: reset });
     expect(t.getBonus("codex", "team", reset, base + 5 * DAY, 8)).toBeNull();
+  });
+
+  it("setzt KEINEN Bonus bei selbst eingelöstem Codex-Reset (resetsAt verschoben)", () => {
+    // Selbst eingelöster 7d-Reset: Weekly 100 → 0 UND resetsAt rückt nach vorn
+    // (25.06. → 28.06.). Neues Fenster, kein Bonus-Budget oben drauf.
+    const t = new BonusResetTracker();
+    t.record("codex", "team", { usedPercent: 100, resetsAt: "2026-06-25T00:53:07Z", fivePercent: 100, ts: "2026-06-21T16:12:00Z" });
+    t.record("codex", "team", { usedPercent: 0, resetsAt: "2026-06-28T17:45:32Z", fivePercent: 0, ts: "2026-06-21T17:46:00Z" });
+    const nowMs = Date.parse("2026-06-22T00:00:00Z");
+    expect(t.getBonus("codex", "team", "2026-06-28T17:45:32Z", nowMs, 8)).toBeNull();
   });
 
   it("löst KEINEN Bonus durch einen transienten Weekly-Spike aus (Skalen-Artefakt)", () => {

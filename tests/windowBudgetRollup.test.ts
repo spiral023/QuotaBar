@@ -107,6 +107,23 @@ describe("buildCurrentWindowUsage", () => {
     expect(usage.preResetWeeklyPercent).toBe(61);
   });
 
+  // Codex-Selbst-Reset 2026-06-21: Weekly 100 → 0, resetsAt springt nur um die
+  // Restzeit (~3,7 d, 25.06. → 28.06.) nach vorn, nicht volle 7 Tage. Das ist ein
+  // neues 7d-Fenster; der Vor-Reset-Verbrauch darf NICHT auf die neue Periode addiert werden.
+  it("treats a self-redeemed reset as a new period, not bonus budget", () => {
+    const oldReset = "2026-06-25T00:53:07Z";
+    const newReset = "2026-06-28T17:45:32Z";
+    const usage = buildCurrentWindowUsage([
+      obs("2026-06-21T16:12:00Z", 95, "2026-06-21T18:00:00Z", 100, oldReset),
+      obs("2026-06-21T17:46:00Z", 0, "2026-06-21T22:45:00Z", 0, newReset),
+      obs("2026-06-21T19:10:00Z", 30, "2026-06-21T22:45:00Z", 17, newReset),
+    ], windowsPerWeek, 17);
+
+    expect(usage.bonusResetCount).toBe(0);
+    expect(usage.preResetWeeklyPercent).toBe(0);
+    expect(usage.resetAdjustedWeeklyPercent).toBe(17);
+  });
+
   // Screenshot-1-Szenario: Beobachtungen spannen die VORIGE Periode (regulärer
   // Reset) UND den aktuellen Bonus. Nur der aktuelle Bonus (61) darf zählen –
   // nicht 50 + 61. Der reguläre Reset setzt die Akkumulation zurück.
