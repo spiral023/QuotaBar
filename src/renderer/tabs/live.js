@@ -37,8 +37,14 @@ function windowInsightHtml(win) {
     ? `${burnRate >= 0 ? '+' : ''}${burnRate.toFixed(1)} %/h`
     : null;
   const burnTip = 'Ø burn rate from the last measurements.\nBasis: Δ% ÷ Δt (up to 5 snapshots).';
+  let burnCls = 'b-stale', burnIcon = '';
+  if (burnRate !== null && burnRate !== undefined) {
+    if (burnRate > 100)     { burnCls = 'b-bad';  burnIcon = '⚠ '; }
+    else if (burnRate > 50) { burnCls = 'b-warn'; }
+    else if (burnRate > 0)  { burnCls = 'b-ok';   }
+  }
   const burnHtml = burnStr
-    ? `<span class="burn-rate" title="${QB.esc(burnTip)}">${QB.esc(burnStr)}</span>`
+    ? `<span class="badge ${burnCls}" title="${QB.esc(burnTip)}">${burnIcon}${QB.esc(burnStr)}</span>`
     : '';
 
   if (!pace || pace.willLastToReset || pace.etaSeconds === null) {
