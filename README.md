@@ -12,11 +12,16 @@
 </p>
 
 <p align="center">
+  <img src="logos/gh-hero.png" alt="QuotaBar Screenshot" width="100%">
+</p>
+
+<p align="center">
   <a href="#requirements"><img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4"></a>
   <a href="https://www.electronjs.org/"><img alt="Electron 42" src="https://img.shields.io/badge/Electron-42-47848F"></a>
   <a href="https://www.typescriptlang.org/"><img alt="TypeScript 5.8" src="https://img.shields.io/badge/TypeScript-5.8-3178C6"></a>
   <a href="https://vitest.dev/"><img alt="Vitest" src="https://img.shields.io/badge/tests-Vitest-6E9F18"></a>
   <a href="#license"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <a href="https://deepwiki.com/spiral023/QuotaBar"><img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg"></a>
 </p>
 
 <p align="center">
