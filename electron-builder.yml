@@ -4,6 +4,7 @@ publish:
   provider: github
   owner: spiral023
   repo: QuotaBar
+  releaseType: release
 protocols:
   - name: QuotaBar Protocol
     schemes:

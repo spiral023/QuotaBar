@@ -309,21 +309,33 @@ renderer/tabs/
 
 QuotaBar aktualisiert sich im installierten Build automatisch über GitHub Releases.
 
-**Neuen Release veröffentlichen:**
+### Neuen Release veröffentlichen
 
-```bash
-npm version patch        # bumpt package.json + erstellt Tag vX.Y.Z
+```powershell
+git checkout main
+git pull
+npm version patch        # bumpt package.json, erstellt Commit + Tag vX.Y.Z
 git push --follow-tags   # löst den Release-Workflow aus
 ```
 
-Die GitHub Action baut den NSIS-Installer und veröffentlicht ihn samt
-`latest.yml`. Installierte Clients prüfen beim Start und alle 6 Stunden, laden
-ein Update still herunter und installieren es beim nächsten Beenden (oder sofort
-über den Tray-Eintrag „Update bereit – jetzt neu starten").
+`npm version minor` oder `npm version major` für größere Sprünge.
 
-**SmartScreen:** Die Builds sind nicht signiert. Beim ersten Start zeigt Windows
-ggf. „Der Computer wurde durch Windows geschützt" → „Weitere Informationen" →
-„Trotzdem ausführen".
+Die GitHub Action (`release.yml`) läuft auf `windows-latest`, baut den NSIS-Installer und veröffentlicht ihn direkt als GitHub Release (kein Draft) samt `latest.yml`.
+
+Installierte Clients prüfen beim Start und alle 6 Stunden auf Updates. Ein verfügbares Update wird still heruntergeladen und beim nächsten Beenden der App installiert. Alternativ erscheint im Tray-Menü der Eintrag „Update bereit – jetzt neu starten".
+
+### Entwickeln neben dem installierten Build
+
+Der installierte Build und `npm run dev` nutzen dieselbe Datendatei (`%APPDATA%\quotabar-win\`) und dieselbe Single-Instance-Sperre. Deshalb:
+
+- **Vor `npm run dev`:** Installierten Build im Tray beenden (Rechtsklick → Beenden).
+- **Danach:** Dev-Instanz wie gewohnt starten.
+
+Beide Instanzen können nicht gleichzeitig laufen.
+
+### SmartScreen
+
+Die Builds sind nicht code-signiert. Beim ersten Start zeigt Windows ggf. „Der Computer wurde durch Windows geschützt" → „Weitere Informationen" → „Trotzdem ausführen".
 
 ## License
 

@@ -34,6 +34,17 @@ jobs:
         run: |
           node -e "require('./dist/build/versionTag').assertTagMatches(process.env.GIT_TAG, require('./package.json').version)"
 
+      - name: Pre-create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ github.ref_name }}" 2>/dev/null || \
+            gh release create "${{ github.ref_name }}" \
+              --title "${{ github.ref_name }}" \
+              --notes "" \
+              --draft=false
+
       - name: Build & publish installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
