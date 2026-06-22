@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Willkommen bei QuotaBar</title>
+  <title>Welcome to QuotaBar</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
@@ -292,7 +292,7 @@
 <body>
 
   <div class="titlebar">
-    <button class="tbtn" id="btn-close" title="Schließen">
+    <button class="tbtn" id="btn-close" title="Close">
       <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
            stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
         <line x1="1" y1="1" x2="10" y2="10"/>
@@ -312,25 +312,25 @@
           <path d="M9 7L11 9L9 11L7 9Z" fill="#52d017" opacity="0.65"/>
         </svg>
       </div>
-      <div class="hero-title">Willkommen bei <span class="accent">QuotaBar</span></div>
+      <div class="hero-title">Welcome to <span class="accent">QuotaBar</span></div>
       <div class="hero-sub">
-        QuotaBar behält die Kontingente deiner AI&nbsp;Coding&nbsp;Agents im Blick —
-        direkt aus der Windows-Taskleiste. Du siehst jederzeit, wie viel Quota dir
-        bleibt, was deine Nutzung kosten würde und ob sich dein Abo lohnt.
+        QuotaBar keeps track of your AI&nbsp;Coding&nbsp;Agent quotas —
+        right from the Windows taskbar. See at a glance how much quota you have
+        left, what your usage would cost via API, and whether your subscription pays off.
       </div>
     </div>
 
     <!-- ── Erkannte Agents ───────────────────────────────── -->
     <div class="section">
-      <div class="section-title">Automatisch erkannte Coding Agents</div>
+      <div class="section-title">Automatically detected coding agents</div>
       <div id="agents-list">
-        <div class="agents-loading"><div class="spinner"></div>Suche nach installierten Agents…</div>
+        <div class="agents-loading"><div class="spinner"></div>Searching for installed agents…</div>
       </div>
     </div>
 
     <!-- ── Funktionen ────────────────────────────────────── -->
     <div class="section">
-      <div class="section-title">Das kannst du mit QuotaBar machen</div>
+      <div class="section-title">What you can do with QuotaBar</div>
       <div class="stagger">
 
         <div class="feature">
@@ -340,8 +340,8 @@
             </svg>
           </div>
           <div class="feature-body">
-            <div class="feature-cat">Live-Monitoring</div>
-            <div class="feature-text">Session-, 5-Stunden- und Wochenlimits in Echtzeit verfolgen — das Tray-Icon zeigt per Ampelfarbe, wie voll dein Kontingent ist.</div>
+            <div class="feature-cat">Live Monitoring</div>
+            <div class="feature-text">Track session, 5-hour, and weekly limits in real time — the tray icon uses traffic-light colors to show how full your quota is.</div>
           </div>
         </div>
 
@@ -354,7 +354,7 @@
           </div>
           <div class="feature-body">
             <div class="feature-cat">Pace &amp; Burn-Rate</div>
-            <div class="feature-text">Erkennen, ob du schneller verbrauchst als das Zeitfenster läuft — inklusive Prognose, wann die Quota voraussichtlich erschöpft ist.</div>
+            <div class="feature-text">See whether you're burning quota faster than the window allows — including a forecast of when your quota is likely to run out.</div>
           </div>
         </div>
 
@@ -365,8 +365,8 @@
             </svg>
           </div>
           <div class="feature-body">
-            <div class="feature-cat">Kosten &amp; ROI</div>
-            <div class="feature-text">Sehen, was deine Nutzung über die API kosten würde, und sie mit deinem Abo-Preis vergleichen — der ROI-Faktor zeigt, wie sehr sich dein Abo lohnt.</div>
+            <div class="feature-cat">Cost &amp; ROI</div>
+            <div class="feature-text">See what your usage would cost via the API and compare it against your subscription price — the ROI factor shows how much value you're getting.</div>
           </div>
         </div>
 
@@ -378,7 +378,7 @@
           </div>
           <div class="feature-body">
             <div class="feature-cat">Analytics &amp; Models</div>
-            <div class="feature-text">Nutzungstrends, Aktivitätsmuster und Modell-Statistiken analysieren: Welche Modelle kosten am meisten, wie gut greift der Cache?</div>
+            <div class="feature-text">Analyze usage trends, activity patterns, and model statistics: which models cost the most, how effective is the cache?</div>
           </div>
         </div>
 
@@ -390,8 +390,8 @@
             </svg>
           </div>
           <div class="feature-body">
-            <div class="feature-cat">Benachrichtigungen</div>
-            <div class="feature-text">Alerts erhalten, bevor es eng wird: hohe Auslastung, Quota-Resets, Burn-Rate-Spitzen oder frische Kontingente — alles konfigurierbar.</div>
+            <div class="feature-cat">Notifications</div>
+            <div class="feature-text">Get alerts before things get tight: high utilization, quota resets, burn-rate spikes, or fresh quotas — all configurable.</div>
           </div>
         </div>
 
@@ -403,8 +403,8 @@
             </svg>
           </div>
           <div class="feature-body">
-            <div class="feature-cat">History &amp; Berichte</div>
-            <div class="feature-text">Historische Nutzung über frei wählbare Zeiträume auswerten, als Tabelle und Chart — und Berichte als JSON exportieren.</div>
+            <div class="feature-cat">History &amp; Reports</div>
+            <div class="feature-text">Analyze historical usage over custom time ranges as tables and charts — and export reports as JSON.</div>
           </div>
         </div>
 
@@ -413,7 +413,7 @@
 
     <!-- ── Hinweis: Claude Log-Aufbewahrung ──────────────── -->
     <div class="section">
-      <div class="section-title">Wichtig für deine Historie</div>
+      <div class="section-title">Important for your history</div>
       <div class="notice">
         <div class="notice-icon">
           <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
@@ -423,10 +423,10 @@
           </svg>
         </div>
         <div class="notice-body">
-          <div class="notice-cat">Provider löschen alte Logs mit der Zeit</div>
+          <div class="notice-cat">Providers delete old logs over time</div>
           <div class="notice-text">
-            Beim ersten Start siehst du nur, was der jeweilige Provider noch lokal gespeichert hat — bei <strong>Claude</strong> standardmäßig die letzten <strong>30&nbsp;Tage</strong> (Einstellung <code>cleanupPeriodDays</code>; setze z.&nbsp;B. <code>"cleanupPeriodDays": 1095</code> in <code>~/.claude/settings.json</code> für ~3&nbsp;Jahre). <strong>Codex</strong> behält aktuell alle Sessions.
-            QuotaBar sichert jeden erfassten Tag dauerhaft und holt verpasste Tage beim nächsten Start automatisch nach — solange du es regelmäßig laufen lässt, wächst die Historie lückenlos, auch wenn ein Provider aufräumt.
+            On first launch you only see what each provider still has stored locally — for <strong>Claude</strong> that's the last <strong>30&nbsp;days</strong> by default (setting <code>cleanupPeriodDays</code>; set e.g. <code>"cleanupPeriodDays": 1095</code> in <code>~/.claude/settings.json</code> for ~3&nbsp;years). <strong>Codex</strong> currently retains all sessions.
+            QuotaBar permanently stores every captured day and automatically backfills missed days on next start — as long as you run it regularly, your history grows without gaps even if a provider cleans up.
           </div>
         </div>
       </div>
@@ -436,21 +436,21 @@
   <!-- ── Footer ──────────────────────────────────────────── -->
   <div class="footer">
     <div class="autostart-row">
-      <span class="autostart-label">QuotaBar automatisch mit Windows starten</span>
+      <span class="autostart-label">Start QuotaBar automatically with Windows</span>
       <label class="tgl">
         <input type="checkbox" id="tog-autostart" checked>
         <span class="tgl-track"></span>
       </label>
     </div>
-    <button class="start-btn" id="btn-start">Los geht's</button>
-    <div class="footer-note">QuotaBar läuft danach unauffällig in der Taskleiste — ein Klick auf das Icon öffnet das Dashboard.</div>
+    <button class="start-btn" id="btn-start">Get started</button>
+    <div class="footer-note">QuotaBar will then run quietly in the taskbar — click the icon to open the dashboard.</div>
   </div>
 
   <script>
     const STATUS_BADGES = {
-      connected: { cls: 'b-connected', label: 'Verbunden' },
-      detected:  { cls: 'b-detected',  label: 'Erkannt — nicht angemeldet' },
-      not_found: { cls: 'b-missing',   label: 'Nicht gefunden' },
+      connected: { cls: 'b-connected', label: 'Connected' },
+      detected:  { cls: 'b-detected',  label: 'Detected — not signed in' },
+      not_found: { cls: 'b-missing',   label: 'Not found' },
     };
 
     function esc(s) {
@@ -478,7 +478,7 @@
         }).join('');
       } catch (e) {
         console.error('onboarding:agents failed', e);
-        list.innerHTML = '<div class="agents-loading">Agents konnten nicht ermittelt werden.</div>';
+        list.innerHTML = '<div class="agents-loading">Could not detect agents.</div>';
       }
     }
 

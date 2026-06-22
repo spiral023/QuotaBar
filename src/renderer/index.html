@@ -2793,25 +2793,25 @@
       <div class="rp-section">
         <div class="rp-section-title">Quick Stats<span class="cw-dot"></span></div>
         <div class="qs-grid" id="qs-grid">
-          <div class="qs-tile"><div class="qs-tile-lbl">API-Äq. (30d)<i class="info-icon tip-right" data-tip="Hochgerechnete API-Kosten für die letzten 30 Tage – unabhängig vom gewählten Kostenfenster.">i</i></div><div class="qs-tile-val" id="qs-api-cost">—</div></div>
-          <div class="qs-tile"><div class="qs-tile-lbl">Abo ROI<i class="info-icon" data-tip="API-Kosten ÷ anteiliger Abo-Preis für das gewählte Fenster.&#10;&#10;1× = Kosten entsprechen dem Abo. 10× = API wäre 10× so teuer wie das Abo.">i</i></div><div class="qs-tile-val" id="qs-roi">—</div></div>
-          <div class="qs-tile"><div class="qs-tile-lbl">Aktive Tage</div><div class="qs-tile-val" id="qs-active-days">—</div></div>
-          <div class="qs-tile"><div class="qs-tile-lbl">Ø Session</div><div class="qs-tile-val" id="qs-session">—</div></div>
+          <div class="qs-tile"><div class="qs-tile-lbl">API Eq. (30d)<i class="info-icon tip-right" data-tip="Projected API cost for the last 30 days – independent of the selected cost window.">i</i></div><div class="qs-tile-val" id="qs-api-cost">—</div></div>
+          <div class="qs-tile"><div class="qs-tile-lbl">Sub ROI<i class="info-icon" data-tip="API cost ÷ proportional subscription price for the selected window.&#10;&#10;1× = cost equals the subscription. 10× = API would be 10× more expensive than the subscription.">i</i></div><div class="qs-tile-val" id="qs-roi">—</div></div>
+          <div class="qs-tile"><div class="qs-tile-lbl">Active days</div><div class="qs-tile-val" id="qs-active-days">—</div></div>
+          <div class="qs-tile"><div class="qs-tile-lbl">Avg session</div><div class="qs-tile-val" id="qs-session">—</div></div>
         </div>
       </div>
       <div class="rp-section">
         <div class="rp-section-title">Top Models<span class="cw-dot"></span></div>
         <table class="top-models-table" id="top-models-table">
-          <thead><tr><th>Modell</th><th>Kosten</th><th>%</th></tr></thead>
-          <tbody id="top-models-body"><tr><td colspan="3" style="color:var(--t400);text-align:center">Lädt…</td></tr></tbody>
+          <thead><tr><th>Model</th><th>Cost</th><th>%</th></tr></thead>
+          <tbody id="top-models-body"><tr><td colspan="3" style="color:var(--t400);text-align:center">Loading…</td></tr></tbody>
         </table>
       </div>
       <div class="rp-section">
         <div class="rp-section-title">Cost Window</div>
         <div class="pill-grid-3" id="window-pill-grid">
-          <button class="pill" data-win="7d">7 Tage</button>
-          <button class="pill active" data-win="30d">30 Tage</button>
-          <button class="pill" data-win="all">Gesamt</button>
+          <button class="pill" data-win="7d">7 days</button>
+          <button class="pill active" data-win="30d">30 days</button>
+          <button class="pill" data-win="all">All time</button>
         </div>
       </div>
     </div>
@@ -2826,49 +2826,49 @@
       <div class="insights-row1" id="ins-cost-roi">—</div>
       <div class="insights-row2" id="ins-days-session">—</div>
       <div class="insights-sparkline" id="ins-sparkline"></div>
-      <div class="sparkline-label" id="ins-sparkline-label">7-Tage Kosten</div>
+      <div class="sparkline-label" id="ins-sparkline-label">7-day cost</div>
     </div>
   </div>
 
   <!-- ── Analytics View ────────────────────────────────── -->
   <div class="view" id="view-analytics" hidden>
     <div class="analytics-wrap" id="analytics-content">
-      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+      <div class="empty"><div class="spinner"></div><span>Loading…</span></div>
     </div>
   </div>
 
   <!-- ── Models View ──────────────────────────────────────────────── -->
   <div class="view" id="view-models" hidden>
     <div class="analytics-wrap" id="models-content">
-      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+      <div class="empty"><div class="spinner"></div><span>Loading…</span></div>
     </div>
   </div>
 
   <!-- ── History View ─────────────────────────────────────── -->
   <div class="view" id="view-history" hidden>
     <div class="hr-wrap" id="history-content">
-      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+      <div class="empty"><div class="spinner"></div><span>Loading…</span></div>
     </div>
   </div>
 
   <!-- ── Notifications View ──────────────────────────────── -->
   <div class="view" id="view-notifications" hidden>
     <div class="notif-wrap" id="notifications-content">
-      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+      <div class="empty"><div class="spinner"></div><span>Loading…</span></div>
     </div>
   </div>
 
   <!-- ── System View ─────────────────────────────────────── -->
   <div class="view" id="view-system" hidden>
     <div class="sys-wrap" id="system-content">
-      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+      <div class="empty"><div class="spinner"></div><span>Loading…</span></div>
     </div>
   </div>
 
   <!-- ── Plans View ──────────────────────────────────────── -->
   <div class="view" id="view-plans" hidden>
     <div class="pl-wrap" id="plans-content">
-      <div class="empty"><div class="spinner"></div><span>Lädt…</span></div>
+      <div class="empty"><div class="spinner"></div><span>Loading…</span></div>
     </div>
   </div>
 
@@ -2895,7 +2895,7 @@
           </label>
         </div>
         <div class="toggle-row">
-          <span class="toggle-label">E-Mail-Adressen verbergen</span>
+          <span class="toggle-label">Anonymize email addresses</span>
           <label class="tgl">
             <input type="checkbox" id="tog-anonymize">
             <span class="tgl-track"></span>
@@ -2904,17 +2904,17 @@
       </div>
 
       <div class="s-section">
-        <div class="s-section-title">Modelle</div>
+        <div class="s-section-title">Models</div>
         <div class="cost-rows">
           <div class="cost-row">
-            <span class="cost-label">Mindest-Token-Anteil</span>
+            <span class="cost-label">Minimum token share</span>
             <div class="cost-wrap">
               <input type="number" class="cost-field" id="inp-min-share" min="0" max="100" step="1" inputmode="decimal">
               <span class="cost-sym">%</span>
             </div>
           </div>
         </div>
-        <div class="s-hint">Modelle unter diesem Token-Anteil werden bei „Preis/Leistung" und „Preis vs. Intelligenz" ausgeblendet, damit kaum genutzte Modelle die Wertung nicht verzerren. 0 % = aus.</div>
+        <div class="s-hint">Models below this token share are hidden in "Cost/Performance" and "Cost vs. Intelligence" to prevent rarely used models from skewing the ranking. 0 % = off.</div>
       </div>
 
       <button class="save-btn" id="btn-save">Save Settings</button>
@@ -3299,10 +3299,10 @@
       const cost = s.apiCostUSD?.total ?? 0;
       const sub  = s.subscriptionCostUSD?.total ?? 0;
       document.getElementById('ins-cost-roi').textContent =
-        `$${cost.toFixed(0)} API-Äq.  vs $${sub.toFixed(0)} Abo  ${roi.toFixed(1)}×`;
+        `$${cost.toFixed(0)} API eq.  vs $${sub.toFixed(0)} sub  ${roi.toFixed(1)}×`;
       document.getElementById('ins-cost-roi').style.color = QB.roiColor(roi);
       document.getElementById('ins-days-session').textContent =
-        `${s.activeDays ?? 0}/${s.windowDays ?? 30} Tage aktiv · Ø ${s.avgSessionMinutes ?? 0} min/Ses`;
+        `${s.activeDays ?? 0}/${s.windowDays ?? 30} days active · Avg ${s.avgSessionMinutes ?? 0} min/session`;
       renderSparkline(s.sparkline7d ?? []);
     }
 

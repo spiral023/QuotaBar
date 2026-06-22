@@ -36,7 +36,7 @@ function windowInsightHtml(win) {
   const burnStr = (burnRate !== null && burnRate !== undefined)
     ? `${burnRate >= 0 ? '+' : ''}${burnRate.toFixed(1)} %/h`
     : null;
-  const burnTip = 'Ø Verbrauchsrate aus den letzten Messungen.\nBasis: Δ% ÷ Δt (bis zu 5 Snapshots).';
+  const burnTip = 'Ø burn rate from the last measurements.\nBasis: Δ% ÷ Δt (up to 5 snapshots).';
   const burnHtml = burnStr
     ? `<span class="burn-rate" title="${QB.esc(burnTip)}">${QB.esc(burnStr)}</span>`
     : '';
@@ -56,15 +56,15 @@ function windowInsightHtml(win) {
 
   const cls = isCritical ? 'gap-critical' : 'gap-warn';
   let blockInfo = '';
-  let tip = `Hochrechnung: bei aktuellem Tempo wird das Fenster in ~${etaMin}min voll.`;
+  let tip = `Projection: at current pace the window will be full in ~${etaMin}min.`;
   if (win.safetyGapSeconds !== null && win.safetyGapSeconds !== undefined) {
     const blockMin = Math.round(win.safetyGapSeconds / 60);
     if (blockMin > 0) {
       blockInfo = ` · Reset in ${fmtDuration(win.safetyGapSeconds + pace.etaSeconds)}`;
-      tip += `\nDann noch ~${blockMin}min bis zum nächsten Reset.`;
+      tip += `\nThen ~${blockMin}min until the next reset.`;
     }
   }
-  if (burnStr) tip += `\nAktuelles Tempo: ${burnStr}.`;
+  if (burnStr) tip += `\nCurrent pace: ${burnStr}.`;
   const label = `⚠ Limit ~${etaMin}min${blockInfo}`;
   return `<div class="bar-sub-row">
     <span class="safety-gap ${cls}" title="${QB.esc(tip)}">${QB.esc(label)}</span>
@@ -103,7 +103,7 @@ function markerCls(actual, expected) {
 function timeMarkerHtml(actual, expected) {
   if (expected === null || expected === undefined) return '';
   const cls = markerCls(actual, expected);
-  return `<div class="bar-time-marker ${cls}" style="left:${expected.toFixed(1)}%" title="Zeitfortschritt: ${Math.round(expected)}%"></div>`;
+  return `<div class="bar-time-marker ${cls}" style="left:${expected.toFixed(1)}%" title="Time progress: ${Math.round(expected)}%"></div>`;
 }
 
 function providerIconHtml(provider) {
@@ -135,13 +135,13 @@ function tokenDetailInnerHtml(cf) {
     ? `<div class="token-models">${QB.esc(t.models.join(', '))}</div>` : '';
   const missing = cf.missingPricingModels;
   const missingHtml = missing?.length > 0
-    ? `<div class="token-missing" title="Tokens dieser Modelle fehlen in den Kosten — die Summe ist eine Untergrenze">⚠ nicht eingepreist: ${QB.esc(missing.join(', '))}</div>`
+    ? `<div class="token-missing" title="Tokens for these models are not included in the cost — the total is a lower bound">⚠ unpriced: ${QB.esc(missing.join(', '))}</div>`
     : '';
   return `<div class="token-section"><div class="token-grid">${cellsHtml}</div>${modelsHtml}${missingHtml}</div>`;
 }
 
 function fmtWindows(n) {
-  return n.toFixed(1).replace('.', ',');
+  return n.toFixed(1);
 }
 
 function windowBudgetRowHtml(snap, currentUsage) {
@@ -149,9 +149,9 @@ function windowBudgetRowHtml(snap, currentUsage) {
   if (!wb) return '';
   const id = `wb-row-${QB.esc(snap.provider)}`;
   if (wb.learning) {
-    const tip = 'QuotaBar lernt das Verhältnis zwischen 5h- und Weekly-Limit aus deiner Nutzung.\n'
-      + `Fortschritt: ${Math.round(wb.sampleFivePct)} % von 200 % 5h-Nutzung beobachtet.`;
-    return `<div class="wb-wrap" id="${id}"><div class="wb-row"><span class="wb-learning" data-tip="${QB.esc(tip)}">Fenster-Budget: lernt noch…</span></div></div>`;
+    const tip = 'QuotaBar is learning the ratio between the 5h and weekly limit from your usage.\n'
+      + `Progress: ${Math.round(wb.sampleFivePct)} % of 200 % 5h usage observed.`;
+    return `<div class="wb-wrap" id="${id}"><div class="wb-row"><span class="wb-learning" data-tip="${QB.esc(tip)}">Window budget: still learning…</span></div></div>`;
   }
   const adjusted = currentUsage && currentUsage.bonusResetCount > 0;
   const total = adjusted ? currentUsage.totalWindows : wb.windowsPerWeek;
@@ -174,25 +174,25 @@ function windowBudgetRowHtml(snap, currentUsage) {
       (currentPct > 0 ? `<div class="wb-fill${isCurrent ? ' wb-current' : ''}" style="left:${priorPct.toFixed(0)}%;width:${currentPct.toFixed(0)}%"></div>` : '') +
       `</div>`);
   }
-  let tip = `Weekly-Budget umgerechnet in volle 5h-Fenster.\n`
-    + `Gelernt aus deiner Nutzung: ~${fmtWindows(total)} volle 5h-Fenster passen in ein Weekly-Fenster.`;
+  let tip = `Weekly budget converted to full 5h windows.\n`
+    + `Learned from your usage: ~${fmtWindows(total)} full 5h windows fit in one weekly window.`;
   if (adjusted) {
-    tip = `Außerplanmäßiger Reset berücksichtigt.\n`
-      + `Budgetäquivalent: ${currentUsage.resetAdjustedWeeklyPercent.toFixed(0)} % Weekly-Auslastung über alle Reset-Abschnitte.\n`
-      + `Gezählte 5h-Fenster: ${currentUsage.observedUsedWindows}.`;
+    tip = `Unscheduled reset taken into account.\n`
+      + `Budget equivalent: ${currentUsage.resetAdjustedWeeklyPercent.toFixed(0)} % weekly utilization across all reset segments.\n`
+      + `Counted 5h windows: ${currentUsage.observedUsedWindows}.`;
   }
   const adjustedHtml = adjusted
     ? `<div class="wb-adjusted">
-        <span>${Math.round(currentUsage.observedUsedWindows)} gezählt</span>
-        <span>+${fmtWindows(currentUsage.preResetUsedWindows)} vor Reset</span>
+        <span>${Math.round(currentUsage.observedUsedWindows)} counted</span>
+        <span>+${fmtWindows(currentUsage.preResetUsedWindows)} before reset</span>
       </div>`
     : '';
   return `<div class="wb-wrap" id="${id}">
   <div class="wb-row${adjusted ? ' wb-row-adjusted' : ''}" data-tip="${QB.esc(tip)}">
     <div class="wb-bar">${segs.join('')}</div>
     <div class="wb-stats">
-      <span>5h-Fenster: ${fmtWindows(usedWindows)} verbraucht</span>
-      <span>${fmtWindows(remainingWindows)} übrig</span>
+      <span>5h windows: ${fmtWindows(usedWindows)} used</span>
+      <span>${fmtWindows(remainingWindows)} remaining</span>
     </div>
     ${adjustedHtml}
   </div>${bonusBadgeHtml(wb, currentUsage)}
@@ -204,13 +204,13 @@ function bonusBadgeHtml(wb, currentUsage) {
   const hasObservedReset = currentUsage && currentUsage.bonusResetCount > 0;
   if (!hasTrackerBonus && !hasObservedReset) return '';
   const extra = hasTrackerBonus ? wb.bonus.estimatedExtraWindows : currentUsage.preResetUsedWindows;
-  const label = hasTrackerBonus ? 'Bonus-Woche' : 'Reset berücksichtigt';
+  const label = hasTrackerBonus ? 'Bonus week' : 'Reset accounted for';
   const tip = hasTrackerBonus
-    ? 'Außerplanmäßiger Reset erkannt: Das Weekly-Budget wurde erneuert, ohne den '
-      + '7d-Reset-Zeitpunkt zu verschieben. Bis dahin steht effektiv zusätzliches Budget bereit.\n'
-      + 'Die Zahl ist eine grobe Schätzung und durch die verbleibende Zeit begrenzt.'
-    : 'Aus den lokalen Snapshots wurde ein Weekly-Reset innerhalb derselben 7d-Periode rekonstruiert. '
-      + 'Die Fenster-Zeile zählt den Verbrauch vor und nach dem Reset zusammen.';
+    ? 'Unscheduled reset detected: the weekly budget was renewed without shifting the '
+      + '7d reset point. Until then, effectively additional budget is available.\n'
+      + 'The number is a rough estimate and capped by the remaining time.'
+    : 'A weekly reset within the same 7d period was reconstructed from local snapshots. '
+      + 'The window row counts usage before and after the reset together.';
   return `<div class="wb-bonus" data-tip="${QB.esc(tip)}">
     <span class="wb-bonus-icon" aria-hidden="true">⚡</span>
     <span class="wb-bonus-text">${label}${extra >= 0.1
@@ -237,30 +237,30 @@ function windowBudgetCollapseHtml(snap) {
         <path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.5"
               stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      Fenster-Budget
+      Window budget
     </button>
     <div class="token-body">
       <div class="wb-chart-wrap"><canvas id="wb-chart-${QB.esc(snap.provider)}"></canvas></div>
-      <div class="wb-forecast" id="wb-forecast-${QB.esc(snap.provider)}">Lädt…</div>
+      <div class="wb-forecast" id="wb-forecast-${QB.esc(snap.provider)}">Loading…</div>
     </div>
   </div>`;
 }
 
 function wbForecastHtml(fc) {
-  const fmt = (iso) => new Date(iso).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-  const CONF = { high: 'hohe Sicherheit', medium: 'grobe Schätzung', none: 'unsicher' };
-  const kindLbl = fc.primaryKind === 'profile' ? 'Wochenprofil' : 'linear';
+  const fmt = (iso) => new Date(iso).toLocaleString('en-US', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  const CONF = { high: 'high confidence', medium: 'rough estimate', none: 'uncertain' };
+  const kindLbl = fc.primaryKind === 'profile' ? 'weekly profile' : 'linear';
   const confLbl = CONF[fc.confidence] ? `, ${CONF[fc.confidence]}` : '';
   const main = fc.reason === 'insufficient-data'
-    ? 'Keine belastbare Prognose (zu wenig Daten)'
+    ? 'No reliable forecast (insufficient data)'
     : fc.primaryLastsUntilReset
-      ? `Reicht voraussichtlich bis zum Reset (${kindLbl}${confLbl})`
+      ? `Expected to last until reset (${kindLbl}${confLbl})`
       : fc.primaryAt
-        ? `Limit erreicht: ~${fmt(fc.primaryAt)} (${kindLbl}${confLbl})`
-        : 'Keine Prognose möglich';
+        ? `Limit reached: ~${fmt(fc.primaryAt)} (${kindLbl}${confLbl})`
+        : 'No forecast available';
   let burn = '';
-  if (fc.burnRateLastsUntilReset === true) burn = '<br>Bei aktuellem Tempo: reicht bis zum Reset';
-  else if (fc.burnRateAt) burn = `<br>Bei aktuellem Tempo: ~${QB.esc(fmt(fc.burnRateAt))}`;
+  if (fc.burnRateLastsUntilReset === true) burn = '<br>At current pace: will last until reset';
+  else if (fc.burnRateAt) burn = `<br>At current pace: ~${QB.esc(fmt(fc.burnRateAt))}`;
   return `<span class="wb-fc-main">${QB.esc(main)}</span>${burn}`;
 }
 
@@ -286,7 +286,7 @@ async function hydrateWindowBudgets(snapshots, gen) {
           canvas.getContext('2d'), d.series, d.forecast, weekly?.resetsAt ?? null);
       } else {
         canvas.closest('.wb-chart-wrap').innerHTML =
-          '<div class="wb-hint">Kein Verlauf verfügbar — Debug-Logging ist deaktiviert (Einstellungen).</div>';
+          '<div class="wb-hint">No history available — debug logging is disabled (Settings).</div>';
       }
     }
   } catch (e) {
@@ -297,21 +297,21 @@ async function hydrateWindowBudgets(snapshots, gen) {
 function windowBadgeHtml(cf) {
   if (!cf || !cf.windowLabel) return '';
   const days = cf.windowDays ?? '?';
-  const mode = cf.calculationMode === 'actual-span' ? 'tatsächlicher Zeitraum' : 'festes Fenster';
+  const mode = cf.calculationMode === 'actual-span' ? 'actual span' : 'fixed window';
   const text = cf.calculationMode === 'actual-span' ? `${days}d (all)` : cf.windowLabel;
-  const tip = `Kostenfenster: ${cf.windowLabel}\nTage: ${days}\nModus: ${mode}`;
+  const tip = `Cost window: ${cf.windowLabel}\nDays: ${days}\nMode: ${mode}`;
   return `<span class="badge b-window" data-tip="${QB.esc(tip)}">${QB.esc(text)}</span>`;
 }
 
 function costBadgeHtml(cf) {
   if (!cf) return '';
   const roiTip = cf.factor !== null
-    ? `API-Kosten ÷ anteiliger Abo-Preis\nfür ${cf.windowLabel || 'dieses Fenster'} (${cf.windowDays ?? '?'}d).\n1× = Abo-äquivalent.`
+    ? `API cost ÷ proportional subscription price\nfor ${cf.windowLabel || 'this window'} (${cf.windowDays ?? '?'}d).\n1× = subscription equivalent.`
     : '';
   const infoIcon = roiTip
     ? `<i class="info-icon" data-tip="${roiTip}" style="display:inline-flex;margin-left:3px">i</i>`
     : '';
-  if (cf.factor === null) return `<span class="badge b-cost">${QB.esc(cf.label || 'Keine Logs')}</span>`;
+  if (cf.factor === null) return `<span class="badge b-cost">${QB.esc(cf.label || 'No logs')}</span>`;
   const pre = cf.isEstimate ? '~' : '';
   const factorPart = `${pre}${cf.factor.toFixed(2)}× sub`;
   if (cf.apiCostUSD >= 0.005) {
@@ -386,7 +386,7 @@ function renderStandard(snap, name, delay, acctIdx) {
             <span class="card-chevron">›</span>
           </div>
         </div>
-        ${snap.identity?.email ? (QB.settings?.anonymizeAccounts ? `<div class="prov-account" title="${QB.esc(snap.identity.email)}">Konto ${acctIdx}</div>` : `<div class="prov-account" title="Aktives Konto">${QB.esc(snap.identity.email)}</div>`) : ''}
+        ${snap.identity?.email ? (QB.settings?.anonymizeAccounts ? `<div class="prov-account" title="${QB.esc(snap.identity.email)}">Account ${acctIdx}</div>` : `<div class="prov-account" title="Active account">${QB.esc(snap.identity.email)}</div>`) : ''}
         ${bars}
         ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
         ${windowBudgetCollapseHtml(snap)}

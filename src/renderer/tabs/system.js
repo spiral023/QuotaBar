@@ -23,13 +23,13 @@ window.QB = window.QB || {};
   function updatePanelHtml(u) {
     if (!u) return '';
     const map = {
-      disabled: ['Entwicklungs-Build', 'Auto-Updates sind nur im installierten Build aktiv.'],
-      idle: ['Aktuell', 'Du verwendest die neueste Version.'],
-      checking: ['Suche nach Updates…', ''],
-      available: [`Update ${u.newVersion || ''} gefunden`, 'Wird im Hintergrund geladen…'],
-      downloading: [`Lädt ${u.newVersion || ''}…`, `${u.downloadPercent}%`],
-      ready: [`Update ${u.newVersion || ''} bereit`, 'Wird beim Beenden installiert.'],
-      error: ['Update-Fehler', u.error || ''],
+      disabled: ['Development Build', 'Auto-updates are only active in the installed build.'],
+      idle: ['Up to date', 'You are using the latest version.'],
+      checking: ['Checking for updates…', ''],
+      available: [`Update ${u.newVersion || ''} found`, 'Downloading in the background…'],
+      downloading: [`Downloading ${u.newVersion || ''}…`, `${u.downloadPercent}%`],
+      ready: [`Update ${u.newVersion || ''} ready`, 'Will be installed on exit.'],
+      error: ['Update error', u.error || ''],
     };
     const [title, sub] = map[u.status] || ['—', ''];
     const canCheck = u.status !== 'disabled' && u.status !== 'checking' && u.status !== 'downloading';
@@ -47,9 +47,9 @@ window.QB = window.QB || {};
           </div>
           <div style="display:flex;gap:6px">
             <button class="sys-action secondary" id="sys-update-check" ${canCheck ? '' : 'disabled'}
-              style="min-height:28px;padding:0 10px;font-size:9.5px">Auf Updates prüfen</button>
+              style="min-height:28px;padding:0 10px;font-size:9.5px">Check for updates</button>
             ${canInstall ? `<button class="sys-action" id="sys-update-install"
-              style="min-height:28px;padding:0 10px;font-size:9.5px">Jetzt neu starten</button>` : ''}
+              style="min-height:28px;padding:0 10px;font-size:9.5px">Restart now</button>` : ''}
           </div>
         </div>
       </div>`;
@@ -57,24 +57,24 @@ window.QB = window.QB || {};
 
   const DELETE_GROUPS = [
     {
-      id: 'cache', label: 'Cache', note: 'Usage-Snapshots, FX-Kurse',
+      id: 'cache', label: 'Cache', note: 'Usage snapshots, FX rates',
       pathIds: ['app-cache', 'app-fx-cache'],
-      consequence: 'Wird beim nächsten App-Start aus den JSONL-Logs neu berechnet.',
+      consequence: 'Will be recalculated from JSONL logs on next app start.',
     },
     {
-      id: 'logs', label: 'Logs', note: 'App-Log, Notification-Log',
+      id: 'logs', label: 'Logs', note: 'App log, notification log',
       pathIds: ['app-log', 'app-notification-log'],
-      consequence: 'Log-Einträge werden dauerhaft entfernt. Die App läuft weiter.',
+      consequence: 'Log entries are permanently removed. The app continues to run.',
     },
     {
-      id: 'state', label: 'Status-Daten', note: 'Window, Bonus, Notifications',
+      id: 'state', label: 'State Data', note: 'Window, Bonus, Notifications',
       pathIds: ['app-window-history', 'app-window-ratio', 'app-bonus-state', 'app-notification-state'],
-      consequence: 'Window-Tracking und Bonus-Erkennung starten nach Neustart zurück.',
+      consequence: 'Window tracking and bonus detection reset on next restart.',
     },
     {
-      id: 'debug', label: 'Debug-Logs', note: 'Backfill-Daten, Manifeste',
+      id: 'debug', label: 'Debug Logs', note: 'Backfill data, manifests',
       pathIds: ['app-debug'],
-      consequence: 'Backfill wird beim nächsten Start vollständig neu aufgebaut.',
+      consequence: 'Backfill will be fully rebuilt on next start.',
     },
   ];
 
@@ -94,7 +94,7 @@ window.QB = window.QB || {};
       renderUI(wrap, _data);
     } catch (e) {
       console.error('system:get failed', e);
-      wrap.innerHTML = '<div class="empty"><span>Systemdaten nicht verfügbar.</span></div>';
+      wrap.innerHTML = '<div class="empty"><span>System data not available.</span></div>';
     }
   };
 
@@ -121,22 +121,22 @@ window.QB = window.QB || {};
         ${updatePanelHtml(_update)}
         <div class="sys-toolbar">
           <div class="sys-toolbar-main">
-            <div class="sys-title">Lokale Agent- und App-Daten</div>
-            <div class="sys-sub">Scan: ${formatDateTime(report.generatedAt)} · Inhalte von Credentials werden nicht gelesen</div>
+            <div class="sys-title">Local Agent &amp; App Data</div>
+            <div class="sys-sub">Scan: ${formatDateTime(report.generatedAt)} · Credential contents are not read</div>
           </div>
-          <button class="sys-action secondary" id="sys-open-app" title="QuotaBar-Datenordner öffnen">
+          <button class="sys-action secondary" id="sys-open-app" title="Open QuotaBar data folder">
             ${folderIcon()} App
           </button>
-          <button class="sys-action" id="sys-refresh" title="Neu scannen">
+          <button class="sys-action" id="sys-refresh" title="Re-scan">
             ${refreshIcon()} Scan
           </button>
         </div>
 
         <div class="sys-kpis">
-          ${kpi('Agents', `${detected}/${report.agents.length}`, `${connected} verbunden`)}
-          ${kpi('Dateien', fmtCount(report.totals.fileCount), 'erkannte lokale Daten')}
-          ${kpi('Größe', fmtBytes(report.totals.totalBytes), 'Summe bekannter Pfade')}
-          ${kpi('Zuletzt', lastModified ? relativeTime(lastModified) : '—', lastModified ? formatDateTime(lastModified) : 'keine Dateien')}
+          ${kpi('Agents', `${detected}/${report.agents.length}`, `${connected} connected`)}
+          ${kpi('Files', fmtCount(report.totals.fileCount), 'detected local data')}
+          ${kpi('Size', fmtBytes(report.totals.totalBytes), 'sum of known paths')}
+          ${kpi('Last', lastModified ? relativeTime(lastModified) : '—', lastModified ? formatDateTime(lastModified) : 'no files')}
         </div>
 
         <div class="sys-layout">
@@ -147,11 +147,11 @@ window.QB = window.QB || {};
                 <span class="sys-section-count">${report.agents.length}</span>
               </div>
               ${report.agents.map(agentCard).join('')}
-              <div class="sys-note">Status basiert auf bekannten Auth- und Datenpfaden. Es findet keine breite Festplatten-Suche statt.</div>
+              <div class="sys-note">Status is based on known auth and data paths. No broad disk scan is performed.</div>
             </div>
             <div class="sys-panel">
               <div class="sys-section-head">
-                <span class="sys-section-title">Datenarten</span>
+                <span class="sys-section-title">Data types</span>
                 <span class="sys-section-count">${fmtBytes(report.totals.totalBytes)}</span>
               </div>
               <div class="sys-cat-grid">
@@ -163,8 +163,8 @@ window.QB = window.QB || {};
           <div>
             <div class="sys-panel">
               <div class="sys-section-head">
-                <span class="sys-section-title">Agent-Pfade</span>
-                <span class="sys-section-count">${report.agents.reduce((sum, agent) => sum + agent.paths.filter((p) => p.exists).length, 0)} aktiv</span>
+                <span class="sys-section-title">Agent Paths</span>
+                <span class="sys-section-count">${report.agents.reduce((sum, agent) => sum + agent.paths.filter((p) => p.exists).length, 0)} active</span>
               </div>
               <div class="sys-path-list">
                 ${report.agents.flatMap((agent) => agent.paths.map((item) => pathRow(item, agent.name))).join('')}
@@ -177,25 +177,25 @@ window.QB = window.QB || {};
                   <span class="sys-section-count">${fmtBytes(report.app.totals.totalBytes)}</span>
                   <button class="sys-action secondary" id="sys-delete-toggle"
                     style="min-height:26px;padding:0 8px;font-size:9.5px;gap:5px"
-                    title="QuotaBar-Daten löschen">
-                    ${trashIcon()} Löschen
+                    title="Delete QuotaBar data">
+                    ${trashIcon()} Delete
                   </button>
                 </div>
               </div>
               <div class="sys-path-list">
                 ${report.app.paths.map((item) => pathRow(item, 'QuotaBar')).join('')}
               </div>
-              <div class="sys-note">Explorer öffnet nur Ordner aus dieser Liste. Nicht vorhandene Pfade bleiben gesperrt.</div>
+              <div class="sys-note">Explorer only opens folders from this list. Non-existent paths remain locked.</div>
               <div class="sys-delete-panel" id="sys-delete-panel">
                 <div id="sys-del-step-select">
-                  <div class="sys-delete-title">Daten auswählen</div>
+                  <div class="sys-delete-title">Select data</div>
                   ${DELETE_GROUPS.map((g) => deleteGroupRow(g, report.app.paths)).join('')}
                   <div class="sys-del-footer">
                     <div class="sys-del-result" id="sys-del-result"></div>
                     <button class="sys-action secondary" id="sys-delete-cancel"
-                      style="min-height:28px;padding:0 10px;font-size:9.5px">Abbrechen</button>
+                      style="min-height:28px;padding:0 10px;font-size:9.5px">Cancel</button>
                     <button class="sys-action danger" id="sys-delete-confirm" disabled
-                      style="min-height:28px;padding:0 10px;font-size:9.5px">Jetzt löschen</button>
+                      style="min-height:28px;padding:0 10px;font-size:9.5px">Delete now</button>
                   </div>
                 </div>
                 <div id="sys-del-step-confirm" style="display:none"></div>
@@ -261,16 +261,16 @@ window.QB = window.QB || {};
 
       stepConfirm.innerHTML = `
         <div class="sys-del-warn">
-          ${warnIcon()} Diese Aktion kann nicht rückgängig gemacht werden.
+          ${warnIcon()} This action cannot be undone.
         </div>
         ${rows}
         <div class="sys-del-footer" style="margin-top:8px">
           <div class="sys-del-result" id="sys-del-result2"></div>
           <button class="sys-action secondary" id="sys-del-back"
-            style="min-height:28px;padding:0 10px;font-size:9.5px">Zurück</button>
+            style="min-height:28px;padding:0 10px;font-size:9.5px">Back</button>
           <button class="sys-action danger" id="sys-del-execute"
             style="min-height:28px;padding:0 10px;font-size:9.5px">
-            Wirklich löschen · ${fmtBytes(totalBytes)}
+            Confirm delete · ${fmtBytes(totalBytes)}
           </button>
         </div>`;
 
@@ -287,7 +287,7 @@ window.QB = window.QB || {};
         try {
           const result = await QB.ipc.invoke('system:delete-app-data', groupIds);
           if (result?.ok) {
-            if (resultEl) resultEl.textContent = `${result.deleted.length} Datei(en) gelöscht`;
+            if (resultEl) resultEl.textContent = `${result.deleted.length} file(s) deleted`;
             _data = null;
             setTimeout(async () => {
               try {
@@ -296,13 +296,13 @@ window.QB = window.QB || {};
               } catch (e) { console.error('system refresh after delete failed', e); }
             }, 1200);
           } else {
-            if (resultEl) { resultEl.textContent = 'Fehler beim Löschen'; resultEl.classList.add('error'); }
+            if (resultEl) { resultEl.textContent = 'Error deleting'; resultEl.classList.add('error'); }
             btn.disabled = false;
             wrap.querySelector('#sys-del-back').disabled = false;
           }
         } catch (e) {
           console.error('system:delete-app-data failed', e);
-          if (resultEl) { resultEl.textContent = 'Fehler beim Löschen'; resultEl.classList.add('error'); }
+          if (resultEl) { resultEl.textContent = 'Error deleting'; resultEl.classList.add('error'); }
           btn.disabled = false;
           wrap.querySelector('#sys-del-back').disabled = false;
         }
@@ -329,12 +329,10 @@ window.QB = window.QB || {};
     });
 
     wrap.querySelector('#sys-update-check')?.addEventListener('click', async () => {
-      // Sofort optimistisch "Suche…" anzeigen
-      _update = { ...(_update || {}), status: 'checking', error: null };
+        _update = { ...(_update || {}), status: 'checking', error: null };
       if (_data) renderUI(wrap, _data);
-      // Check anstoßen (feuert asynchron im Main-Prozess)
       try { await QB.ipc.invoke('update:check'); } catch (e) { console.error('update:check failed', e); }
-      // Ergebnis trifft asynchron ein → kurz nachpollen, bis sich der Status ändert
+      // Poll briefly until status changes
       for (let i = 0; i < 6; i++) {
         await new Promise((resolve) => setTimeout(resolve, 600));
         await loadUpdateState(false);
@@ -358,7 +356,7 @@ window.QB = window.QB || {};
       return group ? sum + groupSizeBytes(group.pathIds, _data?.app?.paths ?? []) : sum;
     }, 0);
     btn.disabled = selected.length === 0;
-    btn.textContent = selected.length === 0 ? 'Jetzt löschen' : `Jetzt löschen · ${fmtBytes(totalBytes)}`;
+    btn.textContent = selected.length === 0 ? 'Delete now' : `Delete now · ${fmtBytes(totalBytes)}`;
   }
 
   function deleteGroupRow(group, appPaths) {
@@ -407,11 +405,11 @@ window.QB = window.QB || {};
       </div>
       <div class="sys-agent-stats">
         <div class="sys-mini-stat">
-          <div class="sys-mini-label">Dateien</div>
+          <div class="sys-mini-label">Files</div>
           <div class="sys-mini-value">${fmtCount(agent.totals.fileCount)}</div>
         </div>
         <div class="sys-mini-stat">
-          <div class="sys-mini-label">Größe</div>
+          <div class="sys-mini-label">Size</div>
           <div class="sys-mini-value">${fmtBytes(agent.totals.totalBytes)}</div>
         </div>
       </div>
@@ -428,7 +426,7 @@ window.QB = window.QB || {};
 
   function pathRow(item, owner) {
     const exists = item.exists;
-    const meta = exists ? `${fmtCount(item.fileCount)} · ${fmtBytes(item.totalBytes)}` : 'nicht gefunden';
+    const meta = exists ? `${fmtCount(item.fileCount)} · ${fmtBytes(item.totalBytes)}` : 'not found';
     const title = `${owner} · ${item.label}`;
     return `<div class="sys-path-row">
       <div class="sys-path-label">
@@ -438,14 +436,14 @@ window.QB = window.QB || {};
       <div class="sys-path-value" title="${QB.esc(item.path)}">${QB.esc(item.path)}</div>
       <div class="sys-path-meta">${QB.esc(meta)}</div>
       <button class="sys-open-btn" ${item.openPath ? `data-open-path="${QB.esc(item.openPath)}"` : 'disabled'}
-              title="${item.openPath ? 'Im Explorer öffnen' : 'Pfad nicht vorhanden'}" aria-label="Im Explorer öffnen">
+              title="${item.openPath ? 'Open in Explorer' : 'Path not found'}" aria-label="Open in Explorer">
         ${folderIcon()}
       </button>
     </div>`;
   }
 
   function statusLabel(status) {
-    return ({ connected: 'Verbunden', detected: 'Daten', not_found: 'Fehlt' })[status] ?? status;
+    return ({ connected: 'Connected', detected: 'Data', not_found: 'Missing' })[status] ?? status;
   }
 
   function categoryLabel(category) {
@@ -454,7 +452,7 @@ window.QB = window.QB || {};
 
   function fmtCount(n) {
     if (!n) return '0';
-    return Number(n).toLocaleString('de-DE');
+    return Number(n).toLocaleString('en-US');
   }
 
   function fmtBytes(bytes) {
@@ -477,7 +475,7 @@ window.QB = window.QB || {};
   function formatDateTime(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
-    return d.toLocaleString('de-DE', {
+    return d.toLocaleString('en-US', {
       day: '2-digit', month: '2-digit', year: '2-digit',
       hour: '2-digit', minute: '2-digit',
     });
@@ -487,7 +485,7 @@ window.QB = window.QB || {};
     const ms = Date.now() - new Date(iso).getTime();
     if (!isFinite(ms)) return '—';
     const min = Math.max(0, Math.round(ms / 60000));
-    if (min < 1) return 'gerade eben';
+    if (min < 1) return 'just now';
     if (min < 60) return `${min} min`;
     const hours = Math.round(min / 60);
     if (hours < 48) return `${hours} h`;

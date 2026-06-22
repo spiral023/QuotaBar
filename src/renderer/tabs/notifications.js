@@ -14,56 +14,56 @@ const sevColor = sev => SEV_COLOR[sev] ?? 'var(--t300)';
 // ── Regeldefinitionen (inkl. Severity für die Akzentleiste) ─────────────────
 const RULE_GROUPS = [
   {
-    label: 'Kontingent-Fenster',
+    label: 'Quota Window',
     rules: [
-      { id: 'confirmedReset',  sev: 'info',     label: 'Bestätigter Reset',    tooltip: 'Das Kontingent wurde zur erwarteten Zeit zurückgesetzt – ein neuer Zyklus hat begonnen.' },
-      { id: 'unexpectedReset', sev: 'watch',    label: 'Unerwarteter Reset',   tooltip: 'Ein Reset außerhalb des normalen Zyklus wurde erkannt, z.B. nach einem Planwechsel.' },
-      { id: 'resetSoon',       sev: 'info',     label: 'Reset in Kürze',       tooltip: 'Das Kontingent setzt sich bald zurück.',
-        extras: [{ key: 'minutesBeforeReset', label: 'Min. vor Reset', type: 'number', min: 1, max: 120 }] },
-      { id: 'highUsage',       sev: 'warning',  label: 'Hoher Verbrauch',      tooltip: 'Eine hohe Verbrauchsschwelle wurde überschritten.',
-        extras: [{ key: 'thresholdPercent', label: 'Schwelle %', type: 'number', min: 50, max: 99 }] },
-      { id: 'criticalUsage',   sev: 'critical', label: 'Kritischer Verbrauch', tooltip: 'Kritische Schwelle erreicht – das Kontingent wird bald erschöpft sein.',
-        extras: [{ key: 'thresholdPercent', label: 'Schwelle %', type: 'number', min: 50, max: 99 }] },
+      { id: 'confirmedReset',  sev: 'info',     label: 'Confirmed Reset',    tooltip: 'Quota was reset at the expected time – a new cycle has started.' },
+      { id: 'unexpectedReset', sev: 'watch',    label: 'Unexpected Reset',   tooltip: 'A reset outside the normal cycle was detected, e.g. after a plan change.' },
+      { id: 'resetSoon',       sev: 'info',     label: 'Reset Soon',         tooltip: 'Quota will reset soon.',
+        extras: [{ key: 'minutesBeforeReset', label: 'Min. before reset', type: 'number', min: 1, max: 120 }] },
+      { id: 'highUsage',       sev: 'warning',  label: 'High Usage',         tooltip: 'A high usage threshold has been exceeded.',
+        extras: [{ key: 'thresholdPercent', label: 'Threshold %', type: 'number', min: 50, max: 99 }] },
+      { id: 'criticalUsage',   sev: 'critical', label: 'Critical Usage',     tooltip: 'Critical threshold reached – quota will be exhausted soon.',
+        extras: [{ key: 'thresholdPercent', label: 'Threshold %', type: 'number', min: 50, max: 99 }] },
     ],
   },
   {
-    label: 'Tempo & Prognose',
+    label: 'Pace & Forecast',
     rules: [
-      { id: 'projectedDepletion', sev: 'warning', label: 'Erschöpfung vor Reset', tooltip: 'Beim aktuellen Tempo wird das Kontingent vor dem nächsten Reset aufgebraucht.' },
-      { id: 'farAhead',           sev: 'watch',   label: 'Deutlich zu schnell',  tooltip: 'Verbrauchstempo liegt deutlich über dem geplanten Tagesdurchschnitt.',
+      { id: 'projectedDepletion', sev: 'warning', label: 'Depletion Before Reset', tooltip: 'At the current pace, the quota will run out before the next reset.' },
+      { id: 'farAhead',           sev: 'watch',   label: 'Much Too Fast',          tooltip: 'Consumption rate is significantly above the planned daily average.',
         extras: [{ key: 'minDeltaPercent', label: 'Min. Delta %', type: 'number', min: 5, max: 50 }] },
-      { id: 'farBehind',          sev: 'info',    label: 'Deutlich zu langsam',  tooltip: 'Deutlich weniger Nutzung als möglich. Noch viel Kontingent verfügbar.',
+      { id: 'farBehind',          sev: 'info',    label: 'Much Too Slow',          tooltip: 'Significantly less usage than possible. Plenty of quota remaining.',
         extras: [{ key: 'minDeltaPercent', label: 'Min. Delta %', type: 'number', min: 5, max: 50 }] },
     ],
   },
   {
-    label: 'Historische Nutzung',
+    label: 'Historical Usage',
     rules: [
-      { id: 'freshQuotaWorkWindow',     sev: 'info',    label: 'Frisches Kontingent (Arbeitszeit)', tooltip: 'Nach einem Reset steht ein frisches Arbeitsfenster bereit.',
-        extras: [{ key: 'maxUsedPercent', label: 'Max. Verbrauch %', type: 'number', min: 5, max: 50 }] },
-      { id: 'quotaIdleAfterReset',      sev: 'info',    label: 'Kontingent ungenutzt',              tooltip: 'Das Kontingent wurde zurückgesetzt, aber keine Aktivität erkannt.' },
-      { id: 'weeklyReserveOpportunity', sev: 'info',    label: 'Wöchentliche Reserve',              tooltip: 'Wöchentliches Restbudget kann noch eingesetzt werden, bevor der Zyklus endet.' },
-      { id: 'rolling5hOutputSpike',     sev: 'watch',   label: 'Output-Token-Spike (5h)',           tooltip: 'Ungewöhnlich hoher Output-Token-Anstieg im gleitenden 5h-Fenster.' },
-      { id: 'rolling5hProxyLimit',      sev: 'warning', label: 'Proxy-Limit (5h)',                  tooltip: 'Output-Token-Proxy-Schwelle im 5h-Fenster erreicht.',
-        extras: [{ key: 'thresholdPercent', label: 'Schwelle %', type: 'number', min: 50, max: 100 }, { key: 'customOutputTokenLimit', label: 'Token-Limit', type: 'number', min: 10000, max: 5000000 }] },
-      { id: 'burnRateSpike',            sev: 'warning', label: 'Burn-Rate ungewöhnlich hoch',       tooltip: 'Token-Verbrauchsrate pro Stunde ist ungewöhnlich hoch.',
-        extras: [{ key: 'factor', label: 'Faktor', type: 'number', min: 1.1, max: 10, step: 0.1 }] },
+      { id: 'freshQuotaWorkWindow',     sev: 'info',    label: 'Fresh Quota (Work Hours)',  tooltip: 'A fresh work window is available after a reset.',
+        extras: [{ key: 'maxUsedPercent', label: 'Max. Usage %', type: 'number', min: 5, max: 50 }] },
+      { id: 'quotaIdleAfterReset',      sev: 'info',    label: 'Quota Idle',                tooltip: 'Quota was reset but no activity detected.' },
+      { id: 'weeklyReserveOpportunity', sev: 'info',    label: 'Weekly Reserve',            tooltip: 'Weekly remaining budget can still be used before the cycle ends.' },
+      { id: 'rolling5hOutputSpike',     sev: 'watch',   label: 'Output Token Spike (5h)',   tooltip: 'Unusually high output token surge in the rolling 5h window.' },
+      { id: 'rolling5hProxyLimit',      sev: 'warning', label: 'Proxy Limit (5h)',          tooltip: 'Output token proxy threshold reached in the 5h window.',
+        extras: [{ key: 'thresholdPercent', label: 'Threshold %', type: 'number', min: 50, max: 100 }, { key: 'customOutputTokenLimit', label: 'Token Limit', type: 'number', min: 10000, max: 5000000 }] },
+      { id: 'burnRateSpike',            sev: 'warning', label: 'Burn Rate Unusually High',  tooltip: 'Token consumption rate per hour is unusually high.',
+        extras: [{ key: 'factor', label: 'Factor', type: 'number', min: 1.1, max: 10, step: 0.1 }] },
     ],
   },
   {
-    label: 'Wirtschaftlichkeit',
+    label: 'Cost Efficiency',
     rules: [
-      { id: 'cacheHitDrop',        sev: 'watch',   label: 'Cache-Hit-Rate gesunken', tooltip: 'Die Prompt-Cache-Trefferrate ist gesunken. Höhere Kosten möglich.' },
-      { id: 'expensiveModelShare', sev: 'watch',   label: 'Teure Modelle (Spike)',   tooltip: 'Plötzlicher Anstieg bei teuren Modellen (z.B. Opus).',
-        extras: [{ key: 'thresholdPercent', label: 'Schwelle %', type: 'number', min: 5, max: 100 }] },
-      { id: 'roiMilestone',        sev: 'info',    label: 'ROI-Meilenstein',         tooltip: 'Ein ROI-Meilenstein wurde basierend auf Nutzungsmustern erreicht.' },
+      { id: 'cacheHitDrop',        sev: 'watch',   label: 'Cache Hit Rate Dropped',  tooltip: 'Prompt cache hit rate has dropped. Higher costs possible.' },
+      { id: 'expensiveModelShare', sev: 'watch',   label: 'Expensive Models (Spike)', tooltip: 'Sudden spike in expensive model usage (e.g. Opus).',
+        extras: [{ key: 'thresholdPercent', label: 'Threshold %', type: 'number', min: 5, max: 100 }] },
+      { id: 'roiMilestone',        sev: 'info',    label: 'ROI Milestone',            tooltip: 'An ROI milestone was reached based on usage patterns.' },
     ],
   },
   {
-    label: 'Datenqualität',
+    label: 'Data Quality',
     rules: [
-      { id: 'providerDataHealth', sev: 'watch', label: 'Daten veraltet / wiederhergestellt', tooltip: 'API-Daten wurden längere Zeit nicht aktualisiert oder sind wieder verfügbar.',
-        extras: [{ key: 'staleMinutes', label: 'Minuten bis Alert', type: 'number', min: 1, max: 60 }] },
+      { id: 'providerDataHealth', sev: 'watch', label: 'Data Stale / Restored', tooltip: 'API data has not been updated for a while or is available again.',
+        extras: [{ key: 'staleMinutes', label: 'Minutes until alert', type: 'number', min: 1, max: 60 }] },
     ],
   },
 ];
@@ -78,13 +78,13 @@ let lastFiredText = '';
 QB.renderNotifications = async function () {
   const wrap = document.getElementById('notifications-content');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="empty"><div class="spinner"></div><span>Lädt…</span></div>';
+  wrap.innerHTML = '<div class="empty"><div class="spinner"></div><span>Loading…</span></div>';
 
   let settings;
   try {
     settings = await QB.ipc.invoke('settings:get');
   } catch {
-    wrap.innerHTML = '<div class="empty"><span>Fehler beim Laden der Einstellungen.</span></div>';
+    wrap.innerHTML = '<div class="empty"><span>Failed to load settings.</span></div>';
     return;
   }
 
@@ -111,12 +111,12 @@ function buildNotificationsHTML(ns, rules) {
       <div class="notif-head-top">
         <div class="notif-head-titles">
           <div class="notif-head-title">
-            Benachrichtigungen
-            <span class="notif-paused-badge">Pausiert</span>
+            Notifications
+            <span class="notif-paused-badge">Paused</span>
           </div>
           <div class="notif-head-sub" id="notif-status-sub">—</div>
         </div>
-        <label class="notif-master-wrap tgl" title="Alle Benachrichtigungen aktivieren">
+        <label class="notif-master-wrap tgl" title="Enable all notifications">
           <input type="checkbox" id="notif-master" ${enabled ? 'checked' : ''}>
           <span class="tgl-track"></span>
         </label>
@@ -125,10 +125,10 @@ function buildNotificationsHTML(ns, rules) {
       <div class="notif-segment" data-active="rules">
         <span class="notif-segment-thumb"></span>
         <button class="notif-seg-btn active" data-seg="rules">
-          Regeln <span class="notif-seg-count" id="notif-seg-rules">0</span>
+          Rules <span class="notif-seg-count" id="notif-seg-rules">0</span>
         </button>
         <button class="notif-seg-btn" data-seg="history">
-          Verlauf <span class="notif-seg-count" id="notif-seg-history">0</span>
+          History <span class="notif-seg-count" id="notif-seg-history">0</span>
         </button>
       </div>
     </div>
@@ -139,17 +139,17 @@ function buildNotificationsHTML(ns, rules) {
         ${buildRuleGroups(rules)}
       </div>
       <div class="notif-view" data-view="history" hidden>
-        <div id="notif-history-list"><div class="empty" style="padding:24px 0"><span>Lädt…</span></div></div>
+        <div id="notif-history-list"><div class="empty" style="padding:24px 0"><span>Loading…</span></div></div>
       </div>
     </div>
 
     <div class="notif-savebar" id="notif-savebar">
       <div class="notif-savebar-info">
         <span class="notif-savebar-dot"></span>
-        <span id="notif-savebar-text">Keine Änderungen</span>
+        <span id="notif-savebar-text">No changes</span>
       </div>
-      <button class="notif-btn notif-btn-ghost" id="notif-discard-btn">Verwerfen</button>
-      <button class="notif-btn notif-btn-save" id="notif-save-btn">Speichern</button>
+      <button class="notif-btn notif-btn-ghost" id="notif-discard-btn">Discard</button>
+      <button class="notif-btn notif-btn-save" id="notif-save-btn">Save</button>
     </div>
   `;
 }
@@ -161,15 +161,15 @@ function buildGlobalPanel(ns) {
     <div class="notif-panel" id="notif-global-panel">
       <button class="notif-collap-head" data-collap>
         ${chevron()}
-        <span class="notif-collap-title">Globale Einstellungen</span>
-        <span class="notif-collap-meta">Stille Stunden · Abstand</span>
+        <span class="notif-collap-title">Global Settings</span>
+        <span class="notif-collap-meta">Quiet Hours · Gap</span>
       </button>
       <div class="notif-collap-body"><div class="notif-collap-inner"><div class="notif-collap-pad">
 
         <div class="notif-set-row">
           <div class="notif-set-col">
-            <div class="notif-set-label">Stille Stunden</div>
-            <div class="notif-set-hint">Nur kritische Meldungen in diesem Zeitraum</div>
+            <div class="notif-set-label">Quiet Hours</div>
+            <div class="notif-set-hint">Only critical alerts during this period</div>
           </div>
           <label class="tgl">
             <input type="checkbox" id="notif-quiet-enabled" ${quietOn ? 'checked' : ''}>
@@ -177,20 +177,20 @@ function buildGlobalPanel(ns) {
           </label>
         </div>
         <div class="notif-set-row notif-times" id="notif-quiet-times" ${quietOn ? '' : 'hidden'}>
-          <div class="notif-set-label">Von</div>
+          <div class="notif-set-label">From</div>
           <span class="notif-time-field"><input class="cost-field" type="time" id="notif-quiet-start" value="${ns.quietHours?.start ?? '22:30'}"></span>
-          <div class="notif-set-label">Bis</div>
+          <div class="notif-set-label">To</div>
           <span class="notif-time-field"><input class="cost-field" type="time" id="notif-quiet-end" value="${ns.quietHours?.end ?? '08:00'}"></span>
         </div>
 
         <div class="notif-set-row" style="display:block">
-          <div class="notif-set-label">Mindestabstand zwischen Meldungen</div>
+          <div class="notif-set-label">Minimum gap between alerts</div>
           <div class="notif-gap" id="notif-gap-pills">
             ${[0, 5, 15, 30].map(v =>
-              `<button class="pill${gap === v ? ' active' : ''}" data-gap="${v}">${v === 0 ? 'Aus' : v + ' min'}</button>`
+              `<button class="pill${gap === v ? ' active' : ''}" data-gap="${v}">${v === 0 ? 'Off' : v + ' min'}</button>`
             ).join('')}
           </div>
-          <button class="notif-test-btn" id="notif-test-btn">Test-Benachrichtigung senden</button>
+          <button class="notif-test-btn" id="notif-test-btn">Send test notification</button>
         </div>
 
       </div></div></div>
@@ -370,7 +370,7 @@ function bindNotificationsEvents(wrap) {
     });
   });
 
-  // Beliebige Feld-Änderung → Save-Bar
+  // Any field change → save bar
   wrap.querySelectorAll('.notif-cooldown-field, .notif-extra-field, #notif-quiet-start, #notif-quiet-end')
     .forEach(inp => inp.addEventListener('input', () => updateSaveBar(wrap)));
   wrap.querySelector('#notif-master')?.addEventListener('change', () => updateSaveBar(wrap));
@@ -412,8 +412,8 @@ function updateStatusSub(wrap, activeTotal) {
   if (activeTotal == null) {
     activeTotal = wrap.querySelectorAll('.notif-rule-toggle:checked').length;
   }
-  let text = `${activeTotal} von ${RULE_COUNT} Regeln aktiv`;
-  if (lastFiredText) text += ` · zuletzt ${lastFiredText}`;
+  let text = `${activeTotal} of ${RULE_COUNT} rules active`;
+  if (lastFiredText) text += ` · last ${lastFiredText}`;
   sub.textContent = text;
 }
 
@@ -457,7 +457,7 @@ function updateSaveBar(wrap) {
   const diff = countChanges(JSON.parse(initialSnapshot), current);
   const txt = wrap.querySelector('#notif-savebar-text');
   if (diff > 0) {
-    if (txt) txt.textContent = diff === 1 ? '1 Änderung' : `${diff} Änderungen`;
+    if (txt) txt.textContent = diff === 1 ? '1 change' : `${diff} changes`;
     bar.classList.add('is-open');
   } else {
     bar.classList.remove('is-open');
@@ -468,18 +468,18 @@ async function saveNotificationSettings(wrap) {
   const btn  = wrap.querySelector('#notif-save-btn');
   const bar  = wrap.querySelector('#notif-savebar');
   btn.disabled = true;
-  btn.textContent = 'Speichert…';
+  btn.textContent = 'Saving…';
 
   const payload = collectPayload(wrap);
 
   try {
     await QB.ipc.invoke('notification:settings:save', payload);
     initialSnapshot = JSON.stringify(payload);
-    btn.textContent = '✓ Gespeichert';
+    btn.textContent = '✓ Saved';
     bar?.classList.remove('is-open');
-    setTimeout(() => { btn.textContent = 'Speichern'; btn.disabled = false; }, 1600);
+    setTimeout(() => { btn.textContent = 'Save'; btn.disabled = false; }, 1600);
   } catch (e) {
-    btn.textContent = 'Fehler – erneut';
+    btn.textContent = 'Error – retry';
     btn.disabled = false;
     console.error(e);
   }
@@ -498,12 +498,12 @@ function ruleSeverity(ruleId, fallback) {
 function formatRelative(date) {
   const diffMs = Date.now() - date.getTime();
   const min = Math.round(diffMs / 60000);
-  if (min < 1) return 'gerade eben';
-  if (min < 60) return `vor ${min} min`;
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
   const h = Math.round(min / 60);
-  if (h < 24) return `vor ${h} h`;
+  if (h < 24) return `${h} h ago`;
   const d = Math.round(h / 24);
-  return `vor ${d} ${d === 1 ? 'Tag' : 'Tagen'}`;
+  return `${d} ${d === 1 ? 'day' : 'days'} ago`;
 }
 
 async function loadNotificationHistory(wrap, rules) {
@@ -520,14 +520,14 @@ async function loadNotificationHistory(wrap, rules) {
     }
 
     if (!history || history.length === 0) {
-      list.innerHTML = '<div class="empty notif-hist-empty"><span>Noch keine Meldungen.</span></div>';
+      list.innerHTML = '<div class="empty notif-hist-empty"><span>No alerts yet.</span></div>';
       return;
     }
 
     list.className = 'notif-hist';
     list.innerHTML = history.map((e, i) => {
-      const time = new Date(e.firedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-      const date = new Date(e.firedAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+      const time = new Date(e.firedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const date = new Date(e.firedAt).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit' });
       const providerLabel = e.provider ? e.provider[0].toUpperCase() + e.provider.slice(1) : '';
       const providerCls = e.provider === 'claude' ? 'is-claude' : e.provider === 'codex' ? 'is-codex' : '';
       const sev = ruleSeverity(e.ruleId, e.severity);
@@ -535,9 +535,9 @@ async function loadNotificationHistory(wrap, rules) {
       const ruleEnabled = rules[e.ruleId]?.enabled !== false;
       const delay = `animation-delay:${Math.min(i, 14) * 40}ms`;
       const muteBtn = isMuteEntry ? '' : `
-        <button class="notif-hist-mute" data-rule="${e.ruleId}" ${ruleEnabled ? '' : 'disabled'}
-                title="Benachrichtigungstyp „${ruleLabel(e.ruleId)}“ dauerhaft deaktivieren">
-          ${ruleEnabled ? 'Stumm' : 'Deaktiviert'}
+        <button class=”notif-hist-mute” data-rule=”${e.ruleId}” ${ruleEnabled ? '' : 'disabled'}
+                title=”Permanently disable notification type &quot;${ruleLabel(e.ruleId)}&quot;”>
+          ${ruleEnabled ? 'Mute' : 'Disabled'}
         </button>`;
       return `
         <div class="notif-hist-entry notif-anim${isMuteEntry ? ' notif-hist-muted' : ''}" style="--sev:${sevColor(sev)};${delay}">
@@ -547,7 +547,7 @@ async function loadNotificationHistory(wrap, rules) {
             ${e.windowName ? `<span class="notif-hist-window">${e.windowName}</span>` : ''}
             ${muteBtn}
           </div>
-          <div class="notif-hist-body">${isMuteEntry ? `Typ „${ruleLabel(e.ruleId)}“ deaktiviert` : e.body}</div>
+          <div class=”notif-hist-body”>${isMuteEntry ? `Type &quot;${ruleLabel(e.ruleId)}&quot; disabled` : e.body}</div>
           <div class="notif-hist-reason">${e.reason}</div>
         </div>
       `;
@@ -557,7 +557,7 @@ async function loadNotificationHistory(wrap, rules) {
       btn.addEventListener('click', () => void muteRuleFromHistory(wrap, rules, btn.dataset.rule));
     });
   } catch (e) {
-    list.innerHTML = '<div class="empty notif-hist-empty"><span>Verlauf nicht verfügbar.</span></div>';
+    list.innerHTML = '<div class="empty notif-hist-empty"><span>History not available.</span></div>';
     console.error(e);
   }
 }
@@ -569,24 +569,23 @@ async function muteRuleFromHistory(wrap, rules, ruleId) {
     });
     if (rules[ruleId]) rules[ruleId].enabled = false; else rules[ruleId] = { enabled: false };
 
-    // Verlauf-Buttons synchronisieren
     wrap.querySelectorAll(`.notif-hist-mute[data-rule="${ruleId}"]`).forEach(b => {
       b.disabled = true;
-      b.textContent = 'Deaktiviert';
+      b.textContent = 'Disabled';
     });
-    // Regel-Toggle + Karte im Regeln-Tab synchronisieren
+    // Sync rule toggle + card in rules tab
     const toggle = wrap.querySelector(`.notif-rule-toggle[data-rule="${ruleId}"]`);
     if (toggle) {
       toggle.checked = false;
       toggle.closest('.notif-rule')?.classList.replace('is-on', 'is-off');
     }
     refreshCounts(wrap);
-    // Snapshot mitziehen, damit die direkte Mute-Aktion keine "ungespeicherte Änderung" auslöst
+    // Sync snapshot so direct mute doesn't trigger an "unsaved change"
     const snap = JSON.parse(initialSnapshot || '{}');
     if (snap.rules?.[ruleId]) snap.rules[ruleId].enabled = false;
     initialSnapshot = JSON.stringify(snap);
     updateSaveBar(wrap);
   } catch (e) {
-    console.error('Mute via Verlauf fehlgeschlagen', e);
+    console.error('Mute via history failed', e);
   }
 }

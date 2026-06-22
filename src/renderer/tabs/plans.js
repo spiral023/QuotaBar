@@ -26,7 +26,7 @@ QB.renderPlans = async function renderPlans() {
     _renderUI();
   } catch (e) {
     console.error('plans:get failed', e);
-    c.innerHTML = '<div class="empty"><span>Fehler beim Laden</span></div>';
+    c.innerHTML = '<div class="empty"><span>Failed to load</span></div>';
   }
 };
 
@@ -74,7 +74,7 @@ function _fmtAmount(p) {
 
 function _fmtDate(s) {
   if (!s) return '';
-  return new Date(s).toLocaleDateString('de-AT', { day: '2-digit', month: 'short', year: '2-digit' });
+  return new Date(s).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: '2-digit' });
 }
 
 function _nowLocalIso() {
@@ -89,21 +89,21 @@ function _rowHtml(p) {
   const active = _isActive(p);
   const end = p.endsAt
     ? _fmtDate(p.endsAt)
-    : '<span class="pl-row-open">läuft</span>';
+    : '<span class="pl-row-open">ongoing</span>';
   return `
     <div class="pl-row${active ? ' is-active' : ''}">
       <div class="pl-row-info">
         <div class="pl-row-top">
           <span class="pl-row-name">${QB.esc(p.name)}</span>
-          ${active ? '<span class="pl-badge">aktiv</span>' : ''}
+          ${active ? '<span class="pl-badge">active</span>' : ''}
         </div>
         <div class="pl-row-range">${_fmtDate(p.startsAt)} <span class="pl-row-dash">–</span> ${end}</div>
       </div>
-      <div class="pl-row-amt">${_fmtAmount(p)}<span class="pl-row-cyc">/Mo</span></div>
+      <div class="pl-row-amt">${_fmtAmount(p)}<span class="pl-row-cyc">/mo</span></div>
       <div class="pl-row-actions">
-        <button class="pl-mini" data-act="edit" data-id="${p.id}" title="Bearbeiten">Bearbeiten</button>
-        ${active ? `<button class="pl-mini" data-act="change" data-id="${p.id}" title="Neuen Preis/Stufe ab heute">Preis ändern ab…</button>` : ''}
-        <button class="pl-mini pl-danger" data-act="del" data-id="${p.id}" title="Löschen" aria-label="Löschen">
+        <button class="pl-mini" data-act="edit" data-id="${p.id}" title="Edit">Edit</button>
+        ${active ? `<button class="pl-mini" data-act="change" data-id="${p.id}" title="New price/tier from today">Change price from…</button>` : ''}
+        <button class="pl-mini pl-danger" data-act="del" data-id="${p.id}" title="Delete" aria-label="Delete">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
         </button>
       </div>
@@ -119,10 +119,10 @@ function _cardHtml(prov) {
   const body = list.length
     ? `<div class="pl-list">${list.map(_rowHtml).join('')}</div>`
     : `<div class="pl-empty">
-         <div class="pl-empty-text">Noch kein Abo für ${prov.label} hinterlegt</div>
+         <div class="pl-empty-text">No subscription added for ${prov.label} yet</div>
          <button class="pl-add-cta" data-act="add" data-prov="${prov.id}">
            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-           Abo hinzufügen
+           Add subscription
          </button>
        </div>`;
 
@@ -132,10 +132,10 @@ function _cardHtml(prov) {
         <div class="pl-card-titlewrap">
           <span class="pl-card-dot"></span>
           <span class="pl-card-title">${prov.label}</span>
-          ${hasActive ? '' : (list.length ? '<span class="pl-card-sub">kein aktives Abo</span>' : '')}
+          ${hasActive ? '' : (list.length ? '<span class="pl-card-sub">no active subscription</span>' : '')}
         </div>
-        ${list.length ? `<button class="pl-mini pl-add-inline" data-act="add" data-prov="${prov.id}" title="Weiteres Abo hinzufügen">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Abo
+        ${list.length ? `<button class="pl-mini pl-add-inline" data-act="add" data-prov="${prov.id}" title="Add another subscription">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add
         </button>` : ''}
       </header>
       ${body}
@@ -151,7 +151,7 @@ function _renderUI() {
       ${_fxEstimated
     ? `<div class="pl-fx-note">
            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
-           Wechselkurse teils geschätzt (offline / kein Kurs verfügbar).
+           Exchange rates partially estimated (offline / no rate available).
          </div>`
     : ''}
     </div>`;
@@ -183,7 +183,7 @@ function _onAction(ds) {
       _mode: 'change', _fromId: o.id,
     };
   } else if (ds.act === 'del') {
-    if (confirm('Dieses Abo löschen?')) {
+    if (confirm('Delete this subscription?')) {
       _plans = _plans.filter((p) => p.id !== ds.id);
       _save().then(_renderUI).catch((e) => console.error('plans:save failed', e));
     }
@@ -203,8 +203,8 @@ function _closeEditor() {
 function _renderEditor() {
   const e = _editing;
   const prov = PROVIDERS.find((p) => p.id === e.provider) || PROVIDERS[0];
-  const title = e._mode === 'edit' ? 'Abo bearbeiten'
-    : e._mode === 'change' ? 'Preis / Stufe ändern' : 'Abo hinzufügen';
+  const title = e._mode === 'edit' ? 'Edit subscription'
+    : e._mode === 'change' ? 'Change price / tier' : 'Add subscription';
 
   const wrap = document.createElement('div');
   wrap.className = `pl-modal pl-modal-${prov.id}`;
@@ -219,13 +219,13 @@ function _renderEditor() {
       <label class="pl-f">
         <span class="pl-f-lbl">Name</span>
         <input id="pl-name" class="pl-input" list="pl-name-sugg" autocomplete="off"
-               value="${QB.esc(e.name)}" placeholder="z. B. Pro">
+               value="${QB.esc(e.name)}" placeholder="e.g. Pro">
         <datalist id="pl-name-sugg">${NAME_SUGGESTIONS.map((s) => `<option value="${QB.esc(s)}"></option>`).join('')}</datalist>
       </label>
       <div class="pl-chips">${NAME_SUGGESTIONS.map((s) => `<button type="button" class="pl-chip" data-name="${QB.esc(s)}">${QB.esc(s)}</button>`).join('')}</div>
 
       <label class="pl-f">
-        <span class="pl-f-lbl">Betrag / Monat</span>
+        <span class="pl-f-lbl">Amount / month</span>
         <span class="pl-amt-wrap">
           <input id="pl-amount" class="pl-input pl-input-num" type="number" min="0" step="1"
                  inputmode="decimal" value="${e.amount}" placeholder="0">
@@ -240,12 +240,12 @@ function _renderEditor() {
       <div class="pl-f-grid">
         <label class="pl-f">
           <span class="pl-f-lbl">Start
-            <button type="button" class="pl-f-link" id="pl-start-begin" title="Ersten erfassten Nutzungstag von ${prov.label} eintragen">seit Beginn</button>
+            <button type="button" class="pl-f-link" id="pl-start-begin" title="Set first recorded usage day for ${prov.label}">since start</button>
           </span>
           <input id="pl-start" class="pl-input" type="datetime-local" value="${(e.startsAt || '').slice(0, 16)}">
         </label>
         <label class="pl-f">
-          <span class="pl-f-lbl">Ende <span class="pl-f-hint">leer = läuft weiter</span></span>
+          <span class="pl-f-lbl">End <span class="pl-f-hint">empty = ongoing</span></span>
           <input id="pl-end" class="pl-input" type="datetime-local" value="${(e.endsAt || '').slice(0, 16)}">
         </label>
       </div>
@@ -253,8 +253,8 @@ function _renderEditor() {
       <div class="pl-err" id="pl-err" hidden></div>
 
       <div class="pl-dialog-actions">
-        <button type="button" class="pl-mini" id="pl-cancel">Abbrechen</button>
-        <button type="button" class="pl-add-cta pl-save" id="pl-ok">Speichern</button>
+        <button type="button" class="pl-mini" id="pl-cancel">Cancel</button>
+        <button type="button" class="pl-add-cta pl-save" id="pl-ok">Save</button>
       </div>
     </div>`;
 
@@ -271,7 +271,7 @@ function _renderEditor() {
     const amt = parseFloat($('pl-amount').value) || 0;
     const prev = $('pl-fx-preview');
     if (currency === 'EUR' && amt > 0) {
-      prev.textContent = '≈ wird mit Tageskurs in USD umgerechnet';
+      prev.textContent = '≈ will be converted to USD at current daily rate';
       prev.hidden = false;
     } else {
       prev.textContent = '';
@@ -306,7 +306,7 @@ function _renderEditor() {
       $('pl-start').value = first + 'T00:00';
       beginBtn.textContent = original;
     } else {
-      beginBtn.textContent = 'keine Daten';
+      beginBtn.textContent = 'no data';
       setTimeout(() => { beginBtn.textContent = original; }, 1800);
     }
     beginBtn.disabled = false;
@@ -340,11 +340,11 @@ function _submitEditor(currency) {
     err.classList.add('pl-err-shake');
   };
 
-  if (!name) return showErr('Bitte einen Namen angeben.');
-  if (!(amount >= 0)) return showErr('Betrag muss 0 oder größer sein.');
-  if (!startsAt) return showErr('Bitte ein Startdatum angeben.');
+  if (!name) return showErr('Please enter a name.');
+  if (!(amount >= 0)) return showErr('Amount must be 0 or greater.');
+  if (!startsAt) return showErr('Please enter a start date.');
   if (endVal && new Date(endVal).getTime() <= new Date(startsAt).getTime()) {
-    return showErr('Ende muss nach dem Start liegen.');
+    return showErr('End must be after start.');
   }
 
   const endsAt = endVal ? new Date(endVal).toISOString() : null;

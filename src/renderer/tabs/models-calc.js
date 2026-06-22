@@ -160,7 +160,7 @@
     for (const [model, e] of perModel) {
       if (grandTotal > 0 && e.sum / grandTotal < othersThreshold) {
         othersGrouped.push(model);
-        if (!others) others = { model: 'Andere', provider: 'other', values: new Array(buckets.length).fill(0) };
+        if (!others) others = { model: 'Other', provider: 'other', values: new Array(buckets.length).fill(0) };
         for (let i = 0; i < e.values.length; i++) others.values[i] += e.values[i];
       } else {
         series.push({ model, provider: e.provider, values: e.values });

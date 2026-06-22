@@ -33,12 +33,12 @@ window.QB = window.QB || {};
   ];
 
   const PRESETS = [
-    ['7d', 'Letzte 7 Tage'], ['30d', 'Letzte 30 Tage'], ['week', 'Diese Woche'],
-    ['month', 'Dieser Monat'], ['year', 'Dieses Jahr'], ['all', 'Gesamt'],
+    ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['week', 'This week'],
+    ['month', 'This month'], ['year', 'This year'], ['all', 'All time'],
   ];
 
   const RESOLUTIONS = [
-    ['hourly', 'Std'], ['daily', 'Tag'], ['weekly', 'Wo'], ['monthly', 'Mon'],
+    ['hourly', 'Hr'], ['daily', 'Day'], ['weekly', 'Wk'], ['monthly', 'Mo'],
   ];
 
   function pad2(n) { return String(n).padStart(2, '0'); }
@@ -67,11 +67,11 @@ window.QB = window.QB || {};
   }
 
   const COLUMNS_COMPACT = [
-    ['model', 'Modell', 'txt'],
+    ['model', 'Model', 'txt'],
     ['outputTokens', 'Output', 'num'],
-    ['costUSD', 'Kosten', 'num'],
+    ['costUSD', 'Cost', 'num'],
     ['effPerMTok', '$/MTok', 'num'],
-    ['sharePct', 'Anteil', 'num'],
+    ['sharePct', 'Share', 'num'],
   ];
   const CLAUDE_PALETTE = ['#DA785B', '#E89B6F', '#C05A45', '#F0B27A', '#A8442F', '#F5D0A9'];
   const CODEX_PALETTE  = ['#4B55C8', '#6E8EE8', '#56C8D8', '#3A3F8F', '#7A6FF0', '#2E6FBF'];
@@ -93,7 +93,7 @@ window.QB = window.QB || {};
     } catch (e) {
       console.error('models:get failed', e);
       const msg = (e && e.message) ? e.message : String(e);
-      container.innerHTML = `<div class="empty"><span>Fehler: ${QB.esc(msg.slice(0, 300))}</span></div>`;
+      container.innerHTML = `<div class="empty"><span>Error: ${QB.esc(msg.slice(0, 300))}</span></div>`;
     }
   };
 
@@ -146,7 +146,7 @@ window.QB = window.QB || {};
   let _colorOrder = [];
 
   function colorFor(model, provider, order) {
-    if (model === 'Andere') return OTHER_COLOR;
+    if (model === 'Other') return OTHER_COLOR;
     const palette = provider === 'claude' ? CLAUDE_PALETTE : CODEX_PALETTE;
     const siblings = order.filter((m) => _modelProvider.get(m) === provider);
     return palette[Math.max(siblings.indexOf(model), 0) % palette.length];
@@ -165,13 +165,13 @@ window.QB = window.QB || {};
 
         <div class="an-section mod-chart-sec">
           <div class="mod-chart-hd">
-            <span class="mod-chart-ttl">VERTEILUNG</span>
+            <span class="mod-chart-ttl">DISTRIBUTION</span>
           </div>
           <div class="hr-controls mod-chart-controls">
             <div class="hr-ctrl-row1">
               <div class="hr-select-wrap">
-                <select class="hr-preset-select" id="mod-preset" aria-label="Zeitraum" title="Zeitraum wählen">
-                  <option value="custom" hidden${_preset ? '' : ' selected'}>Eigene Auswahl</option>
+                <select class="hr-preset-select" id="mod-preset" aria-label="Period" title="Select period">
+                  <option value="custom" hidden${_preset ? '' : ' selected'}>Custom range</option>
                   ${PRESETS.map(([id, label]) => `<option value="${id}"${_preset === id ? ' selected' : ''}>${label}</option>`).join('')}
                 </select>
                 <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
@@ -180,11 +180,11 @@ window.QB = window.QB || {};
                 </svg>
               </div>
               <div class="hr-date-pair">
-                <input class="hr-date-input" type="date" id="mod-from" value="${_from}" aria-label="Von" title="Startdatum">
+                <input class="hr-date-input" type="date" id="mod-from" value="${_from}" aria-label="From" title="Start date">
                 <span class="hr-date-sep" aria-hidden="true">–</span>
-                <input class="hr-date-input" type="date" id="mod-to" value="${_to}" aria-label="Bis" title="Enddatum">
+                <input class="hr-date-input" type="date" id="mod-to" value="${_to}" aria-label="To" title="End date">
               </div>
-              <button class="hr-reload" id="mod-load-btn" title="Neu laden" aria-label="Neu laden">
+              <button class="hr-reload" id="mod-load-btn" title="Reload" aria-label="Reload">
                 <svg width="12" height="12" viewBox="0 0 14 14" fill="none"
                      stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M1.5 7a5.5 5.5 0 0 1 9.9-3.3"/>
@@ -195,21 +195,21 @@ window.QB = window.QB || {};
               </button>
             </div>
             <div class="hr-ctrl-row2">
-              <div class="hr-seg" id="mod-agg-pills" role="group" aria-label="Auflösung">
+              <div class="hr-seg" id="mod-agg-pills" role="group" aria-label="Resolution">
                 ${RESOLUTIONS.map(([id, label]) => `<button class="hr-seg-btn${_resolution === id ? ' active' : ''}" data-agg="${id}">${label}</button>`).join('')}
               </div>
-              <div class="hr-seg" id="mod-prov-pills" role="group" aria-label="Anbieter">
-                <button class="hr-seg-btn${_provider === 'all' ? ' active' : ''}" data-prov="all">Alle</button>
+              <div class="hr-seg" id="mod-prov-pills" role="group" aria-label="Provider">
+                <button class="hr-seg-btn${_provider === 'all' ? ' active' : ''}" data-prov="all">All</button>
                 <button class="hr-seg-btn hr-seg-claude${_provider === 'claude' ? ' active' : ''}" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
                 <button class="hr-seg-btn hr-seg-codex${_provider === 'codex' ? ' active' : ''}" data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
               </div>
               <button class="hr-tgl${_showEmpty ? ' active' : ''}" id="mod-empty-toggle"
-                      title="Leere Zeiteinheiten einblenden" aria-pressed="${_showEmpty}">
+                      title="Show empty time units" aria-pressed="${_showEmpty}">
                 <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
                      stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
                   <path d="M1.5 9.5V5"/><path d="M5.5 9.5V7" stroke-dasharray="1.5 1.5"/><path d="M9.5 9.5V2.5"/>
                 </svg>
-                <span class="hr-tgl-label">Lücken</span>
+                <span class="hr-tgl-label">Gaps</span>
               </button>
             </div>
           </div>
@@ -225,10 +225,10 @@ window.QB = window.QB || {};
 
         ${hasBenchmarks ? `
         <div class="an-section">
-          <div class="an-section-head"><span class="an-section-title">PREIS vs. INTELLIGENZ</span></div>
+          <div class="an-section-head"><span class="an-section-title">COST vs. INTELLIGENCE</span></div>
           <div class="mod-scatter-wrap"><canvas id="mod-scatter-canvas"></canvas></div>
           <div class="mod-note" id="mod-scatter-empty" hidden></div>
-          <div class="mod-scatter-note">x = $/MTok effektiv (inkl. Cache) · grün = besser, rot = schlechter · ${_data.benchmarksAsOf ? 'Stand ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
+          <div class="mod-scatter-note">x = $/MTok effective (incl. cache) · green = better, red = worse · ${_data.benchmarksAsOf ? 'as of ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
         </div>` : ''}
 
         <div id="mod-tt-section" hidden></div>
@@ -236,7 +236,7 @@ window.QB = window.QB || {};
         <div id="mod-cost-section" hidden></div>
 
         <div class="an-section">
-          <div class="an-section-head"><span class="an-section-title">MODELLE IM DETAIL</span></div>
+          <div class="an-section-head"><span class="an-section-title">MODEL DETAILS</span></div>
           <div class="mod-table-scroll"><table class="mod-table" id="mod-table"></table></div>
         </div>
       </div>`;
@@ -341,40 +341,40 @@ window.QB = window.QB || {};
 
     el.innerHTML = `
       <div class="an-stat-tile mod-kpi-lead">
-        <div class="an-stat-lbl">Ø $/MTok effektiv</div>
+        <div class="an-stat-lbl">Avg $/MTok effective</div>
         <span class="kv-fill"></span>
         <div class="an-stat-val">${k.effPerMTok != null ? '$' + k.effPerMTok.toFixed(2) : '—'}${trend(k.effPerMTokDeltaPct, true)}</div>
-        <div class="mod-kpi-sub">Gesamtkosten ÷ Gesamttokens, inkl. Cache</div>
+        <div class="mod-kpi-sub">Total cost ÷ total tokens, incl. cache</div>
       </div>
       <div class="an-stat-tile">
-        <div class="an-stat-lbl">Aktive Modelle</div>
+        <div class="an-stat-lbl">Active models</div>
         <span class="kv-fill"></span>
         <div class="an-stat-val">${k.activeModels}${k.activeModelsDelta != null
           ? `<span class="mod-kpi-trend flat">${k.activeModelsDelta >= 0 ? '+' : ''}${k.activeModelsDelta}</span>` : ''}</div>
       </div>
       <div class="an-stat-tile">
-        <div class="an-stat-lbl">Top nach Kosten</div>
+        <div class="an-stat-lbl">Top by cost</div>
         <span class="kv-fill"></span>
         <div class="an-stat-val" title="${k.topCost ? QB.esc(k.topCost.model) : ''}">${k.topCost ? QB.esc(shortName(k.topCost.model)) : '—'}</div>
         <div class="mod-kpi-sub">${k.topCost ? '$' + k.topCost.costUSD.toFixed(0) + ' · ' + k.topCost.sharePct.toFixed(0) + '%' : ''}</div>
       </div>
       <div class="an-stat-tile">
-        <div class="an-stat-lbl">Top nach Output</div>
+        <div class="an-stat-lbl">Top by output</div>
         <span class="kv-fill"></span>
         <div class="an-stat-val" title="${k.topOutput ? QB.esc(k.topOutput.model) : ''}">${k.topOutput ? QB.esc(shortName(k.topOutput.model)) : '—'}</div>
         <div class="mod-kpi-sub">${k.topOutput ? QB.fmtTokens(k.topOutput.outputTokens) : ''}</div>
       </div>
       <div class="an-stat-tile">
-        <div class="an-stat-lbl">Preis/Leistung</div>
+        <div class="an-stat-lbl">Best value</div>
         <span class="kv-fill"></span>
         <div class="an-stat-val" title="${k.bestValue ? QB.esc(k.bestValue.model) : ''}">${k.bestValue ? QB.esc(shortName(k.bestValue.model)) : '—'}</div>
-        <div class="mod-kpi-sub">${k.bestValue ? 'Score/$ am höchsten' : 'kein Score verfügbar'}</div>
+        <div class="mod-kpi-sub">${k.bestValue ? 'Highest score/$' : 'no score available'}</div>
       </div>
       <div class="an-stat-tile">
-        <div class="an-stat-lbl">Top-3-Anteil</div>
+        <div class="an-stat-lbl">Top-3 share</div>
         <span class="kv-fill"></span>
         <div class="an-stat-val">${k.top3SharePct.toFixed(0)}%</div>
-        <div class="mod-kpi-sub">Kosten-Konzentration</div>
+        <div class="mod-kpi-sub">Cost concentration</div>
       </div>`;
   }
 
@@ -430,7 +430,7 @@ window.QB = window.QB || {};
         cells = await getHourlyCells();
       } catch (e) {
         console.error('models hourly fetch failed', e);
-        if (seq === _stackSeq && note) { note.hidden = false; note.textContent = 'Stundendaten konnten nicht geladen werden.'; }
+        if (seq === _stackSeq && note) { note.hidden = false; note.textContent = 'Failed to load hourly data.'; }
         return;
       }
       if (seq !== _stackSeq) return; // durch neuere Auswahl überholt
@@ -442,7 +442,7 @@ window.QB = window.QB || {};
 
     if (srcNote) {
       srcNote.textContent = _resolution === 'hourly'
-        ? `Stunde · Live-Quelle · max. 168 h · ${_from} – ${_to}`
+        ? `Hourly · live source · max. 168 h · ${_from} – ${_to}`
         : `${_from} – ${_to}`;
     }
 
@@ -462,8 +462,8 @@ window.QB = window.QB || {};
     note.hidden = !empty;
     if (empty) {
       note.textContent = _metric === 'cacheCreation' && _provider === 'codex'
-        ? 'Cache-Creation-Tokens gibt es nur bei Claude.'
-        : 'Keine Daten im gewählten Zeitraum.';
+        ? 'Cache creation tokens are only available for Claude.'
+        : 'No data for the selected period.';
     }
 
     const datasets = stack.series.map((s) => ({
@@ -489,11 +489,11 @@ window.QB = window.QB || {};
     const lineDefs = [];
     if (_provider === 'all' || _provider === 'claude') lineDefs.push({ label: 'Claude', values: rate.claude, color: QB.providerColor('claude') });
     if (_provider === 'all' || _provider === 'codex')  lineDefs.push({ label: 'Codex',  values: rate.codex,  color: QB.providerColor('codex') });
-    if (_provider === 'all')                            lineDefs.push({ label: 'Gesamt', values: rate.total,  color: '#8298aa' });
+    if (_provider === 'all')                            lineDefs.push({ label: 'Total', values: rate.total,  color: '#8298aa' });
 
     const empty = lineDefs.every((l) => l.values.every((v) => v == null));
     note.hidden = !empty;
-    if (empty) note.textContent = 'Keine Daten im gewählten Zeitraum.';
+    if (empty) note.textContent = 'No data for the selected period.';
 
     const datasets = lineDefs.map((l) => ({
       label: l.label, data: l.values,
@@ -552,7 +552,7 @@ window.QB = window.QB || {};
       const isEmpty = pts.length === 0;
       emptyNote.hidden = !isEmpty;
       emptyNote.textContent = isEmpty
-        ? 'Keine Modelle mit Benchmark-Score im gewählten Zeitraum/Filter.'
+        ? 'No models with benchmark score in the selected period/filter.'
         : '';
       canvas.style.visibility = isEmpty ? 'hidden' : '';
     }
@@ -593,14 +593,14 @@ window.QB = window.QB || {};
             callbacks: {
               label: (item) => {
                 const p = item.dataset.pointsMeta[item.dataIndex];
-                return ' ' + p.model + ': Score ' + p.y + ' · $' + p.x.toFixed(2) + '/MTok · ' + p.sharePct.toFixed(1) + '% der Kosten';
+                return ' ' + p.model + ': Score ' + p.y + ' · $' + p.x.toFixed(2) + '/MTok · ' + p.sharePct.toFixed(1) + '% of cost';
               },
             },
           },
         },
         scales: {
           x: {
-            title: { display: true, text: '$ / MTok (effektiv)', color: '#708090', font: { size: 9 } },
+            title: { display: true, text: '$ / MTok (effective)', color: '#708090', font: { size: 9 } },
             grid: { color: 'rgba(255,255,255,0.04)' }, border: { display: false },
             ticks: { color: (ctx) => axisColors.costColor(tickValue(ctx)), font: { family: "'IBM Plex Mono', monospace", size: 9 },
                      callback: (v) => '$' + Number(v).toFixed(1) },
@@ -625,11 +625,11 @@ window.QB = window.QB || {};
   }
 
   const COLUMNS = [
-    ['model', 'Modell', 'txt'], ['inputTokens', 'Input', 'num'], ['outputTokens', 'Output', 'num'],
+    ['model', 'Model', 'txt'], ['inputTokens', 'Input', 'num'], ['outputTokens', 'Output', 'num'],
     ['cacheReadTokens', 'Cache R', 'num'], ['cacheCreationTokens', 'Cache C', 'num'],
-    ['totalTokens', 'Total', 'num'], ['costUSD', 'Kosten', 'num'], ['effPerMTok', '$/MTok', 'num'],
-    ['score', 'Score', 'num'], ['scorePerDollar', 'Score/$', 'num'], ['sharePct', 'Anteil', 'num'],
-    ['cacheHitRate', 'Cache-Hit', 'num'], ['firstUsed', 'Erste', 'num'], ['lastUsed', 'Letzte', 'num'],
+    ['totalTokens', 'Total', 'num'], ['costUSD', 'Cost', 'num'], ['effPerMTok', '$/MTok', 'num'],
+    ['score', 'Score', 'num'], ['scorePerDollar', 'Score/$', 'num'], ['sharePct', 'Share', 'num'],
+    ['cacheHitRate', 'Cache hit', 'num'], ['firstUsed', 'First', 'num'], ['lastUsed', 'Last', 'num'],
   ];
 
   function renderTable() {
@@ -679,7 +679,7 @@ window.QB = window.QB || {};
          <td>$${totals.costUSD.toFixed(2)}</td>
          <td>${totals.totalTokens > 0 ? '$' + ((totals.costUSD / totals.totalTokens) * 1e6).toFixed(2) : '—'}</td>
          <td></td>`
-      : `<td class="txt">Σ ${rows.length} Modelle</td>
+      : `<td class="txt">Σ ${rows.length} models</td>
          <td>${QB.fmtTokens(totals.inputTokens)}</td><td>${QB.fmtTokens(totals.outputTokens)}</td>
          <td>${QB.fmtTokens(totals.cacheReadTokens)}</td><td>${QB.fmtTokens(totals.cacheCreationTokens)}</td>
          <td>${QB.fmtTokens(totals.totalTokens)}</td><td>$${totals.costUSD.toFixed(2)}</td>
@@ -704,7 +704,7 @@ window.QB = window.QB || {};
     }));
   }
 
-  const PROVIDER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', other: 'Andere' };
+  const PROVIDER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', other: 'Other' };
   // Token-Typ → Akzentfarbe (identisch zur TOKEN-TYPEN-Sektion, visuell verzahnt).
   const COST_TYPE_COLORS = { input: '#6E8EE8', output: '#52d017', cacheRead: '#56C8D8', cacheCreation: '#E89B6F' };
 
@@ -741,12 +741,12 @@ window.QB = window.QB || {};
             <span class="mod-cost-spend">${fmtUSD(p.totalCostUSD)}</span>
           </div>
           <table class="mod-cost-table">
-            <thead><tr><th>Token-Typ</th><th class="mod-cost-share">Anteil</th><th>Menge</th><th>Kosten</th><th class="mod-cost-perm">$/MTok</th></tr></thead>
+            <thead><tr><th>Token type</th><th class="mod-cost-share">Share</th><th>Amount</th><th>Cost</th><th class="mod-cost-perm">$/MTok</th></tr></thead>
             <tbody>
               ${bodyRows}
               <tr class="mod-cost-total">
-                <td>Gesamt</td>
-                <td class="mod-cost-share">100,0%</td>
+                <td>Total</td>
+                <td class="mod-cost-share">100.0%</td>
                 <td>${QB.fmtTokens(p.totalTokens)}</td>
                 <td>${fmtUSD(p.totalCostUSD)}</td>
                 <td class="mod-cost-effcell">${fmtRate(p.effPerMTok)}</td>
@@ -760,11 +760,11 @@ window.QB = window.QB || {};
 
     el.innerHTML = `
       <div class="an-section-head">
-        <span class="an-section-title">ECHTE NUTZUNG · KOSTEN JE TOKEN-TYP</span>
+        <span class="an-section-title">ACTUAL USAGE · COST BY TOKEN TYPE</span>
       </div>
-      <div class="mod-cost-sub">Menge × eigener $/MTok = Kosten je Typ; Gesamt-$/MTok = Kosten pro Mio. Token echter Nutzung</div>
+      <div class="mod-cost-sub">Amount × own $/MTok = cost per type; Total $/MTok = cost per million tokens of actual usage</div>
       ${blocks}
-      ${anyStale ? '<div class="mod-cost-note">Per-Typ-Kosten werden nach dem nächsten Backfill-Lauf vollständig befüllt.</div>' : ''}`;
+      ${anyStale ? '<div class="mod-cost-note">Per-type costs will be fully populated after the next backfill run.</div>' : ''}`;
   }
 
   const TOKEN_TYPE_META = [
@@ -782,7 +782,7 @@ window.QB = window.QB || {};
     el.hidden = false;
     el.className = 'an-section';
     el.innerHTML = `
-      <div class="an-section-head"><span class="an-section-title">TOKEN-TYPEN</span></div>
+      <div class="an-section-head"><span class="an-section-title">TOKEN TYPES</span></div>
       <div class="mod-tt-grid">
         ${TOKEN_TYPE_META.map((t) => `
           <div class="an-stat-tile mod-tt-tile" style="--tt-col:${t.col}">

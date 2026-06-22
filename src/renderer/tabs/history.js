@@ -45,12 +45,12 @@ async function _fetchMinDate() {
 }
 
 const PRESETS = [
-  { id: '7d',    label: 'Letzte 7 Tage' },
-  { id: '30d',   label: 'Letzte 30 Tage' },
-  { id: 'week',  label: 'Diese Woche' },
-  { id: 'month', label: 'Dieser Monat' },
-  { id: 'year',  label: 'Dieses Jahr' },
-  { id: 'all',   label: 'Gesamt' },
+  { id: '7d',    label: 'Last 7 days' },
+  { id: '30d',   label: 'Last 30 days' },
+  { id: 'week',  label: 'This week' },
+  { id: 'month', label: 'This month' },
+  { id: 'year',  label: 'This year' },
+  { id: 'all',   label: 'All time' },
 ];
 
 function _presetDates(preset) {
@@ -95,8 +95,8 @@ function _buildControls(container, minDate) {
     <div class="hr-controls">
       <div class="hr-ctrl-row1">
         <div class="hr-select-wrap">
-          <select class="hr-preset-select" id="hr-preset" aria-label="Zeitraum" title="Zeitraum wählen">
-            <option value="custom" hidden${_activePreset ? '' : ' selected'}>Eigene Auswahl</option>
+          <select class="hr-preset-select" id="hr-preset" aria-label="Period" title="Select period">
+            <option value="custom" hidden${_activePreset ? '' : ' selected'}>Custom range</option>
             ${presetOptions}
           </select>
           <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
@@ -105,11 +105,11 @@ function _buildControls(container, minDate) {
           </svg>
         </div>
         <div class="hr-date-pair">
-          <input class="hr-date-input" type="date" id="hr-from" value="${fromDate}" aria-label="Von" title="Startdatum">
+          <input class="hr-date-input" type="date" id="hr-from" value="${fromDate}" aria-label="From" title="Start date">
           <span class="hr-date-sep" aria-hidden="true">–</span>
-          <input class="hr-date-input" type="date" id="hr-to" value="${today}" aria-label="Bis" title="Enddatum">
+          <input class="hr-date-input" type="date" id="hr-to" value="${today}" aria-label="To" title="End date">
         </div>
-        <button class="hr-reload" id="hr-load-btn" title="Neu laden" aria-label="Neu laden">
+        <button class="hr-reload" id="hr-load-btn" title="Reload" aria-label="Reload">
           <svg width="12" height="12" viewBox="0 0 14 14" fill="none"
                stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M1.5 7a5.5 5.5 0 0 1 9.9-3.3"/>
@@ -120,24 +120,24 @@ function _buildControls(container, minDate) {
         </button>
       </div>
       <div class="hr-ctrl-row2">
-        <div class="hr-seg" id="hr-agg-pills" role="group" aria-label="Auflösung">
-          <button class="hr-seg-btn"        data-agg="hourly"  title="Stündlich">Std</button>
-          <button class="hr-seg-btn active" data-agg="daily"   title="Täglich">Tag</button>
-          <button class="hr-seg-btn"        data-agg="weekly"  title="Wöchentlich">Wo</button>
-          <button class="hr-seg-btn"        data-agg="monthly" title="Monatlich">Mon</button>
+        <div class="hr-seg" id="hr-agg-pills" role="group" aria-label="Resolution">
+          <button class="hr-seg-btn"        data-agg="hourly"  title="Hourly">Hr</button>
+          <button class="hr-seg-btn active" data-agg="daily"   title="Daily">Day</button>
+          <button class="hr-seg-btn"        data-agg="weekly"  title="Weekly">Wk</button>
+          <button class="hr-seg-btn"        data-agg="monthly" title="Monthly">Mo</button>
         </div>
-        <div class="hr-seg" id="hr-prov-pills" role="group" aria-label="Anbieter">
-          <button class="hr-seg-btn active" data-prov="all">Alle</button>
+        <div class="hr-seg" id="hr-prov-pills" role="group" aria-label="Provider">
+          <button class="hr-seg-btn active" data-prov="all">All</button>
           <button class="hr-seg-btn hr-seg-claude" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
           <button class="hr-seg-btn hr-seg-codex"  data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
         </div>
         <button class="hr-tgl${_showEmpty ? ' active' : ''}" id="hr-empty-toggle"
-                title="Leere Zeiteinheiten einblenden" aria-pressed="${_showEmpty}">
+                title="Show empty time units" aria-pressed="${_showEmpty}">
           <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
                stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
             <path d="M1.5 9.5V5"/><path d="M5.5 9.5V7" stroke-dasharray="1.5 1.5"/><path d="M9.5 9.5V2.5"/>
           </svg>
-          <span class="hr-tgl-label">Lücken</span>
+          <span class="hr-tgl-label">Gaps</span>
         </button>
       </div>
     </div>
@@ -218,7 +218,7 @@ async function _loadAndRender() {
     _renderResults(report, agg);
   } catch (e) {
     console.error('history:get failed', e);
-    results.innerHTML = '<div class="empty"><span style="color:var(--red)">Fehler beim Laden der Backfill-Daten.</span></div>';
+    results.innerHTML = '<div class="empty"><span style="color:var(--red)">Failed to load backfill data.</span></div>';
   } finally {
     if (loadBtn) { loadBtn.disabled = false; loadBtn.classList.remove('loading'); }
   }
@@ -250,9 +250,9 @@ function _renderChart() {
   const claudeData = labels.map(b => bucketMap[b].claude ?? 0);
   const codexData  = labels.map(b => bucketMap[b].codex  ?? 0);
 
-  const titleMap = { total: 'GESAMT-TOKENS', input: 'INPUT-TOKENS', output: 'OUTPUT-TOKENS', cache: 'CACHE-TOKENS' };
+  const titleMap = { total: 'TOTAL TOKENS', input: 'INPUT TOKENS', output: 'OUTPUT TOKENS', cache: 'CACHE TOKENS' };
   const titleEl = document.getElementById('hr-chart-title');
-  if (titleEl) titleEl.textContent = _chartMode === 'cost' ? 'KOSTEN PRO PERIODE' : `${titleMap[_tokenMode]} PRO PERIODE`;
+  if (titleEl) titleEl.textContent = _chartMode === 'cost' ? 'COST PER PERIOD' : `${titleMap[_tokenMode]} PER PERIOD`;
 
   const changes = QB.charts.mapChangesToIndex(_lastReport?.planChanges || [], labels);
   _barChart = QB.charts.createStackedBar(ctx, labels, [
@@ -328,8 +328,8 @@ function _renderResults(report, agg) {
             <path d="M8 15h5"/><path d="M8 19h3"/>
           </svg>
         </div>
-        <div class="hr-empty-text">Keine Backfill-Daten für diesen Zeitraum</div>
-        <div class="hr-empty-sub">Starte die App, um Backfill-Dateien zu erzeugen</div>
+        <div class="hr-empty-text">No backfill data for this period</div>
+        <div class="hr-empty-sub">Start the app to generate backfill files</div>
       </div>
     `;
     return;
@@ -344,18 +344,18 @@ function _renderResults(report, agg) {
   const claudeCost  = claudeSums?.costUSD  ?? 0;
   const codexCost   = codexSums?.costUSD   ?? 0;
 
-  const tTypeLabels = { total: 'Gesamt', input: 'Input', output: 'Output', cache: 'Cache' };
+  const tTypeLabels = { total: 'Total', input: 'Input', output: 'Output', cache: 'Cache' };
   const tokenTypePillsHtml = Object.keys(tTypeLabels).map(t =>
     `<button class="pill${_tokenMode === t ? ' active' : ''}" data-ttype="${t}">${tTypeLabels[t]}</button>`
   ).join('');
 
-  const titleMap = { total: 'GESAMT-TOKENS', input: 'INPUT-TOKENS', output: 'OUTPUT-TOKENS', cache: 'CACHE-TOKENS' };
-  const chartTitle = _chartMode === 'cost' ? 'KOSTEN PRO PERIODE' : `${titleMap[_tokenMode]} PRO PERIODE`;
+  const titleMap = { total: 'TOTAL TOKENS', input: 'INPUT TOKENS', output: 'OUTPUT TOKENS', cache: 'CACHE TOKENS' };
+  const chartTitle = _chartMode === 'cost' ? 'COST PER PERIOD' : `${titleMap[_tokenMode]} PER PERIOD`;
 
   results.innerHTML = `
     <div class="hr-summary-row">
       <div class="hr-kpi">
-        <div class="hr-kpi-lbl">Gesamt API-Kosten</div>
+        <div class="hr-kpi-lbl">Total API cost</div>
         <div class="hr-kpi-val">$${(totals.costUSD ?? 0).toFixed(2)}</div>
       </div>
       <div class="hr-kpi hr-kpi-provider" style="--prov-col:var(--claude-col)">
@@ -393,7 +393,7 @@ function _renderResults(report, agg) {
       </div>
       <div class="mod-seg mod-metric-seg" id="hr-token-type-row"
            style="display:${_chartMode === 'tokens' ? 'flex' : 'none'};margin-bottom:6px">
-        <button ${_tokenMode === 'total'  ? 'class="active"' : ''} data-ttype="total">Gesamt</button>
+        <button ${_tokenMode === 'total'  ? 'class="active"' : ''} data-ttype="total">Total</button>
         <button ${_tokenMode === 'input'  ? 'class="active"' : ''} data-ttype="input">In</button>
         <button ${_tokenMode === 'output' ? 'class="active"' : ''} data-ttype="output">Out</button>
         <button ${_tokenMode === 'cache'  ? 'class="active"' : ''} data-ttype="cache">Cache</button>
@@ -405,16 +405,16 @@ function _renderResults(report, agg) {
 
     <div class="hr-table-section">
       <div class="hr-section-head">
-        <span class="hr-section-title">DETAILANSICHT</span>
-        <span class="hr-row-count">${rows.length} Zeilen</span>
+        <span class="hr-section-title">DETAIL VIEW</span>
+        <span class="hr-row-count">${rows.length} rows</span>
       </div>
       <div class="hr-table-scroll">
         <table class="hr-table">
           <thead>
             <tr>
-              <th>Periode</th>
-              <th>Anbieter</th>
-              <th class="num">API-Kosten</th>
+              <th>Period</th>
+              <th>Provider</th>
+              <th class="num">API cost</th>
               <th class="num">Tokens</th>
               <th class="num">Input</th>
               <th class="num">Output</th>
@@ -444,7 +444,7 @@ function _renderResults(report, agg) {
           <tfoot>
             ${claudeSums ? _footRow('Claude', 'var(--claude-col)', claudeSums, 'hr-foot-sub') : ''}
             ${codexSums  ? _footRow('Codex',  'var(--codex-col)',  codexSums,  'hr-foot-sub') : ''}
-            ${_footRow('Gesamt', '', grandSums, 'hr-foot-total')}
+            ${_footRow('Total', '', grandSums, 'hr-foot-total')}
           </tfoot>
         </table>
       </div>
@@ -587,7 +587,7 @@ function _bindTokenKpiTooltip() {
       </div>` : ''}
       <hr class="hr-tok-tip-divider">
       <div class="hr-tok-tip-row hr-tok-tip-total">
-        <span class="hr-tok-tip-lbl">Gesamt</span>
+        <span class="hr-tok-tip-lbl">Total</span>
         <span class="hr-tok-tip-val">${QB.fmtTokens(total)}</span>
       </div>
     `;

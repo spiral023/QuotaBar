@@ -26,18 +26,17 @@ let _whMode       = 'util';    // 'util' | 'used' | 'max'
 let _whGen        = 0;         // Race-Schutz für den asynchron geladenen Verlauf
 
 const PRESETS = [
-  { id: '7d',    label: 'Letzte 7 Tage' },
-  { id: '30d',   label: 'Letzte 30 Tage' },
-  { id: 'week',  label: 'Diese Woche' },
-  { id: 'month', label: 'Dieser Monat' },
-  { id: 'year',  label: 'Dieses Jahr' },
-  { id: 'all',   label: 'Gesamt' },
+  { id: '7d',    label: 'Last 7 days' },
+  { id: '30d',   label: 'Last 30 days' },
+  { id: 'week',  label: 'This week' },
+  { id: 'month', label: 'This month' },
+  { id: 'year',  label: 'This year' },
+  { id: 'all',   label: 'All time' },
 ];
 
-// Kurzlabel für die dynamischen Section-Titel (z. B. "(30 Tage)").
 const PRESET_LABELS = {
-  '7d': '7 Tage', '30d': '30 Tage', week: 'diese Woche',
-  month: 'dieser Monat', year: 'dieses Jahr', all: 'Gesamt',
+  '7d': '7 days', '30d': '30 days', week: 'this week',
+  month: 'this month', year: 'this year', all: 'all time',
 };
 
 QB.renderAnalytics = async function renderAnalytics() {
@@ -120,7 +119,7 @@ function _winLabel() {
   if (_activePreset && PRESET_LABELS[_activePreset]) return PRESET_LABELS[_activePreset];
   if (_from && _to) {
     const days = Math.round((new Date(_to) - new Date(_from)) / 864e5) + 1;
-    return `${days} Tage`;
+    return `${days} days`;
   }
   return '';
 }
@@ -145,8 +144,8 @@ function _buildControls(container) {
     <div class="hr-controls">
       <div class="hr-ctrl-row1">
         <div class="hr-select-wrap">
-          <select class="hr-preset-select" id="an-preset" aria-label="Zeitraum" title="Zeitraum wählen">
-            <option value="custom" hidden${_activePreset ? '' : ' selected'}>Eigene Auswahl</option>
+          <select class="hr-preset-select" id="an-preset" aria-label="Period" title="Select period">
+            <option value="custom" hidden${_activePreset ? '' : ' selected'}>Custom range</option>
             ${presetOptions}
           </select>
           <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
@@ -155,16 +154,16 @@ function _buildControls(container) {
           </svg>
         </div>
         <div class="hr-date-pair">
-          <input class="hr-date-input" type="date" id="an-from" value="${_from ?? ninetyAgo}" aria-label="Von" title="Startdatum">
+          <input class="hr-date-input" type="date" id="an-from" value="${_from ?? ninetyAgo}" aria-label="From" title="Start date">
           <span class="hr-date-sep" aria-hidden="true">–</span>
-          <input class="hr-date-input" type="date" id="an-to" value="${_to ?? today}" aria-label="Bis" title="Enddatum">
+          <input class="hr-date-input" type="date" id="an-to" value="${_to ?? today}" aria-label="To" title="End date">
         </div>
       </div>
       <div class="hr-ctrl-row2">
-        <div class="hr-seg an-agg-seg" id="an-agg-pills" role="group" aria-label="Auflösung">
-          <button class="hr-seg-btn${_agg === 'daily'   ? ' active' : ''}" data-agg="daily"   title="Täglich">Tag</button>
-          <button class="hr-seg-btn${_agg === 'weekly'  ? ' active' : ''}" data-agg="weekly"  title="Wöchentlich">Wo</button>
-          <button class="hr-seg-btn${_agg === 'monthly' ? ' active' : ''}" data-agg="monthly" title="Monatlich">Mon</button>
+        <div class="hr-seg an-agg-seg" id="an-agg-pills" role="group" aria-label="Resolution">
+          <button class="hr-seg-btn${_agg === 'daily'   ? ' active' : ''}" data-agg="daily"   title="Daily">Day</button>
+          <button class="hr-seg-btn${_agg === 'weekly'  ? ' active' : ''}" data-agg="weekly"  title="Weekly">Wk</button>
+          <button class="hr-seg-btn${_agg === 'monthly' ? ' active' : ''}" data-agg="monthly" title="Monthly">Mo</button>
         </div>
       </div>
     </div>
@@ -226,7 +225,7 @@ async function _loadAndRender() {
     _renderResults(data);
   } catch (e) {
     console.error('analytics:get failed', e);
-    results.innerHTML = '<div class="empty"><span>Fehler beim Laden</span></div>';
+    results.innerHTML = '<div class="empty"><span>Failed to load</span></div>';
   }
 }
 
@@ -266,42 +265,42 @@ function _renderResults(data) {
       <div class="an-section">
         <div class="an-section-head"><span class="an-section-title">TOP MODELS BY COST (${winLabel})</span></div>
         <table class="top-models-table">
-          <thead><tr><th>Modell</th><th>Kosten</th><th>%</th></tr></thead>
+          <thead><tr><th>Model</th><th>Cost</th><th>%</th></tr></thead>
           <tbody id="an-top-models-body"></tbody>
         </table>
       </div>
     </div>
 
     <div class="an-section">
-      <div class="an-section-head"><span class="an-section-title">AKTIVITÄTSSTATS (${winLabel})</span></div>
+      <div class="an-section-head"><span class="an-section-title">ACTIVITY STATS (${winLabel})</span></div>
       <div class="an-stats-grid" id="an-stats-grid"></div>
     </div>
 
     <div class="an-row2">
       <div class="an-section">
-        <div class="an-section-head"><span class="an-section-title">STUNDEN-HEATMAP (${winLabel})</span></div>
+        <div class="an-section-head"><span class="an-section-title">HOUR HEATMAP (${winLabel})</span></div>
         <div id="an-hour-heatmap"></div>
       </div>
       <div class="an-section">
-        <div class="an-section-head"><span class="an-section-title">WOCHENTAG (${winLabel})</span></div>
+        <div class="an-section-head"><span class="an-section-title">WEEKDAY (${winLabel})</span></div>
         <div id="an-weekday-bars"></div>
-        <div class="an-section-head" style="margin-top:8px"><span class="an-section-title">TOP 5 TAGE</span></div>
+        <div class="an-section-head" style="margin-top:8px"><span class="an-section-title">TOP 5 DAYS</span></div>
         <div id="an-top-days"></div>
       </div>
     </div>
 
     <div class="an-section">
-      <div class="an-section-head"><span class="an-section-title">5H-FENSTER-PEAK (CLAUDE, ${winLabel})</span></div>
+      <div class="an-section-head"><span class="an-section-title">5H WINDOW PEAK (CLAUDE, ${winLabel})</span></div>
       <div id="an-peak"></div>
     </div>
 
     <div class="an-row2">
       <div class="an-section">
-        <div class="an-section-head"><span class="an-section-title">KOSTENEFFIZIENZ</span></div>
+        <div class="an-section-head"><span class="an-section-title">COST EFFICIENCY</span></div>
         <div id="an-cost-eff"></div>
       </div>
       <div class="an-section">
-        <div class="an-section-head"><span class="an-section-title">ROI NACH ABO-TIER</span></div>
+        <div class="an-section-head"><span class="an-section-title">ROI BY SUBSCRIPTION TIER</span></div>
         <div id="an-roi-tiers"></div>
       </div>
     </div>
@@ -312,7 +311,7 @@ function _renderResults(data) {
         <div style="display:flex;gap:6px;align-items:center">
           <div class="mod-seg" id="an-wh-pills">
             <button class="${_whMode === 'util' ? 'active' : ''}" data-whmode="util">%</button>
-            <button class="${_whMode === 'used' ? 'active' : ''}" data-whmode="used">Anz.</button>
+            <button class="${_whMode === 'used' ? 'active' : ''}" data-whmode="used">Cnt</button>
             <button class="${_whMode === 'max'  ? 'active' : ''}" data-whmode="max">Max</button>
           </div>
           <div class="hr-chart-legend">
@@ -321,7 +320,7 @@ function _renderResults(data) {
           </div>
         </div>
       </div>
-      <div class="an-wh-sub">5h-Fenster genutzt (≥5 %) vs. laut Nutzung mögliche Fenster je 7d-Fenster — zeigt, ob der Plan ausgereizt wird.</div>
+      <div class="an-wh-sub">5h windows used (≥5%) vs. possible windows per 7d window based on usage — shows whether the plan is being maxed out.</div>
       <div class="an-chart-wrap"><canvas id="an-wh-canvas"></canvas></div>
       <div id="an-wh-note" class="an-wh-empty" hidden></div>
     </div>
@@ -344,11 +343,11 @@ function _renderResults(data) {
 function _lineTitle() {
   const winLabel = _winLabel();
   if (_chartMode === 'roi') {
-    return `API-ÄQUIVALENT-FAKTOR · LAUFEND (${winLabel})`;
+    return `API EQUIVALENT FACTOR · RUNNING (${winLabel})`;
   }
-  const per = _agg === 'monthly' ? 'Ø API-KOSTEN/TAG · MONAT'
-            : _agg === 'weekly'  ? 'Ø API-KOSTEN/TAG · WOCHE'
-            : 'API-KOSTEN PRO TAG';
+  const per = _agg === 'monthly' ? 'AVG API COST/DAY · MONTH'
+            : _agg === 'weekly'  ? 'AVG API COST/DAY · WEEK'
+            : 'API COST PER DAY';
   return `${per} (${winLabel})`;
 }
 
@@ -411,9 +410,9 @@ function _aggregateBuckets(daily, agg) {
 
 function _bucketLabel(dateStr, agg) {
   const d = new Date(dateStr + 'T00:00:00Z');
-  if (agg === 'monthly') return d.toLocaleDateString('de-AT', { month: 'short', year: '2-digit', timeZone: 'UTC' });
-  if (agg === 'weekly')  return 'KW ' + _isoWeekNum(dateStr);
-  return d.toLocaleDateString('de-AT', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+  if (agg === 'monthly') return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+  if (agg === 'weekly')  return 'W' + _isoWeekNum(dateStr);
+  return d.toLocaleDateString('en-US', { day: '2-digit', month: 'short', timeZone: 'UTC' });
 }
 
 function _buildLineChart(data) {
@@ -483,7 +482,7 @@ function _renderNoPlanChip(show) {
   chip.className = 'an-noplan-chip';
   chip.setAttribute('role', 'button');
   chip.setAttribute('tabindex', '0');
-  chip.textContent = 'Kein Abo hinterlegt — im Tab ‚Abos‘ einrichten';
+  chip.textContent = ‘No subscription set up — configure in the Subscriptions tab’;
   const go = () => document.getElementById('tab-plans')?.click();
   chip.addEventListener('click', go);
   chip.addEventListener('keydown', e => {
@@ -553,7 +552,7 @@ function _buildTopModels(data) {
   const tbody = document.getElementById('an-top-models-body');
   if (!tbody) return;
   if (!data.topModels?.length) {
-    tbody.innerHTML = '<tr><td colspan="3" style="color:var(--t400);text-align:center;padding:8px">Keine Daten</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" style="color:var(--t400);text-align:center;padding:8px">No data</td></tr>';
     return;
   }
   tbody.innerHTML = data.topModels.map(m => `
@@ -577,13 +576,13 @@ function _buildStats(data) {
   const sessions = data.sessionStats ?? {};
 
   const tiles = [
-    { lbl: 'Aktive Tage',      val: `${data.activeDays ?? 0}/${data.windowDays ?? 30}` },
-    { lbl: 'Cache-Hit',        val: `${(cacheAvg * 100).toFixed(1)}%` },
-    { lbl: 'Ø Session',        val: `${sessions.avgMinutes ?? data.avgSessionMinutes ?? 0} min` },
-    { lbl: 'Sitzungen',        val: `${sessions.count ?? 0}` },
-    { lbl: 'Ses/Tag',          val: `${sessions.sessionsPerActiveDay ?? 0}` },
-    { lbl: 'Gesamtstunden',    val: `${sessions.totalHours ?? 0} h` },
-    { lbl: 'API-Kosten',       val: `$${(data.apiCostUSD?.total ?? 0).toFixed(0)}`,   color: 'var(--t100)' },
+    { lbl: 'Active days',      val: `${data.activeDays ?? 0}/${data.windowDays ?? 30}` },
+    { lbl: 'Cache hit',        val: `${(cacheAvg * 100).toFixed(1)}%` },
+    { lbl: 'Avg session',      val: `${sessions.avgMinutes ?? data.avgSessionMinutes ?? 0} min` },
+    { lbl: 'Sessions',         val: `${sessions.count ?? 0}` },
+    { lbl: 'Ses/day',          val: `${sessions.sessionsPerActiveDay ?? 0}` },
+    { lbl: 'Total hours',      val: `${sessions.totalHours ?? 0} h` },
+    { lbl: 'API cost',         val: `$${(data.apiCostUSD?.total ?? 0).toFixed(0)}`,   color: 'var(--t100)' },
     { lbl: 'ROI',              val: `${roi.toFixed(1)}×`,                             color: QB.roiColor(roi) },
     { lbl: 'Tokens',           val: QB.fmtTokens(totalIn + totalOut) },
   ];
@@ -601,7 +600,7 @@ function _buildHourHeatmap(data) {
   if (!el) return;
   const buckets = data.hourHeatmap ?? [];
   if (!buckets.length || buckets.every(b => b.count === 0)) {
-    el.innerHTML = '<div style="color:var(--t400);font-size:10px;padding:4px 0">Keine Daten</div>';
+    el.innerHTML = '<div style="color:var(--t400);font-size:10px;padding:4px 0">No data</div>';
     return;
   }
 
@@ -617,7 +616,7 @@ function _buildHourHeatmap(data) {
     <div class="an-clock">
       <canvas class="an-clock-canvas"></canvas>
       <div class="an-clock-tip"></div>
-      <div class="an-clock-cap">Aktivste Stunde <b>${String(peak.hour).padStart(2, '0')}:00</b> · Σ ${totalCount} Aktivitäten</div>
+      <div class="an-clock-cap">Peak hour <b>${String(peak.hour).padStart(2, '0')}:00</b> · Σ ${totalCount} activities</div>
     </div>`;
 
   _initHourClock(
@@ -748,8 +747,8 @@ function _initHourClock(wrap, canvas, tip, byHour, totalCount) {
 
     const b = byHour[h];
     const share = totalCount > 0 ? (b.count / totalCount) * 100 : 0;
-    tip.innerHTML = `<b>${String(h).padStart(2, '0')}:00</b> · ${b.count} Akt.`
-      + `<br><span class="an-clock-tip-sub">${share.toFixed(0)} % der Aktivität</span>`;
+    tip.innerHTML = `<b>${String(h).padStart(2, '0')}:00</b> · ${b.count} act.`
+      + `<br><span class="an-clock-tip-sub">${share.toFixed(0)}% of activity</span>`;
     tip.classList.add('show');
 
     // Tooltip relativ zum .an-clock-Wrap positionieren.
@@ -798,7 +797,7 @@ function _buildTopDays(data) {
   if (!el) return;
   const days = data.topActiveDays ?? [];
   if (!days.length) {
-    el.innerHTML = '<div style="color:var(--t400);font-size:10px">Keine Daten</div>';
+    el.innerHTML = '<div style="color:var(--t400);font-size:10px">No data</div>';
     return;
   }
   el.innerHTML = '<div class="an-top-days">' + days.map(d => `
@@ -822,7 +821,7 @@ function _buildFiveHourPeak(data) {
   const peak = data.fiveHourPeak ?? { maxOutputTokens: 0, maxTotalTokens: 0, peakWindowStart: null };
 
   const dateStr = peak.peakWindowStart
-    ? new Date(peak.peakWindowStart).toLocaleString('de-AT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
+    ? new Date(peak.peakWindowStart).toLocaleString('en-US', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
     : '—';
 
   const thresholdRows = _FIVE_HOUR_THRESHOLDS.map(t => {
@@ -841,7 +840,7 @@ function _buildFiveHourPeak(data) {
 
   el.innerHTML = `
     <div class="an-peak-hero">${QB.fmtTokens(peak.maxOutputTokens)}</div>
-    <div class="an-peak-sub">Output-Token · Fenster: ${QB.esc(dateStr)} · Gesamt ${QB.fmtTokens(peak.maxTotalTokens)}</div>
+    <div class="an-peak-sub">Output tokens · Window: ${QB.esc(dateStr)} · Total ${QB.fmtTokens(peak.maxTotalTokens)}</div>
     <div class="an-threshold">${thresholdRows}</div>
   `;
 }
@@ -854,11 +853,11 @@ function _buildCostEfficiency(data) {
 
   if (elTiles) {
     const tiles = [
-      { lbl: '$/1k Output',  val: `$${eff.costPer1kOutputTokens.toFixed(3)}` },
-      { lbl: '$/Std (API)',  val: `$${eff.costPerActiveHour.toFixed(2)}` },
+      { lbl: '$/1k output',  val: `$${eff.costPer1kOutputTokens.toFixed(3)}` },
+      { lbl: '$/hr (API)',   val: `$${eff.costPerActiveHour.toFixed(2)}` },
     ];
     if (eff.subCostPerActiveHour > 0) {
-      tiles.push({ lbl: '$/Std (Abo)', val: `$${eff.subCostPerActiveHour.toFixed(2)}` });
+      tiles.push({ lbl: '$/hr (sub)', val: `$${eff.subCostPerActiveHour.toFixed(2)}` });
     }
     const cols = tiles.length === 3 ? '1fr 1fr 1fr' : '1fr 1fr';
     elTiles.innerHTML = `<div class="an-stats-grid" style="grid-template-columns:${cols}">` +
@@ -873,7 +872,7 @@ function _buildCostEfficiency(data) {
   if (elRoi) {
     elRoi.innerHTML = `
       <table class="an-roi-table">
-        <thead><tr><th>Abo</th><th>Preis/Mo</th><th>ROI</th></tr></thead>
+        <thead><tr><th>Sub</th><th>Price/mo</th><th>ROI</th></tr></thead>
         <tbody>
           ${(eff.roiByTier ?? []).map(t => {
             const color = t.roi >= 5 ? '#52d017' : t.roi >= 1 ? '#f59830' : '#e55';
@@ -902,11 +901,10 @@ const _WH_SERIES = [
 ];
 
 function _whTitle() {
-  const m = _whMode === 'used' ? 'GENUTZTE 5H-FENSTER'
-          : _whMode === 'max'  ? 'MÖGLICHE 5H-FENSTER'
-          : '5H-FENSTER-AUSLASTUNG';
-  // Bewusst zeitraum-unabhängig (gesamter Verlauf); nur die Auflösung greift.
-  const unit = _agg === 'monthly' ? 'PRO MONAT' : 'PRO WOCHE';
+  const m = _whMode === 'used' ? 'USED 5H WINDOWS'
+          : _whMode === 'max'  ? 'POSSIBLE 5H WINDOWS'
+          : '5H WINDOW UTILIZATION';
+  const unit = _agg === 'monthly' ? 'PER MONTH' : 'PER WEEK';
   return `${m} · ${unit}`;
 }
 
@@ -944,9 +942,9 @@ function _whBucketKey(weekEndIso) {
 function _whBucketLabel(key) {
   if (/^\d{4}-\d{2}$/.test(key)) {
     const d = new Date(key + '-01T00:00:00Z');
-    return d.toLocaleDateString('de-AT', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+    return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' });
   }
-  return 'KW ' + _isoWeekNum(key);
+  return 'W' + _isoWeekNum(key);
 }
 
 function _buildWindowHistoryChart() {
@@ -978,7 +976,7 @@ function _buildWindowHistoryChart() {
 
   const keys = [...buckets.keys()].sort();
   if (!keys.length) {
-    if (note) { note.hidden = false; note.textContent = 'Noch keine abgeschlossene Woche erfasst — der Verlauf füllt sich mit der Zeit.'; }
+    if (note) { note.hidden = false; note.textContent = 'No completed week recorded yet — history will fill in over time.'; }
     return;
   }
   if (note) note.hidden = true;
@@ -1040,12 +1038,12 @@ function _buildWindowHistoryChart() {
               if (v == null) return ` ${item.dataset.label}: —`;
               return isPct
                 ? ` ${item.dataset.label}: ${v.toFixed(0)} %`
-                : ` ${item.dataset.label}: ${_fmtWin(v)} Fenster`;
+                : ` ${item.dataset.label}: ${_fmtWin(v)} windows`;
             },
             afterLabel: (item) => {
               const b = buckets.get(keys[item.dataIndex]);
               const s = _WH_SERIES[item.datasetIndex];
-              return (b && b.prov[s.id] && b.prov[s.id].bonus) ? '⚡ Bonus-Woche' : '';
+              return (b && b.prov[s.id] && b.prov[s.id].bonus) ? '⚡ Bonus week' : '';
             },
           },
         },
@@ -1082,7 +1080,7 @@ function _bindWhToggles() {
 }
 
 function _fmtWin(n) {
-  return n.toFixed(1).replace('.', ',');
+  return n.toFixed(1);
 }
 
 })();
