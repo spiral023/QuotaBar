@@ -214,7 +214,7 @@ function bonusBadgeHtml(wb, currentUsage) {
   return `<div class="wb-bonus" data-tip="${QB.esc(tip)}">
     <span class="wb-bonus-icon" aria-hidden="true">⚡</span>
     <span class="wb-bonus-text">${label}${extra >= 0.1
-      ? ` · ≈ +<span class="wb-bonus-num">${fmtWindows(extra)}</span> 5h-Fenster`
+      ? ` · ≈ +<span class="wb-bonus-num">${fmtWindows(extra)}</span> 5h windows`
       : ''}</span>
   </div>`;
 }
@@ -251,17 +251,20 @@ function wbForecastHtml(fc) {
   const CONF = { high: 'high confidence', medium: 'rough estimate', none: 'uncertain' };
   const kindLbl = fc.primaryKind === 'profile' ? 'weekly profile' : 'linear';
   const confLbl = CONF[fc.confidence] ? `, ${CONF[fc.confidence]}` : '';
+  let mainCls = '';
   const main = fc.reason === 'insufficient-data'
     ? 'No reliable forecast (insufficient data)'
     : fc.primaryLastsUntilReset
-      ? `Expected to last until reset (${kindLbl}${confLbl})`
+      ? (mainCls = 'wb-fc-ok', `Expected to last until reset (${kindLbl}${confLbl})`)
       : fc.primaryAt
-        ? `Limit reached: ~${fmt(fc.primaryAt)} (${kindLbl}${confLbl})`
+        ? (mainCls = 'wb-fc-bad', `Limit reached: ~${fmt(fc.primaryAt)} (${kindLbl}${confLbl})`)
         : 'No forecast available';
   let burn = '';
-  if (fc.burnRateLastsUntilReset === true) burn = '<br>At current pace: will last until reset';
-  else if (fc.burnRateAt) burn = `<br>At current pace: ~${QB.esc(fmt(fc.burnRateAt))}`;
-  return `<span class="wb-fc-main">${QB.esc(main)}</span>${burn}`;
+  if (fc.burnRateLastsUntilReset === true)
+    burn = '<br><span class="wb-fc-burn wb-fc-ok">At current pace: will last until reset</span>';
+  else if (fc.burnRateAt)
+    burn = `<br><span class="wb-fc-burn wb-fc-bad">At current pace: ~${QB.esc(fmt(fc.burnRateAt))}</span>`;
+  return `<span class="wb-fc-main ${mainCls}">${QB.esc(main)}</span>${burn}`;
 }
 
 async function hydrateWindowBudgets(snapshots, gen) {

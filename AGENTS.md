@@ -15,6 +15,10 @@ Dieses Repository enthaelt eine Electron/TypeScript Windows-Tray-App fuer QuotaB
 - Build-Artefakte, `node_modules`, `dist`, `release` und `package-output` nicht committen.
 - Deutsche Umlaute in Textdateien korrekt schreiben (`ä`, `ö`, `ü`, `Ä`, `Ö`, `Ü`, `ß`), nicht als `ae`, `oe`, `ue` usw.
 
+## Sprache
+
+Die gesamte App ist auf **Englisch**: UI-Labels, Tooltips, Fehlermeldungen, Benachrichtigungen, Kommentare im Code und öffentliche Dokumentation. Niemals UI-Strings oder Docs ins Deutsche übersetzen — ein "Übersetzungsfehler" bedeutet immer, dass ein deutsches Wort in englischen Text eingeschlichen ist, nicht umgekehrt.
+
 ## UI-Konventionen
 
 ### Tooltips
