@@ -80,7 +80,7 @@ interface PathSpec {
 const CATEGORY_LABELS: Record<SystemDataCategoryId, string> = {
   logs: "Logs & Sessions",
   credentials: "Credentials",
-  config: "Konfiguration",
+  config: "Configuration",
   cache: "Cache",
 };
 

@@ -482,7 +482,7 @@ function _renderNoPlanChip(show) {
   chip.className = 'an-noplan-chip';
   chip.setAttribute('role', 'button');
   chip.setAttribute('tabindex', '0');
-  chip.textContent = ‘No subscription set up — configure in the Subscriptions tab’;
+  chip.textContent = "No subscription set up — configure in the Subscriptions tab";
   const go = () => document.getElementById('tab-plans')?.click();
   chip.addEventListener('click', go);
   chip.addEventListener('keydown', e => {
