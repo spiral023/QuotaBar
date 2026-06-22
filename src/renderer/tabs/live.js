@@ -140,26 +140,6 @@ function tokenDetailInnerHtml(cf) {
   return `<div class="token-section"><div class="token-grid">${cellsHtml}</div>${modelsHtml}${missingHtml}</div>`;
 }
 
-function tokenCollapseHtml(cf, provider) {
-  const inner = tokenDetailInnerHtml(cf);
-  if (!inner) return '';
-  const id = `tc-${QB.esc(provider)}`;
-  let isOpen = false;
-  try { isOpen = localStorage.getItem('tokenDetailsOpen') === '1'; } catch {}
-  const periodSuffix = cf?.windowLabel ? ` · ${QB.esc(cf.windowLabel)}` : '';
-  return `<div class="token-collapse${isOpen ? ' open' : ''}" id="${QB.esc(id)}">
-    <button class="token-toggle" aria-expanded="${isOpen}"
-            onclick="QB.toggleTokenSection('${QB.esc(id)}')">
-      <svg class="toggle-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none">
-        <path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.5"
-              stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      Token Details${periodSuffix}
-    </button>
-    <div class="token-body">${inner}</div>
-  </div>`;
-}
-
 function fmtWindows(n) {
   return n.toFixed(1).replace('.', ',');
 }
@@ -340,73 +320,6 @@ function costBadgeHtml(cf) {
   return `<span class="badge b-cost" style="display:inline-flex;align-items:center">${factorPart}${infoIcon}</span>`;
 }
 
-// ── Overview card ─────────────────────────────────────────────────────
-function renderOverview(snapshots) {
-  const provData = snapshots.map(s => {
-    const win = s.windows.find(w => w.name === 'fiveHour');
-    const hasData = s.status === 'ok' || s.status === 'stale';
-    return { name: s.provider, pct: hasData && typeof win?.usedPercent === 'number' ? win.usedPercent : null };
-  });
-  if (provData.length === 0) return '';
-  const validPcts = provData.filter(p => p.pct !== null).map(p => p.pct);
-  const maxPct    = validPcts.length > 0 ? Math.max(...validPcts) : 0;
-  const pctStr    = validPcts.length > 0 ? `${Math.round(maxPct)}%` : '—';
-  const pctColor  = validPcts.length > 0 ? `color:var(--${QB.usageColor(maxPct)})` : '';
-  const rows = provData.map(p => {
-    const col      = QB.providerColor(p.name);
-    const fill     = p.pct !== null ? clamp(p.pct, 0, 100) : 0;
-    const pctText  = p.pct !== null ? `${Math.round(p.pct)}%` : '—';
-    const nameStr  = p.name.charAt(0).toUpperCase() + p.name.slice(1);
-    const glow     = fill > 0 ? `box-shadow:0 0 6px ${col}66` : '';
-    const pctStyle = p.pct !== null ? `color:var(--${QB.usageColor(p.pct)})` : 'color:var(--t400)';
-    return `<div class="mini-row">
-      <div class="mini-label"><span class="mini-dot" style="background:${col}"></span>${nameStr}</div>
-      <div class="mini-track"><div class="mini-fill" style="width:${fill}%;background:${col};${glow}"></div></div>
-      <span class="mini-pct" style="${pctStyle}">${pctText}</span>
-    </div>`;
-  }).join('');
-  return `<div class="card" style="animation-delay:0ms">
-    <div class="overview-head">
-      <span class="overview-label">Overview</span>
-      <div class="overview-right"><span class="overview-total-lbl">Peak Usage</span><span class="overview-pct" style="${pctColor}">${pctStr}</span></div>
-    </div>
-    <div class="mini-bars">${rows}</div>
-  </div>`;
-}
-
-// ── Tip card ──────────────────────────────────────────────────────────
-function renderTip(snapshots) {
-  let worstStage = null, worstProvider = null;
-  const stageOrder = ['farBehind','behind','slightlyBehind','onTrack','slightlyAhead','ahead','farAhead'];
-  for (const snap of snapshots) {
-    const weekly = snap.windows.find(w => w.name === 'weekly');
-    if (weekly?.pace?.stage) {
-      const idx = stageOrder.indexOf(weekly.pace.stage);
-      const worstIdx = worstStage ? stageOrder.indexOf(worstStage) : 999;
-      if (idx < worstIdx) { worstStage = weekly.pace.stage; worstProvider = snap.provider; }
-    }
-  }
-  if (!worstStage || worstStage === 'onTrack') return '';
-  const name = worstProvider ? worstProvider.charAt(0).toUpperCase() + worstProvider.slice(1) : '';
-  const tips = {
-    farBehind:`You're far behind on ${name}. Your usage is well below the expected pace.`,
-    behind:`${name} usage is running behind the expected weekly pace.`,
-    slightlyBehind:`${name} is slightly below pace — your quota has plenty of room left.`,
-    slightlyAhead:`${name} usage is slightly ahead of pace this week.`,
-    ahead:`${name} is well ahead of pace — quota may run tight before the weekly reset.`,
-    farAhead:`${name} is consuming quota much faster than expected this week.`,
-  };
-  const text = tips[worstStage] || '';
-  if (!text) return '';
-  const delay = (snapshots.length + 1) * 65;
-  return `<div class="card" style="animation-delay:${delay}ms">
-    <div class="tip-body-wrap">
-      <div class="tip-icon-box"><svg width="15" height="15" viewBox="0 0 15 15" fill="none"><circle cx="7.5" cy="6" r="3.5" stroke="#52d017" stroke-width="1.4"/><path d="M5.5 10.5h4M6 12h3" stroke="#52d017" stroke-width="1.4" stroke-linecap="round"/></svg></div>
-      <div class="tip-content"><div class="tip-label">Tip</div><div class="tip-text">${QB.esc(text)}</div></div>
-    </div>
-  </div>`;
-}
-
 // ── Standard provider card ─────────────────────────────────────────────
 function renderStandard(snap, name, delay, acctIdx) {
   const fiveH  = snap.windows.find(w => w.name === 'fiveHour');
@@ -461,7 +374,6 @@ function renderStandard(snap, name, delay, acctIdx) {
   const winHtml = windowBadgeHtml(snap.costFactor);
   if (winHtml) bdgs.push(winHtml);
   const accent = QB.accentVar(hasPct ? pct : null);
-  const tokenHtml = tokenCollapseHtml(snap.costFactor, snap.provider);
 
   return `<div class="card has-accent" style="--card-accent:${accent};${delay}">
     <div class="card-body">
@@ -478,7 +390,6 @@ function renderStandard(snap, name, delay, acctIdx) {
         ${bars}
         ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
         ${windowBudgetCollapseHtml(snap)}
-        ${tokenHtml}
       </div>
     </div>
   </div>`;
@@ -553,14 +464,12 @@ QB.renderLive = function renderLive(snapshots) {
     el.innerHTML = '<div class="empty"><span>No provider data</span></div>';
     return;
   }
-  const overview = renderOverview(snapshots);
   const providerSeq = {};
   const cards    = snapshots.map((snap, i) => {
     providerSeq[snap.provider] = (providerSeq[snap.provider] || 0) + 1;
     return renderCard(snap, i + 1, providerSeq[snap.provider]);
   }).join('');
-  const tip      = renderTip(snapshots);
-  el.innerHTML   = overview + cards + tip;
+  el.innerHTML   = cards;
   _wbDataPromise = null; // neue Snapshots → Budget-Daten neu laden
   const wbGen = ++_wbGeneration;
   void hydrateWindowBudgets(snapshots, wbGen);

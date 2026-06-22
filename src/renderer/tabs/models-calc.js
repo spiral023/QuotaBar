@@ -83,6 +83,51 @@
     return (d) => d.date;
   }
 
+  // Nächster Bucket-Schlüssel je Auflösung (gleiche Formate wie bucketFnFor).
+  // Spiegelt die Gap-Fill-Logik des History-Tabs.
+  function nextBucket(bucket, granularity) {
+    const p2 = (n) => String(n).padStart(2, '0');
+    if (granularity === 'hourly') {
+      const [date, time] = bucket.split(' ');
+      const h = parseInt(time, 10);
+      if (h < 23) return `${date} ${p2(h + 1)}:00`;
+      return `${isoAddDays(date, 1)} 00:00`;
+    }
+    if (granularity === 'monthly') {
+      const [yr, mo] = bucket.split('-').map(Number);
+      return mo < 12 ? `${yr}-${p2(mo + 1)}` : `${yr + 1}-01`;
+    }
+    if (granularity === 'weekly') {
+      const [yr, wk] = bucket.split('-W').map(Number);
+      const jan4 = new Date(Date.UTC(yr, 0, 4));
+      const jan4Day = jan4.getUTCDay() || 7;
+      const w1Thu = new Date(jan4.getTime() + (4 - jan4Day) * 86400000);
+      const next = new Date(w1Thu.getTime() + wk * 7 * 86400000); // Donnerstag der Folgewoche
+      const yearStart = new Date(Date.UTC(next.getUTCFullYear(), 0, 1));
+      const week = Math.ceil(((next - yearStart) / 86400000 + 1) / 7);
+      return `${next.getUTCFullYear()}-W${p2(week)}`;
+    }
+    return isoAddDays(bucket, 1); // daily
+  }
+
+  // Bucket-Achse für ein Daten-Set. Mit fillGaps werden fehlende Zeiteinheiten
+  // zwischen erstem und letztem vorhandenen Bucket ergänzt (leere Lücken).
+  function bucketAxis(days, granularity, fillGaps) {
+    const bucketOf = bucketFnFor(granularity);
+    const present = Array.from(new Set(days.map(bucketOf))).sort();
+    if (!fillGaps || present.length < 2) return present;
+    const max = present[present.length - 1];
+    const seq = [];
+    let cur = present[0];
+    for (let i = 0; i < 100000 && cur <= max; i++) {
+      seq.push(cur);
+      const nxt = nextBucket(cur, granularity);
+      if (!nxt || nxt <= cur) break;
+      cur = nxt;
+    }
+    return seq;
+  }
+
   /**
    * Stellt Daten je Auflösung (hourly/daily/weekly/monthly) für Stacked Bar
    * Charts zusammen.
@@ -90,9 +135,9 @@
    * series enthält absolute Werte; die 100%-Normalisierung passiert beim Chart-Aufbau.
    * othersThreshold: Anteil am Gesamtwert des Fensters, unter dem ein Modell in „Andere" fällt (z.B. 0.01).
    */
-  function buildStack(days, metric, granularity, othersThreshold) {
+  function buildStack(days, metric, granularity, othersThreshold, fillGaps) {
     const bucketOf = bucketFnFor(granularity);
-    const buckets = Array.from(new Set(days.map(bucketOf))).sort();
+    const buckets = bucketAxis(days, granularity, fillGaps);
     const idx = new Map(buckets.map((b, i) => [b, i]));
 
     const perModel = new Map(); // model → { provider, values[] , sum }
@@ -133,9 +178,9 @@
    * Werte sind null, wenn im Bucket für den Provider keine Tokens anfielen
    * (Chart.js zeichnet dort eine Lücke). Rate = Σ Kosten ÷ Σ Tokens × 1e6.
    */
-  function buildRateSeries(days, granularity) {
+  function buildRateSeries(days, granularity, fillGaps) {
     const bucketOf = bucketFnFor(granularity);
-    const buckets = Array.from(new Set(days.map(bucketOf))).sort();
+    const buckets = bucketAxis(days, granularity, fillGaps);
     const idx = new Map(buckets.map((b, i) => [b, i]));
     const blank = () => buckets.map(() => ({ cost: 0, tokens: 0 }));
     const acc = { claude: blank(), codex: blank(), total: blank() };
@@ -470,5 +515,5 @@
     };
   }
 
-  return { isoAddDays, filterWindow, previousWindow, filterRange, previousRange, metricOf, isoWeek, bucketFnFor, buildStack, buildRateSeries, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown, providerCostBreakdown };
+  return { isoAddDays, filterWindow, previousWindow, filterRange, previousRange, metricOf, isoWeek, bucketFnFor, nextBucket, bucketAxis, buildStack, buildRateSeries, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown, providerCostBreakdown };
 });

@@ -21,6 +21,7 @@ window.QB = window.QB || {};
   let _resolution = 'daily';
   let _metric = 'output';
   let _provider = 'all';
+  let _showEmpty = true; // Leere Zeiteinheiten im Verteilungs-Chart einblenden (wie History)
   let _sortKey = 'costUSD';
   let _sortDesc = true;
   // Cache für Stundendaten (reports:get live), Key = `${from}|${to}`.
@@ -183,6 +184,15 @@ window.QB = window.QB || {};
                 <span class="hr-date-sep" aria-hidden="true">–</span>
                 <input class="hr-date-input" type="date" id="mod-to" value="${_to}" aria-label="Bis" title="Enddatum">
               </div>
+              <button class="hr-reload" id="mod-load-btn" title="Neu laden" aria-label="Neu laden">
+                <svg width="12" height="12" viewBox="0 0 14 14" fill="none"
+                     stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1.5 7a5.5 5.5 0 0 1 9.9-3.3"/>
+                  <path d="M12.5 7a5.5 5.5 0 0 1-9.9 3.3"/>
+                  <path d="M11 2.2 13 4l-2 1.8"/>
+                  <path d="M3 11.8 1 10l2-1.8"/>
+                </svg>
+              </button>
             </div>
             <div class="hr-ctrl-row2">
               <div class="hr-seg" id="mod-agg-pills" role="group" aria-label="Auflösung">
@@ -193,6 +203,14 @@ window.QB = window.QB || {};
                 <button class="hr-seg-btn hr-seg-claude${_provider === 'claude' ? ' active' : ''}" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
                 <button class="hr-seg-btn hr-seg-codex${_provider === 'codex' ? ' active' : ''}" data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
               </div>
+              <button class="hr-tgl${_showEmpty ? ' active' : ''}" id="mod-empty-toggle"
+                      title="Leere Zeiteinheiten einblenden" aria-pressed="${_showEmpty}">
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
+                     stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+                  <path d="M1.5 9.5V5"/><path d="M5.5 9.5V7" stroke-dasharray="1.5 1.5"/><path d="M9.5 9.5V2.5"/>
+                </svg>
+                <span class="hr-tgl-label">Lücken</span>
+              </button>
             </div>
           </div>
           <div class="mod-seg mod-metric-seg" id="mod-metric-pills">
@@ -261,6 +279,29 @@ window.QB = window.QB || {};
       p.addEventListener('click', () => { _metric = p.dataset.metric; syncPills(); refreshChart(); }));
     document.querySelectorAll('#mod-prov-pills .hr-seg-btn').forEach((b) =>
       b.addEventListener('click', () => { _provider = b.dataset.prov; refreshLocal(); }));
+    document.getElementById('mod-empty-toggle')?.addEventListener('click', () => {
+      _showEmpty = !_showEmpty;
+      const btn = document.getElementById('mod-empty-toggle');
+      if (btn) { btn.classList.toggle('active', _showEmpty); btn.setAttribute('aria-pressed', String(_showEmpty)); }
+      refreshChart();
+    });
+    document.getElementById('mod-load-btn')?.addEventListener('click', reloadData);
+  }
+
+  // Daten frisch aus dem Hauptprozess holen und den ganzen Tab neu rendern.
+  async function reloadData() {
+    const btn = document.getElementById('mod-load-btn');
+    if (btn) { btn.disabled = true; btn.classList.add('loading'); }
+    _stale = true;
+    _dataPromise = null;
+    _hourlyCache = { key: null, cells: null };
+    try {
+      _data = await loadData();
+      renderUI(); // baut DOM neu auf → Button-Zustand wird zurückgesetzt
+    } catch (e) {
+      console.error('models reload failed', e);
+      if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
+    }
   }
 
   function syncPills() {
@@ -415,7 +456,7 @@ window.QB = window.QB || {};
   function renderStackBars(cellsAll, granularity, note) {
     const cells = _provider === 'all' ? cellsAll : cellsAll.filter((d) => d.provider === _provider);
     const order = _resolution === 'hourly' ? calc.modelColorOrder(cells) : _colorOrder;
-    const stack = calc.buildStack(cells, _metric, granularity, 0.01);
+    const stack = calc.buildStack(cells, _metric, granularity, 0.01, _showEmpty);
 
     const empty = stack.series.length === 0 || stack.series.every((s) => s.values.every((v) => v === 0));
     note.hidden = !empty;
@@ -443,7 +484,7 @@ window.QB = window.QB || {};
 
   // $/MTok-Linie: effektiver Token-Preis je Bucket, getrennt nach Provider + Gesamt.
   function renderRateLines(cellsAll, granularity, note) {
-    const rate = calc.buildRateSeries(cellsAll, granularity);
+    const rate = calc.buildRateSeries(cellsAll, granularity, _showEmpty);
 
     const lineDefs = [];
     if (_provider === 'all' || _provider === 'claude') lineDefs.push({ label: 'Claude', values: rate.claude, color: QB.providerColor('claude') });

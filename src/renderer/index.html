@@ -1585,10 +1585,13 @@
     .view-compact #analytics-content .hr-preset-select,
     .view-compact #history-content .hr-preset-select,
     .view-compact #models-content .hr-preset-select { width: 100%; max-width: 100%; }
-    /* Compact history Zeile 2: Lücken als Icon-only, ans rechte Ende schieben */
-    .view-compact #history-content .hr-tgl-label { display: none; }
-    .view-compact #history-content .hr-tgl { margin-left: auto; padding: 0 6px; }
-    .view-compact #history-content .hr-ctrl-row2 { gap: 3px; }
+    /* Compact history/models Zeile 2: Lücken als Icon-only, ans rechte Ende schieben */
+    .view-compact #history-content .hr-tgl-label,
+    .view-compact #models-content .hr-tgl-label { display: none; }
+    .view-compact #history-content .hr-tgl,
+    .view-compact #models-content .hr-tgl { margin-left: auto; padding: 0 6px; }
+    .view-compact #history-content .hr-ctrl-row2,
+    .view-compact #models-content .hr-ctrl-row2 { gap: 3px; }
     .hr-tb-sep {
       width: 1px; align-self: stretch; margin: 3px 0;
       background: var(--border); flex-shrink: 0;
@@ -2883,11 +2886,6 @@
       </div>
 
       <div class="s-section">
-        <div class="s-section-title">Abos</div>
-        <div class="s-hint">Abo-Pläne &amp; Kosten werden jetzt im Tab <b>Abos</b> verwaltet.</div>
-      </div>
-
-      <div class="s-section">
         <div class="s-section-title">Options</div>
         <div class="toggle-row">
           <span class="toggle-label">Pricing Offline Mode</span>
@@ -2932,10 +2930,10 @@
     </div>
     <div class="footer-btns">
       <button class="tbtn" id="btn-settings" title="Settings">
-        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-             stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="6.5" cy="6.5" r="2"/>
-          <path d="M6.5 1v1.2M6.5 10.8V12M1 6.5h1.2M10.8 6.5H12M2.7 2.7l.85.85M9.45 9.45l.85.85M9.45 3.55l-.85.85M3.55 9.45l-.85.85"/>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
       </button>
     </div>
