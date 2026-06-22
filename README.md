@@ -142,19 +142,20 @@ What this means in practice:
 
 > **Takeaway:** Run QuotaBar regularly and history grows permanently. The only way to lose data is leaving QuotaBar off longer than the provider's retention window. Raising `cleanupPeriodDays` widens that safety margin.
 
-## Dashboard and Reports
+## History Tab
+
+The History tab shows per-period cost and token breakdowns served from the permanent backfill store.
 
 | Capability | Details |
 | --- | --- |
-| Provider filtering | All providers, Claude, or Codex |
-| Report types | Daily, weekly, monthly, and session-level reports |
-| Report controls | Since/until filters, timezone selection, project/instance filtering, sort order, and instance grouping |
-| Claude cost modes | `auto`, `calculate`, `display` |
-| Codex speed modes | `auto`, `standard`, `fast` |
-| Export | Copyable JSON output for programmatic analysis |
-| History chart toggle | Switch the per-period chart between USD costs and token volumes (total, input, output, or cache) |
+| Resolution | Hourly · Daily · Weekly · Monthly |
+| Date range | Preset ranges (Last 7 d, 30 d, this week / month / year, all time) or custom since / until |
+| Provider filter | All · Claude · Codex |
+| Chart toggle | Switch between USD costs and token volumes (total, input, output, or cache) |
+| Summary KPIs | Total API cost, per-provider split, total tokens |
+| Table | Per-period rows with cost and all token-type columns |
 
-Weekly reports use Monday as the week start. JSON field names are stable English names.
+Weekly buckets start on Monday.
 
 ## Models Tab
 
@@ -201,6 +202,39 @@ Per-model cache-hit rate bar and estimated USD saved through cache reads (requir
 
 ---
 
+## Analytics Tab
+
+The Analytics tab shows longer-term patterns across the full history.
+
+| Section | Details |
+| --- | --- |
+| Cost / ROI trend | Multi-series line chart (Claude + Codex) aggregated by hour, day, week, or month |
+| Usage breakdown | Donut chart with per-provider cost share and combined ROI factor for the selected window |
+| Top models by cost | Ranked table with cost and percentage share |
+| Activity stats | Session count, active days, tokens per day, and other aggregate KPIs |
+| Hour heatmap | 24-hour grid showing when usage is concentrated |
+| Weekday pattern | Per-weekday bar chart and top-5 most expensive days |
+| 5h window peak | Highest single 5-hour window within the selected range |
+| Cost efficiency | Per-model cache-hit rates and estimated USD saved |
+| ROI by subscription tier | Subscription factor broken out by plan tier |
+| 5h window history | Rolling utilisation chart over time (requires debug logging) |
+
+The **ROI factor** is `API cost ÷ (subscription cost × window_days / 30)` — normalised so any window length is directly comparable to a monthly subscription price.
+
+## Notifications
+
+QuotaBar fires Windows toast notifications for quota and cost events. Rules are configured individually with enable/disable toggles, cooldown durations, and global quiet hours.
+
+| Category | Rules |
+| --- | --- |
+| Quota window | Confirmed reset, unexpected reset, reset approaching, high / critical usage |
+| Pace & forecast | Projected depletion, burning too fast, burning too slow |
+| Historical usage | Fresh quota, quota idle, weekly reserve low, output spike, burn-rate spike |
+| Cost efficiency | Cache-hit rate drop, expensive model spike, ROI milestone |
+| Data quality | Provider data stale / restored |
+
+All fired notifications are stored in the **Notifications** tab history with timestamps and full details.
+
 ## Cost Tracking
 
 QuotaBar reads local JSONL logs, fetches current model pricing from LiteLLM when online, and calculates API-equivalent costs in USD.
@@ -232,7 +266,7 @@ For Claude, all four token types contribute to cost: input (uncached), output, c
 
 For the full calculation model, see [docs/how-quotabar-calculates.md](docs/how-quotabar-calculates.md).
 
-Settings are stored in `%APPDATA%\quotabar-win\settings.json`:
+Settings are stored in `%USERPROFILE%\.quotabar-win\settings.json`:
 
 ```jsonc
 {
@@ -280,20 +314,26 @@ npm install
 
 ```text
 src/
-|- main/       Electron lifecycle, tray menu, dashboard, notifications, autostart
+|- main/       Electron lifecycle, tray menu, notifications, autostart, backfill
 |              └─ modelsData.ts  per-model aggregation (backfill + live-tail merge)
 |- providers/  Claude and Codex live usage providers
 |- auth/       Credential parsing, JWT helpers, token refresh
-|- usage/      Refresh loop, snapshot store, reset detection, formatters, pace
+|- usage/      Refresh loop, snapshot store, reset detection, bonus detection, pace
 |- pricing/    JSONL readers, cost calculators, LiteLLM fetcher, subscription factor
-|- reports/    Daily, weekly, monthly, and session report aggregation
+|- reports/    Hourly, daily, weekly, monthly, and session report aggregation
 |- config/     Paths, settings, first-run prompt
 |              └─ model-benchmarks.json  static Artificial Analysis Intelligence Index scores
 |- icon/       Tray icon progress bars
 `- shared/     Redaction, shared error types, model name normalisation
 renderer/tabs/
-|- models-calc.js  pure calc helpers (UMD — runs in browser and vitest)
-`- models.js       Models tab UI
+|- live.js             Live quota view
+|- history.js          History tab UI
+|- models-calc.js      Pure calc helpers (UMD — runs in browser and Vitest)
+|- models.js           Models tab UI
+|- analytics.js        Analytics tab UI
+|- plans.js            Subscriptions tab UI
+|- notifications.js    Notifications tab UI
+`- system.js           System / data management tab UI
 ```
 
 ## Security and Privacy
@@ -307,35 +347,35 @@ renderer/tabs/
 
 ## Release & Auto-Update
 
-QuotaBar aktualisiert sich im installierten Build automatisch über GitHub Releases.
+Installed builds update automatically via GitHub Releases.
 
-### Neuen Release veröffentlichen
+### Publishing a release
 
 ```powershell
 git checkout main
 git pull
-npm version patch        # bumpt package.json, erstellt Commit + Tag vX.Y.Z
-git push --follow-tags   # löst den Release-Workflow aus
+npm version patch        # bumps package.json, creates commit + tag vX.Y.Z
+git push --follow-tags   # triggers the release workflow
 ```
 
-`npm version minor` oder `npm version major` für größere Sprünge.
+Use `npm version minor` or `npm version major` for larger bumps.
 
-Die GitHub Action (`release.yml`) läuft auf `windows-latest`, baut den NSIS-Installer und veröffentlicht ihn direkt als GitHub Release (kein Draft) samt `latest.yml`.
+The GitHub Action (`release.yml`) runs on `windows-latest`, builds the NSIS installer, and publishes it directly as a GitHub Release (not a draft) together with `latest.yml`.
 
-Installierte Clients prüfen beim Start und alle 6 Stunden auf Updates. Ein verfügbares Update wird still heruntergeladen und beim nächsten Beenden der App installiert. Alternativ erscheint im Tray-Menü der Eintrag „Update bereit – jetzt neu starten".
+Installed clients check for updates on startup and every 6 hours. An available update is downloaded silently and installed on the next app exit. The tray menu also shows "Update ready — restart now" when an update is waiting.
 
-### Entwickeln neben dem installierten Build
+### Developing alongside the installed build
 
-Der installierte Build und `npm run dev` nutzen dieselbe Datendatei (`%APPDATA%\quotabar-win\`) und dieselbe Single-Instance-Sperre. Deshalb:
+The installed build and `npm run dev` share the same data directory (`%USERPROFILE%\.quotabar-win\`) and the same single-instance lock. Therefore:
 
-- **Vor `npm run dev`:** Installierten Build im Tray beenden (Rechtsklick → Beenden).
-- **Danach:** Dev-Instanz wie gewohnt starten.
+- **Before `npm run dev`:** Exit the installed build from the tray (right-click → Exit).
+- **Then:** Start the dev instance as usual.
 
-Beide Instanzen können nicht gleichzeitig laufen.
+Both instances cannot run at the same time.
 
 ### SmartScreen
 
-Die Builds sind nicht code-signiert. Beim ersten Start zeigt Windows ggf. „Der Computer wurde durch Windows geschützt" → „Weitere Informationen" → „Trotzdem ausführen".
+Builds are not code-signed. On first launch Windows may show "Windows protected your PC" → "More info" → "Run anyway".
 
 ## License
 

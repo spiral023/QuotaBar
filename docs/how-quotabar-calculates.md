@@ -1,25 +1,25 @@
-# Wie QuotaBar Tokens und Kosten berechnet
+# How QuotaBar calculates tokens and costs
 
-QuotaBar liest lokale JSONL-Dateien, die Claude Code und Codex CLI auf dem Rechner hinterlassen, und berechnet daraus Token-Summen, API-Kosten und den Abo-Faktor. Dieser Text beschreibt den vollständigen Rechenweg.
+QuotaBar reads local JSONL files written by Claude Code and Codex CLI and derives token totals, API costs, and the subscription factor from them. This document describes the full calculation pipeline.
 
 ---
 
-## Datenquellen
+## Data sources
 
-| Provider | Dateipfad | Format |
+| Provider | File path | Format |
 |---|---|---|
-| Claude | `~/.claude/projects/**/*.jsonl` | Eine JSON-Zeile pro Assistent-Nachricht |
-| Codex | `~/.codex/sessions/**/*.jsonl` | Eine JSON-Zeile pro Token-Count-Event |
+| Claude | `~/.claude/projects/**/*.jsonl` | One JSON line per assistant message |
+| Codex | `~/.codex/sessions/**/*.jsonl` | One JSON line per token-count event |
 
-Die Dateien werden bei jedem Poll-Zyklus frisch eingelesen. Es gibt keinen lokalen Cache zwischen Refreshes.
+Files are read fresh on every poll cycle. There is no in-memory cache between refreshes.
 
 ---
 
-## Claude: Token-Zählung
+## Claude: token counting
 
-### Welche Zeilen werden ausgewertet?
+### Which lines are counted?
 
-Jede Zeile im Claude-JSONL hat ein `type`-Feld. Ausgewertet werden nur Zeilen mit `type: "assistant"`, die ein `message.usage`-Objekt enthalten:
+Each line in the Claude JSONL has a `type` field. Only lines with `type: "assistant"` that contain a `message.usage` object are counted:
 
 ```json
 {
@@ -38,62 +38,62 @@ Jede Zeile im Claude-JSONL hat ein `type`-Feld. Ausgewertet werden nur Zeilen mi
 }
 ```
 
-### Deduplizierung
+### Deduplication
 
-Claude Code schreibt bei Streaming-Antworten mehrere Snapshots derselben Nachricht in die JSONL-Datei (mit zunehmenden Token-Zählern). QuotaBar dedupliziert auf `message.id`: Die erste Zeile mit einer bestimmten ID wird gezählt, alle weiteren werden übersprungen.
+Claude Code writes multiple snapshots of the same message during streaming (with incrementing token counts). QuotaBar deduplicates on `message.id`: the first line with a given ID is counted; all subsequent ones are skipped.
 
-**Folge:** QuotaBar zählt jede API-Anfrage genau einmal. Tools wie ccusage, die nicht deduplizieren, können höhere Output-Token-Zahlen ausweisen (typisch ~10 % mehr).
+**Effect:** QuotaBar counts each API request exactly once. Tools such as ccusage that do not deduplicate may report higher output-token numbers (typically ~10 % more).
 
-### Token-Felder
+### Token fields
 
-| UI-Feld | JSONL-Feld | Bedeutung |
+| UI field | JSONL field | Meaning |
 |---|---|---|
-| INPUT | `input_tokens` | Frische, nicht gecachte Prompt-Tokens |
-| OUTPUT | `output_tokens` | Generierte Antwort-Tokens |
-| CACHE + | `cache_creation_input_tokens` | Tokens, die neu in den Cache geschrieben wurden |
-| CACHE ▷ | `cache_read_input_tokens` | Tokens, die aus dem Cache gelesen wurden (günstiger) |
-| TOTAL | Summe aller vier Felder | Alle verarbeiteten Tokens |
+| INPUT | `input_tokens` | Fresh, uncached prompt tokens |
+| OUTPUT | `output_tokens` | Generated response tokens |
+| CACHE + | `cache_creation_input_tokens` | Tokens newly written to the cache |
+| CACHE ▷ | `cache_read_input_tokens` | Tokens read from the cache (cheaper) |
+| TOTAL | Sum of all four | All processed tokens |
 
 ```
 TOTAL = INPUT + OUTPUT + CACHE+ + CACHE▷
 ```
 
-Wichtig: `input_tokens` in Claude-JSONL enthält **nur** den frischen, ungecachten Anteil. Cache-Reads kommen ausschließlich in `cache_read_input_tokens`.
+Important: `input_tokens` in Claude JSONL contains **only** the fresh, uncached portion. Cache reads are reported exclusively in `cache_read_input_tokens`.
 
-### Zeitfenster-Filter
+### Time-window filter
 
-Bevor Token-Daten aufsummiert werden, filtert QuotaBar nach dem konfigurierten Kostenfenster (siehe [Kostenfenster](#kostenfenster)). Einträge mit `timestamp < billingStart` werden ignoriert.
-
----
-
-## Claude: Kostenberechnung
-
-Kosten werden in zwei Schritten berechnet:
-
-**Schritt 1 – Einträge mit `costUSD`-Feld:**
-Neuere Claude-Code-Versionen schreiben einen `costUSD`-Wert direkt in jede JSONL-Zeile. Diese Werte werden direkt summiert.
-
-**Schritt 2 – Einträge ohne `costUSD`:**
-Für ältere Einträge ohne `costUSD` holt QuotaBar die Modellpreise von der [LiteLLM-Preistabelle](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json) (oder aus dem lokalen Cache bei Offline-Modus) und rechnet pro Modell:
-
-```
-Kosten = INPUT  × input_cost_per_token
-       + OUTPUT × output_cost_per_token
-       + CACHE+ × cache_creation_input_token_cost
-       + CACHE▷ × cache_read_input_token_cost
-```
-
-Da `input_tokens` in Claude-JSONL bereits nur den ungecachten Anteil enthält, wird kein weiterer Abzug vorgenommen. CACHE+ und CACHE▷ werden mit ihren eigenen (günstigeren) Preisen multipliziert — beide tragen zur Gesamtsumme bei.
-
-Beide Teilsummen (Schritt 1 + Schritt 2) werden addiert. Gibt es für einen Eintrag ohne `costUSD` kein Modell-Feld, wird das erste bekannte Modell oder `claude-sonnet-4-5` als Fallback verwendet.
+Before tokens are summed, QuotaBar filters on the configured cost window (see [Cost window](#cost-window)). Entries with `timestamp < windowStart` are ignored.
 
 ---
 
-## Codex: Token-Zählung
+## Claude: cost calculation
 
-### Dateiformat
+Costs are calculated in two steps:
 
-Codex CLI schreibt zwei relevante Zeilentypen:
+**Step 1 — entries with a `costUSD` field:**  
+Newer Claude Code versions write a `costUSD` value directly into each JSONL line. These values are summed directly.
+
+**Step 2 — entries without `costUSD`:**  
+For older entries without `costUSD`, QuotaBar fetches model prices from the [LiteLLM pricing table](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json) (or from a local cache in offline mode) and calculates per model:
+
+```
+cost = INPUT  × input_cost_per_token
+     + OUTPUT × output_cost_per_token
+     + CACHE+ × cache_creation_input_token_cost
+     + CACHE▷ × cache_read_input_token_cost
+```
+
+Because `input_tokens` already contains only the uncached portion, no further subtraction is needed. CACHE+ and CACHE▷ are multiplied by their own (lower) rates — both contribute to the total.
+
+Both subtotals (step 1 + step 2) are added. If an entry without `costUSD` has no model field, the first known model or `claude-sonnet-4-5` is used as a fallback.
+
+---
+
+## Codex: token counting
+
+### File format
+
+Codex CLI writes two relevant line types:
 
 ```json
 { "type": "turn_context", "payload": { "model": "gpt-5.5" } }
@@ -110,184 +110,223 @@ Codex CLI schreibt zwei relevante Zeilentypen:
   }}}
 ```
 
-### Kumulierte vs. Delta-Zählung
+### Cumulative vs. delta counting
 
-Codex schreibt entweder kumulative Gesamtzahlen (`total_token_usage`) oder Zahlen für den letzten Turn (`last_token_usage`). QuotaBar verarbeitet beide:
+Codex writes either cumulative session totals (`total_token_usage`) or per-turn counts (`last_token_usage`). QuotaBar handles both:
 
-- **`last_token_usage` vorhanden:** Wert direkt als Delta übernehmen.
-- **Nur `total_token_usage` vorhanden:** Delta = Aktuell − Vorherige Summe (Differenzbildung über den Session-Verlauf).
+- **`last_token_usage` present:** Value used directly as a delta.
+- **Only `total_token_usage` present:** Delta = current − previous sum (difference across the session).
 
-### Token-Felder
+### Token fields
 
-Im Codex-JSONL enthält `input_tokens` die **Gesamtsumme** aller Prompt-Tokens — also inklusive des gecachten Anteils. QuotaBar rechnet das intern um:
+In Codex JSONL, `input_tokens` contains the **total** of all prompt tokens — including the cached portion. QuotaBar converts internally:
 
-| UI-Feld | Berechnung | Bedeutung |
+| UI field | Calculation | Meaning |
 |---|---|---|
-| INPUT | `input_tokens − cached_input_tokens` | Frischer, ungecachter Prompt-Anteil |
-| CACHE ▷ | `cached_input_tokens` | Gecachter Prompt-Anteil |
-| OUTPUT | `output_tokens` | Generierte Antwort-Tokens |
-| TOTAL | `total_tokens` aus dem JSONL | Alle Tokens (Prompt inkl. Cache + Output + Reasoning) |
+| INPUT | `input_tokens − cached_input_tokens` | Fresh, uncached prompt portion |
+| CACHE ▷ | `cached_input_tokens` | Cached prompt portion |
+| OUTPUT | `output_tokens` | Generated response tokens |
+| TOTAL | `total_tokens` from JSONL | All tokens (prompt incl. cache + output + reasoning) |
 
 ```
-Angezeigtes INPUT = input_tokens − cached_input_tokens   (ungecacht)
-CACHE ▷           = cached_input_tokens                  (gecacht)
-TOTAL             = input_tokens + output_tokens + reasoning  (aus JSONL)
+Displayed INPUT = input_tokens − cached_input_tokens   (uncached)
+CACHE ▷         = cached_input_tokens                  (cached)
+TOTAL           = input_tokens + output_tokens + reasoning  (from JSONL)
 ```
 
-Damit bedeutet das Feld INPUT bei beiden Providern dasselbe: *frische, ungecachte Tokens*.
+Both providers therefore mean the same thing by INPUT: *fresh, uncached tokens*.
 
-### Modell-Erkennung
+### Model detection
 
-Das aktuelle Modell wird aus dem letzten `turn_context`-Eintrag vor dem Token-Event gelesen. Fehlt er, wird `gpt-5` als Fallback gesetzt (`isFallback: true`).
+The active model is read from the most recent `turn_context` entry before the token event. If none is found, `gpt-5` is used as a fallback (`isFallback: true`).
 
-### Keine Deduplizierung nötig
+### No deduplication needed
 
-Codex schreibt keine doppelten Events. Jeder Token-Count-Event entspricht einem echten API-Turn.
+Codex does not write duplicate events. Each token-count event corresponds to one real API turn.
 
 ---
 
-## Codex: Kostenberechnung
+## Codex: cost calculation
 
 ```
-Kosten = INPUT  × input_cost_per_token
-       + CACHE▷ × cache_read_input_token_cost  (Fallback: input_cost_per_token)
-       + OUTPUT × output_cost_per_token
+cost = INPUT  × input_cost_per_token
+     + CACHE▷ × cache_read_input_token_cost  (fallback: input_cost_per_token)
+     + OUTPUT × output_cost_per_token
 ```
 
-Wobei INPUT und CACHE▷ die oben berechneten UI-Werte sind:
+Where INPUT and CACHE▷ are the UI values calculated above:
 
-- **INPUT** = `input_tokens − cached_input_tokens` (ungecachter Anteil zum vollen Preis)
-- **CACHE▷** = `cached_input_tokens` (gecachter Anteil zum günstigeren Cache-Read-Preis, falls das Modell einen solchen ausweist — sonst zum normalen Input-Preis)
+- **INPUT** = `input_tokens − cached_input_tokens` (uncached portion at full price)
+- **CACHE▷** = `cached_input_tokens` (cached portion at cache-read price if the model provides one — otherwise at the normal input price)
 
-**Speed Tier:** Liest QuotaBar aus `~/.codex/config` den Eintrag `service_tier = priority` (oder `fast`), wird das Ergebnis mit dem Fast-Faktor aus der LiteLLM-Tabelle multipliziert (typisch 2×, modellabhängig).
+**Speed tier:** If QuotaBar reads `service_tier = priority` (or `fast`) from `~/.codex/config`, the result is multiplied by the fast-tier factor from the LiteLLM table (typically 2×, model-dependent).
 
-**Modell-Aliase:** Interne Codex-Modellnamen werden vor der Preisabfrage gemappt:
+**Model aliases:** Internal Codex model names are mapped before the pricing lookup:
 
-| JSONL-Name | Preisabfrage-Name |
+| JSONL name | Pricing lookup name |
 |---|---|
 | `gpt-5-codex` | `gpt-5` |
 | `gpt-5.3-codex` | `gpt-5.2-codex` |
 
 ---
 
-## Kostenfenster
+## Cost window
 
-QuotaBar filtert Token-Daten auf einen konfigurierbaren Zeitraum. Die Einstellung `costWindow` in den App-Settings steuert den Startpunkt:
+QuotaBar filters token data to a configurable time range. The `costWindow` setting controls the start point:
 
-| Modus | Startpunkt | `windowDays` |
+| Mode | Start point | `windowDays` |
 |---|---|---|
-| `7d` | Jetzt − 7 Tage | 7 (fest) |
-| `30d` | Jetzt − 30 Tage | 30 (fest) |
-| `all` | Epoch (1970-01-01) | Tatsächliche Spanne aus den Daten |
+| `7d` | Now − 7 days | 7 (fixed) |
+| `30d` | Now − 30 days | 30 (fixed) |
+| `all` | Epoch (1970-01-01) | Actual span from the data |
 
-Im Modus `all` wird `windowDays` nicht vorab gesetzt, sondern nach dem Einlesen der Daten berechnet: Differenz zwischen jüngstem Eintrag und heute in Tagen (mindestens 1). Dieser Modus heißt intern `calculationMode: "actual-span"`, die festen Modi heißen `"fixed"`.
+In `all` mode, `windowDays` is not fixed upfront but calculated after reading the data: the difference between the most recent entry and today in days (minimum 1). This mode is called `calculationMode: "actual-span"` internally; the fixed modes are `"fixed"`.
 
-Das Fenster wird in der UI als Badge angezeigt (z. B. `30d` oder `14d (all)`). Tooltips erklären den Modus (`festes Fenster` vs. `tatsächlicher Zeitraum`).
+The window is shown as a badge in the UI (e.g. `30d` or `14d (all)`). Tooltips explain the mode (*fixed window* vs. *actual span*).
 
 ---
 
-## Token-Details in der Live-Ansicht
+## Token details in the live view
 
-Die aufklappbare Sektion **Token Details** unterhalb jeder Provider-Karte zeigt die akkumulierten Tokens und API-Kosten für das aktuell konfigurierte Kostenfenster — **nicht** all-time.
+The expandable **Token Details** section below each provider card shows accumulated tokens and API costs for the currently configured cost window — **not** all-time.
 
-Der Zeitraum ist im Toggle-Label sichtbar, z. B. `Token Details · 30d`.
+The time range is visible directly in the toggle label, e.g. `Token Details · 30d`.
 
-| Feld | Inhalt |
+| Field | Content |
 |---|---|
-| Input | INPUT-Tokens des Fensters |
-| Output | OUTPUT-Tokens des Fensters |
-| Cache + | CACHE+-Tokens (nur Claude) |
-| Cache ▷ | CACHE▷-Tokens des Fensters |
-| Total | Summe aller vier Felder |
-| Cost | Berechnete API-Kosten in USD für dieses Fenster |
+| Input | INPUT tokens for the window |
+| Output | OUTPUT tokens for the window |
+| Cache + | CACHE+ tokens (Claude only) |
+| Cache ▷ | CACHE▷ tokens for the window |
+| Total | Sum of all four |
+| Cost | Calculated API cost in USD for this window |
 
 ---
 
-## History-Tab: Kosten- und Token-Diagramm
+## History tab: cost and token chart
 
-Der History-Tab zeigt ein gestapeltes Balkendiagramm (Claude + Codex) pro Periode. Über den Toggle **Kosten / Tokens** wird zwischen zwei Ansichten gewechselt:
+The History tab shows a stacked bar chart (Claude + Codex) per period. The **Cost / Tokens** toggle switches between two views:
 
-- **Kosten:** API-Kosten in USD pro Periode
-- **Tokens:** Token-Menge pro Periode — wählbar zwischen Gesamt, Input, Output, Cache (= CACHE+ + CACHE▷)
+- **Cost:** API cost in USD per period
+- **Tokens:** Token volume per period — selectable between total, input, output, and cache (= CACHE+ + CACHE▷)
 
-Die Y-Achse und Tooltips passen sich automatisch an (USD vs. Token-Einheiten).
+The Y-axis and tooltips adjust automatically (USD vs. token units). Available resolutions: hourly, daily, weekly, monthly.
 
 ---
 
-## Abo-Faktor
+## Analytics tab: ROI and trends
 
-Der Abo-Faktor (`N× sub`) zeigt, wie viel die tatsächliche API-Nutzung im Verhältnis zum monatlichen Abo-Preis gekostet hätte:
+### Cost trend chart
 
-```
-factor = apiCostUSD / (subscriptionCostUSD × windowDays / 30)
-```
+The cost trend line chart aggregates API cost per bucket and shows separate series for Claude and Codex. Available resolutions:
 
-Die Normalisierung auf `windowDays / 30` macht Fenster unterschiedlicher Länge vergleichbar.
-
-Standardwerte (konfigurierbar in den App-Settings):
-
-| Provider | Standard |
+| Resolution | Y-axis value |
 |---|---|
-| Claude | $20 / Monat |
-| Codex | $20 / Monat |
+| Hourly | Raw cost per hour |
+| Daily | Cost per day |
+| Weekly | Average cost per day within the week |
+| Monthly | Average cost per day within the month |
 
-**Beispiel:** `$275.71 · 30d (13.79× sub)` bedeutet: Die API-Nutzung der letzten 30 Tage hätte $275.71 gekostet — das entspricht dem 13.79-fachen des $20-Abos.
+### ROI factor
 
----
-
-## Fenster-Budget (5h ↔ Weekly)
-
-QuotaBar lernt aus der eigenen Nutzung, wie viele volle 5h-Fenster in ein Weekly-Fenster passen. Bei jedem Poll-Zyklus werden die Prozent-Zuwächse beider Fenster verglichen:
+The ROI (subscription factor) is:
 
 ```
-r = Σ ΔWeekly% / Σ Δ5h%        Fenster pro Woche = 1 / r
+ROI = apiCostUSD / (subscriptionCostUSD × windowDays / 30)
 ```
 
-Verworfen werden Paare mit 5h-Reset (Δ5h ≤ 0 oder `resetsAt`-Wechsel), Weekly-Reset (ΔWeekly < 0), gesättigtem Weekly (≥ 99,5 %), Paare mit mehr als 10 Minuten Abstand (Konto-Wechsel, App-Pausen, Log-Lücken) und Paare mit ΔWeekly > Δ5h (physikalisch unmöglich — transiente API-Ausreißer); ein `resetsAt`-Wechsel zählt erst oberhalb von 60 s Differenz als echter Rollover (Mikrosekunden-Jitter der Claude-API). Das Verhältnis gilt erst ab 200 % beobachteter 5h-Nutzung als belastbar — vorher zeigt die Karte „lernt noch…".
+Normalising by `windowDays / 30` makes any window length directly comparable to a monthly subscription price. `1×` means API-equivalent cost equals the subscription cost; `13×` means it is thirteen times the subscription cost.
 
-**Mehrere Konten:** Gelernt wird pro Plan-Tier (`planType`), denn das Fenster-Verhältnis ist eine Eigenschaft des Abos, nicht des Kontos. Wer mehrere Claude-Konten nutzt (Wechsel via `claude /login`), behält für jedes Tier den gelernten Stand; Kennzahlen und Verlaufsgraph zeigen immer das gerade aktive Konto. Die Claude-Karte zeigt dessen E-Mail-Adresse an (Quelle: OAuth-Profil-Endpoint, in Debug-Logs redigiert).
+The running ROI chart shows the cumulative factor growing over time: at each date, all API cost accumulated so far is divided by all subscription cost accumulated so far.
 
-Der State liegt in `%USERPROFILE%\.quotabar-win\window-ratio.json` (Format-Version 4; ältere Dateien werden verworfen und automatisch neu aus den Logs geseedet) und wird beim ersten Start einmalig aus den vorhandenen Live-Debug-Logs aufgebaut. Oberhalb von 3000 % Summe werden beide Summen halbiert (exponentielles Vergessen), damit sich Limit-Änderungen der Anbieter durchsetzen.
+### Other analytics sections
 
-**Prognose:** Der Termin „Limit erreicht ~…" basiert primär auf dem Wochenprofil (durchschnittliche Token pro Wochentag der letzten 4 Wochen, ab 2 Wochen Historie), sonst auf der linearen Wochen-Durchschnittsrate. Zusätzlich wird die aktuelle Burn-Rate als „Bei aktuellem Tempo: …" angezeigt.
-
----
-
-## Debug-Log und Backfill
-
-QuotaBar schreibt optional strukturierte Logs nach `~/.quotabar-win/debug/`:
-
-| Datei | Inhalt |
+| Section | What it shows |
 |---|---|
-| `YYYY-MM-DD.jsonl` | Live-Events: App-Start, Refresh-Zyklen, Snapshots |
-| `YYYY-MM-DD.backfill.jsonl` | Historische Token-Events aus den JSONL-Dateien |
-
-Der Backfill wird beim App-Start einmalig ausgeführt und überspringt Tage, für die die Datei bereits existiert. Über das Tray-Menü ("Regenerate Debug Backfill") kann er erzwungen neu gestartet werden.
-
-> **Hinweis zu Backfill-Kosten:** Die Claude- und Codex-JSONL-Dateien enthalten für Subscription-Accounts keine Kostenfelder. Die `totalCostUSD`-Felder in den Backfill-Dateien sind daher immer `0`.
+| Usage breakdown | Donut chart with per-provider cost share; centre shows the combined ROI factor for the selected window |
+| Activity stats | Session count, active days, average cost per day, and similar aggregate KPIs |
+| Hour heatmap | 24-hour grid showing average cost per hour of the day |
+| Weekday pattern | Per-weekday bar chart and the top-5 most expensive individual days |
+| 5h window peak | Highest single 5-hour window within the selected range |
+| Cost efficiency | Per-model cache-hit rates and estimated USD saved through cache reads |
+| ROI by tier | Subscription factor broken out by plan tier |
+| 5h window history | Rolling utilisation chart over time (requires debug logging enabled) |
 
 ---
 
-## Unterschiede zu ccusage
+## 5h window budget
 
-| Aspekt | QuotaBar | ccusage |
+QuotaBar learns from its own usage data how many full 5-hour windows fit into a weekly window. On every poll cycle it compares the percentage increments of both windows:
+
+```
+r = Σ ΔWeekly% / Σ Δ5h%        windows per week = 1 / r
+```
+
+Pairs are discarded when:
+- 5h reset occurred (Δ5h ≤ 0 or `resetsAt` change)
+- Weekly reset occurred (ΔWeekly < 0)
+- Weekly is saturated (≥ 99.5 %)
+- More than 10 minutes between samples (account switch, app pause, log gap)
+- ΔWeekly > Δ5h (physically impossible — transient API outliers)
+
+A `resetsAt` change only counts as a real rollover when the difference exceeds 60 seconds (eliminates microsecond API jitter). The ratio is considered reliable after 200 % of accumulated 5h usage — until then the card shows "still learning…".
+
+**Multiple accounts:** The ratio is learned per plan tier (`planType`) because the window ratio is a property of the subscription, not the account. Users who switch between multiple Claude accounts (via `claude /login`) retain the learned ratio per tier; all metrics and the history chart always reflect the currently active account. The Claude card displays that account's email address (sourced from the OAuth profile endpoint; redacted in debug logs).
+
+The state is stored in `%USERPROFILE%\.quotabar-win\window-ratio.json` (format version 4; older files are discarded and automatically re-seeded from existing debug logs). On first start the file is built once from available live debug logs. Once the accumulated total exceeds 3000 %, both sums are halved (exponential forgetting) so provider limit changes propagate over time.
+
+**Forecast:** The "limit reached ~…" estimate is based primarily on the weekly usage profile (average tokens per weekday for the last 4 weeks, available after 2 weeks of history), otherwise on the linear weekly average rate. The current burn rate is also shown as "At current pace: …".
+
+---
+
+## Bonus reset detection
+
+QuotaBar detects **unscheduled ("bonus") resets** of the weekly quota window. A bonus reset is when:
+- Weekly usage drops by ≥ 10 percentage points **and** falls below 5 %
+- But the `resetsAt` timestamp does **not** advance by ~7 days (i.e. it is not a scheduled weekly reset)
+
+This pattern indicates an out-of-cycle reset (e.g. a courtesy reset from Anthropic or incident recovery). The bonus badge on the Live tab shows the estimated extra 5-hour windows available during the bonus period.
+
+Transient API artifacts (e.g. brief utilisation spikes) are filtered by cross-checking against 5-hour window movements. Bonus state persists across app restarts.
+
+---
+
+## Debug log and backfill
+
+QuotaBar optionally writes structured logs to `%USERPROFILE%\.quotabar-win\debug\`:
+
+| File | Content |
+|---|---|
+| `YYYY-MM-DD.jsonl` | Live events: app start, refresh cycles, snapshots |
+| `YYYY-MM-DD.backfill.jsonl` | Historical token events derived from provider JSONL files |
+
+The backfill runs once on app start and skips days for which the file already exists. It can be forced via the tray menu ("Regenerate Debug Backfill").
+
+Backfill records written at `BACKFILL_REPAIR_VERSION 2` or later include per-token-type cost breakdowns (`inputCostUSD`, `outputCostUSD`, `cacheCreationCostUSD`, `cacheReadCostUSD`). Records written by an older version have these fields set to `0` and are updated the next time a full backfill repair runs.
+
+---
+
+## Comparison with ccusage
+
+| Aspect | QuotaBar | ccusage |
 |---|---|---|
-| Claude Deduplizierung | Ja, auf `message.id` | Nein (zählt alle Streaming-Snapshots) |
-| Claude Output-Tokens | Tendenziell ~10 % niedriger | Höher durch fehlende Dedup |
-| Codex Token-Zählung | Übereinstimmend (< 1 % Abweichung) | Übereinstimmend |
-| Gemini / OpenCode | Nicht unterstützt | Unterstützt |
-| Kosten-Anzeige | API-Kosten + Abo-Faktor | API-Kosten in USD |
-| Zeitfenster | 7d / 30d / all wählbar | Fest nach Kalendermonat/-woche |
+| Claude deduplication | Yes, on `message.id` | No (counts all streaming snapshots) |
+| Claude output tokens | Typically ~10 % lower | Higher due to missing dedup |
+| Codex token counting | Aligned (< 1 % difference) | Aligned |
+| Gemini / OpenCode | Not supported | Supported |
+| Cost display | API cost + subscription factor | API cost in USD |
+| Time window | 7 d / 30 d / all selectable | Fixed to calendar month / week |
 
 ---
 
-## Dateipfade (Windows)
+## File paths (Windows)
 
-| Zweck | Pfad |
+| Purpose | Path |
 |---|---|
 | Claude JSONL | `%APPDATA%\Claude\projects\**\*.jsonl` |
 | Codex JSONL | `%USERPROFILE%\.codex\sessions\**\*.jsonl` |
-| Codex Config | `%USERPROFILE%\.codex\config` |
-| QuotaBar Settings | `%APPDATA%\quotabar-win\settings.json` |
-| QuotaBar Log | `%APPDATA%\quotabar-win\quotabar.log` |
-| Debug-Log | `%APPDATA%\quotabar-win\debug\` |
+| Codex config | `%USERPROFILE%\.codex\config` |
+| QuotaBar settings | `%USERPROFILE%\.quotabar-win\settings.json` |
+| QuotaBar log | `%USERPROFILE%\.quotabar-win\quotabar.log` |
+| Debug log | `%USERPROFILE%\.quotabar-win\debug\` |
+| Window-ratio state | `%USERPROFILE%\.quotabar-win\window-ratio.json` |
