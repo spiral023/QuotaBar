@@ -132,6 +132,9 @@ if (!app.requestSingleInstanceLock()) {
         tray.setSnapshots(cachedSnapshots);
         detailsWindow.notifyUpdate(cachedSnapshots);
       }
+      // Analytics-Worker früh hochfahren und die JSONL-Historie parsen, damit die
+      // Quick Stats beim ersten Dashboard-Öffnen nicht auf einen Kaltstart warten.
+      detailsWindow.prewarmAnalytics();
       await tray.rebuildMenu();
       if (cli.openWindow) {
         setTimeout(() => detailsWindow.open(

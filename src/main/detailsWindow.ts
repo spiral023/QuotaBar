@@ -13,7 +13,7 @@ import {
   getFxCachePath, getWindowRatioPath, getBonusStatePath, getNotificationStatePath,
 } from "../config/paths";
 import { loadWindowHistoryFile, saveWindowHistoryFile, mergeWindowHistory } from "../usage/windowHistoryStore";
-import type { CostWindow, ViewMode } from "../config/settings";
+import type { CostWindow, ViewMode, Settings } from "../config/settings";
 import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
 import type { ModelsData } from "./modelsData";
 import type { WindowBudgetData, WindowHistoryData } from "./analyticsWorker";
@@ -135,6 +135,38 @@ export class DetailsWindowController {
     this.modelsDataCache.clear();
     this.windowBudgetCache.clear();
     this.windowHistoryCache.clear();
+  }
+
+  private computeSummary(settings: Settings, costWindow: CostWindow): Promise<AnalyticsSummary> {
+    const workerWindow = resolveAnalyticsWindow(costWindow);
+    const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
+    const cacheKey = `summary:${costWindow}`;
+
+    return this.analyticsSummaryCache.get(cacheKey, () => runAnalyticsWorker({
+      task: "summary",
+      claudeProjectsDirs: getClaudeProjectsDirs(),
+      codexSessionsDirs:  getCodexSessionsDirs(),
+      periodStartMs: workerWindow.periodStartMs,
+      windowDays: workerWindow.windowDays,
+      since: workerWindow.since,
+      settings: { ...settings, costWindow },
+      cacheHitRate,
+    }) as Promise<AnalyticsSummary>);
+  }
+
+  /**
+   * Spawnt den Analytics-Worker und parst die JSONL-/Codex-Historie in dessen
+   * FileParseCache, bevor der Nutzer das Dashboard öffnet. Die erste
+   * analytics:summary-Anfrage blockiert auf einem Kaltstart sonst ~15-20 s auf
+   * Worker-Boot + Vollparse — das Vorwärmen verlagert diese Kosten weg vom
+   * Öffnen-Pfad. Das hier memoizierte Ergebnis wird ggf. vom ersten Live-Refresh
+   * verworfen, doch der modulglobale FileParseCache im Worker überlebt das, sodass
+   * die spätere echte Anfrage die Dateien nur noch neu statt parst.
+   */
+  prewarmAnalytics(): void {
+    void loadSettings()
+      .then(settings => this.computeSummary(settings, settings.costWindow))
+      .catch(err => log.warn(`Analytics prewarm failed: ${err instanceof Error ? err.message : String(err)}`));
   }
 
   private pushUpdate(): void {
@@ -271,20 +303,7 @@ export class DetailsWindowController {
     ipcMain.handle("analytics:summary", async (_, request?: { costWindow?: string }) => {
       const settings = await loadSettings();
       const costWindow = normalizeCostWindow(request?.costWindow) ?? settings.costWindow;
-      const workerWindow = resolveAnalyticsWindow(costWindow);
-      const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
-      const cacheKey = `summary:${costWindow}`;
-
-      return this.analyticsSummaryCache.get(cacheKey, () => runAnalyticsWorker({
-        task: "summary",
-        claudeProjectsDirs: getClaudeProjectsDirs(),
-        codexSessionsDirs:  getCodexSessionsDirs(),
-        periodStartMs: workerWindow.periodStartMs,
-        windowDays: workerWindow.windowDays,
-        since: workerWindow.since,
-        settings: { ...settings, costWindow },
-        cacheHitRate,
-      }) as Promise<AnalyticsSummary>);
+      return this.computeSummary(settings, costWindow);
     });
 
     ipcMain.handle("analytics:get", async (_, request?: { since?: string; until?: string }) => {
