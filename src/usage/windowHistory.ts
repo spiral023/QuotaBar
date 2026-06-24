@@ -1,5 +1,5 @@
 import { resetsAtChanged } from "./windowRatio";
-import { isBonusReset, isTransientWeeklySpike, type WeeklyObservation } from "./bonusReset";
+import { isBonusReset, isTransientWeeklySpike } from "./weeklyTransition";
 
 /**
  * Historie „genutzte vs. mögliche 5h-Fenster pro 7d-Fenster". Aus den
@@ -152,14 +152,13 @@ function buildEntry(provider: string, p: Period): WindowHistoryEntry {
   // verworfen statt als Anker zu dienen — sonst sieht der Abfall vom
   // aufgeblähten Wert wie ein Reset aus. Vgl. windowBudgetRollup.
   let bonus = false;
-  let prevValid: WeeklyObservation | null = null;
+  let prevValid: HistoryObservation | null = null;
   for (const o of p.obs) {
-    const cur: WeeklyObservation = { usedPercent: o.weeklyPct, resetsAt: o.weeklyResetsAt, fivePercent: o.fivePct, ts: o.ts };
     if (prevValid) {
-      if (isTransientWeeklySpike(prevValid, cur)) continue;
-      if (isBonusReset(prevValid, cur)) bonus = true;
+      if (isTransientWeeklySpike(prevValid, o)) continue;
+      if (isBonusReset(prevValid, o)) bonus = true;
     }
-    prevValid = cur;
+    prevValid = o;
   }
 
   return { provider, weekStart, weekEnd, usedWindows, maxWindows, bonus };

@@ -1,4 +1,5 @@
-import { resetsAtChanged, RESETS_AT_TOLERANCE_MS } from "./windowRatio";
+import { resetsAtChanged } from "./windowRatio";
+import { classifyWeeklyTransition, isTransientWeeklySpike } from "./weeklyTransition";
 
 export interface CurrentWindowObservation {
   ts: string;
@@ -22,15 +23,6 @@ export interface CurrentWindowUsage {
 
 const USED_WINDOW_MIN_PCT = 5;
 const FIVE_RESET_DROP_PCT = 15;
-const WEEKLY_SPIKE_MIN_PCT = 99.5;
-const WEEKLY_SPIKE_DELTA_PCT = 20;
-const BONUS_PREV_MIN_PCT = 20;
-const BONUS_NEXT_MAX_PCT = 5;
-// Springt der 7d-resetsAt um mindestens so viel nach vorn, wurde ein neues
-// 7d-Fenster gestartet (geplanter ODER selbst eingelöster Reset) — kein Bonus.
-// Ein echter Kulanz-Bonus lässt resetsAt praktisch unverändert. Siehe
-// NEW_WINDOW_ADVANCE_MIN_MS in bonusReset.ts.
-const NEW_WINDOW_ADVANCE_MIN_MS = 60 * 60 * 1000;
 
 export function buildCurrentWindowUsage(
   observations: CurrentWindowObservation[],
@@ -136,42 +128,4 @@ function countBonusResets(observations: CurrentWindowObservation[]): number {
     prevValid = o;
   }
   return count;
-}
-
-function isTransientWeeklySpike(prev: CurrentWindowObservation, next: CurrentWindowObservation): boolean {
-  const dFive = next.fivePct - prev.fivePct;
-  const dWeekly = next.weeklyPct - prev.weeklyPct;
-  return next.weeklyPct >= WEEKLY_SPIKE_MIN_PCT
-    && dWeekly > WEEKLY_SPIKE_DELTA_PCT
-    && dWeekly > dFive;
-}
-
-type WeeklyTransitionKind = "none" | "regular" | "bonus";
-
-/**
- * Klassifiziert den Übergang prev→next: "none" (kein nennenswerter Abfall),
- * "regular" (geplanter 7d-Reset) oder "bonus" (außerplanmäßiger Kulanz-Reset).
- */
-function classifyWeeklyTransition(prev: CurrentWindowObservation, next: CurrentWindowObservation): WeeklyTransitionKind {
-  if (prev.weeklyPct < BONUS_PREV_MIN_PCT || next.weeklyPct >= BONUS_NEXT_MAX_PCT) return "none";
-  return isRegularWeeklyReset(prev, next) ? "regular" : "bonus";
-}
-
-/**
- * Neuer Fenster-Start statt Bonus, wenn ENTWEDER der resetsAt nennenswert nach
- * vorn rückt (geplanter Reset ~7 d ODER selbst eingelöster Reset = Restzeit)
- * ODER der Abfall am/nach dem zuvor geplanten Reset-Termin auftritt. Letzteres
- * ist nötig, weil Claude bei 0 % Verbrauch `resetsAt` weglässt (null) — genau am
- * regulären Reset. In diesem Fall lässt sich nur über den Drop-Zeitstempel ggü.
- * `prev.weeklyResetsAt` entscheiden, ob die Periodengrenze erreicht wurde
- * (regulär) oder der Drop davor liegt (Bonus).
- */
-function isRegularWeeklyReset(prev: CurrentWindowObservation, next: CurrentWindowObservation): boolean {
-  const prevMs = prev.weeklyResetsAt != null ? new Date(prev.weeklyResetsAt).getTime() : NaN;
-  const nextMs = next.weeklyResetsAt != null ? new Date(next.weeklyResetsAt).getTime() : NaN;
-  if (Number.isFinite(prevMs) && Number.isFinite(nextMs) && nextMs - prevMs >= NEW_WINDOW_ADVANCE_MIN_MS) {
-    return true;
-  }
-  const dropMs = next.ts != null ? new Date(next.ts).getTime() : NaN;
-  return Number.isFinite(prevMs) && Number.isFinite(dropMs) && dropMs >= prevMs - RESETS_AT_TOLERANCE_MS;
 }

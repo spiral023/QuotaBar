@@ -1,39 +1,16 @@
-import { ratioKey, resetsAtChanged, RESETS_AT_TOLERANCE_MS } from "./windowRatio";
+import { ratioKey, resetsAtChanged } from "./windowRatio";
+import {
+  isBonusReset as isBonusResetPoint,
+  isTransientWeeklySpike as isTransientWeeklySpikePoint,
+  type WeeklyPoint,
+} from "./weeklyTransition";
 
 /**
- * Erkennung außerplanmäßiger ("Bonus-")Resets des Weekly-Fensters.
- *
- * Hintergrund: Ein NORMALER Weekly-Reset senkt den Verbrauch UND schiebt
- * `resetsAt` um ~7 Tage nach vorn. Ein AUSSERPLANMÄSSIGER Reset (z. B. Kulanz/
- * Vorfall bei Anthropic) setzt den Weekly-Verbrauch zurück, OHNE den
- * 7d-Reset-Zeitpunkt entsprechend zu verschieben. Dadurch steht bis zum
- * regulären Reset effektiv erneut Budget zur Verfügung — „Bonus-Fenster".
+ * Live-Tracker für außerplanmäßige ("Bonus-")Resets des Weekly-Fensters. Die
+ * eigentliche Übergangs-Klassifikation liegt in `weeklyTransition.ts`; hier
+ * leben nur die WeeklyObservation-API (für den Live-Pfad in `refreshLoop`), der
+ * persistente Bonus-Marker und die Restbudget-Schätzung.
  */
-
-/**
- * Mindest-Abfall (Prozentpunkte) des Weekly-Werts, der als außerplanmäßiger
- * Reset zählt. Ein Kulanz-Reset ist stand-unabhängig (kann bei 12 % genauso
- * passieren wie bei 80 %), daher wird der ABFALL bewertet, nicht der absolute
- * Vorstand. Liegt über dem Ganzzahl-Rundungsrauschen (z. B. 3 → 0 zählt nicht).
- */
-export const BONUS_DROP_MIN_PCT = 10;
-/** Aktueller Weekly-%-Wert muss darunter gefallen sein (Budget effektiv freigegeben). */
-export const BONUS_NEXT_MAX_PCT = 5;
-/**
- * Springt der 7d-`resetsAt` um mindestens so viel NACH VORN, wurde ein neues
- * 7d-Fenster gestartet — sei es der geplante Reset (~7 d Sprung) ODER ein vom
- * Nutzer selbst eingelöster Reset (Sprung = Restzeit, kann deutlich < 7 d sein).
- * Beides ist KEIN Bonus. Ein echter Kulanz-Bonus lässt `resetsAt` dagegen
- * praktisch unverändert (nur Sekunden-Jitter). Schwelle deutlich über Codex'
- * Minuten-„Treppung" des resetsAt, aber weit unter jedem realen Fenster-Sprung
- * (Stunden bis Tage).
- */
-export const NEW_WINDOW_ADVANCE_MIN_MS = 60 * 60 * 1000;
-
-/** Ab diesem Weekly-%-Wert gilt next als Sättigungs-Ausreißer-Kandidat. */
-export const WEEKLY_SPIKE_MIN_PCT = 99.5;
-/** Mindest-Sprunghöhe (Prozentpunkte) eines verdächtigen Aufwärts-Spikes. */
-export const WEEKLY_SPIKE_DELTA_PCT = 20;
 
 const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
 
@@ -55,53 +32,23 @@ export interface WeeklyObservation {
   ts?: string | null;
 }
 
+/** WeeklyObservation (Live-Pfad) → neutraler WeeklyPoint (weeklyTransition). */
+function toPoint(o: WeeklyObservation): WeeklyPoint {
+  return { weeklyPct: o.usedPercent, weeklyResetsAt: o.resetsAt, fivePct: o.fivePercent, ts: o.ts };
+}
+
 /**
- * true, wenn next ein transienter Weekly-Aufwärts-Spike ggü. prev ist: Weekly
- * springt auf ~100 %, der Sprung ist groß UND übersteigt die parallele 5h-
- * Bewegung. Genau dieses Muster erzeugte die alte utilization-Skala (1 % → 100 %
- * direkt nach einem Reset) — der hohe Wert ist physikalisch unmöglich, weil das
- * 5h-Fenster dann noch fast leer ist. Ohne 5h-Wert wird konservativ allein der
- * implausible Sprung auf Sättigung bewertet.
+ * WeeklyObservation-Adapter über `weeklyTransition.isTransientWeeklySpike`.
+ * Beibehalten, weil Live-Tracker und `windowHistory` mit der `usedPercent`-API
+ * arbeiten.
  */
 export function isTransientWeeklySpike(prev: WeeklyObservation, next: WeeklyObservation): boolean {
-  const dWeekly = next.usedPercent - prev.usedPercent;
-  if (next.usedPercent < WEEKLY_SPIKE_MIN_PCT || dWeekly <= WEEKLY_SPIKE_DELTA_PCT) return false;
-  if (typeof prev.fivePercent !== "number" || typeof next.fivePercent !== "number") return true;
-  const dFive = next.fivePercent - prev.fivePercent;
-  return dWeekly > dFive;
+  return isTransientWeeklySpikePoint(toPoint(prev), toPoint(next));
 }
 
-/**
- * true, wenn der Übergang prev→next ein außerplanmäßiger Reset ist: Weekly fiel
- * deutlich (auf ~0), aber der 7d-Reset-Zeitpunkt ist NICHT um ~eine volle
- * Periode weitergesprungen. Transiente Spikes werden vorgelagert gefiltert
- * (siehe BonusResetTracker.record), sodass prev hier ein plausibler Stand ist.
- */
+/** WeeklyObservation-Adapter über `weeklyTransition.isBonusReset` (drop-basiert). */
 export function isBonusReset(prev: WeeklyObservation, next: WeeklyObservation): boolean {
-  const drop = prev.usedPercent - next.usedPercent;
-  const weeklyDropped = drop >= BONUS_DROP_MIN_PCT && next.usedPercent < BONUS_NEXT_MAX_PCT;
-  if (!weeklyDropped) return false;
-  // Ohne prev.resetsAt fehlt der Bezugs-Termin → nicht entscheidbar, kein Bonus.
-  if (prev.resetsAt == null) return false;
-  // Regulärer Reset → kein Bonus.
-  return !isRegularWeeklyReset(prev, next);
-}
-
-/**
- * Neuer Fenster-Start statt Bonus, wenn ENTWEDER der resetsAt nennenswert nach
- * vorn rückt (geplanter Reset ~7 d ODER selbst eingelöster Reset = Restzeit)
- * ODER der Abfall am/nach dem zuvor geplanten Reset-Termin (prev.resetsAt)
- * auftritt. Letzteres ist nötig, weil Claude bei 0 % Verbrauch `resetsAt`
- * weglässt (null) — genau am regulären Reset.
- */
-function isRegularWeeklyReset(prev: WeeklyObservation, next: WeeklyObservation): boolean {
-  const prevMs = prev.resetsAt != null ? new Date(prev.resetsAt).getTime() : NaN;
-  const nextMs = next.resetsAt != null ? new Date(next.resetsAt).getTime() : NaN;
-  if (Number.isFinite(prevMs) && Number.isFinite(nextMs) && nextMs - prevMs >= NEW_WINDOW_ADVANCE_MIN_MS) {
-    return true;
-  }
-  const dropMs = next.ts != null ? new Date(next.ts).getTime() : NaN;
-  return Number.isFinite(prevMs) && Number.isFinite(dropMs) && dropMs >= prevMs - RESETS_AT_TOLERANCE_MS;
+  return isBonusResetPoint(toPoint(prev), toPoint(next));
 }
 
 /**
