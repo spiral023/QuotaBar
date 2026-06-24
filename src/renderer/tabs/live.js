@@ -1,6 +1,14 @@
 /* global QB */
 'use strict';
 
+window.QB = window.QB || {};
+
+// IIFE-gekapselt, damit top-level let/const/function (z. B. _countdowns,
+// renderStandard, clamp) nicht mit gleichnamigen Symbolen anderer Tab-Skripte
+// im gemeinsamen globalen Scope kollidieren (sonst SyntaxError beim Laden des
+// nachfolgenden Skripts → dessen QB.render* bliebe undefiniert).
+(function () {
+
 // ── Countdowns ───────────────────────────────────────────────────────
 let _countdowns = [];
 let _cdTimer    = null;
@@ -441,8 +449,6 @@ function renderCard(snap, idx, acctIdx) {
 }
 
 // ── Main render ───────────────────────────────────────────────────────
-window.QB = window.QB || {};
-
 QB.toggleTokenSection = function toggleTokenSection(id) {
   const container = document.getElementById(id);
   if (!container) return;
@@ -484,3 +490,5 @@ QB.renderLive = function renderLive(snapshots) {
   void hydrateWindowBudgets(snapshots, wbGen);
   startCd();
 };
+
+})();

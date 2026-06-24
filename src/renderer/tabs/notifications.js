@@ -2,6 +2,12 @@
 
 window.QB = window.QB || {};
 
+// IIFE-gekapselt, damit top-level const/let/function (SEV_COLOR, RULE_GROUPS,
+// initialSnapshot, …) nicht mit gleichnamigen Symbolen anderer Tab-Skripte im
+// gemeinsamen globalen Scope kollidieren (sonst SyntaxError → das nachfolgende
+// Skript würde verworfen).
+(function () {
+
 // ── Severity → Akzentfarbe (abgeleitet aus notificationEngine.ts) ───────────
 const SEV_COLOR = {
   critical: 'var(--red)',
@@ -535,8 +541,8 @@ async function loadNotificationHistory(wrap, rules) {
       const ruleEnabled = rules[e.ruleId]?.enabled !== false;
       const delay = `animation-delay:${Math.min(i, 14) * 40}ms`;
       const muteBtn = isMuteEntry ? '' : `
-        <button class=”notif-hist-mute” data-rule=”${e.ruleId}” ${ruleEnabled ? '' : 'disabled'}
-                title=”Permanently disable notification type &quot;${ruleLabel(e.ruleId)}&quot;”>
+        <button class="notif-hist-mute" data-rule="${e.ruleId}" ${ruleEnabled ? '' : 'disabled'}
+                title="Permanently disable notification type &quot;${ruleLabel(e.ruleId)}&quot;">
           ${ruleEnabled ? 'Mute' : 'Disabled'}
         </button>`;
       return `
@@ -547,7 +553,7 @@ async function loadNotificationHistory(wrap, rules) {
             ${e.windowName ? `<span class="notif-hist-window">${e.windowName}</span>` : ''}
             ${muteBtn}
           </div>
-          <div class=”notif-hist-body”>${isMuteEntry ? `Type &quot;${ruleLabel(e.ruleId)}&quot; disabled` : e.body}</div>
+          <div class="notif-hist-body">${isMuteEntry ? `Type &quot;${ruleLabel(e.ruleId)}&quot; disabled` : e.body}</div>
           <div class="notif-hist-reason">${e.reason}</div>
         </div>
       `;
@@ -589,3 +595,5 @@ async function muteRuleFromHistory(wrap, rules, ruleId) {
     console.error('Mute via history failed', e);
   }
 }
+
+})();

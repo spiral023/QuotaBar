@@ -33,7 +33,11 @@ export default tseslint.config(
     },
     rules: {
       "no-empty": ["error", { allowEmptyCatch: true }],
-      "no-redeclare": "off",
+      // Alle Tab-Skripte sind IIFE-gekapselt; deshalb fängt no-redeclare jetzt
+      // versehentliche Doppeldeklarationen innerhalb einer Datei wieder ab.
+      // builtinGlobals:false, damit die bewussten `/* global QB, Chart */`-
+      // Direktiven nicht als Redeklaration der globals-Config gewertet werden.
+      "no-redeclare": ["error", { builtinGlobals: false }],
       "no-unused-vars": [
         "error",
         {

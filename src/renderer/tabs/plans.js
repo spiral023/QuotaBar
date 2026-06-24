@@ -2,6 +2,12 @@
 'use strict';
 window.QB = window.QB || {};
 
+// IIFE-gekapselt, damit top-level let/const/function (_plans, _editing,
+// PROVIDERS, _renderUI, …) nicht mit gleichnamigen Symbolen anderer Tab-Skripte
+// im gemeinsamen globalen Scope kollidieren (sonst SyntaxError → das
+// nachfolgende Skript würde verworfen).
+(function () {
+
 let _plans = [];
 let _fxEstimated = false;
 let _editing = null; // transient editor draft (carries _mode/_fromId) or null
@@ -375,3 +381,5 @@ function _submitEditor(currency) {
     _renderUI();
   });
 }
+
+})();
