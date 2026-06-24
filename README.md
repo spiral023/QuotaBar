@@ -27,6 +27,8 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a>
   &middot;
+  <a href="#supported-clients">Clients</a>
+  &middot;
   <a href="#provider-data">Provider Data</a>
   &middot;
   <a href="#data-lifecycle">Data Lifecycle</a>
@@ -77,10 +79,17 @@ flowchart LR
 
 ## Requirements
 
+**For end users (installer from Releases):**
+
 - Windows
-- Node.js and npm
 - Claude CLI login, Codex CLI login, or both
 - Local provider usage logs for historical cost and report data
+
+Node.js is **not** required — the installer bundles its own runtime.
+
+**For development (building from source):**
+
+- Node.js and npm
 
 > **Early MVP:** Provider quota data depends on unofficial endpoints that may change without notice. QuotaBar handles failures defensively and keeps stale data visible when live refreshes fail.
 
@@ -117,6 +126,26 @@ QuotaBar reads credentials only from known provider paths:
 | <img src="logos/codex.png" width="18" alt="Codex logo"> Codex | `${CODEX_HOME:-~/.codex}/auth.json` |
 
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` may contain comma-separated roots. QuotaBar deduplicates existing roots and combines usage data from them.
+
+## Supported Clients
+
+QuotaBar is **path-based, not client-based** — it doesn't care which app produced the data, only that the data lands in the known provider directories (`~/.claude`, `~/.codex`). Any client that writes its credentials and usage logs there is automatically supported.
+
+| Client | Live quota | History / cost | Notes |
+| --- | --- | --- | --- |
+| <img src="logos/claude.png" width="16" alt="Claude"> Claude CLI | ✅ | ✅ | Reference client. Writes to `~/.claude`. |
+| <img src="logos/claude.png" width="16" alt="Claude"> Claude Code VS Code extension | ✅ | ✅ | Same Claude Code engine — shares `~/.claude`. |
+| <img src="logos/claude.png" width="16" alt="Claude"> Claude Desktop app (Code tab) | ✅ | ✅ | Code sessions write transcripts to `~/.claude/projects`. |
+| <img src="logos/codex.png" width="16" alt="Codex"> Codex CLI | ✅ | ✅ | Reference client. Writes to `~/.codex`. |
+| <img src="logos/codex.png" width="16" alt="Codex"> Codex Windows app | ✅ | ✅ | Uses `~/.codex` (`auth.json` + `sessions/`). |
+| <img src="logos/codex.png" width="16" alt="Codex"> Codex IDE extension | ✅ | ✅ | Uses `~/.codex` (`auth.json` + `sessions/`). |
+
+Two boundaries to keep in mind:
+
+- **Custom directories.** If a client uses a non-default home, point QuotaBar at it via `CLAUDE_CONFIG_DIR` / `CODEX_HOME` (comma-separated roots are merged). QuotaBar does not scan the disk for other locations.
+- **Live quota vs. history are independent.** History only needs usage logs (`projects/**/*.jsonl`, `sessions/**/*.jsonl`). Live quota bars additionally need a valid `.credentials.json` / `auth.json` at the known path — a client that stores tokens elsewhere will still show history, but no live bars.
+
+The quick check for any client: confirm that `.jsonl` files appear under `~/.claude/projects/` or `~/.codex/sessions/`.
 
 ## Provider Data
 
