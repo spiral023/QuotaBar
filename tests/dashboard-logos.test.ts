@@ -25,8 +25,8 @@ describe("dashboard provider logos", () => {
   });
 
   it("keeps the Claude logo on a neutral background for contrast", () => {
-    const html = fs.readFileSync(path.join(repoRoot, "src", "renderer", "index.html"), "utf8");
-    const claudeRule = cssRule(html, ".prov-icon.icon-claude");
+    const css = fs.readFileSync(path.join(repoRoot, "src", "renderer", "styles.css"), "utf8");
+    const claudeRule = cssRule(css, ".prov-icon.icon-claude");
 
     expect(claudeRule).toContain("rgba(255,255,255");
     expect(claudeRule).not.toContain("#e07818");
