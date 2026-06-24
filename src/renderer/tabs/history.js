@@ -24,7 +24,7 @@ QB.renderHistory = async function renderHistory() {
   if (!_initialized) {
     _initialized = true;
     _minDate = await _fetchMinDate();
-    _buildControls(container, _minDate);
+    _buildControls(container);
     await _loadAndRender();
   }
 };
@@ -81,7 +81,7 @@ function _presetDates(preset) {
   }
 }
 
-function _buildControls(container, minDate) {
+function _buildControls(container) {
   const today = new Date().toISOString().slice(0, 10);
 
   if (_activePreset === null) _activePreset = '30d';
@@ -343,11 +343,6 @@ function _renderResults(report, agg) {
 
   const claudeCost  = claudeSums?.costUSD  ?? 0;
   const codexCost   = codexSums?.costUSD   ?? 0;
-
-  const tTypeLabels = { total: 'Total', input: 'Input', output: 'Output', cache: 'Cache' };
-  const tokenTypePillsHtml = Object.keys(tTypeLabels).map(t =>
-    `<button class="pill${_tokenMode === t ? ' active' : ''}" data-ttype="${t}">${tTypeLabels[t]}</button>`
-  ).join('');
 
   const titleMap = { total: 'TOTAL TOKENS', input: 'INPUT TOKENS', output: 'OUTPUT TOKENS', cache: 'CACHE TOKENS' };
   const chartTitle = _chartMode === 'cost' ? 'COST PER PERIOD' : `${titleMap[_tokenMode]} PER PERIOD`;

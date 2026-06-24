@@ -91,24 +91,24 @@ describe("buildStack", () => {
     expect(s.buckets).toEqual(["2026-W02", "2026-W03"]);
   });
 
-  it("folds models below the share threshold into 'Andere'", () => {
+  it("folds models below the share threshold into 'Other'", () => {
     const withTiny = [
       ...days,
       day("2026-01-05", "gpt-5.4-mini", { outputTokens: 1 }),
     ];
     const s = calc.buildStack(withTiny, "output", "daily", 0.05);
-    expect(s.series.map((x: any) => x.model)).toContain("Andere");
+    expect(s.series.map((x: any) => x.model)).toContain("Other");
     expect(s.series.map((x: any) => x.model)).not.toContain("gpt-5.4-mini");
     expect(s.othersGrouped).toEqual(["gpt-5.4-mini"]);
   });
 
-  it("'Andere' is always the last series", () => {
+  it("'Other' is always the last series", () => {
     const withTiny = [
       ...days,
       day("2026-01-05", "gpt-5.4-mini", { outputTokens: 1 }),
     ];
     const s = calc.buildStack(withTiny, "output", "daily", 0.05);
-    expect(s.series[s.series.length - 1].model).toBe("Andere");
+    expect(s.series[s.series.length - 1].model).toBe("Other");
   });
 });
 

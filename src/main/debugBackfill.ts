@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { listClaudeSourceFiles, readClaudeUsageEntriesFromFiles, type ClaudeUsageEntry, type SourceFileRef } from "../pricing/jsonl-reader";
 import { listCodexSourceFiles, readCodexTokensFromFiles, type CodexTokenEvent, type CodexSourceFileRef } from "../pricing/codex-log-reader";
-import { calculateCodexApiCost, calculateCodexApiCostBreakdown, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
+import { calculateCodexApiCostBreakdown, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
 import { calculateCostFromTokens, calculateCostBreakdown, scaleBreakdownTo, ZERO_BREAKDOWN } from "../pricing/cost-calculator";
 import type { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import type { DebugRecorder } from "./debugRecorder";

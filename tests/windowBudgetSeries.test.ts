@@ -251,7 +251,6 @@ describe("readWeeklySeries", () => {
   });
 
   it("liefert reset-bewusste 5h-Fenster-Nutzung für die laufende Periode", async () => {
-    const weeklyReset = "2026-06-16T11:00:00Z";
     await fs.writeFile(path.join(dir, "2026-06-12.jsonl"), [
       snapLine("claude", 37, 67, "2026-06-12T09:46:00Z", "2026-06-12T13:30:00Z", "default_raven"),
     ].join("\n"), "utf8");
