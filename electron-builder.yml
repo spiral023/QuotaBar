@@ -23,6 +23,8 @@ win:
     - nsis
   icon: assets/icon.ico
 nsis:
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.ico" width="72" height="72" alt="QuotaBar icon">
+  <img src="assets/icon.png" width="72" height="72" alt="QuotaBar icon">
 </p>
 
 <h1 align="center">QuotaBar for Windows</h1>
