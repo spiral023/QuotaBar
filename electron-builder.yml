@@ -22,7 +22,11 @@ win:
   target:
     - nsis
     - portable
+    - zip
   icon: assets/icon.ico
+  # Fallback-Name fuer Targets ohne eigenen artifactName -> greift hier nur fuer zip.
+  # Ergibt QuotaBar-<version>-win.zip (entpackter App-Ordner, ohne %TEMP%-Extraktion).
+  artifactName: QuotaBar-${version}-win.${ext}
 portable:
   artifactName: QuotaBar-${version}-portable.${ext}
 nsis:

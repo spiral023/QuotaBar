@@ -54,12 +54,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p upload
-          # Versionierte Dateien (z.B. QuotaBar-1.0.3-portable.exe / -setup.exe)
+          # Versionierte Dateien (z.B. QuotaBar-1.0.3-portable.exe / -setup.exe / -win.zip)
           cp package-output/QuotaBar-*-portable.exe upload/
           cp package-output/QuotaBar-*-setup.exe upload/
+          cp package-output/QuotaBar-*-win.zip upload/
           # Zusätzliche "latest"-Kopien mit festem Namen für stabile Links
           cp package-output/QuotaBar-*-portable.exe upload/QuotaBar-portable.exe
           cp package-output/QuotaBar-*-setup.exe upload/QuotaBar-Setup.exe
+          cp package-output/QuotaBar-*-win.zip upload/QuotaBar.zip
           ls -la upload/
 
       - name: Upload builds as workflow artifact

@@ -56,6 +56,7 @@ QuotaBar sits in the Windows system tray, reads credentials and usage logs from 
 | --- | --- | --- |
 | Installer (recommended) | **[quotabar-installer.sp23.online](https://quotabar-installer.sp23.online)** | NSIS setup, built-in auto-update |
 | Portable | **[quotabar-portable.sp23.online](https://quotabar-portable.sp23.online)** | Single `.exe`, no installation — update manually |
+| ZIP (locked-down PCs) | **[quotabar-zip.sp23.online](https://quotabar-zip.sp23.online)** | Plain folder — extract anywhere and run `QuotaBar for Windows.exe`. Use this when the portable `.exe` is blocked from running out of `%TEMP%`. |
 
 Prefer a specific version? Browse all releases on the [**Releases**](https://github.com/spiral023/QuotaBar/releases) page.
 

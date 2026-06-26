@@ -1,6 +1,6 @@
-// Lädt die Portable-Build aus package-output/ per SFTP hoch.
+// Lädt die Windows-Builds aus package-output/ per SFTP hoch.
 // Aufruf: npm run upload:ftp   (liest Zugangsdaten aus .env via node --env-file)
-// Lädt zwei Dateien: die versionierte Portable + eine feste "latest"-Kopie.
+// Pro Artefakt (Portable, Setup, ZIP) zwei Dateien: die versionierte + eine feste "latest"-Kopie.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -28,6 +28,7 @@ const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
 const artifacts = [
   { versioned: `QuotaBar-${version}-portable.exe`, latest: 'QuotaBar-portable.exe' },
   { versioned: `QuotaBar-${version}-setup.exe`, latest: 'QuotaBar-Setup.exe' },
+  { versioned: `QuotaBar-${version}-win.zip`, latest: 'QuotaBar.zip' },
 ];
 
 for (const a of artifacts) {
