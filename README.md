@@ -50,11 +50,20 @@ QuotaBar sits in the Windows system tray, reads credentials and usage logs from 
 
 ## Installation
 
-1. Go to [**Releases**](https://github.com/spiral023/QuotaBar/releases) and download the latest `QuotaBar-for-Windows-Setup-*.exe`.
-2. Run the installer — Windows may show a SmartScreen prompt since the app isn't signed; click **More info → Run anyway**.
+**Direct downloads** — these links always serve the latest version:
+
+| Download | Link | Notes |
+| --- | --- | --- |
+| Installer (recommended) | **[quotabar-installer.sp23.online](https://quotabar-installer.sp23.online)** | NSIS setup, built-in auto-update |
+| Portable | **[quotabar-portable.sp23.online](https://quotabar-portable.sp23.online)** | Single `.exe`, no installation — update manually |
+
+Prefer a specific version? Browse all releases on the [**Releases**](https://github.com/spiral023/QuotaBar/releases) page.
+
+1. Download the installer (or the portable build) from the links above.
+2. Run it — Windows may show a SmartScreen prompt since the app isn't signed; click **More info → Run anyway**.
 3. QuotaBar starts automatically and appears in the system tray.
 
-**Updates** are built in. Check for new versions in the **System** tab — the update downloads in the background and is applied on the next restart.
+**Updates** are built in for the installer. Check for new versions in the **System** tab — the update downloads in the background and is applied on the next restart.
 
 ## Highlights
 
