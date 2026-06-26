@@ -26,6 +26,7 @@ win:
 portable:
   artifactName: QuotaBar-${version}-portable.${ext}
 nsis:
+  artifactName: QuotaBar-${version}-setup.${ext}
   installerIcon: assets/icon.ico
   uninstallerIcon: assets/icon.ico
   oneClick: false

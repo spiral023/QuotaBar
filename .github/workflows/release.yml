@@ -50,20 +50,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --publish always
 
-      - name: Collect portable build (versioned + latest)
+      - name: Collect builds (versioned + latest)
         shell: bash
         run: |
           mkdir -p upload
-          # Versionierte Datei (z.B. QuotaBar-1.0.3-portable.exe)
+          # Versionierte Dateien (z.B. QuotaBar-1.0.3-portable.exe / -setup.exe)
           cp package-output/QuotaBar-*-portable.exe upload/
-          # Zusätzliche "latest"-Kopie mit festem Namen für stabilen Link
+          cp package-output/QuotaBar-*-setup.exe upload/
+          # Zusätzliche "latest"-Kopien mit festem Namen für stabile Links
           cp package-output/QuotaBar-*-portable.exe upload/QuotaBar-portable.exe
+          cp package-output/QuotaBar-*-setup.exe upload/QuotaBar-Setup.exe
           ls -la upload/
 
-      - name: Upload portable build as workflow artifact
+      - name: Upload builds as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: portable
+          name: builds
           path: upload/
           retention-days: 1
 
@@ -71,10 +73,10 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: Download portable build
+      - name: Download builds
         uses: actions/download-artifact@v4
         with:
-          name: portable
+          name: builds
           path: upload
 
       - name: Upload portable to IONOS via SFTP

@@ -21,20 +21,26 @@ for (const [key, value] of Object.entries({ SFTP_HOST, SFTP_USER, SFTP_PASSWORD 
   }
 }
 
-// Datei versions-genau aus package.json wählen (nicht "erstbeste" aus dem Verzeichnis).
+// Dateien versions-genau aus package.json wählen (nicht "erstbeste" aus dem Verzeichnis).
 const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
-const portable = `QuotaBar-${version}-portable.exe`;
-const localFile = join('package-output', portable);
-if (!existsSync(localFile)) {
-  console.error(`${localFile} nicht gefunden. Zuerst "npm run package" ausführen.`);
-  process.exit(1);
+
+// Je Artefakt: versionierte Quelldatei + fester "latest"-Name für stabile Links.
+const artifacts = [
+  { versioned: `QuotaBar-${version}-portable.exe`, latest: 'QuotaBar-portable.exe' },
+  { versioned: `QuotaBar-${version}-setup.exe`, latest: 'QuotaBar-Setup.exe' },
+];
+
+for (const a of artifacts) {
+  a.localFile = join('package-output', a.versioned);
+  if (!existsSync(a.localFile)) {
+    console.error(`${a.localFile} nicht gefunden. Zuerst "npm run package" ausführen.`);
+    process.exit(1);
+  }
 }
 
 // Basis-Pfad normalisieren: trailing slashes weg; "." / "" -> Login-Home.
 const base = SFTP_REMOTE_PATH.replace(/\/+$/, '');
 const remoteDir = base === '' || base === '.' ? '.' : base;
-const remoteVersioned = `${remoteDir}/${portable}`;
-const remoteLatest = `${remoteDir}/QuotaBar-portable.exe`;
 
 const sftp = new Client();
 try {
@@ -51,11 +57,14 @@ try {
     await sftp.mkdir(remoteDir, true);
   }
 
-  console.log(`Lade ${localFile} -> ${remoteVersioned}`);
-  await sftp.put(localFile, remoteVersioned);
-
-  console.log(`Lade latest-Kopie -> ${remoteLatest}`);
-  await sftp.put(localFile, remoteLatest);
+  for (const a of artifacts) {
+    const remoteVersioned = `${remoteDir}/${a.versioned}`;
+    const remoteLatest = `${remoteDir}/${a.latest}`;
+    console.log(`Lade ${a.localFile} -> ${remoteVersioned}`);
+    await sftp.put(a.localFile, remoteVersioned);
+    console.log(`Lade latest-Kopie -> ${remoteLatest}`);
+    await sftp.put(a.localFile, remoteLatest);
+  }
 
   const listing = await sftp.list(remoteDir);
   console.log(`\nInhalt von ${remoteDir}:`);
