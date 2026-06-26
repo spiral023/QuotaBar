@@ -10,6 +10,7 @@
     let lastRefreshedAt = null;
     let footerTimer     = null;
     let activePillVal    = 60;
+    let activeProxyMode  = 'auto';
     let _lastSnapshots   = null;
     let inSettings       = false;
 
@@ -146,6 +147,55 @@
       });
     });
 
+    // ── Proxy mode pills ─────────────────────────────────────────
+    function applyProxyModeUI(mode) {
+      activeProxyMode = mode;
+      document.querySelectorAll('#proxy-mode-grid .pill').forEach(p => {
+        p.classList.toggle('active', p.dataset.proxy === mode);
+      });
+      const urlRow = document.getElementById('proxy-url-row');
+      if (urlRow) urlRow.style.display = mode === 'manual' ? '' : 'none';
+    }
+
+    document.querySelectorAll('#proxy-mode-grid .pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        applyProxyModeUI(btn.dataset.proxy);
+        const result = document.getElementById('proxy-test-result');
+        if (result) { result.textContent = ''; result.classList.remove('error'); }
+      });
+    });
+
+    document.getElementById('btn-proxy-test').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-proxy-test');
+      const result = document.getElementById('proxy-test-result');
+      btn.disabled = true;
+      const prevLabel = btn.textContent;
+      btn.textContent = 'Testing…';
+      if (result) { result.textContent = ''; result.classList.remove('error'); }
+      try {
+        const res = await QB.ipc.invoke('settings:test-proxy', {
+          mode: activeProxyMode,
+          url: document.getElementById('inp-proxy-url').value.trim(),
+        });
+        if (result) {
+          if (res?.ok) {
+            const via = res.proxyUrl ? `via ${res.proxyUrl}` : 'direct';
+            result.textContent = `✓ Reachable (${via}, HTTP ${res.status})`;
+            result.classList.remove('error');
+          } else {
+            result.textContent = `✗ ${res?.error || 'Connection failed'}`;
+            result.classList.add('error');
+          }
+        }
+      } catch (e) {
+        if (result) { result.textContent = '✗ Test failed'; result.classList.add('error'); }
+        console.error('settings:test-proxy failed', e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prevLabel;
+      }
+    });
+
     // ── Settings: load ───────────────────────────────────────────
 
     async function loadSettingsUI() {
@@ -154,6 +204,9 @@
         document.getElementById('tog-offline').checked   = !!s.pricingOfflineMode;
         document.getElementById('tog-anonymize').checked = !!s.anonymizeAccounts;
         document.getElementById('inp-min-share').value   = s.minModelTokenSharePct ?? 0;
+        const proxy = s.proxy || { mode: 'auto', url: '' };
+        document.getElementById('inp-proxy-url').value = proxy.url || '';
+        applyProxyModeUI(['off', 'auto', 'manual'].includes(proxy.mode) ? proxy.mode : 'auto');
         QB.settings = s;
 
         activePillVal = s.pollIntervalSeconds ?? 60;
@@ -181,6 +234,10 @@
         pricingOfflineMode:  document.getElementById('tog-offline').checked,
         anonymizeAccounts:   document.getElementById('tog-anonymize').checked,
         minModelTokenSharePct: Number.isFinite(rawShare) ? Math.min(100, Math.max(0, rawShare)) : 0,
+        proxy: {
+          mode: activeProxyMode,
+          url: document.getElementById('inp-proxy-url').value.trim(),
+        },
       };
 
       try {

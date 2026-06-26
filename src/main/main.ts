@@ -8,6 +8,7 @@ import { RefreshLoop } from "../usage/refreshLoop";
 import { UsageStore } from "../usage/usageStore";
 import { applyStartupFlag } from "./autostart";
 import { initializeLogging, log } from "./logging";
+import { configureHttpProxy } from "./httpClient";
 import { TrayController } from "./tray";
 import { DetailsWindowController } from "./detailsWindow";
 import { openOnboardingWindow } from "./onboardingWindow";
@@ -74,6 +75,12 @@ if (!app.requestSingleInstanceLock()) {
 
       const firstRun = await isFirstRun();
       const settings = await loadSettings(cli.pollIntervalSeconds ? { pollIntervalSeconds: cli.pollIntervalSeconds } : {});
+      // Route live requests through a proxy when configured. This must run
+      // before the first refresh, but failures must never block startup.
+      await configureHttpProxy(settings.proxy).catch((err: unknown) => {
+        log.warn(`Proxy init failed: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      });
       const recorder = new DebugRecorder({
         enabled: settings.debugLog.enabled,
         logDir: getDebugLogDir(),

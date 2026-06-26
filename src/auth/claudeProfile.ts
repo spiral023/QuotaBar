@@ -1,3 +1,5 @@
+import { httpFetch } from "../main/httpClient";
+
 const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 
@@ -26,7 +28,7 @@ export async function fetchClaudeProfile(accessToken: string, timeoutMs: number)
   let profile: ClaudeProfile | null = null;
 
   try {
-    const response = await fetch(CLAUDE_PROFILE_URL, {
+    const response = await httpFetch(CLAUDE_PROFILE_URL, {
       headers: {
         "Accept": "application/json",
         "Content-Type": "application/json",

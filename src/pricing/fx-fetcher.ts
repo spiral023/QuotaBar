@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getFxCachePath } from "../config/paths";
+import { httpFetch } from "../main/httpClient";
 
 export type FxPair = "EURUSD";
 export interface FxRate { value: number; estimated: boolean; }
@@ -44,7 +45,7 @@ export class FxFetcher {
     if (!needFetch) { if (this.offlineMode) this.anyEstimated = true; return; }
     try {
       const url = `https://api.frankfurter.dev/v1/${minDay}..${maxDay}?base=EUR&symbols=USD`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+      const res = await httpFetch(url, { signal: AbortSignal.timeout(15_000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as { rates?: Record<string, { USD?: number }> };
       for (const [day, obj] of Object.entries(json.rates ?? {})) {

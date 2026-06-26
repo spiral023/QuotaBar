@@ -3,6 +3,7 @@ import { isClaudeTokenExpired, loadClaudeCredentials, ClaudeCredentials } from "
 import { fetchClaudeProfile } from "../auth/claudeProfile";
 import { refreshClaudeToken } from "../auth/tokenRefresh";
 import { log } from "../main/logging";
+import { httpFetch } from "../main/httpClient";
 import { NotAuthenticatedError, RateLimitError, toErrorMessage } from "../shared/errors";
 import { errorSnapshot, UsageProvider, UsageSnapshot, UsageWindow } from "./types";
 
@@ -107,7 +108,7 @@ export function openClaudeLoginTerminal(): void {
 
 async function requestClaudeUsage(credentials: ClaudeCredentials, timeoutMs: number): Promise<Response> {
   // Unofficial/fragile: Claude Code OAuth endpoint; schema and scope rules can change without notice.
-  return fetch(CLAUDE_USAGE_URL, {
+  return httpFetch(CLAUDE_USAGE_URL, {
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",

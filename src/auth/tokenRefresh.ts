@@ -1,4 +1,5 @@
 import { ClaudeCredentials, saveClaudeCredentials } from "./claudeAuth";
+import { httpFetch } from "../main/httpClient";
 
 const CLAUDE_OAUTH_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
 const CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -21,7 +22,7 @@ export async function refreshClaudeToken(credentials: ClaudeCredentials, timeout
     client_id: CLAUDE_OAUTH_CLIENT_ID
   });
 
-  const response = await fetch(CLAUDE_OAUTH_TOKEN_ENDPOINT, {
+  const response = await httpFetch(CLAUDE_OAUTH_TOKEN_ENDPOINT, {
     method: "POST",
     headers: {
       "Accept": "application/json",

@@ -1,4 +1,5 @@
 import type { ModelPricing } from "./cost-calculator";
+import { httpFetch } from "../main/httpClient";
 
 export type { ModelPricing };
 
@@ -91,7 +92,7 @@ export class LiteLLMFetcher {
       return this.cache;
     }
     try {
-      const response = await fetch(LITELLM_URL, { signal: AbortSignal.timeout(10_000) });
+      const response = await httpFetch(LITELLM_URL, { signal: AbortSignal.timeout(10_000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const json = (await response.json()) as Record<string, unknown>;
       this.cache = buildPricingMap(json);

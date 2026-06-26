@@ -1,5 +1,6 @@
 import { loadCodexCredentials, CodexCredentials } from "../auth/codexAuth";
 import { log } from "../main/logging";
+import { httpFetch } from "../main/httpClient";
 import { redactObject } from "../shared/redaction";
 import { NotAuthenticatedError, toErrorMessage } from "../shared/errors";
 import { errorSnapshot, UsageProvider, UsageSnapshot, UsageWindow } from "./types";
@@ -28,7 +29,7 @@ export class CodexProvider implements UsageProvider {
       }
 
       // Unofficial/fragile: ChatGPT backend API used by Codex CLI/web; shape can change without notice.
-      const response = await fetch(CODEX_USAGE_URL, {
+      const response = await httpFetch(CODEX_USAGE_URL, {
         headers: buildHeaders(credentials),
         signal: AbortSignal.timeout(this.timeoutMs)
       });

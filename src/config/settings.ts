@@ -27,6 +27,28 @@ export interface DebugLogSettings {
   enabled: boolean;
 }
 
+// -- Proxy / Network settings ---------------------------------------------------
+
+export type ProxyMode = "off" | "auto" | "manual";
+
+export interface ProxySettings {
+  /** off = direct; auto = HTTPS_PROXY env or local :3128 proxy; manual = fixed URL. */
+  mode: ProxyMode;
+  /** Proxy URL for manual mode, e.g. "http://127.0.0.1:3128". */
+  url: string;
+}
+
+export const defaultProxySettings: ProxySettings = { mode: "auto", url: "" };
+
+export function normalizeProxySettings(raw: Partial<ProxySettings> | undefined): ProxySettings {
+  const r = (raw ?? {}) as Partial<ProxySettings>;
+  const mode: ProxyMode = (["off", "auto", "manual"] as const).includes(r.mode as ProxyMode)
+    ? (r.mode as ProxyMode)
+    : defaultProxySettings.mode;
+  const url = typeof r.url === "string" ? r.url.trim() : "";
+  return { mode, url };
+}
+
 // ── Notification settings ────────────────────────────────────────────────────
 
 export interface NotificationRuleBase {
@@ -110,6 +132,7 @@ export interface Settings {
    */
   minModelTokenSharePct: number;
   debugLog: DebugLogSettings;
+  proxy: ProxySettings;
   notifications: NotificationSettings;
 }
 
@@ -125,6 +148,7 @@ export const defaultSettings: Settings = {
   pinned: true,
   minModelTokenSharePct: 0,
   debugLog: { enabled: true },
+  proxy: defaultProxySettings,
   notifications: defaultNotificationSettings,
 };
 
@@ -192,6 +216,7 @@ export function normalizeSettings(settings: Settings): Settings {
     pinned: settings.pinned !== false,
     minModelTokenSharePct: clampPct(settings.minModelTokenSharePct, defaultSettings.minModelTokenSharePct),
     debugLog: { enabled: settings.debugLog?.enabled !== false },
+    proxy: normalizeProxySettings(settings.proxy),
     notifications: normalizeNotificationSettings(settings.notifications),
   };
 }

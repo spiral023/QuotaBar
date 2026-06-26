@@ -275,6 +275,28 @@
         <div class="s-hint">Models below this token share are hidden in "Cost/Performance" and "Cost vs. Intelligence" to prevent rarely used models from skewing the ranking. 0 % = off.</div>
       </div>
 
+      <div class="s-section">
+        <div class="s-section-title">Network / Proxy</div>
+        <div class="pill-grid" id="proxy-mode-grid">
+          <button class="pill active" data-proxy="auto">Auto</button>
+          <button class="pill" data-proxy="manual">Manual</button>
+          <button class="pill" data-proxy="off">Off</button>
+        </div>
+        <div class="cost-rows" id="proxy-url-row" style="margin-top:8px">
+          <div class="cost-row">
+            <span class="cost-label">Proxy URL</span>
+            <div class="cost-wrap">
+              <input type="text" class="cost-field" id="inp-proxy-url" placeholder="http://127.0.0.1:3128" style="width:auto;min-width:170px;text-align:left">
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <button class="pill" id="btn-proxy-test" style="flex:0 0 auto">Test connection</button>
+          <span id="proxy-test-result" class="s-hint" style="margin:0"></span>
+        </div>
+        <div class="s-hint">For corporate networks where the live API is only reachable through a proxy. <b>Auto</b> uses the HTTPS_PROXY variable or a local proxy on 127.0.0.1:3128 (e.g. Px) when reachable; <b>Manual</b> forces a specific proxy; <b>Off</b> always connects directly. Uses the system certificate store, so TLS-inspecting proxies work. Changes apply immediately.</div>
+      </div>
+
       <button class="save-btn" id="btn-save">Save Settings</button>
       <div class="save-note">Refresh interval changes take effect on restart</div>
     </div>

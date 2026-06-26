@@ -24,6 +24,8 @@ import { PersistentWorkerClient } from "./workerClient";
 import { collectSystemData, findOpenableSystemPath } from "./systemData";
 import { sharedFxFetcher } from "../pricing/fx-fetcher";
 import { planChangePoints } from "../pricing/plan-cost";
+import { configureHttpProxy, getActiveProxyUrl, httpFetch } from "./httpClient";
+import { normalizeProxySettings, type ProxySettings } from "../config/settings";
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -278,7 +280,37 @@ export class DetailsWindowController {
       };
       await saveSettings(merged);
       log.info("Settings saved via dashboard");
+      // Re-apply proxy settings without a restart when Network settings change.
+      if (Object.prototype.hasOwnProperty.call(partial, "proxy")) {
+        const fresh = await loadSettings();
+        await configureHttpProxy(fresh.proxy).catch((err: unknown) => {
+          log.warn(`Proxy re-apply failed: ${err instanceof Error ? err.message : String(err)}`);
+          return null;
+        });
+      }
       this.clearAnalyticsCaches();
+    });
+
+    // Applies pending proxy settings and checks live API reachability. Any HTTP
+    // response, including 4xx, means the connection path works; network, TLS,
+    // and timeout errors count as failures.
+    ipcMain.handle("settings:test-proxy", async (_, raw: unknown) => {
+      const proxy: ProxySettings = normalizeProxySettings(raw as Partial<ProxySettings>);
+      try {
+        const proxyUrl = await configureHttpProxy(proxy);
+        const res = await httpFetch("https://api.anthropic.com/api/oauth/usage", {
+          method: "GET",
+          signal: AbortSignal.timeout(8_000),
+        });
+        return { ok: true, proxyUrl, status: res.status, mode: proxy.mode };
+      } catch (error) {
+        return {
+          ok: false,
+          proxyUrl: getActiveProxyUrl(),
+          mode: proxy.mode,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
     });
 
     ipcMain.handle("reports:get", async (_, request: ReportRequest) => {
