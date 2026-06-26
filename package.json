@@ -1,6 +1,6 @@
 {
   "name": "quotabar",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "QuotaBar for Windows - Electron tray app for AI coding quota usage",
   "main": "dist/main/main.js",
   "type": "commonjs",
@@ -10,7 +10,9 @@
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
-    "package": "npm run build && electron-builder --win --publish never"
+    "package": "npm run build && electron-builder --win --publish never",
+    "upload:ftp": "node --env-file=.env tools/upload-ftp.mjs",
+    "release:local": "npm run package && npm run upload:ftp"
   },
   "keywords": [
     "electron",
@@ -37,6 +39,7 @@
     "globals": "^17.6.0",
     "nodemon": "^3.1.14",
     "playwright-core": "^1.60.0",
+    "ssh2-sftp-client": "^12.1.1",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.61.0",
     "vitest": "^4.1.8"
