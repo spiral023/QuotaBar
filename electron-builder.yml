@@ -21,10 +21,14 @@ files:
 win:
   target:
     - nsis
+    - portable
   icon: assets/icon.ico
+portable:
+  artifactName: QuotaBar-${version}-portable.${ext}
 nsis:
   installerIcon: assets/icon.ico
   uninstallerIcon: assets/icon.ico
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  license: LICENSE
