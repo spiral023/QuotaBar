@@ -8,6 +8,11 @@ const START_DELAY_MS = 20_000; // App-Init nicht blockieren
 
 let state: UpdateUiState = initialUpdateState(app.getVersion(), false);
 let notifyStateChange: ((state: UpdateUiState) => void) | null = null;
+let onUpdateReady: ((version: string) => void) | null = null;
+
+export function setUpdateReadyCallback(cb: (version: string) => void): void {
+  onUpdateReady = cb;
+}
 
 function apply(event: Parameters<typeof reduceUpdateState>[1]): void {
   state = reduceUpdateState(state, event);
@@ -77,6 +82,7 @@ export async function initializeUpdater(
   autoUpdater.on("update-downloaded", (info) => {
     log.info(`Update ${info.version} heruntergeladen; installiert beim Beenden`);
     apply({ type: "downloaded", version: info.version });
+    onUpdateReady?.(info.version);
   });
   autoUpdater.on("error", (err) => {
     apply({ type: "error", message: err instanceof Error ? err.message : String(err) });

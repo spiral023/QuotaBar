@@ -12,7 +12,7 @@ import { configureHttpProxy } from "./httpClient";
 import { TrayController } from "./tray";
 import { DetailsWindowController } from "./detailsWindow";
 import { openOnboardingWindow } from "./onboardingWindow";
-import { initializeUpdater } from "./updater";
+import { initializeUpdater, setUpdateReadyCallback, quitAndInstall } from "./updater";
 import { NotificationService } from "./notifications";
 import { DebugRecorder } from "./debugRecorder";
 import { runBackfill, BACKFILL_REPAIR_VERSION } from "./debugBackfill";
@@ -165,6 +165,8 @@ if (!app.requestSingleInstanceLock()) {
           await saveSettings({ ...current, notifications: merged });
           return merged;
         },
+        installUpdate: () => quitAndInstall(),
+        dismissUpdate: (version: string) => notificationService.dismissUpdateVersion(version),
       });
       // Toast-Aktivierungen (quotabar://…) an den NotificationService weiterreichen.
       onProtocolUrl = (url: string) => notificationService.handleProtocolUrl(url);
@@ -244,6 +246,9 @@ if (!app.requestSingleInstanceLock()) {
       });
       await initializeUpdater({
         onStateChange: (updateState) => tray.setUpdateState(updateState),
+      });
+      setUpdateReadyCallback((version: string) => {
+        notificationService.sendUpdateReady(version);
       });
       log.info(`QuotaBar started; poll interval ${settings.pollIntervalSeconds}s; noWindow=${cli.noWindow}`);
     })
