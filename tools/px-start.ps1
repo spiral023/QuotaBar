@@ -37,14 +37,18 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Test-Port([string] $Addr, [int] $Port) {
+  # CLM-safe local listener check. Get-NetTCPConnection first (clean, locale-free);
+  # fall back to netstat detecting a listening socket by foreign address ":0"
+  # (locale-independent - German Windows prints "ABHOEREN", not "LISTENING").
   try {
-    $c = New-Object System.Net.Sockets.TcpClient
-    $iar = $c.BeginConnect($Addr, $Port, $null, $null)
-    $ok = $iar.AsyncWaitHandle.WaitOne(400)
-    if ($ok -and $c.Connected) { $c.EndConnect($iar); return $true }
+    if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) { return $true }
     return $false
-  } catch { return $false }
-  finally { if ($c) { $c.Close() } }
+  } catch {
+    try {
+      $out = & netstat -ano 2>$null
+      return [bool]($out | Where-Object { ($_ -match (":" + $Port + "\s")) -and (($_ -match "0\.0\.0\.0:0\s") -or ($_ -match "\[::\]:0\s")) })
+    } catch { return $false }
+  }
 }
 
 function Wait-Port([string] $Addr, [int] $Port, [int] $TimeoutSec) {

@@ -1,23 +1,26 @@
-﻿<#
+<#
 .SYNOPSIS
   QuotaBar - interactive setup for a corporate Windows machine (Px proxy + TLS
   inspection, no WSL2). Installs/reinstalls Claude Code and Codex CLI, starts Px,
   and provides a health check. User data (login, history, JSONL) is preserved.
 
 .DESCRIPTION
-  A single menu script:
-    - Px is started automatically when needed.
-    - Reinstall only replaces program files, never ~/.claude, ~/.claude.json, or
-      ~/.codex, so conversation history, JSONL logs, and auth are preserved.
-    - Proxy/CA are configured for the relevant runtime:
-        Claude (Node): trusts the OS certificate store automatically; proxy via
-                       ~/.claude/settings.json for CLI and VS Code extension.
-        Codex (Rust): does not trust the OS store; export corporate CA as PEM
-                      and set CODEX_CA_CERTIFICATE; proxy via persistent env.
-  Each step prints status messages. Runs in Windows PowerShell 5.1 and pwsh 7.
+  Constrained-Language-Mode safe: uses only allowed cmdlets and external programs
+  (no 'New-Object' for .NET types, no static [Type]::Method calls), so it runs even
+  under PowerShell Constrained Language Mode. No admin required - all changes are in
+  the user scope (HKCU, setx, npm prefix under C:\Entwicklung).
+
+  Reinstall only replaces program files, never ~/.claude, ~/.claude.json, or
+  ~/.codex, so conversation history, JSONL logs, and auth are preserved.
+
+  Proxy/CA:
+    Claude (Node): trusts the OS certificate store automatically; proxy via
+                   ~/.claude/settings.json for CLI and VS Code extension.
+    Codex (Rust):  does not trust the OS store; export corporate CA as PEM
+                   (CODEX_CA_CERTIFICATE) and set proxy via persistent env.
 
 .NOTES
-  This file is UTF-8 with BOM so Windows PowerShell 5.1 handles text correctly.
+  Runs in Windows PowerShell 5.1 and pwsh 7.
 #>
 [CmdletBinding()]
 param(
@@ -31,6 +34,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Static property set is blocked under CLM; the try/catch keeps it harmless there.
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $px      = "http://${PxAddr}:${PxPort}"
@@ -46,19 +50,29 @@ function Write-Err ([string] $m) { Write-Host "  [FAIL] $m" -ForegroundColor Red
 function Write-Info([string] $m) { Write-Host "  - $m" -ForegroundColor Gray }
 function Pause-Menu { Write-Host ""; Read-Host "Press [Enter] to continue" | Out-Null }
 
-# -- General helpers -----------------------------------------------------------
+# -- General helpers (all CLM-safe) --------------------------------------------
+
+# Local listener check. Prefer Get-NetTCPConnection (clean, locale-independent;
+# its signed NetTCPIP module loads under policy-enforced CLM). If the module cannot
+# load on a locked-down host, fall back to external netstat and detect a listening
+# socket by its foreign address ":0" - this is locale-independent, whereas the state
+# word is localized (German Windows prints "ABHOEREN", not "LISTENING").
+# System.Net.Sockets.TcpClient is avoided because CLM blocks it.
 function Test-Port([string] $a, [int] $p) {
   try {
-    $c = New-Object System.Net.Sockets.TcpClient
-    $iar = $c.BeginConnect($a, $p, $null, $null)
-    $ok = $iar.AsyncWaitHandle.WaitOne(500)
-    if ($ok -and $c.Connected) { $c.EndConnect($iar); return $true }
+    if (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue) { return $true }
     return $false
-  } catch { return $false } finally { if ($c) { $c.Close() } }
+  } catch {
+    try {
+      $out = & netstat -ano 2>$null
+      return [bool]($out | Where-Object { ($_ -match (":" + $p + "\s")) -and (($_ -match "0\.0\.0\.0:0\s") -or ($_ -match "\[::\]:0\s")) })
+    } catch { return $false }
+  }
 }
 
-function Get-NodeVersion {
-  try { $r = (& node --version) 2>$null; if ($r -match 'v(\d+\.\d+\.\d+)') { return [version]$Matches[1] } } catch { }
+# Node version as @(major, minor) ints (no [version] cast, CLM-safe).
+function Get-NodeMajorMinor {
+  try { $r = (& node --version) 2>$null; if ($r -match 'v(\d+)\.(\d+)') { return @([int]$Matches[1], [int]$Matches[2]) } } catch { }
   return $null
 }
 
@@ -66,22 +80,28 @@ function Test-CmdExists([string] $name) {
   try { return [bool](Get-Command $name -ErrorAction SilentlyContinue) } catch { return $false }
 }
 
-function Set-UserPathAdd([string] $Add) {
-  $cur = [Environment]::GetEnvironmentVariable("Path", "User")
-  $parts = @(); if ($cur) { $parts = $cur -split ';' | Where-Object { $_ -ne '' } }
-  if ($parts -notcontains $Add) {
-    [Environment]::SetEnvironmentVariable("Path", (@($Add) + $parts) -join ';', "User")
-    Write-Ok "Added to user PATH: $Add"
-  } else { Write-Info "User PATH already contains: $Add" }
-  if (($env:Path -split ';') -notcontains $Add) { $env:Path = "$Add;$env:Path" }
+function Get-CmdSource([string] $name) {
+  try { return (Get-Command $name -ErrorAction SilentlyContinue).Source } catch { return $null }
 }
 
-function ConvertTo-HashtableDeep($obj) {
-  if ($null -eq $obj) { return $null }
-  if ($obj -is [System.Collections.IDictionary]) { $h = @{}; foreach ($k in $obj.Keys) { $h[$k] = ConvertTo-HashtableDeep $obj[$k] }; return $h }
-  if ($obj -is [pscustomobject]) { $h = @{}; foreach ($pr in $obj.PSObject.Properties) { $h[$pr.Name] = ConvertTo-HashtableDeep $pr.Value }; return $h }
-  if (($obj -is [System.Collections.IEnumerable]) -and ($obj -isnot [string])) { return @($obj | ForEach-Object { ConvertTo-HashtableDeep $_ }) }
-  return $obj
+# Persist a user env var: setx (external, CLM-safe, no admin) + update this session.
+function Set-PersistentEnv([string] $Name, [string] $Value) {
+  & setx $Name $Value | Out-Null
+  Set-Item -Path ("Env:\" + $Name) -Value $Value
+}
+
+# Prepend the prefix to the user PATH via registry cmdlets (CLM-safe, no .NET).
+function Set-UserPathAdd([string] $Add) {
+  $key = "HKCU:\Environment"
+  $cur = (Get-ItemProperty -Path $key -Name Path -ErrorAction SilentlyContinue).Path
+  if ($cur -and ($cur.Split(';') -contains $Add)) {
+    Write-Info "User PATH already contains: $Add"
+  } else {
+    $new = if ($cur) { "$Add;$cur" } else { $Add }
+    New-ItemProperty -Path $key -Name Path -Value $new -PropertyType ExpandString -Force | Out-Null
+    Write-Ok "Added to user PATH: $Add (takes effect in a NEW shell)"
+  }
+  if (($env:Path -split ';') -notcontains $Add) { $env:Path = "$Add;$env:Path" }
 }
 
 function Set-SessionProxyEnv {
@@ -100,26 +120,45 @@ function Set-NpmConfig {
   Write-Ok "Configured npm (prefix=$NpmPrefix, cache=$NpmCache, proxy set)"
 }
 
-# Exports all Windows root/CA certificates as a PEM bundle, including corporate CA roots.
+# Export Windows root CAs as a PEM bundle (superset incl. the corporate root CA).
+# CLM-safe: Export-Certificate (cmdlet) + certutil -encode (external); no .NET APIs.
 function Export-WindowsCaBundle([string] $OutFile) {
-  $stores = @('Cert:\LocalMachine\Root', 'Cert:\CurrentUser\Root', 'Cert:\LocalMachine\CA', 'Cert:\CurrentUser\CA')
-  $seen = @{}; $sb = New-Object System.Text.StringBuilder
-  foreach ($s in $stores) {
-    if (-not (Test-Path $s)) { continue }
-    foreach ($cert in (Get-ChildItem $s -ErrorAction SilentlyContinue)) {
+  $tmp = Join-Path $env:TEMP "qb-ca-export"
+  New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  Get-ChildItem -Path $tmp -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path (Split-Path $OutFile -Parent) | Out-Null
+  Set-Content -Path $OutFile -Value "" -Encoding ascii
+
+  $seen = @{}; $i = 0
+  foreach ($store in @("Cert:\LocalMachine\Root", "Cert:\CurrentUser\Root")) {
+    if (-not (Test-Path $store)) { continue }
+    foreach ($cert in (Get-ChildItem -Path $store -ErrorAction SilentlyContinue)) {
       if ($seen.ContainsKey($cert.Thumbprint)) { continue }
       $seen[$cert.Thumbprint] = $true
-      $der = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
-      $b64 = [Convert]::ToBase64String($der, [System.Base64FormattingOptions]::InsertLineBreaks)
-      [void]$sb.AppendLine("# Subject: $($cert.Subject)")
-      [void]$sb.AppendLine("-----BEGIN CERTIFICATE-----")
-      [void]$sb.AppendLine($b64)
-      [void]$sb.AppendLine("-----END CERTIFICATE-----")
+      $i++
+      $cer = Join-Path $tmp "$i.cer"
+      $pem = Join-Path $tmp "$i.pem"
+      try {
+        $cert | Export-Certificate -FilePath $cer -Type CERT -Force | Out-Null
+        & certutil -encode $cer $pem 2>$null | Out-Null
+        if (Test-Path $pem) { Add-Content -Path $OutFile -Value (Get-Content -Path $pem) -Encoding ascii }
+      } catch { }
     }
   }
-  New-Item -ItemType Directory -Force -Path (Split-Path $OutFile -Parent) | Out-Null
-  [System.IO.File]::WriteAllText($OutFile, $sb.ToString(), (New-Object System.Text.ASCIIEncoding))
+  Get-ChildItem -Path $tmp -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
   return $seen.Count
+}
+
+# Persist the proxy env vars used by both Claude and Codex. Claude Code honors
+# HTTPS_PROXY directly, so we deliberately do NOT rewrite ~/.claude/settings.json:
+# round-tripping that file through ConvertFrom-Json/ConvertTo-Json under CLM
+# corrupts existing array values (a verified failure), which would damage user
+# settings. Env vars are safe and leave settings.json untouched.
+function Set-ProxyEnvPersistent {
+  Set-PersistentEnv "HTTP_PROXY"  $px
+  Set-PersistentEnv "HTTPS_PROXY" $px
+  Set-PersistentEnv "NO_PROXY"    $noProxy
+  Set-PersistentEnv "NODE_USE_SYSTEM_CA" "1"
 }
 
 # -- Ensure Px is running ------------------------------------------------------
@@ -129,16 +168,12 @@ function Ensure-Px {
   if (-not (Test-Path $PxIni)) { Write-Err "px.ini not found: $PxIni"; return $false }
   Write-Info "Starting Px hidden in the background ..."
   Start-Process -FilePath $PxExe -ArgumentList @("--config=$PxIni") -WorkingDirectory (Split-Path $PxExe -Parent) -WindowStyle Hidden | Out-Null
-  $deadline = (Get-Date).AddSeconds(15)
-  while ((Get-Date) -lt $deadline) { if (Test-Port $PxAddr $PxPort) { Write-Ok "Px started and reachable on ${PxAddr}:${PxPort}"; return $true }; Start-Sleep -Milliseconds 250 }
+  for ($n = 0; $n -lt 60; $n++) {
+    if (Test-Port $PxAddr $PxPort) { Write-Ok "Px started and reachable on ${PxAddr}:${PxPort}"; return $true }
+    Start-Sleep -Milliseconds 250
+  }
   Write-Err "Px is not listening on ${PxAddr}:${PxPort} (timeout). Check px.ini/logs."
   return $false
-}
-
-# -- Write settings.json without BOM because JSON parsers reject a leading BOM --
-function Write-JsonNoBom([string] $Path, $Object) {
-  $json = ($Object | ConvertTo-Json -Depth 12)
-  [System.IO.File]::WriteAllText($Path, $json, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 # -- Install/reinstall Claude Code --------------------------------------------
@@ -148,8 +183,10 @@ function Install-ClaudeCode {
   if (-not (Ensure-Px)) { Write-Err "Installation requires a running Px proxy."; return }
 
   Set-SessionProxyEnv
-  $nv = Get-NodeVersion
-  if ($nv -and $nv -lt [version]"22.15.0") { Write-Warn "Node $nv < 22.15: NODE_USE_SYSTEM_CA may not work. If npm TLS fails, create a CA bundle (menu 4) and run 'npm config set cafile'." }
+  $nv = Get-NodeMajorMinor
+  if ($nv -and ($nv[0] -lt 22 -or ($nv[0] -eq 22 -and $nv[1] -lt 15))) {
+    Write-Warn "Node $($nv[0]).$($nv[1]) < 22.15: NODE_USE_SYSTEM_CA may not work. If npm TLS fails, create a CA bundle (menu 4) and run 'npm config set cafile'."
+  }
 
   # Remove only the competing native installation, never user data.
   foreach ($p in @((Join-Path $env:USERPROFILE ".local\bin\claude.exe"), (Join-Path $env:USERPROFILE ".local\share\claude"))) {
@@ -158,29 +195,14 @@ function Install-ClaudeCode {
   Set-UserPathAdd $NpmPrefix
   Set-NpmConfig
 
+  # Install @latest directly (replaces any existing version; no removal gap).
   Write-Info "npm install -g $claudePkg@latest ..."
-  try { & npm uninstall -g $claudePkg 2>$null | Out-Null } catch { }
   & npm install -g "$claudePkg@latest"
   if ($LASTEXITCODE -ne 0) { Write-Err "npm install failed (exit $LASTEXITCODE). Check proxy/CA settings."; return }
   Write-Ok "Claude Code installed."
 
-  # Proxy in ~/.claude/settings.json env block for CLI and VS Code extension.
-  $claudeDir = Join-Path $env:USERPROFILE ".claude"
-  New-Item -ItemType Directory -Force -Path $claudeDir | Out-Null
-  $settingsPath = Join-Path $claudeDir "settings.json"
-  $settings = @{}
-  if (Test-Path $settingsPath) {
-    $raw = Get-Content $settingsPath -Raw
-    if (-not [string]::IsNullOrWhiteSpace($raw)) { try { $settings = ConvertTo-HashtableDeep ($raw | ConvertFrom-Json) } catch { Write-Warn "settings.json could not be read; recreating it."; $settings = @{} } }
-  }
-  if ($settings['env'] -isnot [hashtable]) { $settings['env'] = @{} }
-  $settings['env']['HTTPS_PROXY'] = $px
-  $settings['env']['HTTP_PROXY']  = $px
-  $settings['env']['NO_PROXY']    = $noProxy
-  Write-JsonNoBom $settingsPath $settings
-  Write-Ok "Proxy set in ~/.claude/settings.json; history/login unchanged."
-
-  [Environment]::SetEnvironmentVariable("NODE_USE_SYSTEM_CA", "1", "User")
+  Set-ProxyEnvPersistent
+  Write-Ok "Proxy + NODE_USE_SYSTEM_CA persisted as env vars (Claude honors HTTPS_PROXY; settings.json untouched; Px must be running)."
   Write-Info "Tip: start 'claude' in a NEW shell and log in. Fully restart VS Code afterwards."
 }
 
@@ -188,12 +210,13 @@ function Install-ClaudeCode {
 function Install-CodexCli {
   Write-Head "Install / reinstall Codex CLI"
   if (-not (Test-CmdExists "npm")) { Write-Err "npm/Node not found. Install Node 22+ from nodejs.org."; return }
-  $nv = Get-NodeVersion
-  if ($nv -and $nv -lt [version]"22.0.0") { Write-Warn "Node $nv < 22: Codex CLI requires Node 22+. Please update Node." }
+  $nv = Get-NodeMajorMinor
+  if ($nv -and $nv[0] -lt 22) { Write-Warn "Node $($nv[0]).$($nv[1]) < 22: Codex CLI requires Node 22+. Please update Node." }
   if (-not (Ensure-Px)) { Write-Err "Installation requires a running Px proxy."; return }
 
   # Provide corporate CA bundle because Codex/Rust does not trust the OS store.
   if (-not (Test-Path $CaBundlePath)) {
+    Write-Info "Exporting corporate CA bundle (may take ~10s) ..."
     $n = Export-WindowsCaBundle $CaBundlePath
     Write-Ok "Created CA bundle: $CaBundlePath ($n certificates)"
   } else { Write-Info "CA bundle already exists: $CaBundlePath (refresh via menu 4)" }
@@ -205,73 +228,69 @@ function Install-CodexCli {
   Set-NpmConfig
 
   Write-Info "npm install -g $codexPkg@latest ..."
-  try { & npm uninstall -g $codexPkg 2>$null | Out-Null } catch { }
   & npm install -g "$codexPkg@latest"
   if ($LASTEXITCODE -ne 0) { Write-Err "npm install failed (exit $LASTEXITCODE). Check proxy/CA settings."; return }
   Write-Ok "Codex CLI installed."
 
-  # Codex has no settings.json env block, so proxy and CA are persisted as user env vars.
-  [Environment]::SetEnvironmentVariable("CODEX_CA_CERTIFICATE", $CaBundlePath, "User")
-  [Environment]::SetEnvironmentVariable("NODE_USE_SYSTEM_CA", "1", "User")
-  [Environment]::SetEnvironmentVariable("HTTP_PROXY",  $px, "User")
-  [Environment]::SetEnvironmentVariable("HTTPS_PROXY", $px, "User")
-  [Environment]::SetEnvironmentVariable("NO_PROXY",    $noProxy, "User")
+  # Codex (like Claude here) reads proxy/CA from env, so persist them as user env vars.
+  Set-PersistentEnv "CODEX_CA_CERTIFICATE" $CaBundlePath
+  Set-ProxyEnvPersistent
   Write-Ok "Persisted CODEX_CA_CERTIFICATE and proxy env vars; Px must be running."
   Write-Info "Tip: run 'codex login' in a NEW shell. Fully restart VS Code afterwards. ~/.codex is unchanged."
 }
 
 function Update-CaBundle {
   Write-Head "Refresh corporate CA bundle"
+  Write-Info "Exporting ... (may take ~10s)"
   $n = Export-WindowsCaBundle $CaBundlePath
-  [Environment]::SetEnvironmentVariable("CODEX_CA_CERTIFICATE", $CaBundlePath, "User")
+  Set-PersistentEnv "CODEX_CA_CERTIFICATE" $CaBundlePath
   Write-Ok "Updated CA bundle: $CaBundlePath ($n certificates)"
 }
 
 # -- Health check --------------------------------------------------------------
 function Invoke-HealthCheck {
   Write-Head "Health check"
+  Write-Info "PowerShell language mode: $($ExecutionContext.SessionState.LanguageMode)"
+  $key = "HKCU:\Environment"
 
-  # Px
   if (Test-Port $PxAddr $PxPort) { Write-Ok "Px reachable ($px)" } else { Write-Err "Px NOT reachable ($px) - start via menu 1" }
 
-  # Node / npm
-  $nv = Get-NodeVersion
-  if ($nv) { Write-Ok "Node $nv" } else { Write-Err "Node/npm not found" }
+  $nv = Get-NodeMajorMinor
+  if ($nv) { Write-Ok "Node $($nv[0]).$($nv[1])" } else { Write-Err "Node/npm not found" }
   if (Test-CmdExists "npm") {
     try { $npmProxy = (& npm config get proxy) 2>$null } catch { $npmProxy = "" }
     if ($npmProxy -and $npmProxy -ne "null") { Write-Ok "npm proxy: $npmProxy" } else { Write-Warn "npm proxy is not set" }
   }
 
-  # PATH-Prefix
-  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-  if (($userPath -split ';') -contains $NpmPrefix) { Write-Ok "User PATH contains $NpmPrefix" } else { Write-Warn "User PATH does not contain $NpmPrefix - 'claude'/'codex' may not be found" }
+  $userPath = (Get-ItemProperty -Path $key -Name Path -ErrorAction SilentlyContinue).Path
+  if ($userPath -and ($userPath.Split(';') -contains $NpmPrefix)) { Write-Ok "User PATH contains $NpmPrefix" } else { Write-Warn "User PATH does not contain $NpmPrefix - 'claude'/'codex' may not be found" }
+
+  $envProxy = (Get-ItemProperty -Path $key -Name HTTPS_PROXY -ErrorAction SilentlyContinue).HTTPS_PROXY
+  if ($envProxy) { Write-Ok "Persistent HTTPS_PROXY: $envProxy" } else { Write-Warn "Persistent HTTPS_PROXY not set - Claude/Codex won't use Px in new shells" }
 
   # Claude
   if (Test-CmdExists "claude") {
     try { $cv = (& claude --version) 2>$null } catch { $cv = "" }
-    Write-Ok "Claude Code: $cv  ($((Get-Command claude).Source))"
+    $src = Get-CmdSource "claude"
+    Write-Ok "Claude Code: $cv  ($src)"
+    if ($src -and ($src -notlike "$NpmPrefix*")) { Write-Warn "Claude is NOT under $NpmPrefix - possible old/conflicting install" }
   } else { Write-Warn "Claude Code is not installed (menu 2)" }
-  $claudeCreds = Join-Path $env:USERPROFILE ".claude\.credentials.json"
-  if (Test-Path $claudeCreds) { Write-Ok "Claude logged in (.credentials.json exists)" } else { Write-Warn "Claude not logged in - run 'claude' and log in" }
-  $claudeSettings = Join-Path $env:USERPROFILE ".claude\settings.json"
-  if (Test-Path $claudeSettings) {
-    try { $hasProxy = ((Get-Content $claudeSettings -Raw | ConvertFrom-Json).env.HTTPS_PROXY) } catch { $hasProxy = $null }
-    if ($hasProxy) { Write-Ok "Claude settings.json proxy: $hasProxy" } else { Write-Warn "Claude settings.json has no proxy env" }
-  }
+  if (Test-Path (Join-Path $env:USERPROFILE ".claude\.credentials.json")) { Write-Ok "Claude logged in (.credentials.json exists)" } else { Write-Warn "Claude not logged in - run 'claude' and log in" }
 
   # Codex
   if (Test-CmdExists "codex") {
     try { $xv = (& codex --version) 2>$null } catch { $xv = "" }
-    Write-Ok "Codex CLI: $xv  ($((Get-Command codex).Source))"
+    $src = Get-CmdSource "codex"
+    Write-Ok "Codex CLI: $xv  ($src)"
+    if ($src -and ($src -notlike "$NpmPrefix*")) { Write-Warn "Codex is NOT under $NpmPrefix - possible old/conflicting install" }
   } else { Write-Warn "Codex CLI is not installed (menu 3)" }
-  $codexAuth = Join-Path $env:USERPROFILE ".codex\auth.json"
-  if (Test-Path $codexAuth) { Write-Ok "Codex logged in (auth.json exists)" } else { Write-Warn "Codex not logged in - run 'codex login'" }
-  $codexCa = [Environment]::GetEnvironmentVariable("CODEX_CA_CERTIFICATE", "User")
+  if (Test-Path (Join-Path $env:USERPROFILE ".codex\auth.json")) { Write-Ok "Codex logged in (auth.json exists)" } else { Write-Warn "Codex not logged in - run 'codex login'" }
+  $codexCa = (Get-ItemProperty -Path $key -Name CODEX_CA_CERTIFICATE -ErrorAction SilentlyContinue).CODEX_CA_CERTIFICATE
   if ($codexCa -and (Test-Path $codexCa)) { Write-Ok "CODEX_CA_CERTIFICATE -> $codexCa" }
   elseif ($codexCa) { Write-Err "CODEX_CA_CERTIFICATE is set, but the file is missing: $codexCa (menu 4)" }
   else { Write-Warn "CODEX_CA_CERTIFICATE is not set - Codex fails behind TLS inspection" }
 
-  # Connectivity through Px
+  # Connectivity through Px (curl.exe is external -> CLM-safe)
   if (Test-Port $PxAddr $PxPort) {
     foreach ($u in @("https://api.anthropic.com", "https://auth.openai.com")) {
       try {
@@ -286,7 +305,7 @@ function Invoke-HealthCheck {
 function Show-Menu {
   try { Clear-Host } catch { }
   Write-Host "==================================================" -ForegroundColor Cyan
-  Write-Host "  QuotaBar - Setup (Claude / Codex hinter Px)" -ForegroundColor Cyan
+  Write-Host "  QuotaBar - Setup (Claude / Codex behind Px)" -ForegroundColor Cyan
   Write-Host "==================================================" -ForegroundColor Cyan
   $pxState = if (Test-Port $PxAddr $PxPort) { "running" } else { "stopped" }
   $cl = if (Test-CmdExists "claude") { "installed" } else { "missing" }
