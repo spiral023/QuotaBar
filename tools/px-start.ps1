@@ -15,13 +15,14 @@
 .PARAMETER Stop
   Stops a running Px process instead of starting one.
 
-.PARAMETER Debug
+.PARAMETER Foreground
   Starts Px in the foreground with log output for troubleshooting.
+  (Named -Foreground, not -Debug, because -Debug is a reserved common parameter.)
 
 .EXAMPLE
-  .\px-start.ps1            # Start Px and set environment variables
-  .\px-start.ps1 -Debug     # Start Px visibly with logs
-  .\px-start.ps1 -Stop      # Stop Px
+  .\px-start.ps1               # Start Px and set environment variables
+  .\px-start.ps1 -Foreground   # Start Px visibly with logs
+  .\px-start.ps1 -Stop         # Stop Px
 #>
 [CmdletBinding()]
 param(
@@ -31,7 +32,7 @@ param(
   [int]    $BindPort = 3128,
   [int]    $StartTimeoutSec = 15,
   [switch] $Stop,
-  [switch] $Debug
+  [switch] $Foreground
 )
 
 $ErrorActionPreference = "Stop"
@@ -89,7 +90,7 @@ if (Test-Port $BindAddr $BindPort) {
     ArgumentList     = $pxArgs
     WorkingDirectory = (Split-Path $PxExe -Parent)
   }
-  if ($Debug) {
+  if ($Foreground) {
     # Visible foreground process with stdout logs for troubleshooting.
     $startOpts.ArgumentList += @("--foreground", "--log=4")
     $startOpts.WindowStyle = "Normal"
@@ -100,7 +101,7 @@ if (Test-Port $BindAddr $BindPort) {
   Start-Process @startOpts | Out-Null
 
   if (-not (Wait-Port $BindAddr $BindPort $StartTimeoutSec)) {
-    throw "Px is not listening on ${BindAddr}:${BindPort} (timeout ${StartTimeoutSec}s). Start with -Debug and check the log."
+    throw "Px is not listening on ${BindAddr}:${BindPort} (timeout ${StartTimeoutSec}s). Start with -Foreground and check the log."
   }
   Write-Host "Px is reachable on ${BindAddr}:${BindPort}." -ForegroundColor Green
 }
