@@ -20,6 +20,10 @@ export interface NotificationActionHandlers {
   openDashboard: () => void;
   /** Persist rules[ruleId].enabled = false and return the updated settings. */
   muteRule: (ruleId: string) => Promise<NotificationSettings>;
+  /** Trigger an immediate app restart to apply a downloaded update. */
+  installUpdate: () => void;
+  /** Suppress the update-ready notification for a specific version. */
+  dismissUpdate: (version: string) => void;
 }
 
 const PROVIDER_LOGO_FILES: Record<string, string> = {
@@ -88,6 +92,35 @@ export class NotificationService {
     }
   }
 
+  sendUpdateReady(version: string): void {
+    if (this.state.getDismissedUpdateVersion() === version) return;
+    const withActions = this.actionHandlers != null;
+    const notification = new Notification(
+      process.platform === "win32"
+        ? { toastXml: buildUpdateToastXml(version, withActions) }
+        : {
+            title: `QuotaBar ${version} ready to install`,
+            body: "Restart now to apply the update.",
+            ...(withActions
+              ? { actions: [{ type: "button" as const, text: "Restart Now" }] }
+              : {}),
+          },
+    );
+    notification.on("click", () => this.actionHandlers?.installUpdate());
+    notification.on("action", (details, legacyIndex) => {
+      const fromDetails = (details as { actionIndex?: number } | undefined)?.actionIndex;
+      const index = typeof fromDetails === "number" ? fromDetails : legacyIndex;
+      if (index === 0) this.actionHandlers?.installUpdate();
+      else if (index === 1) this.actionHandlers?.dismissUpdate(version);
+    });
+    notification.show();
+  }
+
+  dismissUpdateVersion(version: string): void {
+    this.state.setDismissedUpdateVersion(version);
+    this.savePersistedState();
+  }
+
   sendTest(): void {
     const withActions = this.actionHandlers != null;
     const notification = new Notification(
@@ -147,6 +180,15 @@ export class NotificationService {
     if (action === "mute") {
       const ruleId = parsed.searchParams.get("rule");
       if (ruleId) void this.muteRuleFromNotification(ruleId);
+      return;
+    }
+    if (action === "update-install") {
+      this.actionHandlers?.installUpdate();
+      return;
+    }
+    if (action === "update-dismiss") {
+      const version = parsed.searchParams.get("v");
+      if (version) this.actionHandlers?.dismissUpdate(version);
       return;
     }
     this.actionHandlers?.openDashboard();
@@ -235,6 +277,26 @@ export function buildTestToastXml(withActions = false): string {
     `<visual><binding template="ToastGeneric">` +
     `<text>QuotaBar</text>` +
     `<text>Test notification - notifications are working.</text>` +
+    `</binding></visual>` +
+    actionsXml +
+    `</toast>`
+  );
+}
+
+export function buildUpdateToastXml(version: string, withActions = false): string {
+  const versionXml = escapeXml(version);
+  const dismissArg = escapeXml(`quotabar://update-dismiss?v=${encodeURIComponent(version)}`);
+  const actionsXml = withActions
+    ? `<actions>` +
+      `<action content="Restart Now" activationType="protocol" arguments="quotabar://update-install"/>` +
+      `<action content="Later" activationType="protocol" arguments="${dismissArg}"/>` +
+      `</actions>`
+    : "";
+  return (
+    `<toast activationType="protocol" launch="quotabar://open">` +
+    `<visual><binding template="ToastGeneric">` +
+    `<text>QuotaBar ${versionXml} ready to install</text>` +
+    `<text>Restart now to apply the update.</text>` +
     `</binding></visual>` +
     actionsXml +
     `</toast>`
