@@ -285,6 +285,8 @@ export function buildTestToastXml(withActions = false): string {
 
 export function buildUpdateToastXml(version: string, withActions = false): string {
   const versionXml = escapeXml(version);
+  // Double-layer encoding: encodeURIComponent makes the version URL-safe (query value),
+  // then escapeXml makes the whole URL safe as an XML attribute value.
   const dismissArg = escapeXml(`quotabar://update-dismiss?v=${encodeURIComponent(version)}`);
   const actionsXml = withActions
     ? `<actions>` +

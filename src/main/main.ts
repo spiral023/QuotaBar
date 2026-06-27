@@ -166,6 +166,8 @@ if (!app.requestSingleInstanceLock()) {
           return merged;
         },
         installUpdate: () => quitAndInstall(),
+        // "Later" suppresses the re-notification for this version only — the downloaded
+        // update still installs silently on next quit (autoInstallOnAppQuit = true).
         dismissUpdate: (version: string) => notificationService.dismissUpdateVersion(version),
       });
       // Toast-Aktivierungen (quotabar://…) an den NotificationService weiterreichen.
