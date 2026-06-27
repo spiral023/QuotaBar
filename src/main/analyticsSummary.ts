@@ -41,20 +41,21 @@ export function buildTopModels(
   codexRows: ReportRow[],
   limit: number,
 ): { model: string; provider: "claude" | "codex"; costUSD: number; pctOfTotal: number }[] {
-  const map = new Map<string, { provider: "claude" | "codex"; costUSD: number }>();
+  const map = new Map<string, { model: string; provider: "claude" | "codex"; costUSD: number }>();
   for (const row of [...claudeRows, ...codexRows]) {
     for (const mb of row.modelBreakdowns ?? []) {
-      const existing = map.get(mb.model);
+      const key = `${row.provider}\0${mb.model}`;
+      const existing = map.get(key);
       if (existing) {
         existing.costUSD += mb.costUSD;
       } else {
-        map.set(mb.model, { provider: row.provider, costUSD: mb.costUSD });
+        map.set(key, { model: mb.model, provider: row.provider, costUSD: mb.costUSD });
       }
     }
   }
   const total = Array.from(map.values()).reduce((s, m) => s + m.costUSD, 0);
-  return Array.from(map.entries())
-    .map(([model, { provider, costUSD }]) => ({
+  return Array.from(map.values())
+    .map(({ model, provider, costUSD }) => ({
       model,
       provider,
       costUSD,
@@ -65,22 +66,28 @@ export function buildTopModels(
 }
 
 export function computeAvgSessionMinutes(entries: ClaudeUsageEntry[]): number {
-  const sessionMap = new Map<string, { min: number; max: number }>();
+  const sessionMap = new Map<string, { min: number; max: number; count: number }>();
   for (const entry of entries) {
     const ts  = new Date(entry.timestamp).getTime();
     const key = `${entry.project}\0${entry.session}`;
     const ex  = sessionMap.get(key);
     if (!ex) {
-      sessionMap.set(key, { min: ts, max: ts });
+      sessionMap.set(key, { min: ts, max: ts, count: 1 });
     } else {
       if (ts < ex.min) ex.min = ts;
       if (ts > ex.max) ex.max = ts;
+      ex.count++;
     }
   }
   if (sessionMap.size === 0) return 0;
   let totalMs = 0;
-  for (const { min, max } of sessionMap.values()) totalMs += max - min;
-  return Math.round(totalMs / sessionMap.size / 60_000);
+  let measured = 0;
+  for (const { min, max, count } of sessionMap.values()) {
+    if (count < 2 || max <= min) continue;
+    totalMs += max - min;
+    measured++;
+  }
+  return measured > 0 ? Math.round(totalMs / measured / 60_000) : 0;
 }
 
 export function computeCacheHitRate(snapshots: UsageSnapshot[] | null): { claude: number; codex: number } {
@@ -158,25 +165,31 @@ export function buildSessionStats(
   entries: ClaudeUsageEntry[],
   activeDays: number,
 ): { count: number; avgMinutes: number; totalHours: number; sessionsPerActiveDay: number } {
-  const sessions = new Map<string, { min: number; max: number }>();
+  const sessions = new Map<string, { min: number; max: number; count: number }>();
   for (const e of entries) {
     const ts  = new Date(e.timestamp).getTime();
     const key = `${e.project}\0${e.session}`;
     const ex  = sessions.get(key);
     if (!ex) {
-      sessions.set(key, { min: ts, max: ts });
+      sessions.set(key, { min: ts, max: ts, count: 1 });
     } else {
       if (ts < ex.min) ex.min = ts;
       if (ts > ex.max) ex.max = ts;
+      ex.count++;
     }
   }
   const count = sessions.size;
   if (count === 0) return { count: 0, avgMinutes: 0, totalHours: 0, sessionsPerActiveDay: 0 };
   let totalMs = 0;
-  for (const { min, max } of sessions.values()) totalMs += max - min;
+  let measured = 0;
+  for (const { min, max, count: entryCount } of sessions.values()) {
+    if (entryCount < 2 || max <= min) continue;
+    totalMs += max - min;
+    measured++;
+  }
   return {
     count,
-    avgMinutes:          Math.round(totalMs / count / 60_000),
+    avgMinutes:          measured > 0 ? Math.round(totalMs / measured / 60_000) : 0,
     totalHours:          Math.round(totalMs / 3_600_000 * 10) / 10,
     sessionsPerActiveDay: activeDays > 0 ? Math.round(count / activeDays * 10) / 10 : 0,
   };

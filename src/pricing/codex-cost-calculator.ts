@@ -4,7 +4,6 @@ import type { LiteLLMFetcher } from "./litellm-fetcher";
 import { type CostBreakdown, sumBreakdown } from "./cost-calculator";
 
 const MODEL_ALIASES: Record<string, string> = {
-  "gpt-5-codex": "gpt-5",
   "gpt-5.3-codex": "gpt-5.2-codex",
 };
 

@@ -7,7 +7,10 @@ export function computeBackoffMs(
   consecutive: number,
   random: () => number = Math.random,
 ): number {
-  const base = Math.max(serverRetryAfterMs, MIN_RETRY_MS);
+  const retryAfter = Number.isFinite(serverRetryAfterMs) && serverRetryAfterMs > 0
+    ? serverRetryAfterMs
+    : MIN_RETRY_MS;
+  const base = Math.max(retryAfter, MIN_RETRY_MS);
   const exponent = Math.max(0, consecutive - 1);
   const scaled = Math.min(MAX_RETRY_MS, base * 2 ** exponent);
   return scaled + Math.floor(random() * JITTER_MAX_MS);

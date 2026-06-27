@@ -68,14 +68,11 @@ describe("calculateCodexApiCost", () => {
     expect(fast).toBeCloseTo(standard * 2, 4);
   });
 
-  it("resolves model alias gpt-5-codex → gpt-5", async () => {
+  it("uses direct gpt-5-codex pricing instead of aliasing to gpt-5", async () => {
     const fetcher = new LiteLLMFetcher(true);
-    // gpt-5 not in fallback → returns null → cost should be 0
     const events = [makeEvent({ model: "gpt-5-codex", inputTokens: 1000, outputTokens: 100 })];
     const cost = await calculateCodexApiCost(events, fetcher, "standard");
-    // Either 0 (no gpt-5 fallback) or > 0 (if LiteLLM has it in offline mode) — just verify no throw
-    expect(typeof cost).toBe("number");
-    expect(cost).toBeGreaterThanOrEqual(0);
+    expect(cost).toBeGreaterThan(0);
   });
 
   it("returns 0 for event with unknown model (no pricing found)", async () => {

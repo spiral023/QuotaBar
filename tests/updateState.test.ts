@@ -43,6 +43,14 @@ describe("reduceUpdateState", () => {
     expect(s.error).toBe("boom");
     expect(s.currentVersion).toBe("0.1.0");
   });
+  it("keeps a downloaded update installable when a later updater error arrives", () => {
+    const ready = reduceUpdateState(base, { type: "downloaded", version: "0.2.0" });
+    const afterError = reduceUpdateState(ready, { type: "error", message: "network down" });
+
+    expect(afterError.status).toBe("ready");
+    expect(afterError.newVersion).toBe("0.2.0");
+    expect(afterError.error).toBe("network down");
+  });
   it("never leaves the disabled state", () => {
     const disabled = initialUpdateState("0.1.0", false);
     expect(reduceUpdateState(disabled, { type: "checking" }).status).toBe("disabled");

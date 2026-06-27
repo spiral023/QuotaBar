@@ -109,6 +109,30 @@ describe("calculateCostBreakdown", () => {
     const fast = calculateCostBreakdown({ ...tokens, speed: "fast" }, fastPricing);
     expect(fast.outputCostUSD).toBeCloseTo(normal.outputCostUSD * 4);
   });
+
+  it("uses total Anthropic input context to choose the >200k tier for all input token types", () => {
+    const tieredPricing: ModelPricing = {
+      input_cost_per_token: 1,
+      cache_read_input_token_cost: 2,
+      cache_creation_input_token_cost: 3,
+      output_cost_per_token: 4,
+      input_cost_per_token_above_200k_tokens: 10,
+      cache_read_input_token_cost_above_200k_tokens: 20,
+      cache_creation_input_token_cost_above_200k_tokens: 30,
+      output_cost_per_token_above_200k_tokens: 40,
+    };
+
+    const b = calculateCostBreakdown({
+      input_tokens: 150_000,
+      cache_read_input_tokens: 150_000,
+      cache_creation_input_tokens: 0,
+      output_tokens: 1_000,
+    }, tieredPricing);
+
+    expect(b.inputCostUSD).toBe(150_000 * 10);
+    expect(b.cacheReadCostUSD).toBe(150_000 * 20);
+    expect(b.outputCostUSD).toBe(1_000 * 40);
+  });
 });
 
 describe("scaleBreakdownTo", () => {

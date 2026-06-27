@@ -51,6 +51,16 @@ describe("backfillManifest", () => {
     expect(unchanged).toEqual(["/a.jsonl"]);
   });
 
+  it("diffSources reports files deleted from the current source set", () => {
+    const prev = { "/a.jsonl": "1:100", "/deleted.jsonl": "2:200" };
+    const current = { "/a.jsonl": "1:100" };
+    const { changed, unchanged, deleted } = diffSources(prev, current);
+
+    expect(changed).toEqual([]);
+    expect(unchanged).toEqual(["/a.jsonl"]);
+    expect(deleted).toEqual(["/deleted.jsonl"]);
+  });
+
   it("reports repaired version 0 when no marker exists", async () => {
     expect(await getRepairedVersion(tmp)).toBe(0);
   });

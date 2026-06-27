@@ -20,8 +20,10 @@ import { loadManifest, saveManifest, fileSignature, diffSources, type BackfillMa
  *     Quelldateien neu geschrieben → Datenverlust unveränderter Dateien).
  * 2 = Per-Token-Typ-Kosten (input/output/cacheCreation/cacheRead CostUSD) je
  *     Modell ergänzt → historische Tagessätze einmalig neu berechnen.
+ * 3 = Deleted source files now trigger a rebuild and stale backfill day files
+ *     are removed, so ghost entries from rotated logs disappear.
  */
-export const BACKFILL_REPAIR_VERSION = 2;
+export const BACKFILL_REPAIR_VERSION = 3;
 
 export interface BackfillOptions {
   recorder: DebugRecorder;
@@ -57,9 +59,9 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   const manifest: BackfillManifest = opts.force
     ? { version: 1, sources: {}, lastRunAt: new Date(0).toISOString() }
     : await loadManifest(opts.logDir);
-  const { changed, unchanged } = diffSources(manifest.sources, currentSources);
+  const { changed, unchanged, deleted } = diffSources(manifest.sources, currentSources);
 
-  if (!opts.force && changed.length === 0) {
+  if (!opts.force && changed.length === 0 && deleted.length === 0) {
     opts.recorder.write({ kind: "backfill.skipped", unchangedSources: unchanged.length });
     await saveManifest(opts.logDir, { version: 1, sources: currentSources, lastRunAt: new Date().toISOString() });
     const durationMs = Date.now() - startedAt;
@@ -68,7 +70,10 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   }
 
   // Nur geänderte/neue Dateien parsen (bzw. bei force: alle).
-  const changedSet = new Set(opts.force ? Object.keys(currentSources) : changed);
+  const rebuildAll = opts.force || deleted.length > 0;
+  if (rebuildAll) await removeBackfillFiles(opts.logDir);
+
+  const changedSet = new Set(rebuildAll ? Object.keys(currentSources) : changed);
   const claudeChanged = claudeRefs.filter((r) => changedSet.has(r.file));
   const codexChanged = codexRefs.filter((r) => changedSet.has(r.file));
 
@@ -175,9 +180,21 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
     daysSkipped: 0,
     durationMs,
     sourcesScanned: Object.keys(currentSources).length,
-    sourcesChanged: changedSet.size,
+    sourcesChanged: changedSet.size + deleted.length,
   });
   return { daysWritten: written, daysSkipped: 0, durationMs, errors };
+}
+
+async function removeBackfillFiles(logDir: string): Promise<void> {
+  let files: string[];
+  try {
+    files = await fs.readdir(logDir);
+  } catch {
+    return;
+  }
+  await Promise.all(files
+    .filter((file) => file.endsWith(".backfill.jsonl"))
+    .map((file) => fs.rm(path.join(logDir, file), { force: true })));
 }
 
 async function summarizeClaude(date: string, entries: ClaudeUsageEntry[], fetcher?: LiteLLMFetcher): Promise<TokensDaySummaryEvent> {

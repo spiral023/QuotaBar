@@ -36,6 +36,12 @@ describe("LiteLLMFetcher (offline mode)", () => {
     expect(pricing).not.toBeNull();
   });
 
+  it("does not attach unknown models to arbitrary substring pricing", async () => {
+    const fetcher = new LiteLLMFetcher(true);
+    const pricing = await fetcher.getModelPricing("gpt");
+    expect(pricing).toBeNull();
+  });
+
   it("still resolves gpt-4o after prefix-lookup change (regression)", async () => {
     const fetcher = new LiteLLMFetcher(true);
     const pricing = await fetcher.getModelPricing("gpt-4o");
@@ -50,6 +56,13 @@ describe("LiteLLMFetcher (offline mode)", () => {
     expect(pricing!.input_cost_per_token).toBeCloseTo(5e-6, 10);
     expect(pricing!.output_cost_per_token).toBeCloseTo(30e-6, 10);
     expect(pricing!.cache_read_input_token_cost).toBeCloseTo(0.5e-6, 10);
+  });
+
+  it("returns direct fallback pricing for gpt-5-codex", async () => {
+    const fetcher = new LiteLLMFetcher(true);
+    const pricing = await fetcher.getModelPricing("gpt-5-codex");
+    expect(pricing).not.toBeNull();
+    expect(pricing!.input_cost_per_token).toBeGreaterThan(0);
   });
 
   it("returns pricing for gpt-5.4", async () => {

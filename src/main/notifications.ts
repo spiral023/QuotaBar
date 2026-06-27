@@ -102,7 +102,10 @@ export class NotificationService {
             title: `QuotaBar ${version} ready to install`,
             body: "Restart now to apply the update.",
             ...(withActions
-              ? { actions: [{ type: "button" as const, text: "Restart Now" }] }
+              ? { actions: [
+                  { type: "button" as const, text: "Restart Now" },
+                  { type: "button" as const, text: "Later" },
+                ] }
               : {}),
           },
     );

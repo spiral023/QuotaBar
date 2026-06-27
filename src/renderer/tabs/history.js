@@ -60,9 +60,9 @@ function _presetDates(preset) {
 
   switch (preset) {
     case '7d':
-      return { from: new Date(now - 7  * 864e5).toISOString().slice(0, 10), to: today };
+      return { from: new Date(now - 6  * 864e5).toISOString().slice(0, 10), to: today };
     case '30d':
-      return { from: new Date(now - 30 * 864e5).toISOString().slice(0, 10), to: today };
+      return { from: new Date(now - 29 * 864e5).toISOString().slice(0, 10), to: today };
     case 'week': {
       const d   = new Date(now);
       const day = d.getDay();
@@ -240,7 +240,7 @@ function _renderChart() {
     } else if (_tokenMode === 'output') {
       val = r.outputTokens ?? 0;
     } else if (_tokenMode === 'cache') {
-      val = (r.cacheReadTokens ?? 0) + (r.cacheCreationTokens ?? 0);
+      val = (r.cacheReadTokens ?? 0);
     } else {
       val = r.totalTokens ?? 0;
     }

@@ -46,7 +46,7 @@ export class ClaudeProvider implements UsageProvider {
       }
       if (response.status === 429) {
         const header = response.headers.get("Retry-After");
-        const retryAfterMs = header !== null ? parseInt(header, 10) * 1000 : 5 * 60 * 1000;
+        const retryAfterMs = parseRetryAfterMs(header);
         throw new RateLimitError(retryAfterMs);
       }
       if (!response.ok) {
@@ -68,6 +68,23 @@ export class ClaudeProvider implements UsageProvider {
       return errorSnapshot("claude", toErrorMessage(error), status);
     }
   }
+}
+
+export function parseRetryAfterMs(header: string | null, now = new Date()): number {
+  const fallbackMs = 5 * 60 * 1000;
+  if (header === null) return fallbackMs;
+  const trimmed = header.trim();
+  if (!trimmed) return fallbackMs;
+
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : fallbackMs;
+  }
+
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isFinite(dateMs)) return fallbackMs;
+  const deltaMs = dateMs - now.getTime();
+  return deltaMs > 0 ? deltaMs : fallbackMs;
 }
 
 export function normalizeClaudeUsageResponse(input: unknown, identity: { rateLimitTier?: string } = {}): UsageSnapshot {

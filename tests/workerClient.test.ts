@@ -92,6 +92,20 @@ describe("PersistentWorkerClient", () => {
     await expect(retry).resolves.toBe("ok");
   });
 
+  it("ignores a late exit from an old worker after a new worker has been spawned", async () => {
+    const { client, workers } = createClient();
+    const pending = client.request({ task: "summary" });
+    workers[0].emit("error", new Error("thread crashed"));
+    await expect(pending).rejects.toThrow("thread crashed");
+
+    const retry = client.request({ task: "summary" });
+    expect(workers).toHaveLength(2);
+    workers[0].emit("exit", 1);
+    workers[1].emit("message", { id: workers[1].posted[0].id, ok: true, result: "ok" });
+
+    await expect(retry).resolves.toBe("ok");
+  });
+
   it("unrefs the worker so it does not keep the process alive", () => {
     const { client, workers } = createClient();
     void client.request({ task: "summary" }).catch(() => {});

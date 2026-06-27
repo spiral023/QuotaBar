@@ -18,7 +18,7 @@ const LIVE_LOG_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
  * füttert denselben Akkumulator wie der Live-Tracker. Backfill-Dateien
  * enthalten keine Snapshot-Events und werden ignoriert.
  */
-export async function seedFromDebugLogs(logDir: string): Promise<WindowRatioFile> {
+export async function seedFromDebugLogs(logDir: string, now = new Date()): Promise<WindowRatioFile> {
   const result = emptyRatioFile();
   let entries: string[];
   try {
@@ -29,6 +29,7 @@ export async function seedFromDebugLogs(logDir: string): Promise<WindowRatioFile
   const files = entries
     .map((e) => LIVE_LOG_RE.exec(e))
     .filter((m): m is RegExpExecArray => m !== null)
+    .filter((m) => m[1] < localDayKey(now))
     .sort((a, b) => a[1].localeCompare(b[1]));
 
   for (const match of files) {
@@ -36,6 +37,11 @@ export async function seedFromDebugLogs(logDir: string): Promise<WindowRatioFile
     result.seededThrough = match[1];
   }
   return clearTransients(result);
+}
+
+function localDayKey(date: Date): string {
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 async function seedFile(filePath: string, result: WindowRatioFile): Promise<void> {

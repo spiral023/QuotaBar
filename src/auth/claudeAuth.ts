@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { getClaudeCredentialsPath } from "../config/paths";
 
 export interface ClaudeCredentials {
@@ -52,18 +53,25 @@ export async function loadClaudeCredentials(): Promise<ClaudeCredentials | null>
 }
 
 export async function saveClaudeCredentials(credentials: ClaudeCredentials): Promise<void> {
-  const path = getClaudeCredentialsPath();
-  const existing = await readExistingJson(path);
-  existing.claudeAiOauth = {
-    ...(existing.claudeAiOauth && typeof existing.claudeAiOauth === "object" ? existing.claudeAiOauth : {}),
+  const credentialsPath = getClaudeCredentialsPath();
+  const existing = await readExistingJson(credentialsPath);
+  const previousOauth = existing.claudeAiOauth && typeof existing.claudeAiOauth === "object"
+    ? existing.claudeAiOauth as Record<string, unknown>
+    : {};
+  const nextOauth: Record<string, unknown> = {
+    ...previousOauth,
     accessToken: credentials.accessToken,
-    refreshToken: credentials.refreshToken,
-    expiresAt: credentials.expiresAt ? credentials.expiresAt.getTime() : undefined,
     scopes: credentials.scopes,
-    rateLimitTier: credentials.rateLimitTier
   };
+  if (credentials.refreshToken !== undefined) nextOauth.refreshToken = credentials.refreshToken;
+  if (credentials.expiresAt !== undefined) nextOauth.expiresAt = credentials.expiresAt.getTime();
+  if (credentials.rateLimitTier !== undefined) nextOauth.rateLimitTier = credentials.rateLimitTier;
+  existing.claudeAiOauth = nextOauth;
 
-  await fs.writeFile(path, `${JSON.stringify(existing, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await fs.mkdir(path.dirname(credentialsPath), { recursive: true });
+  const tmpPath = `${credentialsPath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmpPath, `${JSON.stringify(existing, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await fs.rename(tmpPath, credentialsPath);
 }
 
 export function isClaudeTokenExpired(credentials: ClaudeCredentials, skewMs = 5 * 60_000): boolean {

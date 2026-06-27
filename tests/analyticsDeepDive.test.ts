@@ -10,6 +10,7 @@ import {
   buildWeeklySummary,
   buildCostEfficiency,
   computeActiveHours,
+  buildSessionStats,
 } from "../src/main/analyticsSummary";
 
 function makeEntry(isoTimestamp: string, out = 0): ClaudeUsageEntry {
@@ -391,5 +392,21 @@ describe("computeActiveHours", () => {
     ];
     // 3 minutes = 0.05h — must not collapse to 0 through rounding
     expect(computeActiveHours(entries)).toBeCloseTo(0.05);
+  });
+});
+
+describe("buildSessionStats", () => {
+  it("excludes single-entry sessions from avgMinutes and totalHours", () => {
+    const entries = [
+      makeSessionEntry("2026-05-01T10:00:00.000Z", "multi"),
+      makeSessionEntry("2026-05-01T11:00:00.000Z", "multi"),
+      makeSessionEntry("2026-05-01T12:00:00.000Z", "single"),
+    ];
+
+    const stats = buildSessionStats(entries, 1);
+
+    expect(stats.count).toBe(2);
+    expect(stats.avgMinutes).toBe(60);
+    expect(stats.totalHours).toBe(1);
   });
 });

@@ -94,10 +94,11 @@ export class FxFetcher {
   get estimated(): boolean { return this.anyEstimated || this.offlineMode; }
 
   private missingBusinessDay(have: Record<string, number>, minDay: string, maxDay: string): boolean {
-    for (let d = new Date(`${minDay}T00:00:00Z`); d <= new Date(`${maxDay}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
-      const dow = d.getUTCDay();
+    const pad = (v: number): string => String(v).padStart(2, "0");
+    for (let d = new Date(`${minDay}T00:00:00`); d <= new Date(`${maxDay}T00:00:00`); d.setDate(d.getDate() + 1)) {
+      const dow = d.getDay();
       if (dow === 0 || dow === 6) continue;
-      const key = d.toISOString().slice(0, 10);
+      const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
       if (have[key] === undefined) return true;
     }
     return false;

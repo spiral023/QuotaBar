@@ -8,6 +8,12 @@ function localDayBounds(day: string): { start: number; end: number } {
   return { start, end: start + DAY_MS };
 }
 
+function daysInLocalMonth(day: string): number {
+  const date = new Date(`${day}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return 30;
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
 // Anteil des Tages [start,end), in dem [from,to) aktiv ist (0..1).
 function activeFraction(plan: PlanPeriod, dayStart: number, dayEnd: number): number {
   const from = new Date(plan.startsAt).getTime();
@@ -27,7 +33,7 @@ export function dailySubCostUSD(
     if (p.provider !== provider) continue;
     const frac = activeFraction(p, start, end);
     if (frac <= 0) continue;
-    const perDay = (p.amount / 30) * frac;
+    const perDay = (p.amount / daysInLocalMonth(day)) * frac;
     sum += p.currency === "EUR" ? perDay * fx.rate("EURUSD", day).value : perDay;
   }
   return sum;

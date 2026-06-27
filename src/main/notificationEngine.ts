@@ -543,6 +543,8 @@ function isQuietHours(qh: { enabled: boolean; start: string; end: string }, now:
   if (!qh.enabled) return false;
   const [sh, sm] = qh.start.split(":").map(Number);
   const [eh, em] = qh.end.split(":").map(Number);
+  if (![sh, sm, eh, em].every(Number.isFinite)) return false;
+  if (sh < 0 || sh > 23 || eh < 0 || eh > 23 || sm < 0 || sm > 59 || em < 0 || em > 59) return false;
   const nowMin   = now.getHours() * 60 + now.getMinutes();
   const startMin = sh * 60 + sm;
   const endMin   = eh * 60 + em;

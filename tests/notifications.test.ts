@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   NotificationEngine,
   NotificationStateStore,
+  isQuietHours,
 } from "../src/main/notificationEngine";
 import type { NotificationContext } from "../src/main/notificationEngine";
 import {
@@ -504,5 +505,10 @@ describe("quiet hours", () => {
     const previous = [snap("claude", [{ name: "fiveHour", usedPercent: 93 }])];
     const events = engine.evaluate({ current, previous, settings }, state);
     expect(events.some(e => e.severity === "critical")).toBe(true);
+  });
+
+  it("treats invalid quiet-hours strings as not quiet", () => {
+    expect(isQuietHours({ enabled: true, start: "bad", end: "08:00" }, new Date())).toBe(false);
+    expect(isQuietHours({ enabled: true, start: "22:00", end: "bad" }, new Date())).toBe(false);
   });
 });

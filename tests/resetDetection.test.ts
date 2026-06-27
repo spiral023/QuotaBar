@@ -28,10 +28,10 @@ describe("detectResets", () => {
     expect(detectResets(prev, next)).toEqual([{ provider: "claude", windowName: "weekly" }]);
   });
 
-  it("emits nothing when prev was below threshold (80%)", () => {
+  it("emits when a window drops sharply from a non-saturated regular usage level", () => {
     const prev = snap("codex", [{ name: "fiveHour", usedPercent: 80 }]);
     const next = snap("codex", [{ name: "fiveHour", usedPercent: 0 }]);
-    expect(detectResets(prev, next)).toEqual([]);
+    expect(detectResets(prev, next)).toEqual([{ provider: "codex", windowName: "fiveHour" }]);
   });
 
   it("emits nothing when next is above near-empty threshold (50%)", () => {
@@ -90,10 +90,10 @@ describe("detectResets", () => {
     expect(detectResets(prev, next)).toHaveLength(1);
   });
 
-  it("threshold boundary: prev 99.4% → no event", () => {
+  it("threshold boundary: prev 99.4% can still reset", () => {
     const prev = snap("codex", [{ name: "fiveHour", usedPercent: 99.4 }]);
     const next = snap("codex", [{ name: "fiveHour", usedPercent: 0 }]);
-    expect(detectResets(prev, next)).toEqual([]);
+    expect(detectResets(prev, next)).toHaveLength(1);
   });
 
   it("threshold boundary: next exactly 1% → emits", () => {

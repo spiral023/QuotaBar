@@ -55,6 +55,27 @@ describe("buildTopModels", () => {
     expect(top[1].model).toBe("claude-sonnet-4-6");
     expect(top[1].pctOfTotal).toBeCloseTo(10 / 30, 5);
   });
+
+  it("keeps same model names separate when providers differ", () => {
+    const claude = [makeRow("2026-05-01", 10, "claude", ["shared-model"])];
+    const codex = [makeRow("2026-05-01", 20, "codex", ["shared-model"])];
+
+    const top = buildTopModels(claude, codex, 5);
+
+    expect(top).toHaveLength(2);
+    expect(top).toContainEqual({
+      model: "shared-model",
+      provider: "claude",
+      costUSD: 10,
+      pctOfTotal: 10 / 30,
+    });
+    expect(top).toContainEqual({
+      model: "shared-model",
+      provider: "codex",
+      costUSD: 20,
+      pctOfTotal: 20 / 30,
+    });
+  });
 });
 
 describe("computeAvgSessionMinutes", () => {
@@ -69,6 +90,16 @@ describe("computeAvgSessionMinutes", () => {
       { provider: "claude", timestamp: "2026-05-01T11:00:00.000Z", model: "claude-sonnet-4-6", project: "p1", session: "s1", inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
     ];
     // Session s1: 10:00 → 11:00 = 60 min
+    expect(computeAvgSessionMinutes(entries)).toBe(60);
+  });
+
+  it("excludes single-entry sessions from the average duration divisor", () => {
+    const entries: ClaudeUsageEntry[] = [
+      { provider: "claude", timestamp: "2026-05-01T10:00:00.000Z", model: "claude-sonnet-4-6", project: "p1", session: "s1", inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
+      { provider: "claude", timestamp: "2026-05-01T11:00:00.000Z", model: "claude-sonnet-4-6", project: "p1", session: "s1", inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
+      { provider: "claude", timestamp: "2026-05-01T12:00:00.000Z", model: "claude-sonnet-4-6", project: "p1", session: "single", inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
+    ];
+
     expect(computeAvgSessionMinutes(entries)).toBe(60);
   });
 });

@@ -29,6 +29,18 @@ describe("buildWeeklyProfile", () => {
     expect(p.avgTokensPerWeekday[3]).toBe(0);
     expect(p.weeksOfData).toBe(2);
   });
+
+  it("divides each weekday by its actual count in the rolling profile window", () => {
+    const p = buildWeeklyProfile([
+      day("2026-06-11", "claude", 4_000_000),
+      day("2026-06-04", "claude", 4_000_000),
+      day("2026-05-28", "claude", 4_000_000),
+      day("2026-05-21", "claude", 4_000_000),
+      day("2026-05-14", "claude", 4_000_000),
+    ], "claude", NOW);
+
+    expect(p.avgTokensPerWeekday[4]).toBeCloseTo(4_000_000);
+  });
 });
 
 describe("computeWeeklyForecast", () => {

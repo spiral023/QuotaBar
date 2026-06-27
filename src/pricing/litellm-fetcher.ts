@@ -70,10 +70,16 @@ const FALLBACK_PRICES: Record<string, ModelPricing> = {
     output_cost_per_token: 10e-6,
     cache_read_input_token_cost: 0.125e-6,
   },
+  "gpt-5-codex": {
+    input_cost_per_token: 1.25e-6,
+    output_cost_per_token: 10e-6,
+    cache_read_input_token_cost: 0.125e-6,
+  },
 };
 
 export class LiteLLMFetcher {
   private cache: Map<string, ModelPricing> | null = null;
+  private inFlight: Promise<Map<string, ModelPricing>> | null = null;
   // Memoisiert das Lookup-Ergebnis je Modellname (inkl. negativer Treffer als
   // `null`), damit der lineare Fuzzy-Scan über die große Preis-Map nicht pro
   // Event erneut läuft. Die Preisdaten sind pro Prozesslauf stabil.
@@ -92,6 +98,14 @@ export class LiteLLMFetcher {
 
   private async getPricingMap(): Promise<Map<string, ModelPricing>> {
     if (this.cache) return this.cache;
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = this.loadPricingMap().finally(() => {
+      this.inFlight = null;
+    });
+    return this.inFlight;
+  }
+
+  private async loadPricingMap(): Promise<Map<string, ModelPricing>> {
     if (this.offlineMode) {
       this.cache = new Map(Object.entries(FALLBACK_PRICES));
       recordDataSourceStatus("litellm", { ok: true, source: "offline", at: new Date().toISOString(), detail: `${this.cache.size} fallback models` });
@@ -123,10 +137,13 @@ export class LiteLLMFetcher {
       if (pricing.has(key)) return pricing.get(key)!;
     }
     const lower = modelName.toLowerCase();
+    if (lower.length < 5) return null;
+    const matches: ModelPricing[] = [];
     for (const [key, value] of pricing) {
       const k = key.toLowerCase();
-      if (k.includes(lower) || lower.includes(k)) return value;
+      if (k.includes(lower) || lower.includes(k)) matches.push(value);
     }
+    if (matches.length === 1) return matches[0];
     return null;
   }
 }

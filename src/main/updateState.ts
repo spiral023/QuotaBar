@@ -40,6 +40,7 @@ export function reduceUpdateState(state: UpdateUiState, event: UpdateEvent): Upd
     case "downloaded":
       return { ...state, status: "ready", newVersion: event.version, downloadPercent: 100 };
     case "error":
+      if (state.status === "ready") return { ...state, error: event.message };
       return { ...state, status: "error", error: event.message };
     default:
       return state;

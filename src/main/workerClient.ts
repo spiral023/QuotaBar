@@ -49,15 +49,16 @@ export class PersistentWorkerClient {
   private ensureWorker(): WorkerLike {
     if (this.worker) return this.worker;
     const worker = this.createWorker();
-    worker.on("message", value => this.handleMessage(value));
-    worker.on("error", err => this.failAll(err));
-    worker.on("exit", code => this.failAll(new Error(`Analytics worker exited with code ${code}`)));
+    worker.on("message", value => this.handleMessage(worker, value));
+    worker.on("error", err => this.failAll(worker, err));
+    worker.on("exit", code => this.failAll(worker, new Error(`Analytics worker exited with code ${code}`)));
     worker.unref();
     this.worker = worker;
     return worker;
   }
 
-  private handleMessage(value: unknown): void {
+  private handleMessage(worker: WorkerLike, value: unknown): void {
+    if (this.worker !== worker) return;
     const msg = value as WorkerResponse;
     const entry = this.pending.get(msg.id);
     if (!entry) return;
@@ -67,7 +68,8 @@ export class PersistentWorkerClient {
   }
 
   /** Worker died — reject everything in flight and respawn lazily on next request. */
-  private failAll(error: Error): void {
+  private failAll(worker: WorkerLike, error: Error): void {
+    if (this.worker !== worker) return;
     this.worker = null;
     const entries = [...this.pending.values()];
     this.pending.clear();

@@ -157,12 +157,15 @@ export const defaultSettings: Settings = {
 };
 
 export async function loadSettings(overrides: Partial<Settings> = {}): Promise<Settings> {
+  const defaults = normalizeSettings({ ...defaultSettings, ...overrides });
   try {
     const parsed = JSON.parse(await fs.readFile(getSettingsPath(), "utf8")) as Partial<Settings>;
     return normalizeSettings({ ...defaultSettings, ...parsed, ...overrides });
-  } catch {
-    await saveSettings({ ...defaultSettings, ...overrides });
-    return normalizeSettings({ ...defaultSettings, ...overrides });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      await saveSettings({ ...defaultSettings, ...overrides });
+    }
+    return defaults;
   }
 }
 

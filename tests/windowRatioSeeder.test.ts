@@ -119,4 +119,20 @@ describe("seedFromDebugLogs", () => {
     expect(seed.providers["claude:default"].pairCount).toBe(0);
     expect(seed.seededThrough).toBe("2026-06-09");
   });
+
+  it("skips the current live log day to avoid double-counting with live observations", async () => {
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      snapLine("codex", 0, 0, "2026-06-09T08:00:00Z"),
+      snapLine("codex", 40, 6, "2026-06-09T08:05:00Z"),
+    ].join("\n"), "utf8");
+    await fs.writeFile(path.join(dir, "2026-06-10.jsonl"), [
+      snapLine("codex", 0, 0, "2026-06-10T08:00:00Z"),
+      snapLine("codex", 80, 12, "2026-06-10T08:05:00Z"),
+    ].join("\n"), "utf8");
+
+    const seed = await seedFromDebugLogs(dir, new Date("2026-06-10T12:00:00.000Z"));
+
+    expect(seed.providers["codex:default"].sumFivePct).toBe(40);
+    expect(seed.seededThrough).toBe("2026-06-09");
+  });
 });

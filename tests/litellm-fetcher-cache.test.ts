@@ -52,4 +52,24 @@ describe("LiteLLMFetcher live cache", () => {
 
     expect(JSON.parse(fs.readFileSync(mocks.pricePath, "utf8"))).toEqual(payload);
   });
+
+  it("deduplicates concurrent live fetches", async () => {
+    const payload = {
+      "openai/test-model": {
+        input_cost_per_token: 1e-6,
+      },
+    };
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => payload,
+    });
+
+    const fetcher = new LiteLLMFetcher(false);
+    await Promise.all([
+      fetcher.getModelPricing("openai/test-model"),
+      fetcher.getModelPricing("openai/test-model"),
+    ]);
+
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
 });

@@ -5,6 +5,9 @@ export interface ResetEvent {
   windowName: UsageWindow["name"];
 }
 
+const RESET_PREVIOUS_MIN_PERCENT = 25;
+const RESET_NEXT_MAX_PERCENT = 1;
+
 export function detectResets(
   prev: UsageSnapshot | undefined,
   next: UsageSnapshot
@@ -15,11 +18,11 @@ export function detectResets(
   const events: ResetEvent[] = [];
   for (const nextWindow of next.windows) {
     if (typeof nextWindow.usedPercent !== "number") continue;
-    if (nextWindow.usedPercent > 1) continue;
+    if (nextWindow.usedPercent > RESET_NEXT_MAX_PERCENT) continue;
 
     const prevWindow = prev.windows.find((w) => w.name === nextWindow.name);
     if (!prevWindow || typeof prevWindow.usedPercent !== "number") continue;
-    if (prevWindow.usedPercent < 99.5) continue;
+    if (prevWindow.usedPercent < RESET_PREVIOUS_MIN_PERCENT) continue;
 
     events.push({ provider: next.provider, windowName: nextWindow.name });
   }

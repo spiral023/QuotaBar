@@ -8,6 +8,10 @@ describe("computeBackoffMs", () => {
     expect(computeBackoffMs(0, 1, noJitter)).toBe(MIN_RETRY_MS);
   });
 
+  it("treats NaN retry-after as MIN_RETRY_MS", () => {
+    expect(computeBackoffMs(Number.NaN, 1, noJitter)).toBe(MIN_RETRY_MS);
+  });
+
   it("uses the larger of server value and MIN_RETRY_MS", () => {
     expect(computeBackoffMs(8_000, 1, noJitter)).toBe(8_000);
     expect(computeBackoffMs(2_000, 1, noJitter)).toBe(MIN_RETRY_MS);

@@ -25,6 +25,7 @@ let _whChart      = null;      // Chart-Instanz der 5h-Fenster-Historie
 let _whData       = null;      // { entries, planChanges } (zeitraum-unabhängig gecacht)
 let _whMode       = 'util';    // 'util' | 'used' | 'max'
 let _whGen        = 0;         // Race-Schutz für den asynchron geladenen Verlauf
+let _hourClockResizeObserver = null;
 
 const PRESETS = [
   { id: '7d',    label: 'Last 7 days' },
@@ -92,9 +93,9 @@ function _presetDates(preset) {
 
   switch (preset) {
     case '7d':
-      return { from: new Date(now - 7  * 864e5).toISOString().slice(0, 10), to: today };
+      return { from: new Date(now - 6  * 864e5).toISOString().slice(0, 10), to: today };
     case '30d':
-      return { from: new Date(now - 30 * 864e5).toISOString().slice(0, 10), to: today };
+      return { from: new Date(now - 29 * 864e5).toISOString().slice(0, 10), to: today };
     case 'week': {
       const d   = new Date(now);
       const day = d.getDay();
@@ -555,7 +556,7 @@ function _buildDonut(data) {
   const chartColors = ['#DA785B', '#4B55C8'];
   const labels      = ['Claude', 'Codex'];
 
-  _donutChart = QB.charts.createDoughnut(ctx, labels, chartData, chartColors);
+  _donutChart = QB.charts.createDoughnut(ctx, labels, chartData, chartColors, { empty: total <= 0 });
 
   const roi    = data.roiFactor?.combined ?? 0;
   const center = document.getElementById('an-donut-center');
@@ -601,7 +602,12 @@ function _buildStats(data) {
   const grid = document.getElementById('an-stats-grid');
   if (!grid) return;
 
-  const cacheAvg  = ((data.cacheHitRate?.claude ?? 0) + (data.cacheHitRate?.codex ?? 0)) / 2;
+  const claudeCacheDen = (data.totalTokens?.claude?.input ?? 0) + (data.totalTokens?.claude?.cacheRead ?? 0);
+  const codexCacheDen = (data.totalTokens?.codex?.input ?? 0) + (data.totalTokens?.codex?.cached ?? 0);
+  const cacheWeightedDen = claudeCacheDen + codexCacheDen;
+  const cacheAvg = cacheWeightedDen > 0
+    ? (((data.cacheHitRate?.claude ?? 0) * claudeCacheDen) + ((data.cacheHitRate?.codex ?? 0) * codexCacheDen)) / cacheWeightedDen
+    : 0;
   const totalIn   = (data.totalTokens?.claude?.input  ?? 0) + (data.totalTokens?.codex?.input  ?? 0);
   const totalOut  = (data.totalTokens?.claude?.output ?? 0) + (data.totalTokens?.codex?.output ?? 0);
   const roi       = data.roiFactor?.combined ?? 0;
@@ -805,8 +811,10 @@ function _initHourClock(wrap, canvas, tip, byHour, totalCount) {
   animate();
 
   if (typeof ResizeObserver !== 'undefined') {
+    if (_hourClockResizeObserver) _hourClockResizeObserver.disconnect();
     const ro = new ResizeObserver(() => { layout(); draw(); });
     ro.observe(wrap);
+    _hourClockResizeObserver = ro;
   }
 }
 
@@ -1041,7 +1049,7 @@ function _buildWindowHistoryChart() {
       borderWidth: 1.5,
       tension: 0.3,
       fill: false,
-      spanGaps: true,
+      spanGaps: false,
       pointRadius: bonusFlags.map(b => b ? 4 : 2),
       pointHoverRadius: 5,
       pointBackgroundColor: bonusFlags.map(b => b ? '#52d017' : s.color),

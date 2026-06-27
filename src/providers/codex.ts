@@ -2,7 +2,8 @@ import { loadCodexCredentials, CodexCredentials } from "../auth/codexAuth";
 import { log } from "../main/logging";
 import { httpFetch } from "../main/httpClient";
 import { redactObject } from "../shared/redaction";
-import { NotAuthenticatedError, toErrorMessage } from "../shared/errors";
+import { NotAuthenticatedError, RateLimitError, toErrorMessage } from "../shared/errors";
+import { parseRetryAfterMs } from "./claude";
 import { errorSnapshot, UsageProvider, UsageSnapshot, UsageWindow } from "./types";
 
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
@@ -38,6 +39,9 @@ export class CodexProvider implements UsageProvider {
       if (response.status === 401 || response.status === 403) {
         throw new NotAuthenticatedError(`Codex usage returned HTTP ${response.status}`);
       }
+      if (response.status === 429) {
+        throw new RateLimitError(parseRetryAfterMs(response.headers.get("Retry-After")));
+      }
       if (!response.ok) {
         throw new Error(`Codex usage returned HTTP ${response.status}`);
       }
@@ -46,6 +50,7 @@ export class CodexProvider implements UsageProvider {
       this.logUsageShapeIfChanged(json);
       return normalizeCodexUsageResponse(json, { accountId: credentials.accountId, email: credentials.email });
     } catch (error) {
+      if (error instanceof RateLimitError) throw error;
       const status = error instanceof NotAuthenticatedError ? "not_authenticated" : "error";
       log.warn(`Codex fetch failed: ${toErrorMessage(error)}`);
       return errorSnapshot("codex", toErrorMessage(error), status);

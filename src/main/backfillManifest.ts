@@ -73,12 +73,16 @@ export async function fileSignature(filePath: string): Promise<string | null> {
 export function diffSources(
   previous: Record<string, string>,
   current: Record<string, string>,
-): { changed: string[]; unchanged: string[] } {
+): { changed: string[]; unchanged: string[]; deleted: string[] } {
   const changed: string[] = [];
   const unchanged: string[] = [];
+  const deleted: string[] = [];
   for (const [file, sig] of Object.entries(current)) {
     if (previous[file] === sig) unchanged.push(file);
     else changed.push(file);
   }
-  return { changed, unchanged };
+  for (const file of Object.keys(previous)) {
+    if (current[file] === undefined) deleted.push(file);
+  }
+  return { changed, unchanged, deleted };
 }

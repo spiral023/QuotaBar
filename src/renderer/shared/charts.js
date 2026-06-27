@@ -160,7 +160,7 @@ QB.charts.createStackedBar = function(ctx, labels, datasets, opts) {
   });
 };
 
-QB.charts.createDoughnut = function(ctx, labels, data, colors) {
+QB.charts.createDoughnut = function(ctx, labels, data, colors, opts) {
   return new Chart(ctx, {
     type: 'doughnut',
     data: {
@@ -180,6 +180,7 @@ QB.charts.createDoughnut = function(ctx, labels, data, colors) {
           borderWidth: 1,
           titleColor: '#b4c8d8',
           bodyColor: '#8298aa',
+          filter: () => !(opts && opts.empty),
           callbacks: {
             label: (item) => ` ${item.label}: $${item.parsed.toFixed(2)}`,
           },

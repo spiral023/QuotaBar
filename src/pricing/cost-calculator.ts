@@ -47,26 +47,32 @@ export interface CostBreakdown {
  * von calculateCostFromTokens – einzige Quelle der Wahrheit für die Zerlegung.
  */
 export function calculateCostBreakdown(tokens: TokenCounts, pricing: ModelPricing): CostBreakdown {
-  const inputCost = calculateTieredCost(
-    tokens.input_tokens,
+  const totalInputContext =
+    (tokens.input_tokens ?? 0) +
+    (tokens.cache_creation_input_tokens ?? 0) +
+    (tokens.cache_read_input_tokens ?? 0);
+  const useAbove200k = totalInputContext > TIERED_THRESHOLD;
+  const price = (base: number | undefined, tiered: number | undefined): number | undefined =>
+    useAbove200k && tiered != null ? tiered : base;
+  const cost = (count: number | undefined, rate: number | undefined): number =>
+    count != null && count > 0 && rate != null ? count * rate : 0;
+
+  const inputCost = cost(tokens.input_tokens, price(
     pricing.input_cost_per_token,
     pricing.input_cost_per_token_above_200k_tokens,
-  );
-  const outputCost = calculateTieredCost(
-    tokens.output_tokens,
+  ));
+  const outputCost = cost(tokens.output_tokens, price(
     pricing.output_cost_per_token,
     pricing.output_cost_per_token_above_200k_tokens,
-  );
-  const cacheCreationCost = calculateTieredCost(
-    tokens.cache_creation_input_tokens,
+  ));
+  const cacheCreationCost = cost(tokens.cache_creation_input_tokens, price(
     pricing.cache_creation_input_token_cost,
     pricing.cache_creation_input_token_cost_above_200k_tokens,
-  );
-  const cacheReadCost = calculateTieredCost(
-    tokens.cache_read_input_tokens,
+  ));
+  const cacheReadCost = cost(tokens.cache_read_input_tokens, price(
     pricing.cache_read_input_token_cost,
     pricing.cache_read_input_token_cost_above_200k_tokens,
-  );
+  ));
   const multiplier = tokens.speed === "fast" ? (pricing.provider_specific_entry?.fast ?? 1) : 1;
   return {
     inputCostUSD: inputCost * multiplier,

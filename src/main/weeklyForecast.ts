@@ -13,14 +13,19 @@ export interface WeeklyProfile {
 }
 
 /**
- * Typische Token-Menge pro Wochentag aus den Backfill-Tagessummen der
- * letzten 28 Tage. 28 Tage ≙ jeder Wochentag kommt genau 4× vor, daher
- * ist der Divisor konstant 4 (Tage ohne Nutzung zählen als 0).
+ * Typical token volume per weekday from recent backfill daily totals. Missing
+ * days count as 0, but the divisor is the actual weekday count in the window.
  */
 export function buildWeeklyProfile(records: BackfillDayRecord[], provider: "claude" | "codex", now: Date): WeeklyProfile {
   const sinceMs = now.getTime() - PROFILE_DAYS * DAY_MS;
   const totals = new Array<number>(7).fill(0);
+  const counts = new Array<number>(7).fill(0);
   const weeks = new Set<number>();
+  let firstProfileDay = startOfUtcDay(sinceMs);
+  if (firstProfileDay < sinceMs) firstProfileDay += DAY_MS;
+  for (let t = firstProfileDay; t <= startOfUtcDay(now.getTime()); t += DAY_MS) {
+    counts[new Date(t).getUTCDay()]++;
+  }
   for (const r of records) {
     if (r.provider !== provider) continue;
     const dayMs = new Date(`${r.date}T00:00:00.000Z`).getTime();
@@ -29,9 +34,14 @@ export function buildWeeklyProfile(records: BackfillDayRecord[], provider: "clau
     weeks.add(Math.floor(dayMs / (7 * DAY_MS)));
   }
   return {
-    avgTokensPerWeekday: totals.map((t) => t / 4),
+    avgTokensPerWeekday: totals.map((t, day) => t / Math.max(1, counts[day])),
     weeksOfData: weeks.size,
   };
+}
+
+function startOfUtcDay(ms: number): number {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
 export interface WeeklyForecastInput {

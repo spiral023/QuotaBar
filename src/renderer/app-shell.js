@@ -443,7 +443,7 @@
         const total = d.claudeUSD + d.codexUSD;
         const totalPx = Math.round((total / maxVal) * 24);
         const cPx = Math.round((d.claudeUSD / maxVal) * 24);
-        const dPx = totalPx - cPx;
+        const dPx = Math.max(0, totalPx - cPx);
         return `<div class="sparkline-bar-wrap" title="${d.date}: $${total.toFixed(2)}">
           <div class="sparkline-bar" style="height:${cPx}px;background:var(--claude-col)"></div>
           <div class="sparkline-bar" style="height:${dPx}px;background:var(--codex-col)"></div>
