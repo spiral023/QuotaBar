@@ -155,7 +155,7 @@ if (!app.requestSingleInstanceLock()) {
         openDashboard: () => detailsWindow.open(
           () => void refreshLoop.refreshNow("dashboard"),
           () => void refreshLoop.recomputeCost(),
-          { tab: "notifications" },
+          { tab: "live" },
         ),
         muteRule: async (ruleId: string) => {
           const current = await loadSettings();

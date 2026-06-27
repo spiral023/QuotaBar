@@ -1122,6 +1122,13 @@
     /* Variante: Tooltip nach rechts ausrichten (für linke Tile-Ecken) */
     .info-icon.tip-right::after { left: 0; transform: none; }
     .info-icon.tip-right::before { left: 4px; transform: none; }
+    /* Variante: Tooltip nach unten (für Elemente nahe der oberen Panel-Kante) */
+    .info-icon.tip-below::after { bottom: auto; top: calc(100% + 7px); }
+    .info-icon.tip-below::before {
+      bottom: auto; top: calc(100% + 2px);
+      border-top-color: transparent;
+      border-bottom-color: rgba(255,255,255,0.15);
+    }
 
     /* Top Models Tabelle */
     .top-models-table {
