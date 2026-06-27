@@ -15,9 +15,13 @@
 
   Proxy/CA:
     Claude (Node): trusts the OS certificate store automatically; proxy via
-                   ~/.claude/settings.json for CLI and VS Code extension.
+                   persistent HTTPS_PROXY env (settings.json left untouched).
     Codex (Rust):  does not trust the OS store; export corporate CA as PEM
                    (CODEX_CA_CERTIFICATE) and set proxy via persistent env.
+
+  Px autostart (menu 7) registers a hidden logon scheduled task so Px is running
+  after every logon; if Task Scheduler is unavailable it falls back to a Startup-
+  folder launcher. Px itself must be installed beforehand (see $PxExe/$PxIni).
 
 .NOTES
   Runs in Windows PowerShell 5.1 and pwsh 7.
@@ -41,6 +45,8 @@ $px      = "http://${PxAddr}:${PxPort}"
 $noProxy = "localhost,127.0.0.1,::1"
 $claudePkg = "@anthropic-ai/claude-code"
 $codexPkg  = "@openai/codex"
+$PxTaskName   = "QuotaBar Px Proxy"
+$PxStartupCmd = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\quotabar-px.cmd"
 
 # -- Output helpers ------------------------------------------------------------
 function Write-Head([string] $t) { Write-Host "`n$t" -ForegroundColor Cyan; Write-Host ("-" * $t.Length) -ForegroundColor DarkCyan }
@@ -161,11 +167,58 @@ function Set-ProxyEnvPersistent {
   Set-PersistentEnv "NODE_USE_SYSTEM_CA" "1"
 }
 
+# Guidance shown when Px is missing. Px cannot be auto-installed because the
+# download itself would need the proxy that Px provides (chicken-and-egg).
+function Show-PxHelp {
+  $dir = Split-Path $PxExe -Parent
+  Write-Info "Px is a one-time manual prerequisite (cannot be auto-downloaded:"
+  Write-Info "the download itself would need the very proxy Px provides)."
+  Write-Info "1) Download Px: https://github.com/genotrance/px/releases  (px-*-windows-amd64.zip)"
+  Write-Info "2) Extract so that px.exe ends up exactly at:"
+  Write-Info "     $PxExe"
+  Write-Info "   (i.e. unzip into: $dir)"
+  Write-Info "3) Place px.ini next to px.exe with at least:"
+  Write-Info "     [proxy]"
+  Write-Info "     server = your-proxy-host:8080      ; or:  pac = http://host/proxy.pac"
+  Write-Info "     listen = 127.0.0.1"
+  Write-Info "     port   = $PxPort"
+  Write-Info "   Px does the Kerberos/NTLM auth upstream; no credentials are stored here."
+  Write-Info "   Different location? Pass -PxExe / -PxIni when starting this script."
+}
+
+# -- Px autostart at logon (CLM-safe, no admin) -------------------------------
+function Test-PxAutostart {
+  try { & schtasks /query /tn $PxTaskName *> $null; if ($LASTEXITCODE -eq 0) { return $true } } catch { }
+  return (Test-Path $PxStartupCmd)
+}
+function Enable-PxAutostart {
+  if (-not (Test-Path $PxExe)) { Write-Err "px.exe not found: $PxExe - install Px first."; Show-PxHelp; return }
+  # Prefer a hidden logon scheduled task: no console flash, and a self-logon task
+  # needs no admin. Default paths have no spaces, so /tr needs no inner quotes.
+  $tr = "$PxExe --config=$PxIni"
+  & schtasks /create /tn $PxTaskName /tr $tr /sc onlogon /f *> $null
+  if ($LASTEXITCODE -eq 0) {
+    if (Test-Path $PxStartupCmd) { Remove-Item $PxStartupCmd -Force -ErrorAction SilentlyContinue }
+    Write-Ok "Px autostart enabled (hidden logon task '$PxTaskName')."
+    return
+  }
+  # Fallback: Startup-folder .cmd (e.g. when Task Scheduler is GPO-blocked).
+  $launch = 'powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath ''{0}'' -ArgumentList ''--config={1}'' -WindowStyle Hidden"' -f $PxExe, $PxIni
+  Set-Content -Path $PxStartupCmd -Value "@echo off`r`n$launch" -Encoding ascii
+  Write-Ok "Px autostart enabled (Startup folder: $PxStartupCmd)."
+  Write-Info "Task Scheduler was unavailable (GPO?); used the Startup folder instead."
+}
+function Disable-PxAutostart {
+  & schtasks /delete /tn $PxTaskName /f *> $null
+  if (Test-Path $PxStartupCmd) { Remove-Item $PxStartupCmd -Force -ErrorAction SilentlyContinue }
+  Write-Ok "Px autostart removed."
+}
+
 # -- Ensure Px is running ------------------------------------------------------
 function Ensure-Px {
   if (Test-Port $PxAddr $PxPort) { Write-Ok "Px is already running on ${PxAddr}:${PxPort}"; return $true }
-  if (-not (Test-Path $PxExe)) { Write-Err "px.exe not found: $PxExe"; return $false }
-  if (-not (Test-Path $PxIni)) { Write-Err "px.ini not found: $PxIni"; return $false }
+  if (-not (Test-Path $PxExe)) { Write-Err "px.exe not found: $PxExe"; Show-PxHelp; return $false }
+  if (-not (Test-Path $PxIni)) { Write-Err "px.ini not found: $PxIni"; Show-PxHelp; return $false }
   Write-Info "Starting Px hidden in the background ..."
   Start-Process -FilePath $PxExe -ArgumentList @("--config=$PxIni") -WorkingDirectory (Split-Path $PxExe -Parent) -WindowStyle Hidden | Out-Null
   for ($n = 0; $n -lt 60; $n++) {
@@ -254,6 +307,9 @@ function Invoke-HealthCheck {
   $key = "HKCU:\Environment"
 
   if (Test-Port $PxAddr $PxPort) { Write-Ok "Px reachable ($px)" } else { Write-Err "Px NOT reachable ($px) - start via menu 1" }
+  if (Test-PxAutostart) { Write-Ok "Px autostart: enabled (starts at logon)" } else { Write-Warn "Px autostart: disabled - enable via menu 7 so Px runs after every logon" }
+  if (Test-Path $PxExe) { Write-Ok "px.exe present: $PxExe" } else { Write-Warn "px.exe missing: $PxExe - run menu 1 for download/extract instructions" }
+  if (Test-Path $PxIni) { Write-Ok "px.ini present: $PxIni" } else { Write-Warn "px.ini missing: $PxIni - run menu 1 for the required keys" }
 
   $nv = Get-NodeMajorMinor
   if ($nv) { Write-Ok "Node $($nv[0]).$($nv[1])" } else { Write-Err "Node/npm not found" }
@@ -321,6 +377,7 @@ function Show-Menu {
   Write-Host "  4) Refresh corporate CA bundle (Codex)"
   Write-Host "  5) Install both (Claude + Codex)"
   Write-Host "  6) Health check"
+  Write-Host ("  7) Px autostart at logon  [{0}]" -f $(if (Test-PxAutostart) { "enabled" } else { "disabled" }))
   Write-Host "  0) Exit"
   Write-Host ""
   Write-Host "  User data (login, history, JSONL) is preserved for all actions." -ForegroundColor DarkGray
@@ -336,6 +393,7 @@ do {
     "4" { try { Update-CaBundle }    catch { Write-Err $_.Exception.Message }; Pause-Menu }
     "5" { try { Install-ClaudeCode; Install-CodexCli } catch { Write-Err $_.Exception.Message }; Pause-Menu }
     "6" { try { Invoke-HealthCheck } catch { Write-Err $_.Exception.Message }; Pause-Menu }
+    "7" { Write-Head "Px autostart"; try { if (Test-PxAutostart) { Disable-PxAutostart } else { Enable-PxAutostart } } catch { Write-Err $_.Exception.Message }; Pause-Menu }
     "0" { Write-Host "`nExiting." -ForegroundColor Cyan }
     default { Write-Warn "Invalid choice: '$choice'"; Start-Sleep -Milliseconds 800 }
   }
