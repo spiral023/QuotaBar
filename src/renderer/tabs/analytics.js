@@ -18,6 +18,7 @@ let _from         = null;
 let _to           = null;
 let _lastData     = null;     // aktuell gerendertes AnalyticsData (für Chart-Toggles)
 let _chartMode    = 'cost';   // 'cost' | 'roi'
+let _lineProvider = 'all';    // 'all' | 'claude' | 'codex'
 let _agg          = 'daily';  // 'daily' | 'weekly' | 'monthly' | 'hourly'
 let _hourlyBuckets = null;    // gecachte Stunden-Daten für den Linien-Chart
 const _cache      = new Map(); // `${from}:${to}` → AnalyticsData
@@ -26,6 +27,18 @@ let _whData       = null;      // { entries, planChanges } (zeitraum-unabhängig
 let _whMode       = 'util';    // 'util' | 'used' | 'max'
 let _whGen        = 0;         // Race-Schutz für den asynchron geladenen Verlauf
 let _hourClockResizeObserver = null;
+
+const ACTIVITY_HEAT_LOW = [38, 66, 79];
+const ACTIVITY_HEAT_HIGH = [125, 220, 196];
+
+function _activityHeatColor(t, boost = 0) {
+  const v = Math.max(0, Math.min(1, t || 0));
+  const r = Math.round(ACTIVITY_HEAT_LOW[0] + (ACTIVITY_HEAT_HIGH[0] - ACTIVITY_HEAT_LOW[0]) * v);
+  const g = Math.round(ACTIVITY_HEAT_LOW[1] + (ACTIVITY_HEAT_HIGH[1] - ACTIVITY_HEAT_LOW[1]) * v);
+  const b = Math.round(ACTIVITY_HEAT_LOW[2] + (ACTIVITY_HEAT_HIGH[2] - ACTIVITY_HEAT_LOW[2]) * v);
+  const a = Math.min(1, 0.42 + 0.58 * v + boost);
+  return `rgba(${r},${g},${b},${a})`;
+}
 
 const PRESETS = [
   { id: '7d',    label: 'Last 7 days' },
@@ -245,12 +258,17 @@ function _renderResults(data) {
     <div class="an-section">
       <div class="an-section-head">
         <span class="an-section-title" id="an-line-title">${_lineTitle()}</span>
-        <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+        <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+          <div class="hr-seg" id="an-line-provider-pills" role="group" aria-label="Provider">
+            <button class="hr-seg-btn${_lineProvider === 'all' ? ' active' : ''}" data-prov="all">All</button>
+            <button class="hr-seg-btn hr-seg-claude${_lineProvider === 'claude' ? ' active' : ''}" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
+            <button class="hr-seg-btn hr-seg-codex${_lineProvider === 'codex' ? ' active' : ''}" data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
+          </div>
           <div class="mod-seg" id="an-ctype-pills">
             <button class="${_chartMode === 'cost' ? 'active' : ''}" data-ctype="cost">$</button>
             <button class="${_chartMode === 'roi'  ? 'active' : ''}" data-ctype="roi">ROI</button>
           </div>
-          <div class="hr-chart-legend">
+          <div class="hr-chart-legend" id="an-line-legend">
             <span class="hr-legend-dot" style="background:var(--claude-col)"></span>
             <span class="hr-legend-dot" style="background:var(--codex-col)"></span>
           </div>
@@ -475,7 +493,7 @@ function _buildLineChart(data) {
   const totalSub = buckets.reduce((s, b) => s + (b.claudeSubUSD || 0) + (b.codexSubUSD || 0), 0);
   _renderNoPlanChip(isRoi && totalSub === 0);
 
-  _lineChart = QB.charts.createLine(ctx, labels, [
+  const datasets = [
     {
       label: 'Claude',
       data: claudeData,
@@ -498,7 +516,26 @@ function _buildLineChart(data) {
       tension: 0.3,
       fill: true,
     },
-  ], { yFormat: isRoi ? 'roi' : 'cost', planChanges: changes });
+  ];
+
+  const visibleDatasets = _visibleLineDatasets(_lineProvider, datasets);
+  _renderLineLegend(visibleDatasets);
+
+  _lineChart = QB.charts.createLine(ctx, labels, visibleDatasets, { yFormat: isRoi ? 'roi' : 'cost', planChanges: changes });
+}
+
+function _visibleLineDatasets(provider, datasets) {
+  if (provider === 'claude') return datasets.filter(d => d.label === 'Claude');
+  if (provider === 'codex') return datasets.filter(d => d.label === 'Codex');
+  return datasets;
+}
+
+function _renderLineLegend(datasets) {
+  const legend = document.getElementById('an-line-legend');
+  if (!legend) return;
+  legend.innerHTML = datasets.map(d => (
+    `<span class="hr-legend-dot" style="background:${QB.esc(d.borderColor)}"></span>`
+  )).join('');
 }
 
 // Zeigt/entfernt einen kleinen Hinweis-Chip über dem Linien-Chart, wenn im
@@ -526,6 +563,16 @@ function _renderNoPlanChip(show) {
 }
 
 function _bindLineToggles() {
+  document.querySelectorAll('#an-line-provider-pills .hr-seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('active')) return;
+      document.querySelectorAll('#an-line-provider-pills .hr-seg-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _lineProvider = btn.dataset.prov;
+      if (_lastData) _buildLineChart(_lastData);
+    });
+  });
+
   document.querySelectorAll('#an-ctype-pills button').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.classList.contains('active')) return;
@@ -694,16 +741,6 @@ function _initHourClock(wrap, canvas, tip, byHour, totalCount) {
     innerR = outerR * 0.34;
   }
 
-  // Glut (niedrig) → Flamme (hoch), angelehnt an --claude-col.
-  function heatColor(t, boost) {
-    const lo = [104, 58, 44], hi = [255, 162, 110];
-    const r = Math.round(lo[0] + (hi[0] - lo[0]) * t);
-    const g = Math.round(lo[1] + (hi[1] - lo[1]) * t);
-    const b = Math.round(lo[2] + (hi[2] - lo[2]) * t);
-    const a = Math.min(1, 0.42 + 0.58 * t + (boost || 0));
-    return `rgba(${r},${g},${b},${a})`;
-  }
-
   function wedge(r0, r1, a0, a1) {
     ctx.beginPath();
     ctx.arc(cx, cy, r1, a0, a1);
@@ -739,7 +776,7 @@ function _initHourClock(wrap, canvas, tip, byHour, totalCount) {
       const r1 = innerR + b.pct * progress * (outerR - innerR);
       if (r1 > innerR + 0.5) {
         wedge(innerR, r1, a0, a1);
-        ctx.fillStyle = heatColor(b.pct, hovered ? 0.18 : 0);
+        ctx.fillStyle = _activityHeatColor(b.pct, hovered ? 0.18 : 0);
         ctx.fill();
         if (hovered) {
           ctx.strokeStyle = 'rgba(255,255,255,0.55)';
@@ -823,14 +860,19 @@ function _buildWeekdayBars(data) {
   if (!el) return;
   const dist = data.weekdayDistribution ?? [];
   el.innerHTML = dist.map(d => `
-    <div class="an-wkday-row">
-      <span class="an-wkday-lbl">${QB.esc(d.label)}</span>
+    <div class="an-wkday-row" style="--wk-pct:${(d.pct * 100).toFixed(1)}%">
+      <span class="an-wkday-lbl">${QB.esc(_weekdayLabel(d))}</span>
       <div class="an-wkday-track">
-        <div class="an-wkday-fill" style="width:${(d.pct * 100).toFixed(1)}%"></div>
+        <div class="an-wkday-fill"></div>
       </div>
       <span class="an-wkday-pct">${(d.pct * 100).toFixed(0)}%</span>
     </div>
   `).join('');
+}
+
+function _weekdayLabel(d) {
+  const labels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return labels[d.day] ?? d.label;
 }
 
 function _buildTopDays(data) {
@@ -841,10 +883,13 @@ function _buildTopDays(data) {
     el.innerHTML = '<div style="color:var(--t400);font-size:10px">No data</div>';
     return;
   }
-  el.innerHTML = '<div class="an-top-days">' + days.map(d => `
+  const maxCalls = Math.max(...days.map(d => d.count), 1);
+  el.innerHTML = '<div class="an-top-days">' + days.map((d, index) => `
     <div class="an-top-day-row">
+      <span class="an-top-day-rank">${index + 1}</span>
       <span class="an-top-day-date">${QB.esc(d.date)}</span>
-      <span class="an-top-day-count">${d.count} Calls</span>
+      <span class="an-top-day-count">${d.count}<small>Calls</small></span>
+      <span class="an-top-day-spark" style="--day-pct:${((d.count / maxCalls) * 100).toFixed(1)}%"></span>
       <span class="an-top-day-tokens">${QB.fmtTokens(d.outputTokens)} out</span>
     </div>
   `).join('') + '</div>';
@@ -1123,5 +1168,11 @@ function _bindWhToggles() {
 function _fmtWin(n) {
   return n.toFixed(1);
 }
+
+QB.__analyticsTest = {
+  activityHeatColor: _activityHeatColor,
+  visibleLineDatasets: _visibleLineDatasets,
+  weekdayLabel: _weekdayLabel,
+};
 
 })();

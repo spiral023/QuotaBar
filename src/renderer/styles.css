@@ -23,6 +23,8 @@
 
       --claude-col:  #DA785B;
       --codex-col:   #4B55C8;
+      --activity-col: #7ddcc4;
+      --activity-col-soft: #4f91a3;
       --r-card:  11px;
       --r-icon:  9px;
       --r-btn:   7px;
@@ -880,7 +882,7 @@
     }
 
     /* ══ ANALYTICS PHASE 3 ═════════════════════════════════════ */
-    /* Stunden-Aktivitätsuhr — radialer 24h-Dial (löst die alte Balkenliste ab) */
+    /* Hour activity clock: radial 24h dial replacing the old bar list. */
     .an-clock {
       position: relative;
       display: flex; align-items: center; justify-content: center;
@@ -893,7 +895,7 @@
       font-size: 9px; color: var(--t400); letter-spacing: 0.02em;
       text-align: center;
     }
-    .an-clock-cap b { color: var(--claude-col); font-weight: 600; }
+    .an-clock-cap b { color: var(--activity-col); font-weight: 600; }
     .an-clock-tip {
       position: absolute; left: 0; top: 0;
       pointer-events: none; z-index: 5;
@@ -909,28 +911,83 @@
       transition: opacity 120ms ease, transform 120ms ease;
     }
     .an-clock-tip.show { opacity: 1; transform: translateY(0); }
-    .an-clock-tip b { color: var(--claude-col); font-weight: 600; }
+    .an-clock-tip b { color: var(--activity-col); font-weight: 600; }
     .an-clock-tip-sub { color: var(--t400); }
 
-    .an-wkday-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
-    .an-wkday-lbl { width: 56px; flex-shrink: 0; font-size: 9.5px; color: var(--t300); }
-    .an-wkday-track {
-      flex: 1; height: 7px; background: rgba(255,255,255,0.04); border-radius: 2px;
+    .an-wkday-row {
+      display: grid; grid-template-columns: 78px minmax(90px, 1fr) 34px;
+      align-items: center; gap: 8px;
+      min-height: 25px; padding: 2px 0;
     }
-    .an-wkday-fill { height: 100%; border-radius: 2px; background: #DA785B; opacity: 0.75; }
+    .an-wkday-lbl {
+      font-size: 10px; color: var(--t300);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .an-wkday-track {
+      position: relative; height: 13px; overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,0.055) 1px, transparent 1px) 0 0 / 25% 100%,
+        rgba(255,255,255,0.04);
+      border-radius: var(--r-badge);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.035) inset;
+    }
+    .an-wkday-fill {
+      width: var(--wk-pct); min-width: 5px; height: 100%;
+      border-radius: var(--r-badge);
+      background: linear-gradient(90deg, var(--activity-col-soft), var(--activity-col));
+      opacity: 0.82;
+      box-shadow: 0 0 10px color-mix(in srgb, var(--activity-col) 22%, transparent);
+    }
     .an-wkday-pct {
-      width: 30px; flex-shrink: 0; text-align: right;
-      font-family: 'IBM Plex Mono', monospace; font-size: 8px; color: var(--t400);
+      text-align: right;
+      font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+      font-variant-numeric: tabular-nums; color: var(--t300);
     }
 
-    .an-top-days { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
-    .an-top-day-row { display: flex; align-items: baseline; gap: 6px; font-size: 10px; }
-    .an-top-day-date {
-      font-family: 'IBM Plex Mono', monospace; font-size: 9px;
-      color: var(--t300); flex-shrink: 0;
+    .an-top-days { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+    .an-top-day-row {
+      display: grid;
+      grid-template-columns: 20px minmax(70px, 88px) minmax(62px, auto) minmax(36px, 1fr) minmax(54px, auto);
+      align-items: center; gap: 6px;
+      min-height: 28px; padding: 2px 0;
+      font-size: 10px;
     }
-    .an-top-day-count { font-weight: 600; color: var(--t100); }
-    .an-top-day-tokens { color: var(--t400); font-size: 9px; margin-left: auto; }
+    .an-top-day-rank {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 18px; height: 18px; border-radius: var(--r-badge);
+      background: color-mix(in srgb, var(--activity-col) 13%, transparent);
+      color: var(--activity-col);
+      font-family: 'IBM Plex Mono', monospace; font-size: 9px; font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .an-top-day-date {
+      font-family: 'IBM Plex Mono', monospace; font-size: 9.5px;
+      color: var(--t300); font-variant-numeric: tabular-nums;
+    }
+    .an-top-day-count {
+      color: var(--t100); font-weight: 700;
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .an-top-day-count small {
+      margin-left: 3px; color: var(--t400);
+      font-family: 'DM Sans', system-ui, sans-serif; font-size: 9px; font-weight: 600;
+    }
+    .an-top-day-spark {
+      position: relative; display: block; height: 4px; overflow: hidden;
+      border-radius: 999px; background: rgba(255,255,255,0.045);
+    }
+    .an-top-day-spark::before {
+      content: ''; position: absolute; inset: 0 auto 0 0;
+      width: var(--day-pct); border-radius: inherit;
+      background: linear-gradient(90deg, var(--activity-col-soft), var(--activity-col));
+      opacity: 0.72;
+    }
+    .an-top-day-tokens {
+      color: var(--t300); font-size: 9px; text-align: right;
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
 
     .an-peak-hero {
       font-family: 'IBM Plex Mono', monospace;
