@@ -1438,6 +1438,16 @@
     .notif-rule:hover { background: var(--bg-card-hover); box-shadow: 0 1px 2px rgba(0,0,0,0.3), 0 5px 16px rgba(0,0,0,0.22); }
     .notif-rule.is-off { opacity: 0.6; }
     .notif-rule.is-off::before { opacity: 0.28; }
+    .notif-rule.is-pending { opacity: 0.55; }
+    .notif-rule.is-pending::before { opacity: 0.2; }
+    .notif-rule.is-pending .notif-rule-name { color: var(--t300); }
+    .tgl-disabled { pointer-events: none; opacity: 0.45; }
+    .notif-rule-soon, .notif-collap-soon {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.07em;
+      text-transform: uppercase; color: var(--t400);
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: var(--r-badge); padding: 1px 5px;
+    }
     .notif-rule-head { display: flex; align-items: center; gap: 9px; }
     .notif-rule-name { flex: 1; font-size: 11px; color: var(--t100); font-weight: 500; text-wrap: pretty; }
 

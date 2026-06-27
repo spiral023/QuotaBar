@@ -30,6 +30,7 @@ export interface PersistedNotificationState {
   lastGlobalFiredAt: number;
   lastPercent?: Record<string, number>; // undefined-Werte werden weggelassen
   lastResetsAt?: Record<string, string>; // geplanter Reset-Zeitpunkt (ISO) des zuletzt gesehenen Fensters
+  lastPaceStage?: Record<string, PaceStage>; // letzte Pace-Stage je Fenster, für Transitionserkennung über Neustarts
   dismissedUpdateVersion?: string | null;
 }
 
@@ -69,6 +70,11 @@ export class NotificationStateStore {
         this.lastResetsAt.set(k, v);
       }
     }
+    if (saved.lastPaceStage) {
+      for (const [k, v] of Object.entries(saved.lastPaceStage)) {
+        this.lastPaceStage.set(k, v);
+      }
+    }
     if (saved.dismissedUpdateVersion !== undefined) {
       this._dismissedUpdateVersion = saved.dismissedUpdateVersion ?? null;
     }
@@ -83,11 +89,16 @@ export class NotificationStateStore {
     for (const [k, v] of this.lastResetsAt) {
       if (typeof v === "string") lastResetsAt[k] = v;
     }
+    const lastPaceStage: Record<string, PaceStage> = {};
+    for (const [k, v] of this.lastPaceStage) {
+      if (v != null) lastPaceStage[k] = v;
+    }
     return {
       lastFired: Object.fromEntries(this.lastFired),
       lastGlobalFiredAt: this.lastGlobalFiredAt,
       lastPercent,
       lastResetsAt,
+      lastPaceStage,
       dismissedUpdateVersion: this._dismissedUpdateVersion,
     };
   }
@@ -402,7 +413,7 @@ function evaluateWindowRules(
         provider: snap.provider, windowName: win.name,
         severity: "watch",
         title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Usage well above pace`,
-        body: `Usage pace is ${delta}% above the expected daily average.`,
+        body: `Usage is ${delta}% above the expected pace for the ${windowLabel(win.name)} window. Slow down to keep quota for later.`,
         firedAt: localISOString(now),
         reason: `pace transitioned to farAhead (delta=${delta}%)`,
       });
@@ -425,8 +436,8 @@ function evaluateWindowRules(
         ruleId: "farBehind",
         provider: snap.provider, windowName: win.name,
         severity: "info",
-        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Much more reserve than usual`,
-        body: `Usage pace is ${delta}% below the weekly path. Plenty of quota remains.`,
+        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Well below pace`,
+        body: `Usage is ${delta}% below the expected pace for the ${windowLabel(win.name)} window — plenty of quota remains.`,
         firedAt: localISOString(now),
         reason: `pace transitioned to farBehind (delta=-${delta}%)`,
       });
@@ -508,9 +519,12 @@ function deduplicateEvents(events: NotificationEvent[]): NotificationEvent[] {
     return true;
   });
 
-  // Per provider+window: keep only highest severity
+  // Per provider+window: keep only highest severity. Provider-level events
+  // (no windowName) are handled separately below and must be excluded here,
+  // otherwise they would be returned twice (once via best, once via providerLevel).
   const best = new Map<string, NotificationEvent>();
   for (const e of filtered) {
+    if (!e.windowName) continue;
     const k = `${e.provider}:${e.windowName}`;
     const existing = best.get(k);
     if (!existing || SEVERITY_RANK[e.severity] > SEVERITY_RANK[existing.severity]) {

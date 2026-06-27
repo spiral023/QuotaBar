@@ -91,14 +91,18 @@ export const defaultNotificationRules: NotificationRules = {
   highUsage:                { enabled: true,  cooldownMinutes: 60,   thresholdPercent: 80 },
   criticalUsage:            { enabled: true,  cooldownMinutes: 60,   thresholdPercent: 95 },
   projectedDepletion:       { enabled: false, cooldownMinutes: 120,  minEarlyMinutes: 30 },
-  farAhead:                 { enabled: false, cooldownMinutes: 240,  minDeltaPercent: 20 },
-  farBehind:                { enabled: false, cooldownMinutes: 720,  minDeltaPercent: 20 },
-  freshQuotaWorkWindow:     { enabled: true,  cooldownMinutes: 1440, maxUsedPercent: 20 },
+  farAhead:                 { enabled: false, cooldownMinutes: 240,  minDeltaPercent: 12 },
+  farBehind:                { enabled: false, cooldownMinutes: 720,  minDeltaPercent: 12 },
+  // NOTE: The history-based rules below (Phase 3) have UI toggles and config but
+  // no engine implementation yet — the NotificationContext carries no historical
+  // aggregates. They default to off so the app never claims protection it does not
+  // provide. Flip these back on once the rules are implemented in the engine.
+  freshQuotaWorkWindow:     { enabled: false, cooldownMinutes: 1440, maxUsedPercent: 20 },
   quotaIdleAfterReset:      { enabled: false, cooldownMinutes: 1440, minutesAfterReset: 60, maxUsedPercent: 10 },
   weeklyReserveOpportunity: { enabled: false, cooldownMinutes: 1440, maxUsedPercent: 40, hoursBeforeReset: 48 },
-  rolling5hOutputSpike:     { enabled: true,  cooldownMinutes: 180,  baseline: "p95" },
-  rolling5hProxyLimit:      { enabled: true,  cooldownMinutes: 180,  thresholdPercent: 80, customOutputTokenLimit: 500_000 },
-  burnRateSpike:            { enabled: true,  cooldownMinutes: 180,  factor: 2.0 },
+  rolling5hOutputSpike:     { enabled: false, cooldownMinutes: 180,  baseline: "p95" },
+  rolling5hProxyLimit:      { enabled: false, cooldownMinutes: 180,  thresholdPercent: 80, customOutputTokenLimit: 500_000 },
+  burnRateSpike:            { enabled: false, cooldownMinutes: 180,  factor: 2.0 },
   cacheHitDrop:             { enabled: false, cooldownMinutes: 1440, claudeThresholdPercent: 98, codexThresholdPercent: 90 },
   expensiveModelShare:      { enabled: false, cooldownMinutes: 1440, thresholdPercent: 10 },
   roiMilestone:             { enabled: false, cooldownMinutes: 10_080, milestones: [2, 5, 10] },

@@ -59,6 +59,22 @@ describe("normalizeNotificationSettings", () => {
     expect(result.rules.criticalUsage.enabled).toBe(true); // unchanged
   });
 
+  it("disables not-yet-implemented (history-based) rules by default", () => {
+    const r = normalizeNotificationSettings(undefined).rules;
+    // These rules have UI toggles but no engine implementation yet (Phase 3).
+    // They must default to off so the UI does not claim inactive protection.
+    expect(r.freshQuotaWorkWindow.enabled).toBe(false);
+    expect(r.rolling5hOutputSpike.enabled).toBe(false);
+    expect(r.rolling5hProxyLimit.enabled).toBe(false);
+    expect(r.burnRateSpike.enabled).toBe(false);
+  });
+
+  it("defaults pace delta thresholds to 12 (matches the farAhead/farBehind stage boundary)", () => {
+    const result = normalizeNotificationSettings(undefined);
+    expect(result.rules.farAhead.minDeltaPercent).toBe(12);
+    expect(result.rules.farBehind.minDeltaPercent).toBe(12);
+  });
+
   it("clamps minimumGapMinutes to 0 minimum", () => {
     const result = normalizeNotificationSettings({ minimumGapMinutes: -5 } as never);
     expect(result.minimumGapMinutes).toBe(0);
@@ -70,6 +86,20 @@ describe("normalizeNotificationSettings", () => {
     } as never);
     expect(result.quietHours.enabled).toBe(true);
     expect(result.quietHours.start).toBe("23:00");
+  });
+});
+
+describe("NotificationStateStore persistence", () => {
+  it("round-trips lastPaceStage through serialize/loadPersisted", () => {
+    const store = new NotificationStateStore();
+    store.setLastPaceStage("claude", "weekly", "farAhead");
+    store.setLastPaceStage("codex", "fiveHour", "farBehind");
+
+    const restored = new NotificationStateStore();
+    restored.loadPersisted(store.serialize());
+
+    expect(restored.getLastPaceStage("claude", "weekly")).toBe("farAhead");
+    expect(restored.getLastPaceStage("codex", "fiveHour")).toBe("farBehind");
   });
 });
 
@@ -341,6 +371,16 @@ describe("rule: providerDataHealth", () => {
     expect(events.some(e => e.ruleId === "providerDataHealth" && e.title.includes("data is stale"))).toBe(true);
   });
 
+  it("emits a provider-level event exactly once (no dedup duplication)", () => {
+    const now = new Date();
+    state.setStaleStartedAt("codex", now.getTime() - 15 * 60_000);
+    state.setLastStatus("codex", "stale");
+    const current  = [snap("codex", [], "stale")];
+    const previous = [snap("codex", [], "stale")];
+    const events = engine.evaluate({ current, previous, settings: enabledProviderDataHealthSettings, now }, state);
+    expect(events.filter(e => e.ruleId === "providerDataHealth")).toHaveLength(1);
+  });
+
   it("fires recovered alert when going from stale to ok", () => {
     state.setLastStatus("codex", "stale");
     const current  = [snap("codex", [{ name: "fiveHour", usedPercent: 20 }], "ok")];
@@ -396,9 +436,44 @@ describe("notification copy", () => {
 
     expect(event).toMatchObject({
       ruleId: "farBehind",
-      title: "Claude week: Much more reserve than usual",
-      body: "Usage pace is 25% below the weekly path. Plenty of quota remains.",
+      title: "Claude week: Well below pace",
+      body: "Usage is 25% below the expected pace for the week window — plenty of quota remains.",
     });
+  });
+
+  it("farBehind copy is window-aware and never says 'weekly' on a 5h window", () => {
+    const pace = { stage: "farBehind" as const, deltaPercent: -20, expectedUsedPercent: 40, actualUsedPercent: 20, etaSeconds: null, willLastToReset: true };
+    const prevPace = { stage: "onTrack" as const, deltaPercent: 0, expectedUsedPercent: 40, actualUsedPercent: 40, etaSeconds: null, willLastToReset: true };
+    const rules = {
+      ...defaultNotificationSettings.rules,
+      farBehind: { ...defaultNotificationSettings.rules.farBehind, enabled: true },
+    };
+    const current  = [snap("codex", [{ name: "fiveHour", usedPercent: 20, pace }])];
+    const previous = [snap("codex", [{ name: "fiveHour", usedPercent: 40, pace: prevPace }])];
+
+    const [event] = engine.evaluate(ctx(current, previous, { rules }), state);
+
+    expect(event.ruleId).toBe("farBehind");
+    expect(event.body).toContain("5h");
+    expect(event.body.toLowerCase()).not.toContain("week");
+    expect(event.title.toLowerCase()).not.toContain("usual");
+  });
+
+  it("farAhead copy is window-aware and actionable", () => {
+    const pace = { stage: "farAhead" as const, deltaPercent: 22, expectedUsedPercent: 40, actualUsedPercent: 62, etaSeconds: null, willLastToReset: true };
+    const prevPace = { stage: "onTrack" as const, deltaPercent: 0, expectedUsedPercent: 40, actualUsedPercent: 40, etaSeconds: null, willLastToReset: true };
+    const rules = {
+      ...defaultNotificationSettings.rules,
+      farAhead: { ...defaultNotificationSettings.rules.farAhead, enabled: true },
+    };
+    const current  = [snap("claude", [{ name: "fiveHour", usedPercent: 62, pace }])];
+    const previous = [snap("claude", [{ name: "fiveHour", usedPercent: 40, pace: prevPace }])];
+
+    const [event] = engine.evaluate(ctx(current, previous, { rules }), state);
+
+    expect(event.ruleId).toBe("farAhead");
+    expect(event.body).toContain("5h");
+    expect(event.body.toLowerCase()).not.toContain("daily average");
   });
 });
 

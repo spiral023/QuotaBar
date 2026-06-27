@@ -42,26 +42,25 @@ const RULE_GROUPS = [
     ],
   },
   {
+    // Phase 3 — history-based rules. These have config shape but no engine
+    // implementation yet, so they render as disabled "Soon" cards (pending: true)
+    // instead of toggles that would do nothing when enabled.
     label: 'Historical Usage',
     rules: [
-      { id: 'freshQuotaWorkWindow',     sev: 'info',    label: 'Fresh Quota (Work Hours)',  tooltip: 'A fresh work window is available after a reset.',
-        extras: [{ key: 'maxUsedPercent', label: 'Max. Usage %', type: 'number', min: 5, max: 50 }] },
-      { id: 'quotaIdleAfterReset',      sev: 'info',    label: 'Quota Idle',                tooltip: 'Quota was reset but no activity detected.' },
-      { id: 'weeklyReserveOpportunity', sev: 'info',    label: 'Weekly Reserve',            tooltip: 'Weekly remaining budget can still be used before the cycle ends.' },
-      { id: 'rolling5hOutputSpike',     sev: 'watch',   label: 'Output Token Spike (5h)',   tooltip: 'Unusually high output token surge in the rolling 5h window.' },
-      { id: 'rolling5hProxyLimit',      sev: 'warning', label: 'Proxy Limit (5h)',          tooltip: 'Output token proxy threshold reached in the 5h window.',
-        extras: [{ key: 'thresholdPercent', label: 'Threshold %', type: 'number', min: 50, max: 100 }, { key: 'customOutputTokenLimit', label: 'Token Limit', type: 'number', min: 10000, max: 5000000 }] },
-      { id: 'burnRateSpike',            sev: 'warning', label: 'Burn Rate Unusually High',  tooltip: 'Token consumption rate per hour is unusually high.',
-        extras: [{ key: 'factor', label: 'Factor', type: 'number', min: 1.1, max: 10, step: 0.1 }] },
+      { id: 'freshQuotaWorkWindow',     sev: 'info',    label: 'Fresh Quota (Work Hours)',  pending: true, tooltip: 'A fresh work window is available after a reset.' },
+      { id: 'quotaIdleAfterReset',      sev: 'info',    label: 'Quota Idle',                pending: true, tooltip: 'Quota was reset but no activity detected.' },
+      { id: 'weeklyReserveOpportunity', sev: 'info',    label: 'Weekly Reserve',            pending: true, tooltip: 'Weekly remaining budget can still be used before the cycle ends.' },
+      { id: 'rolling5hOutputSpike',     sev: 'watch',   label: 'Output Token Spike (5h)',   pending: true, tooltip: 'Unusually high output token surge in the rolling 5h window.' },
+      { id: 'rolling5hProxyLimit',      sev: 'warning', label: 'Proxy Limit (5h)',          pending: true, tooltip: 'Output token proxy threshold reached in the 5h window.' },
+      { id: 'burnRateSpike',            sev: 'warning', label: 'Burn Rate Unusually High',  pending: true, tooltip: 'Token consumption rate per hour is unusually high.' },
     ],
   },
   {
     label: 'Cost Efficiency',
     rules: [
-      { id: 'cacheHitDrop',        sev: 'watch',   label: 'Cache Hit Rate Dropped',  tooltip: 'Prompt cache hit rate has dropped. Higher costs possible.' },
-      { id: 'expensiveModelShare', sev: 'watch',   label: 'Expensive Models (Spike)', tooltip: 'Sudden spike in expensive model usage (e.g. Opus).',
-        extras: [{ key: 'thresholdPercent', label: 'Threshold %', type: 'number', min: 5, max: 100 }] },
-      { id: 'roiMilestone',        sev: 'info',    label: 'ROI Milestone',            tooltip: 'An ROI milestone was reached based on usage patterns.' },
+      { id: 'cacheHitDrop',        sev: 'watch',   label: 'Cache Hit Rate Dropped',  pending: true, tooltip: 'Prompt cache hit rate has dropped. Higher costs possible.' },
+      { id: 'expensiveModelShare', sev: 'watch',   label: 'Expensive Models (Spike)', pending: true, tooltip: 'Sudden spike in expensive model usage (e.g. Opus).' },
+      { id: 'roiMilestone',        sev: 'info',    label: 'ROI Milestone',            pending: true, tooltip: 'An ROI milestone was reached based on usage patterns.' },
     ],
   },
   {
@@ -74,7 +73,9 @@ const RULE_GROUPS = [
 ];
 
 const ALL_RULES = RULE_GROUPS.flatMap(g => g.rules);
-const RULE_COUNT = ALL_RULES.length;
+// Only implemented rules count toward the "X of N active" status; pending
+// (Phase 3) rules are shown as disabled and cannot be enabled.
+const RULE_COUNT = ALL_RULES.filter(r => !r.pending).length;
 
 // Module state for dirty tracking and header text.
 let initialSnapshot = '';
@@ -206,14 +207,17 @@ function buildGlobalPanel(ns) {
 function buildRuleGroups(rules) {
   return RULE_GROUPS.map((group, gi) => {
     const open = gi === 0 ? ' is-open' : '';
+    const implemented = group.rules.filter(r => !r.pending).length;
+    const metaHtml = implemented === 0
+      ? `<span class="notif-collap-soon">Soon</span>`
+      : `<span class="notif-collap-active-dot"></span><span data-group-count>0/${implemented}</span>`;
     return `
       <div class="notif-panel notif-group-panel${open} notif-anim" data-group="${gi}" style="animation-delay:${gi * 45}ms">
         <button class="notif-collap-head" data-collap>
           ${chevron()}
           <span class="notif-collap-title">${group.label}</span>
           <span class="notif-collap-meta" data-group-meta>
-            <span class="notif-collap-active-dot"></span>
-            <span data-group-count>0/${group.rules.length}</span>
+            ${metaHtml}
           </span>
         </button>
         <div class="notif-collap-body"><div class="notif-collap-inner"><div class="notif-collap-pad">
@@ -227,6 +231,27 @@ function buildRuleGroups(rules) {
 }
 
 function buildRuleCard(def, cfg) {
+  if (def.pending) {
+    // Not implemented in the engine yet — render a disabled card so it cannot be
+    // toggled on. No .notif-rule-toggle here, so it is excluded from active counts
+    // and from the saved payload (collectPayload).
+    return `
+    <div class="notif-rule is-pending" data-rule-id="${def.id}" style="--sev:${sevColor(def.sev)}">
+      <div class="notif-rule-head">
+        <label class="tgl tgl-disabled" title="Not available yet">
+          <input type="checkbox" disabled>
+          <span class="tgl-track"></span>
+        </label>
+        <span class="notif-rule-name">${def.label}</span>
+        <span class="notif-rule-soon">Soon</span>
+        <span class="notif-tip" tabindex="0" role="img" aria-label="${attrEscape(def.tooltip)}" data-tip="${attrEscape(def.tooltip)}">
+          <span class="notif-tip-icon">?</span>
+        </span>
+      </div>
+    </div>
+  `;
+  }
+
   const enabled = cfg.enabled ?? false;
   const cooldown = cfg.cooldownMinutes ?? 60;
   const extrasHtml = (def.extras ?? []).map(ex => {
