@@ -2124,7 +2124,7 @@
     .sys-action.secondary:hover { background: var(--bg-card-hover); color: var(--t100); }
 
     .sys-kpis {
-      display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 6px;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 5px; margin-bottom: 6px;
     }
     .sys-kpi {
       background: var(--bg-card); border: 1px solid var(--border);
@@ -2206,22 +2206,26 @@
     }
 
     .sys-cat-grid {
-      display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 5px;
     }
     .sys-cat {
       background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: var(--r-inner); padding: 8px 9px;
+      border-radius: var(--r-inner); padding: 8px 9px; min-width: 0;
     }
     .sys-cat-label {
       font-size: 8px; font-weight: 700; letter-spacing: 0.1em;
-      text-transform: uppercase; color: var(--t400);
+      line-height: 1.25; text-transform: uppercase; color: var(--t400);
+      overflow-wrap: anywhere;
     }
     .sys-cat-value {
       margin-top: 5px; font-family: 'IBM Plex Mono', monospace;
       font-size: 14px; line-height: 1; font-variant-numeric: tabular-nums;
-      color: var(--t100);
+      color: var(--t100); overflow-wrap: anywhere;
     }
-    .sys-cat-sub { margin-top: 4px; font-size: 9px; color: var(--t400); }
+    .sys-cat-sub {
+      margin-top: 4px; font-size: 9px; line-height: 1.25;
+      color: var(--t400); overflow-wrap: anywhere;
+    }
 
     .sys-path-list { display: flex; flex-direction: column; gap: 4px; }
     .sys-path-row {

@@ -245,6 +245,9 @@ function getProviderLogoPath(provider: string): string | undefined {
   const logoFile = PROVIDER_LOGO_FILES[provider.toLowerCase()];
   if (!logoFile) return undefined;
 
-  const logoPath = path.resolve(__dirname, "..", "..", "logos", logoFile);
-  return existsSync(logoPath) ? logoPath : undefined;
+  const candidates = [
+    ...(process.resourcesPath ? [path.join(process.resourcesPath, "logos", logoFile)] : []),
+    path.resolve(__dirname, "..", "..", "logos", logoFile),
+  ];
+  return candidates.find((candidate) => candidate && existsSync(candidate));
 }

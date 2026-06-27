@@ -1,5 +1,10 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { ModelPricing } from "./cost-calculator";
 import { httpFetch } from "../main/httpClient";
+import { log } from "../main/logging";
+import { recordDataSourceStatus } from "../main/dataSourceStatus";
+import { getLiteLLMModelPricesPath } from "../config/paths";
 
 export type { ModelPricing };
 
@@ -89,15 +94,24 @@ export class LiteLLMFetcher {
     if (this.cache) return this.cache;
     if (this.offlineMode) {
       this.cache = new Map(Object.entries(FALLBACK_PRICES));
+      recordDataSourceStatus("litellm", { ok: true, source: "offline", at: new Date().toISOString(), detail: `${this.cache.size} fallback models` });
       return this.cache;
     }
     try {
       const response = await httpFetch(LITELLM_URL, { signal: AbortSignal.timeout(10_000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const json = (await response.json()) as Record<string, unknown>;
+      await persistLiteLLMPriceFile(json);
       this.cache = buildPricingMap(json);
-    } catch {
+      if (recordDataSourceStatus("litellm", { ok: true, source: "live", at: new Date().toISOString(), detail: `${this.cache.size} models` })) {
+        log.info(`LiteLLM pricing loaded (${this.cache.size} models)`);
+      }
+    } catch (err) {
       this.cache = new Map(Object.entries(FALLBACK_PRICES));
+      const msg = err instanceof Error ? err.message : String(err);
+      if (recordDataSourceStatus("litellm", { ok: false, source: "fallback", at: new Date().toISOString(), detail: `${this.cache.size} fallback models`, error: msg })) {
+        log.warn(`LiteLLM pricing fetch failed, using ${this.cache.size} fallback prices: ${msg}`);
+      }
     }
     return this.cache;
   }
@@ -114,6 +128,16 @@ export class LiteLLMFetcher {
       if (k.includes(lower) || lower.includes(k)) return value;
     }
     return null;
+  }
+}
+
+async function persistLiteLLMPriceFile(json: Record<string, unknown>): Promise<void> {
+  try {
+    const filePath = getLiteLLMModelPricesPath();
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, JSON.stringify(json, null, 2), "utf8");
+  } catch (err) {
+    log.warn(`LiteLLM pricing cache write failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

@@ -85,7 +85,7 @@ export class RefreshLoop {
         }
         if (this.skipLoggedUntil.get(p.id) !== until) {
           const remainingSeconds = Math.ceil((until - nowMs) / 1000);
-          log.info(`${p.id} rate-limited, skipping refresh (${remainingSeconds}s remaining)`);
+          log.debug(`${p.id} rate-limited, skipping refresh (${remainingSeconds}s remaining)`);
           this.recorder?.write({ kind: "refresh.skipped", provider: p.id, reason: "rate-limited", remainingSeconds });
           this.skipLoggedUntil.set(p.id, until);
         }
@@ -177,7 +177,9 @@ export class RefreshLoop {
         const backoffMs = computeBackoffMs(error.retryAfterMs, consecutive);
         this.backoff.set(provider.id, Date.now() + backoffMs);
         this.skipLoggedUntil.delete(provider.id);
-        log.warn(`${provider.id} rate-limited (#${consecutive}), backing off for ${Math.round(backoffMs / 1000)}s`);
+        const message = `${provider.id} rate-limited (#${consecutive}), backing off for ${Math.round(backoffMs / 1000)}s`;
+        if (consecutive === 1) log.warn(message);
+        else log.debug(message);
         return errorSnapshot(provider.id, toErrorMessage(error), "error");
       }
       const cls = classifyFetchError(error);

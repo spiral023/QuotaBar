@@ -5,6 +5,7 @@ window.QB = window.QB || {};
 
 (function () {
   let _data = null;
+  let _dataSources = null;
   let _loading = null;
   let _animated = false;
 
@@ -89,7 +90,7 @@ window.QB = window.QB || {};
     if (_data) { renderUI(wrap, _data); return; }
     wrap.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
     try {
-      const [report] = await Promise.all([loadData(), loadUpdateState(false)]);
+      const [report] = await Promise.all([loadData(), loadUpdateState(false), loadDataSources()]);
       _data = report;
       renderUI(wrap, _data);
     } catch (e) {
@@ -105,6 +106,12 @@ window.QB = window.QB || {};
       .then((report) => { _data = report; return report; })
       .finally(() => { _loading = null; });
     return _loading;
+  }
+
+  function loadDataSources() {
+    return QB.ipc.invoke('dataSources:get')
+      .then((d) => { _dataSources = d; return d; })
+      .catch((e) => { console.error('dataSources:get failed', e); _dataSources = null; return null; });
   }
 
   function renderUI(wrap, report) {
@@ -136,8 +143,12 @@ window.QB = window.QB || {};
           ${kpi('Agents', `${detected}/${report.agents.length}`, `${connected} connected`)}
           ${kpi('Files', fmtCount(report.totals.fileCount), 'detected local data')}
           ${kpi('Size', fmtBytes(report.totals.totalBytes), 'sum of known paths')}
+          ${kpi('Quick Stats', fmtOptionalSeconds(report.quickStatsLoadDurationMs), report.quickStatsLoadDurationMs == null ? 'not measured yet' : 'first summary load')}
+          ${kpi('Scan', fmtSeconds(report.scanDurationMs), 'system data load')}
           ${kpi('Last', lastModified ? relativeTime(lastModified) : '—', lastModified ? formatDateTime(lastModified) : 'no files')}
         </div>
+
+        ${dataSourcesPanelHtml(_dataSources)}
 
         <div class="sys-layout">
           <div>
@@ -214,7 +225,7 @@ window.QB = window.QB || {};
       btn.disabled = true;
       btn.classList.add('loading');
       try {
-        const report = await loadData(true);
+        const [report] = await Promise.all([loadData(true), loadDataSources()]);
         renderUI(wrap, report);
       } catch (e) {
         console.error('system refresh failed', e);
@@ -385,6 +396,54 @@ window.QB = window.QB || {};
     }
   }
 
+  function dsRow(label, info) {
+    const s = info?.status ?? null;
+    let text, color, meta = '';
+    if (!s) {
+      text = 'Not loaded yet'; color = '#888';
+    } else {
+      if (s.ok && s.source === 'live') { text = 'Downloaded'; color = 'var(--green)'; }
+      else if (s.source === 'offline') { text = 'Offline mode'; color = '#9aa0a6'; }
+      else { text = 'Fallback (download failed)'; color = '#e0a030'; }
+      const parts = [];
+      if (s.detail) parts.push(QB.esc(s.detail));
+      if (s.at) parts.push(`${s.ok && s.source === 'live' ? 'last refreshed' : 'last checked'} ${relativeTime(s.at)}`);
+      meta = parts.join(' · ');
+    }
+    const openFile = sourceOpenFile(info);
+    const title = s && s.error ? QB.esc(s.error) : (s && s.at ? formatDateTime(s.at) : '');
+    return `<div class="sys-path-row"${title ? ` title="${title}"` : ''}>
+      <div class="sys-path-label"><div class="sys-path-name">${QB.esc(label)}</div></div>
+      <div class="sys-path-value" style="color:${color}">● ${QB.esc(text)}</div>
+      <div class="sys-path-meta">${meta}</div>
+      <button class="sys-open-btn" ${openFile ? `data-open-path="${QB.esc(openFile.path)}"` : 'disabled'}
+              title="${openFile ? `Open ${QB.esc(openFile.label)}` : 'No local file yet'}" aria-label="Open data source file">
+        ${folderIcon()}
+      </button>
+    </div>`;
+  }
+
+  function sourceOpenFile(info) {
+    if (info?.dataFile?.exists) return { path: info.dataFile.path, label: 'data file' };
+    if (info && Object.prototype.hasOwnProperty.call(info, 'dataFile')) return null;
+    if (info?.statusFile?.exists) return { path: info.statusFile.path, label: 'status file' };
+    return null;
+  }
+
+  function dataSourcesPanelHtml(ds) {
+    ds = ds || {};
+    return `<div class="sys-panel">
+      <div class="sys-section-head">
+        <span class="sys-section-title">Pricing &amp; FX data</span>
+      </div>
+      <div class="sys-path-list">
+        ${dsRow('LiteLLM model prices', ds.litellm)}
+        ${dsRow('FX rates (EUR→USD)', ds.fx)}
+      </div>
+      <div class="sys-note">Downloaded = last successful remote refresh. Fallback = refresh failed and cached/built-in data is used. Offline = pricing offline mode.</div>
+    </div>`;
+  }
+
   function kpi(label, value, sub) {
     return `<div class="sys-kpi">
       <div class="sys-kpi-label">${QB.esc(label)}</div>
@@ -466,6 +525,15 @@ window.QB = window.QB || {};
     }
     const digits = unit === 0 ? 0 : value >= 10 ? 1 : 2;
     return `${value.toFixed(digits)} ${units[unit]}`;
+  }
+
+  function fmtSeconds(ms) {
+    const seconds = Math.max(0, Number(ms) || 0) / 1000;
+    return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)} s`;
+  }
+
+  function fmtOptionalSeconds(ms) {
+    return typeof ms === 'number' && Number.isFinite(ms) ? fmtSeconds(ms) : '—';
   }
 
   function newestDate(values) {

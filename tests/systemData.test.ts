@@ -73,14 +73,32 @@ describe("collectSystemData", () => {
     await writeFile(path.join(appConfigDir, "settings.json"), "{}");
     await writeFile(path.join(appConfigDir, "quotabar.log"), "line\n");
     await writeFile(path.join(appConfigDir, "cache", "usage-snapshots.json"), "{}");
+    await writeFile(path.join(appConfigDir, "cache", "fx-status.json"), "{}");
     await writeFile(path.join(appConfigDir, "debug", "2026-06-11.jsonl"), "{}\n");
 
     const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
 
-    expect(report.app.paths.filter((p) => p.exists)).toHaveLength(4);
-    expect(report.categories.find((c) => c.id === "cache")?.fileCount).toBe(1);
+    expect(report.app.paths.filter((p) => p.exists)).toHaveLength(5);
+    expect(report.categories.find((c) => c.id === "cache")?.fileCount).toBe(2);
     expect(report.categories.find((c) => c.id === "logs")?.fileCount).toBe(2);
     expect(report.categories.find((c) => c.id === "config")?.fileCount).toBe(1);
+  });
+
+  it("reports the scan duration as a performance metric", async () => {
+    const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
+
+    expect(report.scanDurationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("includes the latest Quick Stats load duration when provided", async () => {
+    const report = await collectSystemData({
+      homeDir,
+      appConfigDir,
+      env: {},
+      quickStatsLoadDurationMs: 1234,
+    });
+
+    expect(report.quickStatsLoadDurationMs).toBe(1234);
   });
 });
 
@@ -92,5 +110,24 @@ describe("findOpenableSystemPath", () => {
 
     expect(findOpenableSystemPath(report, sessionsDir)).toBe(sessionsDir);
     expect(findOpenableSystemPath(report, path.join(tmpDir, "outside"))).toBeNull();
+  });
+
+  it("allows opening an existing file path from the generated report", async () => {
+    const fxStatus = path.join(appConfigDir, "cache", "fx-status.json");
+    await writeFile(fxStatus, "{}");
+    const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
+
+    expect(findOpenableSystemPath(report, fxStatus)).toBe(fxStatus);
+  });
+
+  it("allows opening the local LiteLLM model price cache instead of the status file", async () => {
+    const priceCache = path.join(appConfigDir, "cache", "litellm-model-prices.json");
+    const statusFile = path.join(appConfigDir, "cache", "litellm-status.json");
+    await writeFile(priceCache, JSON.stringify({ "openai/test": { input_cost_per_token: 1e-6 } }));
+    await writeFile(statusFile, "{}");
+    const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
+
+    expect(report.app.paths.find((p) => p.id === "app-litellm-prices")?.path).toBe(priceCache);
+    expect(findOpenableSystemPath(report, priceCache)).toBe(priceCache);
   });
 });

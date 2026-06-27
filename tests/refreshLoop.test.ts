@@ -8,6 +8,7 @@ import { RefreshLoop } from "../src/usage/refreshLoop";
 import { UsageStore } from "../src/usage/usageStore";
 import { DebugRecorder } from "../src/main/debugRecorder";
 import { WindowRatioTracker, emptyRatioFile, emptyProviderState } from "../src/usage/windowRatio";
+import { log } from "../src/main/logging";
 
 function okSnap(provider: string): UsageSnapshot {
   return {
@@ -157,6 +158,41 @@ describe("RefreshLoop backoff", () => {
     await loop.refreshNow(); // claude in backoff, codex still fetched
     expect(claudeCalls).toBe(1);
     expect(codexCalls).toBe(2);
+  });
+
+  it("logs skipped refreshes at debug level while a provider is in backoff", async () => {
+    const info = vi.spyOn(log, "info");
+    const debug = vi.spyOn(log, "debug");
+    const store = new UsageStore();
+    const provider = makeProvider("claude", async () => {
+      throw new RateLimitError(5 * 60 * 1000);
+    });
+    const loop = new RefreshLoop([provider], store, 60, 10_000);
+
+    await loop.refreshNow();
+    await loop.refreshNow();
+
+    expect(info.mock.calls.some(([message]) => String(message).includes("skipping refresh"))).toBe(false);
+    expect(debug.mock.calls.some(([message]) => String(message).includes("skipping refresh"))).toBe(true);
+  });
+
+  it("downgrades repeated consecutive rate-limit backoffs after the first warning", async () => {
+    const warn = vi.spyOn(log, "warn");
+    const debug = vi.spyOn(log, "debug");
+    const store = new UsageStore();
+    const provider = makeProvider("claude", async () => {
+      throw new RateLimitError(0);
+    });
+    const loop = new RefreshLoop([provider], store, 60, 10_000);
+
+    await loop.refreshNow();
+    vi.advanceTimersByTime(5_001);
+    await loop.refreshNow();
+
+    const warnBackoffs = warn.mock.calls.filter(([message]) => String(message).includes("rate-limited"));
+    const debugBackoffs = debug.mock.calls.filter(([message]) => String(message).includes("rate-limited"));
+    expect(warnBackoffs).toHaveLength(1);
+    expect(debugBackoffs.length).toBeGreaterThanOrEqual(1);
   });
 });
 

@@ -39,6 +39,10 @@ export function getFxCachePath(): string {
   return path.join(getAppConfigDir(), "cache", "fx-rates.json");
 }
 
+export function getLiteLLMModelPricesPath(): string {
+  return path.join(getAppConfigDir(), "cache", "litellm-model-prices.json");
+}
+
 export function getWindowRatioPath(): string {
   return path.join(getAppConfigDir(), "window-ratio.json");
 }

@@ -10,7 +10,7 @@ import type { ReportRequest } from "../reports/types";
 import {
   getClaudeProjectsDirs, getCodexSessionsDirs, getDebugLogDir, getWindowHistoryPath,
   getAppConfigDir, getLogPath, getNotificationLogPath, getUsageSnapshotCachePath,
-  getFxCachePath, getWindowRatioPath, getBonusStatePath, getNotificationStatePath,
+  getFxCachePath, getLiteLLMModelPricesPath, getWindowRatioPath, getBonusStatePath, getNotificationStatePath,
 } from "../config/paths";
 import { loadWindowHistoryFile, saveWindowHistoryFile, mergeWindowHistory } from "../usage/windowHistoryStore";
 import type { CostWindow, ViewMode, Settings } from "../config/settings";
@@ -24,8 +24,10 @@ import { PersistentWorkerClient } from "./workerClient";
 import { collectSystemData, findOpenableSystemPath } from "./systemData";
 import { sharedFxFetcher } from "../pricing/fx-fetcher";
 import { planChangePoints } from "../pricing/plan-cost";
+import { readDataSourceInfo } from "./dataSourceStatus";
 import { configureHttpProxy, getActiveProxyUrl, httpFetch } from "./httpClient";
 import { normalizeProxySettings, type ProxySettings } from "../config/settings";
+import { QuickStatsLoadMetric } from "./quickStatsLoadMetric";
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -49,6 +51,7 @@ export class DetailsWindowController {
   private readonly windowBudgetCache = new AsyncResultCache<WindowBudgetData>();
   private readonly windowHistoryCache = new AsyncResultCache<WindowHistoryData>();
   private notificationService: NotificationService | null = null;
+  private readonly quickStatsLoadMetric = new QuickStatsLoadMetric();
 
   constructor(
     private readonly getTray: () => Tray | null,
@@ -144,16 +147,24 @@ export class DetailsWindowController {
     const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
     const cacheKey = `summary:${costWindow}`;
 
-    return this.analyticsSummaryCache.get(cacheKey, () => runAnalyticsWorker({
-      task: "summary",
-      claudeProjectsDirs: getClaudeProjectsDirs(),
-      codexSessionsDirs:  getCodexSessionsDirs(),
-      periodStartMs: workerWindow.periodStartMs,
-      windowDays: workerWindow.windowDays,
-      since: workerWindow.since,
-      settings: { ...settings, costWindow },
-      cacheHitRate,
-    }) as Promise<AnalyticsSummary>);
+    return this.analyticsSummaryCache.get(cacheKey, async () => {
+      const startedAtMs = Date.now();
+      const summary = await runAnalyticsWorker({
+        task: "summary",
+        claudeProjectsDirs: getClaudeProjectsDirs(),
+        codexSessionsDirs:  getCodexSessionsDirs(),
+        periodStartMs: workerWindow.periodStartMs,
+        windowDays: workerWindow.windowDays,
+        since: workerWindow.since,
+        settings: { ...settings, costWindow },
+        cacheHitRate,
+      }) as AnalyticsSummary;
+      const durationMs = Math.max(0, Date.now() - startedAtMs);
+      if (this.quickStatsLoadMetric.record(durationMs)) {
+        log.info(`Quick Stats initial load completed in ${formatSeconds(durationMs)}`);
+      }
+      return summary;
+    });
   }
 
   /**
@@ -373,6 +384,11 @@ export class DetailsWindowController {
 
     ipcMain.handle("fx:status", () => ({ estimated: sharedFxFetcher.estimated }));
 
+    ipcMain.handle("dataSources:get", () => ({
+      litellm: readDataSourceInfo("litellm", getLiteLLMModelPricesPath()),
+      fx: readDataSourceInfo("fx", getFxCachePath()),
+    }));
+
     ipcMain.handle("models:get", async () => {
       const settings = await loadSettings();
       return this.modelsDataCache.get("models", () => runAnalyticsWorker({
@@ -439,7 +455,7 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("system:get", async () => {
-      return await collectSystemData();
+      return await collectSystemData({ quickStatsLoadDurationMs: this.quickStatsLoadMetric.valueMs });
     });
 
     ipcMain.handle("system:open-path", async (_, requestedPath: unknown) => {
@@ -543,6 +559,11 @@ function normalizeCostWindow(value: unknown): CostWindow | null {
   return value === "7d" || value === "30d" || value === "all"
     ? value
     : null;
+}
+
+function formatSeconds(durationMs: number): string {
+  const seconds = Math.max(0, durationMs) / 1000;
+  return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)}s`;
 }
 
 // Datumsbereich für den Analytics-Tab. Akzeptiert ein konkretes {since, until}

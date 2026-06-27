@@ -10,6 +10,7 @@ const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 export class CodexProvider implements UsageProvider {
   id = "codex";
   displayName = "Codex";
+  private lastLoggedUsageShape: string | undefined;
 
   constructor(private readonly timeoutMs = 10_000) {}
 
@@ -42,13 +43,21 @@ export class CodexProvider implements UsageProvider {
       }
 
       const json = await response.json();
-      log.debug(`Codex usage payload shape: ${redactObject(summarizeShape(json))}`);
+      this.logUsageShapeIfChanged(json);
       return normalizeCodexUsageResponse(json, { accountId: credentials.accountId, email: credentials.email });
     } catch (error) {
       const status = error instanceof NotAuthenticatedError ? "not_authenticated" : "error";
       log.warn(`Codex fetch failed: ${toErrorMessage(error)}`);
       return errorSnapshot("codex", toErrorMessage(error), status);
     }
+  }
+
+  private logUsageShapeIfChanged(json: unknown): void {
+    const shape = summarizeShape(json);
+    const key = JSON.stringify(shape);
+    if (key === this.lastLoggedUsageShape) return;
+    this.lastLoggedUsageShape = key;
+    log.debug(`Codex usage payload shape changed: ${redactObject(shape)}`);
   }
 }
 

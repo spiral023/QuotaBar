@@ -1,6 +1,6 @@
 {
   "name": "quotabar",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "QuotaBar for Windows - Electron tray app for AI coding quota usage",
   "main": "dist/main/main.js",
   "type": "commonjs",

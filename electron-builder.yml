@@ -18,6 +18,9 @@ files:
   - logos/**
   - src/renderer/**
   - src/config/**
+extraResources:
+  - from: logos
+    to: logos
 win:
   target:
     - nsis

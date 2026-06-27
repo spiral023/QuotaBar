@@ -1,5 +1,8 @@
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import { afterEach, describe, expect, it } from "vitest";
+import { pathToFileURL } from "node:url";
 import { buildNotificationOptions, buildTestToastXml, buildToastXml } from "../src/main/notifications";
 import type { NotificationEvent } from "../src/main/notificationEngine";
 
@@ -43,6 +46,19 @@ describe("buildNotificationOptions", () => {
 });
 
 describe("buildToastXml", () => {
+  const originalResourcesPath = process.resourcesPath;
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    Object.defineProperty(process, "resourcesPath", {
+      value: originalResourcesPath,
+      configurable: true,
+    });
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("activates the quotabar:// protocol for body and buttons", () => {
     const xml = buildToastXml(event("claude", "Claude week: 97% used"), true);
 
@@ -77,5 +93,22 @@ describe("buildToastXml", () => {
     expect(xml).toContain("Limit &lt;90%&gt; &amp; &quot;hoch&quot;");
     expect(xml).toContain("5 &lt; 10 &amp; &apos;ok&apos;");
     expect(xml).not.toMatch(/<text>[^<]*<[^/]/); // kein unescapetes '<' im Textinhalt
+  });
+
+  it("uses provider logos from the external resources directory for Windows toast XML", () => {
+    const resourcesDir = fs.mkdtempSync(path.join(os.tmpdir(), "qb-toast-res-"));
+    tempDirs.push(resourcesDir);
+    const logoDir = path.join(resourcesDir, "logos");
+    fs.mkdirSync(logoDir);
+    const logoPath = path.join(logoDir, "claude.png");
+    fs.writeFileSync(logoPath, "png");
+    Object.defineProperty(process, "resourcesPath", {
+      value: resourcesDir,
+      configurable: true,
+    });
+
+    const xml = buildToastXml(event("claude", "Claude week: 97% used"), false);
+
+    expect(xml).toContain(`src="${pathToFileURL(logoPath).href}"`);
   });
 });

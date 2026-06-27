@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getFxCachePath } from "../config/paths";
 import { httpFetch } from "../main/httpClient";
+import { log } from "../main/logging";
+import { recordDataSourceStatus } from "../main/dataSourceStatus";
 
 export type FxPair = "EURUSD";
 export interface FxRate { value: number; estimated: boolean; }
@@ -41,8 +43,22 @@ export class FxFetcher {
   async ensureRange(minDay: string, maxDay: string): Promise<void> {
     await this.load();
     const have = this.cache!.EURUSD;
-    const needFetch = !this.offlineMode && this.missingBusinessDay(have, minDay, maxDay);
-    if (!needFetch) { if (this.offlineMode) this.anyEstimated = true; return; }
+    const latestDay = (): string | undefined => {
+      const keys = Object.keys(have).sort();
+      return keys.length > 0 ? keys[keys.length - 1] : undefined;
+    };
+    const detail = (): string => { const d = latestDay(); return d ? `latest rate ${d}` : "no cached rates"; };
+
+    if (this.offlineMode) {
+      this.anyEstimated = true;
+      recordDataSourceStatus("fx", { ok: true, source: "offline", at: new Date().toISOString(), detail: detail() });
+      return;
+    }
+    const needFetch = this.missingBusinessDay(have, minDay, maxDay);
+    if (!needFetch) {
+      recordDataSourceStatus("fx", { ok: true, source: "live", at: new Date().toISOString(), detail: detail() });
+      return;
+    }
     try {
       const url = `https://api.frankfurter.dev/v1/${minDay}..${maxDay}?base=EUR&symbols=USD`;
       const res = await httpFetch(url, { signal: AbortSignal.timeout(15_000) });
@@ -52,8 +68,15 @@ export class FxFetcher {
         if (typeof obj?.USD === "number") have[day] = obj.USD;
       }
       await this.save();
-    } catch {
+      if (recordDataSourceStatus("fx", { ok: true, source: "live", at: new Date().toISOString(), detail: detail() })) {
+        log.info(`FX rates loaded (${detail()})`);
+      }
+    } catch (err) {
       this.anyEstimated = true; // Abruf fehlgeschlagen → vorhandene/Fallback-Kurse
+      const msg = err instanceof Error ? err.message : String(err);
+      if (recordDataSourceStatus("fx", { ok: false, source: "fallback", at: new Date().toISOString(), detail: detail(), error: msg })) {
+        log.warn(`FX rates fetch failed, using cached/fallback (${detail()}): ${msg}`);
+      }
     }
   }
 

@@ -6,6 +6,7 @@ import {
   getCodexSessionsDirs,
   getClaudeProjectsDirs,
   getHomeDir,
+  getLiteLLMModelPricesPath,
 } from "../config/paths";
 
 export type SystemAgentStatus = "connected" | "detected" | "not_found";
@@ -17,6 +18,7 @@ export interface SystemDataContext {
   appConfigDir?: string;
   env?: Record<string, string | undefined>;
   now?: Date;
+  quickStatsLoadDurationMs?: number | null;
 }
 
 export interface SystemDataPath {
@@ -63,6 +65,8 @@ export interface SystemAppData {
 
 export interface SystemDataReport {
   generatedAt: string;
+  scanDurationMs: number;
+  quickStatsLoadDurationMs: number | null;
   agents: SystemAgentData[];
   app: SystemAppData;
   categories: SystemDataCategory[];
@@ -85,6 +89,7 @@ const CATEGORY_LABELS: Record<SystemDataCategoryId, string> = {
 };
 
 export async function collectSystemData(context: SystemDataContext = {}): Promise<SystemDataReport> {
+  const scanStartedAtMs = Date.now();
   const generatedAt = (context.now ?? new Date()).toISOString();
   const agentSpecs = buildAgentSpecs(context);
   const agents = await Promise.all(agentSpecs.map(async (agent) => {
@@ -111,6 +116,8 @@ export async function collectSystemData(context: SystemDataContext = {}): Promis
 
   return {
     generatedAt,
+    scanDurationMs: Math.max(0, Date.now() - scanStartedAtMs),
+    quickStatsLoadDurationMs: normalizeDurationMs(context.quickStatsLoadDurationMs),
     agents,
     app,
     categories,
@@ -121,6 +128,7 @@ export async function collectSystemData(context: SystemDataContext = {}): Promis
 export function findOpenableSystemPath(report: SystemDataReport, requestedPath: string): string | null {
   const requestedKey = pathKey(requestedPath);
   for (const item of allReportPaths(report)) {
+    if (item.exists && pathKey(item.path) === requestedKey) return item.path;
     if (!item.openPath) continue;
     if (pathKey(item.openPath) === requestedKey) return item.openPath;
   }
@@ -220,12 +228,21 @@ function buildAppSpecs(context: SystemDataContext): PathSpec[] {
     { id: "app-notification-log",  label: "Notification Log",  category: "logs",   kind: "file",   path: path.join(appDir, "notifications.log") },
     { id: "app-cache",             label: "Usage Cache",       category: "cache",  kind: "file",   path: path.join(appDir, "cache", "usage-snapshots.json") },
     { id: "app-fx-cache",          label: "FX Cache",          category: "cache",  kind: "file",   path: path.join(appDir, "cache", "fx-rates.json") },
+    { id: "app-fx-status",         label: "FX Status",         category: "cache",  kind: "file",   path: path.join(appDir, "cache", "fx-status.json") },
+    { id: "app-litellm-prices",    label: "LiteLLM Model Prices", category: "cache", kind: "file", path: getLiteLLMModelPricesPathForContext(context, appDir) },
+    { id: "app-litellm-status",    label: "LiteLLM Status",    category: "cache",  kind: "file",   path: path.join(appDir, "cache", "litellm-status.json") },
     { id: "app-window-history",    label: "Window History",    category: "cache",  kind: "file",   path: path.join(appDir, "window-history.json") },
     { id: "app-window-ratio",      label: "Window Ratio",      category: "cache",  kind: "file",   path: path.join(appDir, "window-ratio.json") },
     { id: "app-bonus-state",       label: "Bonus State",       category: "cache",  kind: "file",   path: path.join(appDir, "bonus-state.json") },
     { id: "app-notification-state",label: "Notification State",category: "cache",  kind: "file",   path: path.join(appDir, "notification-state.json") },
     { id: "app-debug",             label: "Debug Logs",        category: "logs",   kind: "folder", path: path.join(appDir, "debug") },
   ];
+}
+
+function getLiteLLMModelPricesPathForContext(context: SystemDataContext, appDir: string): string {
+  return context.appConfigDir
+    ? path.join(appDir, "cache", "litellm-model-prices.json")
+    : getLiteLLMModelPricesPath();
 }
 
 async function scanSpecs(specs: PathSpec[]): Promise<SystemDataPath[]> {
@@ -339,6 +356,10 @@ function maxIso(a: string | null, b: string | null): string | null {
   if (!a) return b;
   if (!b) return a;
   return a >= b ? a : b;
+}
+
+function normalizeDurationMs(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function openTarget(targetPath: string, kind: SystemPathKind): string {
