@@ -30,6 +30,7 @@ export interface PersistedNotificationState {
   lastGlobalFiredAt: number;
   lastPercent?: Record<string, number>; // undefined-Werte werden weggelassen
   lastResetsAt?: Record<string, string>; // geplanter Reset-Zeitpunkt (ISO) des zuletzt gesehenen Fensters
+  dismissedUpdateVersion?: string | null;
 }
 
 export class NotificationStateStore {
@@ -41,6 +42,15 @@ export class NotificationStateStore {
   private readonly staleStartedAt  = new Map<string, number>();
   private readonly resetDetectedAt = new Map<string, number>();
   private lastGlobalFiredAt        = 0;
+  private _dismissedUpdateVersion: string | null = null;
+
+  getDismissedUpdateVersion(): string | null {
+    return this._dismissedUpdateVersion;
+  }
+
+  setDismissedUpdateVersion(version: string): void {
+    this._dismissedUpdateVersion = version;
+  }
 
   loadPersisted(saved: PersistedNotificationState): void {
     for (const [k, v] of Object.entries(saved.lastFired)) {
@@ -59,6 +69,9 @@ export class NotificationStateStore {
         this.lastResetsAt.set(k, v);
       }
     }
+    if (saved.dismissedUpdateVersion !== undefined) {
+      this._dismissedUpdateVersion = saved.dismissedUpdateVersion ?? null;
+    }
   }
 
   serialize(): PersistedNotificationState {
@@ -75,6 +88,7 @@ export class NotificationStateStore {
       lastGlobalFiredAt: this.lastGlobalFiredAt,
       lastPercent,
       lastResetsAt,
+      dismissedUpdateVersion: this._dismissedUpdateVersion,
     };
   }
 

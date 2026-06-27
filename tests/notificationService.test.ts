@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { pathToFileURL } from "node:url";
-import { buildNotificationOptions, buildTestToastXml, buildToastXml } from "../src/main/notifications";
+import { buildNotificationOptions, buildTestToastXml, buildToastXml, buildUpdateToastXml } from "../src/main/notifications";
 import type { NotificationEvent } from "../src/main/notificationEngine";
 
 function event(provider: string, title: string): NotificationEvent {
@@ -110,5 +110,40 @@ describe("buildToastXml", () => {
     const xml = buildToastXml(event("claude", "Claude week: 97% used"), false);
 
     expect(xml).toContain(`src="${pathToFileURL(logoPath).href}"`);
+  });
+});
+
+describe("buildUpdateToastXml", () => {
+  it("shows version in title and Restart Now / Later buttons with correct protocol URLs", () => {
+    const xml = buildUpdateToastXml("1.2.3", true);
+
+    expect(xml).toContain("<text>QuotaBar 1.2.3 ready to install</text>");
+    expect(xml).toContain('content="Restart Now"');
+    expect(xml).toContain('arguments="quotabar://update-install"');
+    expect(xml).toContain('content="Later"');
+    expect(xml).toContain("quotabar://update-dismiss?v=1.2.3");
+    expect(xml).toContain('activationType="protocol"');
+  });
+
+  it("omits the actions block when withActions is false", () => {
+    const xml = buildUpdateToastXml("1.2.3", false);
+
+    expect(xml).not.toContain("<actions>");
+    expect(xml).not.toContain("Restart Now");
+  });
+
+  it("percent-encodes the version in the dismiss URL", () => {
+    // '+' in a version string (e.g. build metadata) must be encoded so the
+    // URL round-trip through Windows toast → new URL() → searchParams.get() is lossless.
+    const xml = buildUpdateToastXml("1.2.3+build.1", true);
+
+    expect(xml).toContain("quotabar://update-dismiss?v=1.2.3%2Bbuild.1");
+  });
+
+  it("XML-escapes special characters in the version for the title text", () => {
+    const xml = buildUpdateToastXml("1.0.0-<rc>", true);
+
+    expect(xml).toContain("QuotaBar 1.0.0-&lt;rc&gt; ready to install");
+    expect(xml).not.toContain("<text>QuotaBar 1.0.0-<rc>");
   });
 });
