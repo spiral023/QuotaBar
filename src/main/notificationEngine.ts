@@ -211,8 +211,8 @@ function evaluateProvider(
 
     events.push(...evaluateWindowRules(next, win, prevWin, settings, state, now));
 
-    // Update per-window state after evaluating all rules (NACH evaluateWindowRules,
-    // damit die Regeln noch den vorherigen resetsAt-Wert lesen können).
+    // Update per-window state after evaluating all rules so rules can still read
+    // the previous resetsAt value.
     state.setLastPercent(next.provider, win.name, win.usedPercent);
     state.setLastResetsAt(next.provider, win.name, win.resetsAt);
     state.setLastPaceStage(next.provider, win.name, win.pace?.stage ?? null);
@@ -235,12 +235,11 @@ function evaluateWindowRules(
   const pPrev = prevWin !== undefined ? cap(prevWin.usedPercent ?? 0) : state.getLastPercent(snap.provider, win.name);
   const key = `${snap.provider}:${win.name}`;
 
-  // War zum Beobachtungszeitpunkt bereits ein PLANMÄSSIGER Reset fällig? Der
-  // geplante Reset-Zeitpunkt stammt aus dem vorherigen Fenster (in-memory oder
-  // persistiert) — NICHT aus win.resetsAt, das nach dem Reset bereits auf den
-  // nächsten Zyklus zeigt. Tritt auf, wenn die Maschine über den Reset hinweg
-  // offline war und ihn erst verspätet sieht: dann ist der Abfall erwartbar und
-  // darf NICHT als „außerplanmäßiger Reset" fehlalarmiert werden.
+  // Was a scheduled reset already due at observation time? The scheduled reset
+  // timestamp comes from the previous window (in memory or persisted), not from
+  // win.resetsAt, which already points to the next cycle after the reset.
+  // This happens when the machine was offline across the reset and only sees the
+  // drop later: the drop is expected and must not alert as an unexpected reset.
   const prevResetIso = prevWin?.resetsAt ?? state.getLastResetsAt(snap.provider, win.name);
   const prevResetMs = prevResetIso !== undefined ? new Date(prevResetIso).getTime() : NaN;
   const scheduledResetDue = !Number.isNaN(prevResetMs) && prevResetMs <= now.getTime();
@@ -252,8 +251,8 @@ function evaluateWindowRules(
       ruleId: "confirmedReset",
       provider: snap.provider, windowName: win.name,
       severity: "info",
-      title: `${cap1(snap.provider)} ${windowLabel(win.name)} zurückgesetzt`,
-      body: `Das Kontingent ist zurück auf 0 %.`,
+      title: `${cap1(snap.provider)} ${windowLabel(win.name)} reset`,
+      body: `Quota usage is back to 0%.`,
       firedAt: localISOString(now),
       reason,
     });
@@ -276,18 +275,18 @@ function evaluateWindowRules(
     !(pPrev >= 99.5) // not handled by rule 1
   ) {
     if (scheduledResetDue) {
-      // Planmäßiger Reset, nur verspätet beobachtet → freundliche „zurückgesetzt"-Info
-      // statt Fehlalarm „außerplanmäßiger Reset".
-      fireConfirmedReset(`usedPercent ${pPrev.toFixed(0)}% → ${p.toFixed(0)}% (geplanter Reset, verspätet erkannt)`);
+      // Scheduled reset observed late: send a friendly reset info instead of an
+      // unexpected-reset alert.
+      fireConfirmedReset(`usedPercent ${pPrev.toFixed(0)}% -> ${p.toFixed(0)}% (scheduled reset observed late)`);
     } else if (state.canFire("unexpectedReset", key, cfg2.cooldownMinutes)) {
       events.push({
         ruleId: "unexpectedReset",
         provider: snap.provider, windowName: win.name,
         severity: "watch",
-        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: außerplanmäßiger Reset`,
-        body: `Verbrauch fiel von ${pPrev.toFixed(0)} % auf ${p.toFixed(0)} % außerhalb des normalen Rücksetzzyklus. Mögliche Ursachen: Promo-Reset (z. B. neues Modell), Planänderung oder API-Wartung.`,
+        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Unexpected reset`,
+        body: `Usage dropped from ${pPrev.toFixed(0)}% to ${p.toFixed(0)}% outside the normal reset cycle. Possible causes: promo reset, plan change, or API maintenance.`,
         firedAt: localISOString(now),
-        reason: `usedPercent ${pPrev.toFixed(0)}% → ${p.toFixed(0)}% (outside scheduled reset)`,
+        reason: `usedPercent ${pPrev.toFixed(0)}% -> ${p.toFixed(0)}% (outside scheduled reset)`,
       });
       state.recordFired("unexpectedReset", key);
     }
@@ -303,8 +302,8 @@ function evaluateWindowRules(
           ruleId: "resetSoon",
           provider: snap.provider, windowName: win.name,
           severity: "info",
-          title: `${cap1(snap.provider)} ${windowLabel(win.name)} setzt sich bald zurück`,
-          body: `Reset in ${Math.ceil(minutesUntilReset)} Minuten.`,
+          title: `${cap1(snap.provider)} ${windowLabel(win.name)} resets soon`,
+          body: `Reset in ${Math.ceil(minutesUntilReset)} minutes.`,
           firedAt: localISOString(now),
           reason: `resetsAt in ${minutesUntilReset.toFixed(0)} min`,
         });
@@ -321,8 +320,8 @@ function evaluateWindowRules(
         ruleId: "highUsage",
         provider: snap.provider, windowName: win.name,
         severity: "warning",
-        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: ${p.toFixed(0)} % verbraucht`,
-        body: `Das Kontingent hat ${cfg4.thresholdPercent} % überschritten.`,
+        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: ${p.toFixed(0)}% used`,
+        body: `Quota usage has crossed ${cfg4.thresholdPercent}%.`,
         firedAt: localISOString(now),
         reason: `usedPercent crossed ${cfg4.thresholdPercent}%`,
       });
@@ -338,8 +337,8 @@ function evaluateWindowRules(
         ruleId: "criticalUsage",
         provider: snap.provider, windowName: win.name,
         severity: "critical",
-        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: ${p.toFixed(0)} % verbraucht`,
-        body: `Kritische Schwelle – das Kontingent wird bald erschöpft.`,
+        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: ${p.toFixed(0)}% used`,
+        body: `Critical threshold reached. Quota will be depleted soon.`,
         firedAt: localISOString(now),
         reason: `usedPercent crossed ${cfg5.thresholdPercent}%`,
       });
@@ -352,15 +351,15 @@ function evaluateWindowRules(
   if (cfg6.enabled && win.pace && !win.pace.willLastToReset && win.pace.etaSeconds !== null && win.pace.etaSeconds > 0 && win.resetsAt) {
     const minutesUntilReset = (new Date(win.resetsAt).getTime() - now.getTime()) / 60_000;
     const minutesUntilEmpty = win.pace.etaSeconds / 60;
-    // Unterdrücken wenn ETA < 2 min – zu kurz für eine actionable Warnung
+    // Suppress ETA < 2 min because it is too short for an actionable warning.
     if (minutesUntilReset > 0 && minutesUntilEmpty >= 2 && minutesUntilEmpty < minutesUntilReset - cfg6.minEarlyMinutes) {
       if (state.canFire("projectedDepletion", key, cfg6.cooldownMinutes)) {
         events.push({
           ruleId: "projectedDepletion",
           provider: snap.provider, windowName: win.name,
           severity: "warning",
-          title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Kontingent läuft ab`,
-          body: `Beim aktuellen Tempo erschöpft das Kontingent vor dem Reset.`,
+          title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Quota will run out`,
+          body: `At the current pace, quota will be depleted before reset.`,
           firedAt: localISOString(now),
           reason: `etaSeconds=${win.pace.etaSeconds}, minutesUntilReset=${minutesUntilReset.toFixed(0)}`,
         });
@@ -388,8 +387,8 @@ function evaluateWindowRules(
         ruleId: "farAhead",
         provider: snap.provider, windowName: win.name,
         severity: "watch",
-        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Verbrauch deutlich zu hoch`,
-        body: `Verbrauchstempo liegt +${delta} % über dem erwarteten Tagesdurchschnitt.`,
+        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Usage well above pace`,
+        body: `Usage pace is ${delta}% above the expected daily average.`,
         firedAt: localISOString(now),
         reason: `pace transitioned to farAhead (delta=${delta}%)`,
       });
@@ -412,8 +411,8 @@ function evaluateWindowRules(
         ruleId: "farBehind",
         provider: snap.provider, windowName: win.name,
         severity: "info",
-        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Deutlich mehr Reserve als üblich`,
-        body: `Verbrauchstempo liegt −${delta} % unter dem Wochenpfad – noch viel Kontingent verfügbar.`,
+        title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Much more reserve than usual`,
+        body: `Usage pace is ${delta}% below the weekly path. Plenty of quota remains.`,
         firedAt: localISOString(now),
         reason: `pace transitioned to farBehind (delta=-${delta}%)`,
       });
@@ -449,8 +448,8 @@ function evaluateProviderDataHealth(
           ruleId: "providerDataHealth",
           provider: snap.provider,
           severity: "watch",
-          title: `${cap1(snap.provider)}: Daten veraltet`,
-          body: `Nutzungsdaten wurden seit mehr als ${cfg.staleMinutes} Minuten nicht aktualisiert.`,
+          title: `${cap1(snap.provider)}: data is stale`,
+          body: `Usage data has not been updated for more than ${cfg.staleMinutes} minutes.`,
           firedAt: localISOString(now),
           reason: `status=${snap.status} for ${staleMinutes.toFixed(0)} min`,
         });
@@ -463,8 +462,8 @@ function evaluateProviderDataHealth(
         ruleId: "providerDataHealth",
         provider: snap.provider,
         severity: "info",
-        title: `${cap1(snap.provider)}: Daten wieder aktuell`,
-        body: `Nutzungsdaten sind nach einer Unterbrechung wieder verfügbar.`,
+        title: `${cap1(snap.provider)}: data is current again`,
+        body: `Usage data is available again after an interruption.`,
         firedAt: localISOString(now),
         reason: `status recovered from ${prevStatus} to ok`,
       });
@@ -530,8 +529,8 @@ function cap1(s: string): string { return s ? s[0].toUpperCase() + s.slice(1) : 
 
 const WINDOW_LABELS: Record<string, string> = {
   fiveHour: "5h",
-  weekly:   "Woche",
-  monthly:  "Monat",
+  weekly:   "week",
+  monthly:  "month",
   credits:  "Credits",
   session:  "Session",
 };

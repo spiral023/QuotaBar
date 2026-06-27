@@ -102,7 +102,7 @@ export const defaultNotificationRules: NotificationRules = {
   cacheHitDrop:             { enabled: false, cooldownMinutes: 1440, claudeThresholdPercent: 98, codexThresholdPercent: 90 },
   expensiveModelShare:      { enabled: false, cooldownMinutes: 1440, thresholdPercent: 10 },
   roiMilestone:             { enabled: false, cooldownMinutes: 10_080, milestones: [2, 5, 10] },
-  providerDataHealth:       { enabled: true,  cooldownMinutes: 60,   staleMinutes: 10, notifyRecovered: true },
+  providerDataHealth:       { enabled: false, cooldownMinutes: 60,   staleMinutes: 10, notifyRecovered: true },
 };
 
 export const defaultNotificationSettings: NotificationSettings = {

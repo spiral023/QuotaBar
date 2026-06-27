@@ -47,6 +47,7 @@ describe("normalizeNotificationSettings", () => {
     expect(result.enabled).toBe(true);
     expect(result.minimumGapMinutes).toBe(0);
     expect(result.rules.highUsage.thresholdPercent).toBe(80);
+    expect(result.rules.providerDataHealth.enabled).toBe(false);
   });
 
   it("merges partial rule overrides without losing other rules", () => {
@@ -158,12 +159,11 @@ describe("rule: unexpectedReset", () => {
   });
 });
 
-// ── Verspätet beobachteter, aber planmäßiger Reset ───────────────────────
-// Regression: Wenn die Maschine über den geplanten Reset-Zeitpunkt hinweg
-// offline war, sah QuotaBar nur den fertigen Abfall (z. B. 98% → 0%) und
-// meldete fälschlich „außerplanmäßiger Reset". Liegt der geplante Reset-
-// Zeitpunkt (resetsAt des Vor-Fensters) bereits in der Vergangenheit, ist der
-// Abfall erwartbar → freundliche „zurückgesetzt"-Info statt Fehlalarm.
+// ── Scheduled reset observed late ─────────────────────────────────────────
+// Regression: when the machine was offline across the scheduled reset time,
+// QuotaBar only saw the completed drop (for example 98% -> 0%) and incorrectly
+// reported an unexpected reset. If the previous window's resetsAt is already in
+// the past, the drop is expected and should produce friendly reset info instead.
 
 describe("scheduled reset observed late (machine was offline)", () => {
   let engine: NotificationEngine;
@@ -171,8 +171,8 @@ describe("scheduled reset observed late (machine was offline)", () => {
 
   beforeEach(() => { engine = new NotificationEngine(); state = new NotificationStateStore(); });
 
-  const PAST   = "2020-01-01T00:00:00.000Z"; // resetsAt liegt sicher in der Vergangenheit
-  const FUTURE = "2999-01-01T00:00:00.000Z"; // resetsAt liegt sicher in der Zukunft
+  const PAST   = "2020-01-01T00:00:00.000Z"; // resetsAt is safely in the past
+  const FUTURE = "2999-01-01T00:00:00.000Z"; // resetsAt is safely in the future
 
   it("fires confirmedReset, not unexpectedReset, when the scheduled reset time has passed", () => {
     const current  = [snap("claude", [{ name: "weekly", usedPercent: 0 }])];
@@ -191,8 +191,8 @@ describe("scheduled reset observed late (machine was offline)", () => {
   });
 
   it("uses the persisted resetsAt to suppress the false alarm after a restart (no in-memory previous)", () => {
-    // Maschine war aus: kein in-memory previous, aber lastPercent/lastResetsAt aus
-    // dem letzten Lauf wurden von der Platte geladen.
+    // Machine was off: no in-memory previous, but lastPercent/lastResetsAt from
+    // the previous run were loaded from disk.
     state.loadPersisted({
       lastFired: {},
       lastGlobalFiredAt: 0,
@@ -285,8 +285,8 @@ describe("rule: farAhead / farBehind pace transition", () => {
 
   beforeEach(() => { engine = new NotificationEngine(); state = new NotificationStateStore(); });
 
-  // farAhead/farBehind sind per Default deaktiviert (bewusste Produktentscheidung,
-  // sonst zu laut). Diese Tests prüfen die Feuerlogik, also Regeln explizit aktivieren.
+  // farAhead/farBehind are disabled by default as a product decision because
+  // they would otherwise be too noisy. These tests explicitly enable the rules.
   const enablePaceRules = {
     rules: {
       ...defaultNotificationSettings.rules,
@@ -321,6 +321,12 @@ describe("rule: providerDataHealth", () => {
 
   beforeEach(() => { engine = new NotificationEngine(); state = new NotificationStateStore(); });
 
+  const enabledProviderDataHealthSettings = normalizeNotificationSettings({
+    rules: {
+      providerDataHealth: { ...defaultNotificationSettings.rules.providerDataHealth, enabled: true },
+    } as never,
+  } as never);
+
   it("fires stale alert after staleMinutes exceeded", () => {
     const now = new Date();
     const staleStart = new Date(now.getTime() - 15 * 60_000); // 15 min ago
@@ -331,16 +337,68 @@ describe("rule: providerDataHealth", () => {
     // set previous status as stale so it was already stale
     state.setLastStatus("codex", "stale");
 
-    const events = engine.evaluate({ current, previous, settings: defaultNotificationSettings, now }, state);
-    expect(events.some(e => e.ruleId === "providerDataHealth" && e.title.includes("veraltet"))).toBe(true);
+    const events = engine.evaluate({ current, previous, settings: enabledProviderDataHealthSettings, now }, state);
+    expect(events.some(e => e.ruleId === "providerDataHealth" && e.title.includes("data is stale"))).toBe(true);
   });
 
   it("fires recovered alert when going from stale to ok", () => {
     state.setLastStatus("codex", "stale");
     const current  = [snap("codex", [{ name: "fiveHour", usedPercent: 20 }], "ok")];
     const previous = [snap("codex", [], "stale")];
-    const events = engine.evaluate({ current, previous, settings: defaultNotificationSettings }, state);
-    expect(events.some(e => e.ruleId === "providerDataHealth" && e.body.includes("wieder verfügbar"))).toBe(true);
+    const events = engine.evaluate({ current, previous, settings: enabledProviderDataHealthSettings }, state);
+    expect(events.some(e => e.ruleId === "providerDataHealth" && e.body.includes("available again"))).toBe(true);
+  });
+});
+
+describe("notification copy", () => {
+  let engine: NotificationEngine;
+  let state: NotificationStateStore;
+
+  beforeEach(() => { engine = new NotificationEngine(); state = new NotificationStateStore(); });
+
+  it("uses English copy for quota reset notifications", () => {
+    const current  = [snap("claude", [{ name: "weekly", usedPercent: 0 }])];
+    const previous = [snap("claude", [{ name: "weekly", usedPercent: 100 }])];
+
+    const [event] = engine.evaluate(ctx(current, previous), state);
+
+    expect(event).toMatchObject({
+      ruleId: "confirmedReset",
+      title: "Claude week reset",
+      body: "Quota usage is back to 0%.",
+    });
+  });
+
+  it("uses English copy for high and critical quota notifications", () => {
+    const current  = [snap("codex", [{ name: "fiveHour", usedPercent: 96 }])];
+    const previous = [snap("codex", [{ name: "fiveHour", usedPercent: 79 }])];
+
+    const [event] = engine.evaluate(ctx(current, previous), state);
+
+    expect(event).toMatchObject({
+      ruleId: "criticalUsage",
+      title: "Codex 5h: 96% used",
+      body: "Critical threshold reached. Quota will be depleted soon.",
+    });
+  });
+
+  it("uses English copy for pace notifications", () => {
+    const pace = { stage: "farBehind" as const, deltaPercent: -25, expectedUsedPercent: 50, actualUsedPercent: 25, etaSeconds: null, willLastToReset: true };
+    const prevPace = { stage: "onTrack" as const, deltaPercent: 0, expectedUsedPercent: 50, actualUsedPercent: 50, etaSeconds: null, willLastToReset: true };
+    const rules = {
+      ...defaultNotificationSettings.rules,
+      farBehind: { ...defaultNotificationSettings.rules.farBehind, enabled: true },
+    };
+    const current  = [snap("claude", [{ name: "weekly", usedPercent: 25, pace }])];
+    const previous = [snap("claude", [{ name: "weekly", usedPercent: 50, pace: prevPace }])];
+
+    const [event] = engine.evaluate(ctx(current, previous, { rules }), state);
+
+    expect(event).toMatchObject({
+      ruleId: "farBehind",
+      title: "Claude week: Much more reserve than usual",
+      body: "Usage pace is 25% below the weekly path. Plenty of quota remains.",
+    });
   });
 });
 

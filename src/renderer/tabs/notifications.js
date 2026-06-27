@@ -1,14 +1,13 @@
-/* Notifications / Alerts-Tab ─ Status-Header, Regeln (Akkordeon), Verlauf, Sticky Save-Bar */
+/* Notifications / Alerts tab: status header, rules accordion, history, sticky save bar */
 
 window.QB = window.QB || {};
 
-// IIFE-gekapselt, damit top-level const/let/function (SEV_COLOR, RULE_GROUPS,
-// initialSnapshot, …) nicht mit gleichnamigen Symbolen anderer Tab-Skripte im
-// gemeinsamen globalen Scope kollidieren (sonst SyntaxError → das nachfolgende
-// Skript würde verworfen).
+// Wrapped in an IIFE so top-level const/let/function names (SEV_COLOR,
+// RULE_GROUPS, initialSnapshot, ...) do not collide with other tab scripts in
+// the shared global scope.
 (function () {
 
-// ── Severity → Akzentfarbe (abgeleitet aus notificationEngine.ts) ───────────
+// Severity to accent color, derived from notificationEngine.ts.
 const SEV_COLOR = {
   critical: 'var(--red)',
   warning:  'var(--orange)',
@@ -17,7 +16,7 @@ const SEV_COLOR = {
 };
 const sevColor = sev => SEV_COLOR[sev] ?? 'var(--t300)';
 
-// ── Regeldefinitionen (inkl. Severity für die Akzentleiste) ─────────────────
+// Rule definitions, including severity for the accent bar.
 const RULE_GROUPS = [
   {
     label: 'Quota Window',
@@ -77,7 +76,7 @@ const RULE_GROUPS = [
 const ALL_RULES = RULE_GROUPS.flatMap(g => g.rules);
 const RULE_COUNT = ALL_RULES.length;
 
-// ── Modulzustand für Dirty-Tracking & Header ────────────────────────────────
+// Module state for dirty tracking and header text.
 let initialSnapshot = '';
 let lastFiredText = '';
 
@@ -108,7 +107,7 @@ QB.renderNotifications = async function () {
   loadNotificationHistory(wrap, rules);
 };
 
-// ── HTML aufbauen ────────────────────────────────────────────────────────────
+// Build HTML.
 
 function buildNotificationsHTML(ns, rules) {
   const enabled = ns.enabled ?? false;
@@ -285,7 +284,7 @@ function attrEscape(s) {
   return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// ── Tooltip-Portal (umgeht Overflow-Clipping der Akkordeon-/Scroll-Container) ─
+// Tooltip portal, avoiding overflow clipping in accordion and scroll containers.
 
 function ensureTooltipEl() {
   let el = document.getElementById('notif-tooltip-float');
@@ -317,7 +316,7 @@ function hideTooltip(tip) {
   tip.classList.remove('is-visible');
 }
 
-// ── Event-Binding ──────────────────────────────────────────────────────────
+// Event binding.
 
 function bindNotificationsEvents(wrap) {
   // Segmented control
@@ -331,12 +330,12 @@ function bindNotificationsEvents(wrap) {
     });
   });
 
-  // Akkordeon (global + Gruppen)
+  // Accordion for global settings and rule groups
   wrap.querySelectorAll('[data-collap]').forEach(head => {
     head.addEventListener('click', () => head.closest('.notif-panel').classList.toggle('is-open'));
   });
 
-  // Tooltips (Portal an <body>, gegen Overflow-Clipping)
+  // Tooltips rendered as a body-level portal to avoid overflow clipping
   const tip = ensureTooltipEl();
   wrap.querySelectorAll('.notif-tip').forEach(el => {
     el.addEventListener('mouseenter', () => showTooltip(tip, el));
@@ -344,10 +343,10 @@ function bindNotificationsEvents(wrap) {
     el.addEventListener('focusin',  () => showTooltip(tip, el));
     el.addEventListener('focusout', () => hideTooltip(tip));
   });
-  // Beim Scrollen ausblenden, damit der Tooltip nicht "stehen bleibt"
+  // Hide while scrolling so the tooltip does not remain detached from its anchor
   wrap.addEventListener('scroll', () => hideTooltip(tip), { passive: true });
 
-  // Master switch → Pausiert-Badge
+  // Master switch updates the paused badge
   const master = wrap.querySelector('#notif-master');
   const syncPaused = () => wrap.classList.toggle('is-paused', !master.checked);
   master?.addEventListener('change', syncPaused);
@@ -366,7 +365,7 @@ function bindNotificationsEvents(wrap) {
     });
   });
 
-  // Regel-Toggles → is-on/is-off Klasse, Zähler & Save-Bar
+  // Rule toggles update is-on/is-off classes, counts, and save bar
   wrap.querySelectorAll('.notif-rule-toggle').forEach(tog => {
     tog.addEventListener('change', () => {
       tog.closest('.notif-rule')?.classList.toggle('is-on', tog.checked);
@@ -387,12 +386,12 @@ function bindNotificationsEvents(wrap) {
     try { await QB.ipc.invoke('notification:test'); } catch (e) { console.error(e); }
   });
 
-  // Speichern / Verwerfen
+  // Save and discard
   wrap.querySelector('#notif-save-btn')?.addEventListener('click', () => saveNotificationSettings(wrap));
   wrap.querySelector('#notif-discard-btn')?.addEventListener('click', () => QB.renderNotifications());
 }
 
-// ── Zähler & Status-Header ───────────────────────────────────────────────────
+// Counts and status header.
 
 function refreshCounts(wrap) {
   let activeTotal = 0;
@@ -423,7 +422,7 @@ function updateStatusSub(wrap, activeTotal) {
   sub.textContent = text;
 }
 
-// ── Dirty-Tracking & Save-Bar ────────────────────────────────────────────────
+// Dirty tracking and save bar.
 
 function collectPayload(wrap) {
   const enabled      = wrap.querySelector('#notif-master')?.checked ?? true;
@@ -491,7 +490,7 @@ async function saveNotificationSettings(wrap) {
   }
 }
 
-// ── Verlauf laden ──────────────────────────────────────────────────────────
+// Load history.
 
 function ruleLabel(ruleId) {
   return ALL_RULES.find(r => r.id === ruleId)?.label ?? ruleId;

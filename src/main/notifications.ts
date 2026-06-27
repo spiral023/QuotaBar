@@ -16,9 +16,9 @@ import { localISOString, log } from "./logging";
 export { NotificationEvent };
 
 export interface NotificationActionHandlers {
-  /** Dashboard-Fenster öffnen/fokussieren (Notifications-Tab). */
+  /** Open or focus the dashboard on the Notifications tab. */
   openDashboard: () => void;
-  /** Persistiert rules[ruleId].enabled = false und liefert die neuen Settings. */
+  /** Persist rules[ruleId].enabled = false and return the updated settings. */
   muteRule: (ruleId: string) => Promise<NotificationSettings>;
 }
 
@@ -91,18 +91,18 @@ export class NotificationService {
   sendTest(): void {
     const withActions = this.actionHandlers != null;
     const notification = new Notification(
-      // Auf Windows muss die Toast-Aktivierung über das quotabar://-Protokoll
-      // laufen, weil Windows beim Klick einen neuen Prozess startet statt die
-      // on('click')/on('action')-Handler der laufenden Instanz auszulösen.
+      // On Windows, toast activation must use the quotabar:// protocol because
+      // Windows starts a new process on click instead of invoking the running
+      // instance's on('click')/on('action') handlers.
       process.platform === "win32"
         ? { toastXml: buildTestToastXml(withActions) }
         : {
             title: "QuotaBar",
-            body: "Testbenachrichtigung – Benachrichtigungen funktionieren.",
-            ...(withActions ? { actions: [{ type: "button" as const, text: "Öffnen" }] } : {}),
+            body: "Test notification - notifications are working.",
+            ...(withActions ? { actions: [{ type: "button" as const, text: "Open" }] } : {}),
           },
     );
-    // Fallback für macOS bzw. Fälle, in denen die Events doch feuern.
+    // Fallback for macOS and cases where events still fire.
     notification.on("click", () => this.actionHandlers?.openDashboard());
     notification.on("action", () => this.actionHandlers?.openDashboard());
     notification.show();
@@ -117,7 +117,8 @@ export class NotificationService {
     );
     notification.on("click", () => this.actionHandlers?.openDashboard());
     notification.on("action", (details, legacyIndex) => {
-      // Neuere Electron-Versionen liefern details.actionIndex, ältere den Index als 2. Argument
+      // Newer Electron versions provide details.actionIndex; older versions pass
+      // the index as the second argument.
       const fromDetails = (details as { actionIndex?: number } | undefined)?.actionIndex;
       const index = typeof fromDetails === "number" ? fromDetails : legacyIndex;
       if (index === 0) this.actionHandlers?.openDashboard();
@@ -127,11 +128,11 @@ export class NotificationService {
   }
 
   /**
-   * Verarbeitet eine quotabar://-Aktivierung aus einer Windows-Toast.
-   * Aufgerufen aus dem second-instance-Handler (App lief bereits) bzw. beim
-   * Kaltstart mit der Protokoll-URL in process.argv.
-   *   quotabar://open            → Dashboard öffnen
-   *   quotabar://mute?rule=<id>  → Regel stummschalten (ohne Dashboard zu öffnen)
+   * Handles a quotabar:// activation from a Windows toast.
+   * Called from the second-instance handler when the app is already running, or
+   * from cold start with the protocol URL in process.argv.
+   *   quotabar://open            -> open the dashboard
+   *   quotabar://mute?rule=<id>  -> mute the rule without opening the dashboard
    */
   handleProtocolUrl(rawUrl: string): void {
     let parsed: URL;
@@ -141,7 +142,7 @@ export class NotificationService {
       return;
     }
     if (parsed.protocol !== "quotabar:") return;
-    // Bei quotabar://open landet "open" im hostname; defensiv auch pathname prüfen.
+    // For quotabar://open, "open" lands in hostname; defensively check pathname too.
     const action = (parsed.hostname || parsed.pathname.replace(/^\/+/, "")).toLowerCase();
     if (action === "mute") {
       const ruleId = parsed.searchParams.get("rule");
@@ -159,13 +160,13 @@ export class NotificationService {
       log.warn(`Mute via notification failed for rule ${ruleId}: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    // Aktion im Verlauf sichtbar machen — nur die Rule-ID, keine sensiblen Inhalte
+    // Make the action visible in history: rule ID only, no sensitive contents.
     const entry: NotificationEvent = {
       ruleId,
       provider: "",
       severity: "info",
-      title: "Regel deaktiviert",
-      body: `Benachrichtigungstyp "${ruleId}" wurde über eine Benachrichtigung deaktiviert.`,
+      title: "Rule disabled",
+      body: `Notification type "${ruleId}" was disabled from a notification.`,
       firedAt: localISOString(new Date()),
       reason: "rule-muted",
     };
@@ -183,8 +184,8 @@ export function buildNotificationOptions(event: NotificationEvent, withActions =
     ...(icon ? { icon } : {}),
     ...(withActions ? {
       actions: [
-        { type: "button" as const, text: "Öffnen" },
-        { type: "button" as const, text: "Stumm" },
+        { type: "button" as const, text: "Open" },
+        { type: "button" as const, text: "Mute" },
       ],
     } : {}),
   };
@@ -209,8 +210,8 @@ export function buildToastXml(event: NotificationEvent, withActions = false): st
   const muteArg = `quotabar://mute?rule=${encodeURIComponent(event.ruleId)}`;
   const actionsXml = withActions
     ? `<actions>` +
-      `<action content="Öffnen" activationType="protocol" arguments="quotabar://open"/>` +
-      `<action content="Stumm" activationType="protocol" arguments="${escapeXml(muteArg)}"/>` +
+      `<action content="Open" activationType="protocol" arguments="quotabar://open"/>` +
+      `<action content="Mute" activationType="protocol" arguments="${escapeXml(muteArg)}"/>` +
       `</actions>`
     : "";
   return (
@@ -227,13 +228,13 @@ export function buildToastXml(event: NotificationEvent, withActions = false): st
 
 export function buildTestToastXml(withActions = false): string {
   const actionsXml = withActions
-    ? `<actions><action content="Öffnen" activationType="protocol" arguments="quotabar://open"/></actions>`
+    ? `<actions><action content="Open" activationType="protocol" arguments="quotabar://open"/></actions>`
     : "";
   return (
     `<toast activationType="protocol" launch="quotabar://open">` +
     `<visual><binding template="ToastGeneric">` +
     `<text>QuotaBar</text>` +
-    `<text>Testbenachrichtigung – Benachrichtigungen funktionieren.</text>` +
+    `<text>Test notification - notifications are working.</text>` +
     `</binding></visual>` +
     actionsXml +
     `</toast>`
