@@ -396,6 +396,13 @@
       }
       const roiEl = document.getElementById('qs-roi');
       if (roiEl) roiEl.style.color = QB.roiColor(roi);
+
+      const win = activeCostWindowFromUI();
+      const winLabel = win === '7d' ? '7d' : win === 'all' ? 'all time' : '30d';
+      const lbl = document.getElementById('qs-api-cost-lbl');
+      if (lbl) lbl.textContent = `API Eq. (${winLabel})`;
+      const tip = document.getElementById('qs-api-cost-tip');
+      if (tip) tip.dataset.tip = `Projected API cost for the ${winLabel === 'all time' ? 'full history' : `last ${winLabel}`}.`;
     }
 
     function updateTopModels(s) {

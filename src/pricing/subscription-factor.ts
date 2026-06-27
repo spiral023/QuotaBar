@@ -216,10 +216,10 @@ function computeActualDaysFromEntries(timestamps: string[]): number {
 }
 
 function formatLabel(apiCostUSD: number, factor: number | null, isEstimate: boolean): string {
-  if (factor === null) return "Kein Abo hinterlegt";
-  if (apiCostUSD === 0 && !isEstimate) return "$0.00 (keine Daten)";
+  if (factor === null) return "No plan configured";
+  if (apiCostUSD === 0 && !isEstimate) return "$0.00 (no data)";
   const prefix = isEstimate ? "~" : "";
-  return `${prefix}${factor.toFixed(1)}× Abo`;
+  return `${prefix}${factor.toFixed(1)}× plan`;
 }
 
 function localDayKey(ms: number): string {

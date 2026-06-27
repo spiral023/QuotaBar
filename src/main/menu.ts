@@ -106,10 +106,10 @@ function snapshotToMenuLines(displayName: string, snapshot: UsageSnapshot): stri
 }
 
 function formatCostFactorLine(cost: CostFactorResult): string {
-  if (cost.factor === null) return `  API-Äq: ${cost.label}`;
-  if (cost.apiCostUSD === 0 && !cost.isEstimate) return "  API-Äq: $0.00 (keine Daten)";
+  if (cost.factor === null) return `  API-equiv: ${cost.label}`;
+  if (cost.apiCostUSD === 0 && !cost.isEstimate) return "  API-equiv: $0.00 (no data)";
   const prefix = cost.isEstimate ? "~" : "";
-  return `  API-Äq: ${prefix}$${cost.apiCostUSD.toFixed(2)} (${cost.label})`;
+  return `  API-equiv: ${prefix}$${cost.apiCostUSD.toFixed(2)} (${cost.label})`;
 }
 
 function titleCase(value: string): string {
