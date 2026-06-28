@@ -366,6 +366,8 @@ export class DetailsWindowController {
         codexSessionsDirs:  getCodexSessionsDirs(),
         periodStartMs, windowDays, since, until, settings, cacheHitRate,
         eurUsdRates, fxEstimated,
+        logDir: getDebugLogDir(),
+        nowMs: Date.now(),
       }) as Promise<AnalyticsData>);
     });
 

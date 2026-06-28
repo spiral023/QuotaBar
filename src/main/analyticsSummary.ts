@@ -3,6 +3,7 @@ import type { ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import type { UsageSnapshot } from "../providers/types";
 import type { CodexTokenEvent } from "../pricing/codex-log-reader";
 import type { PlanChangePoint } from "../pricing/plan-cost";
+import type { PressureDist } from "../usage/windowHistory";
 
 export interface AnalyticsSummary {
   apiCostUSD: { claude: number; codex: number; total: number };
@@ -125,7 +126,7 @@ export interface AnalyticsData extends AnalyticsSummary {
   hourHeatmap: { hour: number; count: number; pct: number }[];
   weekdayDistribution: { day: number; label: string; count: number; pct: number }[];
   topActiveDays: { date: string; count: number; outputTokens: number }[];
-  fiveHourPeak: { maxOutputTokens: number; maxTotalTokens: number; peakWindowStart: string | null };
+  fiveHourPressure: { claude: PressureDist; codex: PressureDist };
   weeklySummary: WeeklyBucket[];
   costEfficiency: CostEfficiency;
   planChanges: PlanChangePoint[];
@@ -259,44 +260,6 @@ export function buildTopActiveDays(
     .map(([date, count]) => ({ date, count, outputTokens: outputByDate.get(date) ?? 0 }))
     .sort((a, b) => b.count - a.count)
     .slice(0, limit);
-}
-
-const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
-
-export function buildFiveHourPeak(
-  entries: ClaudeUsageEntry[],
-): { maxOutputTokens: number; maxTotalTokens: number; peakWindowStart: string | null } {
-  if (entries.length === 0) return { maxOutputTokens: 0, maxTotalTokens: 0, peakWindowStart: null };
-
-  const sorted = [...entries].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-  );
-  const timestamps = sorted.map(e => new Date(e.timestamp).getTime());
-
-  let maxOut = 0, maxTotal = 0, peakStart: string | null = null;
-  let left = 0, winOut = 0, winTotal = 0;
-
-  for (let right = 0; right < sorted.length; right++) {
-    const e = sorted[right];
-    winOut   += e.outputTokens;
-    winTotal += e.inputTokens + e.outputTokens + e.cacheReadTokens + e.cacheCreationTokens;
-
-    const rightMs = timestamps[right];
-    while (timestamps[left] < rightMs - FIVE_HOURS_MS) {
-      winOut   -= sorted[left].outputTokens;
-      winTotal -= sorted[left].inputTokens + sorted[left].outputTokens
-               + sorted[left].cacheReadTokens + sorted[left].cacheCreationTokens;
-      left++;
-    }
-
-    if (winOut > maxOut) {
-      maxOut   = winOut;
-      maxTotal = winTotal;
-      peakStart = sorted[left].timestamp;
-    }
-  }
-
-  return { maxOutputTokens: maxOut, maxTotalTokens: maxTotal, peakWindowStart: peakStart };
 }
 
 export interface WeeklyBucket {

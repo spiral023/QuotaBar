@@ -8,7 +8,7 @@ import {
   computeAvgSessionMinutes,
   buildDailyBuckets, buildSessionStats, buildTotalTokens,
   buildHourHeatmap, buildWeekdayDistribution, buildTopActiveDays,
-  buildFiveHourPeak, buildWeeklySummary, buildCostEfficiency, computeActiveHours,
+  buildWeeklySummary, buildCostEfficiency, computeActiveHours,
   localDayKey,
   type AnalyticsSummary, type AnalyticsData,
 } from "./analyticsSummary";
@@ -19,7 +19,7 @@ import { readBackfillDayRecords } from "../reports/backfill-reader";
 import { buildWeeklyProfile, computeWeeklyForecast, type WeeklyForecastResult } from "./weeklyForecast";
 import { readWeeklySeriesForProviders, type WindowBudgetSeries } from "./windowBudgetSeries";
 import { readWindowHistoryObservations } from "./windowHistoryReader";
-import { buildWindowHistory, type WindowHistoryEntry } from "../usage/windowHistory";
+import { buildWindowHistory, buildFiveHourPressure, type WindowHistoryEntry } from "../usage/windowHistory";
 import type { UsagePace } from "../usage/usagePace";
 import type { CurrentWindowUsage } from "../usage/windowBudgetRollup";
 
@@ -35,6 +35,8 @@ interface AnalyticsTaskInput {
   cacheHitRate: { claude: number; codex: number };
   eurUsdRates?: Record<string, number>;
   fxEstimated?: boolean;
+  logDir: string;   // NEW: snapshot debug logs for fivePct
+  nowMs: number;    // NEW: upper bound when `until` is absent
 }
 
 interface ModelsTaskInput {
@@ -178,7 +180,15 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
   const hourHeatmap       = buildHourHeatmap(claudeEntries);
   const weekdayDistribution = buildWeekdayDistribution(claudeEntries);
   const topActiveDays     = buildTopActiveDays(claudeEntries, claudeReport.rows, 5);
-  const fiveHourPeak      = buildFiveHourPeak(claudeEntries);
+  const pressureObs = await readWindowHistoryObservations(input.logDir);
+  const sinceMs = input.periodStartMs;
+  const untilMs = input.until
+    ? Date.parse(input.until) + 24 * 3600 * 1000
+    : input.nowMs;
+  const fiveHourPressure = {
+    claude: buildFiveHourPressure(pressureObs, sinceMs, untilMs, "claude"),
+    codex:  buildFiveHourPressure(pressureObs, sinceMs, untilMs, "codex"),
+  };
   const weeklySummary     = buildWeeklySummary(claudeReport.rows, codexReport.rows, claudeEntries, codexEvents);
   const costEfficiency    = buildCostEfficiency(claudeCost, totalTokens.claude.output, computeActiveHours(claudeEntries), claudePeriodSub);
 
@@ -189,7 +199,7 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     activeDays, avgSessionMinutes, cacheHitRate, sparkline7d, topModels,
     windowDays,
     dailyBuckets, sessionStats, totalTokens,
-    hourHeatmap, weekdayDistribution, topActiveDays, fiveHourPeak, weeklySummary, costEfficiency,
+    hourHeatmap, weekdayDistribution, topActiveDays, fiveHourPressure, weeklySummary, costEfficiency,
     planChanges,
   };
   return result;
