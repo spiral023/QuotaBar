@@ -989,12 +989,18 @@
       font-variant-numeric: tabular-nums; white-space: nowrap;
     }
 
-    .an-peak-hero {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums;
-      color: var(--t100); line-height: 1;
+    .an-pressure {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
     }
-    .an-peak-sub { font-size: 9px; color: var(--t400); margin: 3px 0 10px; }
+    .view-compact .an-pressure { grid-template-columns: 1fr; }
+    .an-pcol { min-width: 0; }
+    .an-pcol-head {
+      font-size: 10px; color: var(--t300); margin-bottom: 8px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .an-pcol-head b { color: var(--t100); font-weight: 600; }
+    .an-pcol-empty { font-size: 10px; color: var(--t400); padding: 12px 0; }
+    .an-pcol-worst { font-size: 9px; color: var(--t400); margin-top: 8px; }
     .an-threshold { display: flex; flex-direction: column; gap: 5px; }
     .an-threshold-row { display: flex; align-items: center; gap: 8px; }
     .an-threshold-lbl {

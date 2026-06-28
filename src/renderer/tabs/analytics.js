@@ -314,7 +314,7 @@ function _renderResults(data) {
     </div>
 
     <div class="an-section">
-      <div class="an-section-head"><span class="an-section-title">5H WINDOW PEAK (CLAUDE, ${winLabel})</span></div>
+      <div class="an-section-head"><span class="an-section-title">5H WINDOW PRESSURE (${winLabel})</span></div>
       <div id="an-peak"></div>
     </div>
 
@@ -359,7 +359,7 @@ function _renderResults(data) {
   _buildHourHeatmap(data);
   _buildWeekdayBars(data);
   _buildTopDays(data);
-  _buildFiveHourPeak(data);
+  _buildFiveHourPressure(data);
   _buildCostEfficiency(data);
   void _renderWindowHistory();
 }
@@ -895,40 +895,53 @@ function _buildTopDays(data) {
   `).join('') + '</div>';
 }
 
-const _FIVE_HOUR_THRESHOLDS = [
-  { label: '200k Output', limit: 200_000 },
-  { label: '500k Output', limit: 500_000 },
-  { label: '800k Output', limit: 800_000 },
+const _PRESSURE_BUCKETS = [
+  { key: 'crit', lbl: '>=90%', color: '#e55' },
+  { key: 'high', lbl: '75-90', color: '#f59830' },
+  { key: 'mid',  lbl: '50-75', color: '#b9d617' },
+  { key: 'low',  lbl: '25-50', color: '#52d017' },
+  { key: 'min',  lbl: '5-25',  color: '#3a8a2a' },
 ];
 
-function _buildFiveHourPeak(data) {
-  const el = document.getElementById('an-peak');
-  if (!el) return;
-  const peak = data.fiveHourPeak ?? { maxOutputTokens: 0, maxTotalTokens: 0, peakWindowStart: null };
-
-  const dateStr = peak.peakWindowStart
-    ? new Date(peak.peakWindowStart).toLocaleString('en-US', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
-    : '—';
-
-  const thresholdRows = _FIVE_HOUR_THRESHOLDS.map(t => {
-    const pct = Math.min(peak.maxOutputTokens / t.limit, 1);
-    const color = pct >= 1 ? '#e55' : pct >= 0.7 ? '#f59830' : '#52d017';
+function _pressureColumn(title, dist) {
+  if (!dist || dist.total === 0) {
+    return `
+      <div class="an-pcol">
+        <div class="an-pcol-head">${title}</div>
+        <div class="an-pcol-empty">Not enough window data yet</div>
+      </div>`;
+  }
+  const maxCount = Math.max(..._PRESSURE_BUCKETS.map(b => dist.buckets[b.key]), 1);
+  const rows = _PRESSURE_BUCKETS.map(b => {
+    const c = dist.buckets[b.key];
+    const w = Math.round((c / maxCount) * 100);
     return `
       <div class="an-threshold-row">
-        <span class="an-threshold-lbl">${QB.esc(t.label)}</span>
-        <div class="an-threshold-track">
-          <div class="an-threshold-fill" style="width:${(pct * 100).toFixed(1)}%;background:${color}"></div>
-        </div>
-        <span class="an-threshold-pct" style="color:${color}">${(pct * 100).toFixed(0)}%</span>
-      </div>
-    `;
+        <div class="an-threshold-lbl">${b.lbl}</div>
+        <div class="an-threshold-track"><div class="an-threshold-fill" style="width:${w}%;background:${b.color}"></div></div>
+        <div class="an-threshold-pct">${c}</div>
+      </div>`;
   }).join('');
+  const worst = dist.worst
+    ? `${Math.round(dist.worst.pct)}% · ${new Date(dist.worst.windowStart).toLocaleString('en-US', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+    : '—';
+  return `
+    <div class="an-pcol">
+      <div class="an-pcol-head">${title} · <b>${dist.hotCount}/${dist.total}</b> hot (&gt;=90%)</div>
+      <div class="an-threshold">${rows}</div>
+      <div class="an-pcol-worst">Worst ${QB.esc(worst)}</div>
+    </div>`;
+}
 
+function _buildFiveHourPressure(data) {
+  const el = document.getElementById('an-peak');
+  if (!el) return;
+  const p = data.fiveHourPressure ?? { claude: null, codex: null };
   el.innerHTML = `
-    <div class="an-peak-hero">${QB.fmtTokens(peak.maxOutputTokens)}</div>
-    <div class="an-peak-sub">Output tokens · Window: ${QB.esc(dateStr)} · Total ${QB.fmtTokens(peak.maxTotalTokens)}</div>
-    <div class="an-threshold">${thresholdRows}</div>
-  `;
+    <div class="an-pressure">
+      ${_pressureColumn('CLAUDE', p.claude)}
+      ${_pressureColumn('CODEX', p.codex)}
+    </div>`;
 }
 
 
