@@ -60,7 +60,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady()
     .then(async () => {
-      app.setAppUserModelId("com.quotabar.windows");
+      app.setAppUserModelId("win.quotabar.app");
       // quotabar://-Protokoll registrieren, damit Windows Toast-Aktivierungen an
       // diese App weiterleitet (Voraussetzung für funktionierende Toast-Buttons).
       if (process.platform === "win32") {
