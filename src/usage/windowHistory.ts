@@ -163,3 +163,71 @@ function buildEntry(provider: string, p: Period): WindowHistoryEntry {
 
   return { provider, weekStart, weekEnd, usedWindows, maxWindows, bonus };
 }
+
+/** Spitzen-fivePct, ab dem ein 5h-Fenster als „heiß" (throttling-nah) gilt. */
+export const PRESSURE_HOT_PCT = 90;
+
+export interface PressureDist {
+  buckets: { crit: number; high: number; mid: number; low: number; min: number };
+  total: number;     // aktive Fenster (Peak > USED_WINDOW_MIN_PCT)
+  hotCount: number;  // Fenster mit Peak >= PRESSURE_HOT_PCT (= buckets.crit)
+  worst: { pct: number; windowStart: string } | null;
+}
+
+/**
+ * Verteilung der Spitzen-Auslastung (fivePct) über die aktiven 5h-Fenster eines
+ * Anbieters im Zeitraum [sinceMs, untilMs]. Segmentiert nach fiveResetsAt; je
+ * Fenster zählt der Spitzenwert. Idle-Fenster (Peak <= 5 %) werden verworfen.
+ */
+export function buildFiveHourPressure(
+  observations: HistoryObservation[],
+  sinceMs: number,
+  untilMs: number,
+  provider: string,
+): PressureDist {
+  const buckets = { crit: 0, high: 0, mid: 0, low: 0, min: 0 };
+  let total = 0;
+  let worst: { pct: number; windowStart: string } | null = null;
+
+  const list = observations
+    .filter((o) => o.provider === provider)
+    .sort((a, b) => a.ts.localeCompare(b.ts));
+
+  let curReset: string | null | undefined;
+  let curPeak = 0;
+  let curStart: string | null = null;
+  let started = false;
+
+  const flush = (): void => {
+    if (!started || curStart === null) return;
+    const startMs = new Date(curStart).getTime();
+    if (!Number.isFinite(startMs) || startMs < sinceMs || startMs > untilMs) return;
+    if (curPeak <= USED_WINDOW_MIN_PCT) return;
+    total++;
+    if (curPeak >= 90) buckets.crit++;
+    else if (curPeak >= 75) buckets.high++;
+    else if (curPeak >= 50) buckets.mid++;
+    else if (curPeak >= 25) buckets.low++;
+    else buckets.min++;
+    if (!worst || curPeak > worst.pct) worst = { pct: curPeak, windowStart: curStart };
+  };
+
+  for (const o of list) {
+    if (!started) {
+      started = true;
+      curReset = o.fiveResetsAt;
+      curPeak = o.fivePct;
+      curStart = o.ts;
+    } else if (resetsAtChanged(curReset, o.fiveResetsAt)) {
+      flush();
+      curReset = o.fiveResetsAt;
+      curPeak = o.fivePct;
+      curStart = o.ts;
+    } else if (o.fivePct > curPeak) {
+      curPeak = o.fivePct;
+    }
+  }
+  flush();
+
+  return { buckets, total, hotCount: buckets.crit, worst };
+}

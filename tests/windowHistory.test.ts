@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWindowHistory,
+  buildFiveHourPressure,
   type HistoryObservation,
+  type PressureDist,
 } from "../src/usage/windowHistory";
 import { mergeWindowHistory, type WindowHistoryEntry } from "../src/usage/windowHistoryStore";
 
@@ -144,5 +146,90 @@ describe("mergeWindowHistory", () => {
   it("hält Anbieter mit gleichem weekEnd getrennt", () => {
     const merged = mergeWindowHistory([mk("claude", R1, 3)], [mk("codex", R1, 4)]);
     expect(merged).toHaveLength(2);
+  });
+});
+
+describe("buildFiveHourPressure", () => {
+  const SINCE = Date.parse("2026-06-01T00:00:00Z");
+  const UNTIL = Date.parse("2026-06-30T00:00:00Z");
+  const FA = "2026-06-02T05:00:00Z";
+  const FB = "2026-06-02T10:00:00Z";
+  const FC = "2026-06-02T15:00:00Z";
+
+  it("returns an empty distribution for no observations", () => {
+    const r = buildFiveHourPressure([], SINCE, UNTIL, "claude");
+    expect(r).toEqual<PressureDist>({
+      buckets: { crit: 0, high: 0, mid: 0, low: 0, min: 0 },
+      total: 0,
+      hotCount: 0,
+      worst: null,
+    });
+  });
+
+  it("segments by fiveResetsAt and buckets each window's peak", () => {
+    const data = [
+      obs("2026-06-02T00:30:00Z", 20, FA, 2, R1), // window A peak 95 -> crit
+      obs("2026-06-02T04:00:00Z", 95, FA, 5, R1),
+      obs("2026-06-02T05:30:00Z", 60, FB, 6, R1), // window B peak 60 -> mid
+      obs("2026-06-02T09:00:00Z", 40, FB, 9, R1),
+    ];
+    const r = buildFiveHourPressure(data, SINCE, UNTIL, "claude");
+    expect(r.total).toBe(2);
+    expect(r.buckets.crit).toBe(1);
+    expect(r.buckets.mid).toBe(1);
+    expect(r.hotCount).toBe(1);
+    expect(r.worst).toEqual({ pct: 95, windowStart: "2026-06-02T00:30:00Z" });
+  });
+
+  it("ignores windows whose peak is at or below 5%", () => {
+    const data = [
+      obs("2026-06-02T00:30:00Z", 3, FA, 1, R1),
+      obs("2026-06-02T04:00:00Z", 5, FA, 1, R1), // peak 5 -> not active
+    ];
+    const r = buildFiveHourPressure(data, SINCE, UNTIL, "claude");
+    expect(r.total).toBe(0);
+    expect(r.worst).toBeNull();
+  });
+
+  it("places boundary values in the upper bucket (>= semantics)", () => {
+    const data = [
+      obs("2026-06-02T00:30:00Z", 90, FA, 1, R1), // -> crit (>=90)
+      obs("2026-06-02T05:30:00Z", 75, FB, 1, R1), // -> high (>=75)
+      obs("2026-06-02T10:30:00Z", 50, FC, 1, R1), // -> mid  (>=50)
+    ];
+    const r = buildFiveHourPressure(data, SINCE, UNTIL, "claude");
+    expect(r.buckets).toEqual({ crit: 1, high: 1, mid: 1, low: 0, min: 0 });
+  });
+
+  it("excludes windows whose start falls outside [sinceMs, untilMs]", () => {
+    const data = [
+      obs("2026-05-15T00:30:00Z", 95, FA, 1, R1), // before SINCE
+      obs("2026-05-15T04:00:00Z", 95, FA, 1, R1),
+    ];
+    const r = buildFiveHourPressure(data, SINCE, UNTIL, "claude");
+    expect(r.total).toBe(0);
+  });
+
+  it("separates providers — only counts the requested provider's windows", () => {
+    const data = [
+      obs("2026-06-02T00:30:00Z", 95, FA, 1, R1, "claude"),
+      obs("2026-06-02T00:30:00Z", 80, FA, 1, R1, "codex"),
+    ];
+    const claude = buildFiveHourPressure(data, SINCE, UNTIL, "claude");
+    const codex = buildFiveHourPressure(data, SINCE, UNTIL, "codex");
+    expect(claude.total).toBe(1);
+    expect(claude.buckets.crit).toBe(1);
+    expect(codex.total).toBe(1);
+    expect(codex.buckets.high).toBe(1);
+  });
+
+  it("does not split a window when fiveResetsAt is null", () => {
+    const data = [
+      obs("2026-06-02T00:30:00Z", 30, null, 1, R1),
+      obs("2026-06-02T04:00:00Z", 70, null, 1, R1), // same window, peak 70 -> mid
+    ];
+    const r = buildFiveHourPressure(data, SINCE, UNTIL, "claude");
+    expect(r.total).toBe(1);
+    expect(r.buckets.mid).toBe(1);
   });
 });
