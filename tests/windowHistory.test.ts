@@ -168,7 +168,7 @@ describe("buildFiveHourPressure", () => {
 
   it("segments by fiveResetsAt and buckets each window's peak", () => {
     const data = [
-      obs("2026-06-02T00:30:00Z", 20, FA, 2, R1), // window A peak 95 -> crit
+      obs("2026-06-02T00:30:00Z", 20, FA, 2, R1), // window A, first obs (peak 95 reached at 04:00) -> crit
       obs("2026-06-02T04:00:00Z", 95, FA, 5, R1),
       obs("2026-06-02T05:30:00Z", 60, FB, 6, R1), // window B peak 60 -> mid
       obs("2026-06-02T09:00:00Z", 40, FB, 9, R1),
@@ -231,5 +231,18 @@ describe("buildFiveHourPressure", () => {
     const r = buildFiveHourPressure(data, SINCE, UNTIL, "claude");
     expect(r.total).toBe(1);
     expect(r.buckets.mid).toBe(1);
+  });
+
+  it("includes a window whose start is exactly at untilMs (inclusive upper bound)", () => {
+    const start = "2026-06-30T00:00:00.000Z";
+    const at = Date.parse(start);
+    const FX = "2026-06-30T05:00:00Z";
+    const data = [
+      obs(start, 95, FX, 1, R1),
+      obs("2026-06-30T01:00:00.000Z", 95, FX, 1, R1),
+    ];
+    const r = buildFiveHourPressure(data, at - 1000, at, "claude");
+    expect(r.total).toBe(1);
+    expect(r.buckets.crit).toBe(1);
   });
 });

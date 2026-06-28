@@ -183,7 +183,7 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
   const pressureObs = await readWindowHistoryObservations(input.logDir);
   const sinceMs = input.periodStartMs;
   const untilMs = input.until
-    ? Date.parse(input.until) + 24 * 3600 * 1000
+    ? new Date(`${input.until}T00:00:00`).getTime() + 24 * 3600 * 1000
     : input.nowMs;
   const fiveHourPressure = {
     claude: buildFiveHourPressure(pressureObs, sinceMs, untilMs, "claude"),

@@ -204,7 +204,7 @@ export function buildFiveHourPressure(
     if (!Number.isFinite(startMs) || startMs < sinceMs || startMs > untilMs) return;
     if (curPeak <= USED_WINDOW_MIN_PCT) return;
     total++;
-    if (curPeak >= 90) buckets.crit++;
+    if (curPeak >= PRESSURE_HOT_PCT) buckets.crit++;
     else if (curPeak >= 75) buckets.high++;
     else if (curPeak >= 50) buckets.mid++;
     else if (curPeak >= 25) buckets.low++;

@@ -907,7 +907,7 @@ function _pressureColumn(title, dist) {
   if (!dist || dist.total === 0) {
     return `
       <div class="an-pcol">
-        <div class="an-pcol-head">${title}</div>
+        <div class="an-pcol-head">${QB.esc(title)}</div>
         <div class="an-pcol-empty">Not enough window data yet</div>
       </div>`;
   }
@@ -927,7 +927,7 @@ function _pressureColumn(title, dist) {
     : '—';
   return `
     <div class="an-pcol">
-      <div class="an-pcol-head">${title} · <b>${dist.hotCount}/${dist.total}</b> hot (&gt;=90%)</div>
+      <div class="an-pcol-head">${QB.esc(title)} · <b>${dist.hotCount}/${dist.total}</b> hot (&gt;=90%)</div>
       <div class="an-threshold">${rows}</div>
       <div class="an-pcol-worst">Worst ${QB.esc(worst)}</div>
     </div>`;
