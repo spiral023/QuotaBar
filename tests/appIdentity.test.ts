@@ -119,4 +119,58 @@ describe("app identity", () => {
 
     fs.rmSync(appData, { recursive: true, force: true });
   });
+
+  it("labels the packaged portable build from the electron-builder portable environment", async () => {
+    setPlatform("win32");
+    vi.doMock("electron", () => ({
+      app: {
+        isPackaged: true,
+        getPath: vi.fn((name: string) => name === "exe" ? "C:\\Temp\\QuotaBar.exe" : ""),
+      },
+      shell: {},
+    }));
+
+    const { detectAppVariant } = await import("../src/main/appIdentity");
+
+    expect(detectAppVariant({
+      env: { PORTABLE_EXECUTABLE_DIR: "C:\\Tools\\QuotaBar" },
+    })).toEqual({ id: "portable", label: "Portable" });
+  });
+
+  it("labels packaged builds outside install locations as ZIP builds", async () => {
+    setPlatform("win32");
+    vi.doMock("electron", () => ({
+      app: {
+        isPackaged: true,
+        getPath: vi.fn((name: string) => name === "exe" ? "D:\\Downloads\\QuotaBar\\QuotaBar.exe" : ""),
+      },
+      shell: {},
+    }));
+
+    const { detectAppVariant } = await import("../src/main/appIdentity");
+
+    expect(detectAppVariant({
+      env: {
+        LOCALAPPDATA: "C:\\Users\\Asi\\AppData\\Local",
+        ProgramFiles: "C:\\Program Files",
+      },
+    })).toEqual({ id: "zip", label: "ZIP" });
+  });
+
+  it("labels packaged builds in known install locations as installed builds", async () => {
+    setPlatform("win32");
+    vi.doMock("electron", () => ({
+      app: {
+        isPackaged: true,
+        getPath: vi.fn((name: string) => name === "exe" ? "C:\\Users\\Asi\\AppData\\Local\\Programs\\QuotaBar\\QuotaBar.exe" : ""),
+      },
+      shell: {},
+    }));
+
+    const { detectAppVariant } = await import("../src/main/appIdentity");
+
+    expect(detectAppVariant({
+      env: { LOCALAPPDATA: "C:\\Users\\Asi\\AppData\\Local" },
+    })).toEqual({ id: "installed", label: "Installed" });
+  });
 });

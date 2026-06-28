@@ -8,6 +8,7 @@ import {
   getHomeDir,
   getLiteLLMModelPricesPath,
 } from "../config/paths";
+import type { AppVariantInfo } from "./appIdentity";
 
 export type SystemAgentStatus = "connected" | "detected" | "not_found";
 export type SystemPathKind = "file" | "folder";
@@ -19,6 +20,7 @@ export interface SystemDataContext {
   env?: Record<string, string | undefined>;
   now?: Date;
   quickStatsLoadDurationMs?: number | null;
+  appVariant?: AppVariantInfo;
 }
 
 export interface SystemDataPath {
@@ -59,6 +61,7 @@ export interface SystemDataCategory {
 
 export interface SystemAppData {
   name: "QuotaBar";
+  variant: AppVariantInfo;
   paths: SystemDataPath[];
   totals: SystemDataTotals;
 }
@@ -106,6 +109,7 @@ export async function collectSystemData(context: SystemDataContext = {}): Promis
   }));
   const app = {
     name: "QuotaBar" as const,
+    variant: context.appVariant ?? { id: "development" as const, label: "Development" },
     paths: await scanSpecs(buildAppSpecs(context)),
     totals: emptyTotals(),
   };

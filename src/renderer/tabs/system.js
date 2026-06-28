@@ -21,7 +21,7 @@ window.QB = window.QB || {};
     return _update;
   }
 
-  function updatePanelHtml(u) {
+  function updatePanelHtml(u, variant) {
     if (!u) return '';
     const map = {
       disabled: ['Development Build', 'Auto-updates are only active in the installed build.'],
@@ -35,11 +35,15 @@ window.QB = window.QB || {};
     const [title, sub] = map[u.status] || ['—', ''];
     const canCheck = u.status !== 'disabled' && u.status !== 'checking' && u.status !== 'downloading';
     const canInstall = u.status === 'ready';
+    const variantLabel = variant?.label || 'Unknown';
     return `
       <div class="sys-panel">
         <div class="sys-section-head">
           <span class="sys-section-title">Version & Updates</span>
-          <span class="sys-section-count">v${u.currentVersion}</span>
+          <span class="sys-section-count sys-version-meta">
+            <span>v${QB.esc(u.currentVersion)}</span>
+            <span class="sys-variant-badge">${QB.esc(variantLabel)}</span>
+          </span>
           <button class="sys-open-btn" id="sys-github-link" title="Open GitHub repository" aria-label="Open GitHub repository" style="margin-left:4px">
             ${githubIcon()}
           </button>
@@ -128,7 +132,7 @@ window.QB = window.QB || {};
 
     wrap.innerHTML = `
       <div class="${_animated ? '' : 'sys-stagger'}">
-        ${updatePanelHtml(_update)}
+        ${updatePanelHtml(_update, report.app?.variant)}
         <div class="sys-toolbar">
           <div class="sys-toolbar-main">
             <div class="sys-title">Local Agent &amp; App Data</div>

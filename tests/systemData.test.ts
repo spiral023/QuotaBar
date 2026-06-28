@@ -84,6 +84,17 @@ describe("collectSystemData", () => {
     expect(report.categories.find((c) => c.id === "config")?.fileCount).toBe(1);
   });
 
+  it("includes the QuotaBar distribution variant in app system data", async () => {
+    const report = await collectSystemData({
+      homeDir,
+      appConfigDir,
+      env: {},
+      appVariant: { id: "zip", label: "ZIP" },
+    });
+
+    expect(report.app.variant).toEqual({ id: "zip", label: "ZIP" });
+  });
+
   it("reports the scan duration as a performance metric", async () => {
     const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
 

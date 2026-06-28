@@ -13,6 +13,11 @@ vi.mock("electron", () => {
   };
   return {
     ipcMain,
+    app: {
+      isPackaged: false,
+      getVersion: vi.fn(() => "1.1.4"),
+      getPath: vi.fn(),
+    },
     BrowserWindow: class {},
     screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }) },
     Tray: class {},
@@ -51,12 +56,13 @@ describe("DetailsWindowController dashboard.refreshRequested", () => {
 });
 
 describe("DetailsWindowController system IPC", () => {
-  it("registers system data and path-opening handlers", () => {
+  it("registers app metadata, system data, and path-opening handlers", () => {
     new DetailsWindowController(() => null);
 
     const channels = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls
       .map((call: unknown[]) => call[0]);
 
+    expect(channels).toContain("app:meta");
     expect(channels).toContain("system:get");
     expect(channels).toContain("system:open-path");
   });

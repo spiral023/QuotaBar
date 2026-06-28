@@ -100,6 +100,8 @@
       document.getElementById('btn-pin').title = pinned ? 'Unpin window' : 'Keep window open';
     });
 
+    void loadAppChromeMeta();
+
     // ── Global buttons ───────────────────────────────────────────
 
     document.getElementById('btn-pin').addEventListener('click', () => {
@@ -261,6 +263,19 @@
     function render(snapshots) {
       _lastSnapshots = snapshots;
       QB.renderLive(snapshots);
+    }
+
+    async function loadAppChromeMeta() {
+      try {
+        const meta = await QB.ipc.invoke('app:meta');
+        const versionEl = document.getElementById('titlebar-version');
+        if (versionEl && meta?.version) {
+          versionEl.textContent = `v${meta.version}`;
+          versionEl.title = meta.variant?.label ? `${meta.variant.label} build` : '';
+        }
+      } catch (e) {
+        console.error('app:meta failed', e);
+      }
     }
 
     // ── Analytics Summary laden ──────────────────────────────────────

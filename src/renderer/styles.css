@@ -84,6 +84,16 @@
       text-transform: uppercase;
       color: var(--t100);
     }
+    .logo-version {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0;
+      color: var(--t400);
+      margin-left: -2px;
+      opacity: 0.78;
+      white-space: nowrap;
+    }
     .titlebar-btns {
       display: flex;
       align-items: center;
@@ -870,6 +880,18 @@
     .an-stat-tile:hover {
       border-color: var(--border-mid);
       background: var(--bg-card-hover, var(--bg-surface));
+    }
+    .an-stat-tip {
+      cursor: help;
+      outline: none;
+    }
+    .an-stat-tip:focus-visible {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 2px rgba(82,208,23,0.1);
+    }
+    .an-kpi-tooltip {
+      max-width: min(240px, calc(100vw - 12px));
+      text-wrap: pretty;
     }
     .an-stat-lbl {
       font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
@@ -2222,6 +2244,21 @@
     .sys-section-count {
       font-family: 'IBM Plex Mono', monospace; font-size: 9px;
       font-variant-numeric: tabular-nums; color: var(--t400);
+    }
+    .sys-version-meta {
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .sys-variant-badge {
+      padding: 2px 6px;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: var(--r-badge);
+      color: var(--t300);
+      background: rgba(255,255,255,0.035);
+      font-family: 'DM Sans', system-ui, sans-serif;
+      font-size: 8.5px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
     }
 
     .sys-agent-card {

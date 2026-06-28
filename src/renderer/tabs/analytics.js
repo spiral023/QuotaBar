@@ -31,6 +31,28 @@ let _hourClockResizeObserver = null;
 const ACTIVITY_HEAT_LOW = [38, 66, 79];
 const ACTIVITY_HEAT_HIGH = [125, 220, 196];
 
+const KPI_TOOLTIPS = {
+  'Active days': 'Number of days in the selected period with recorded activity, shown against all days in the period.',
+  'Cache hit': 'Share of reusable prompt input served from cache. In All mode this is weighted by provider input volume.',
+  'Avg session': 'Average tracked session length for the selected provider filter.',
+  'Sessions': 'Total number of tracked sessions in the selected period.',
+  'Ses/day': 'Average sessions per active day, excluding days without activity.',
+  'Total hours': 'Total tracked active session time in the selected period.',
+  'API cost': 'Estimated API-equivalent usage cost for the selected provider filter and period.',
+  'ROI': 'API-equivalent factor: estimated API cost divided by subscription cost for the selected provider filter.',
+  'Tokens': 'Input plus output tokens for the selected provider filter, excluding cache-read tokens.',
+  '$/1k output': 'API cost divided by output tokens, normalized to 1,000 output tokens.',
+  '$/hr (API)': 'Estimated API-equivalent cost divided by tracked active hours.',
+  '$/hr (sub)': 'Subscription cost allocated across tracked active hours.',
+  '$/session': 'Estimated API-equivalent cost divided by tracked sessions.',
+  'Out tok/hr': 'Output tokens generated per tracked active hour.',
+  'Tok/session': 'Input plus output tokens divided by tracked sessions.',
+};
+
+function _statTooltip(label) {
+  return KPI_TOOLTIPS[label] || '';
+}
+
 // Wählt aus einem ProviderTriple ({claude, codex, all}) die Sicht des aktuellen
 // globalen Toggles; fällt auf die "all"-Sicht bzw. den Fallback zurück.
 function _pick(triple, fallback) {
@@ -709,12 +731,70 @@ function _buildStats(data) {
     { lbl: 'Tokens',           val: QB.fmtTokens(tokens) },
   ];
 
-  grid.innerHTML = tiles.map(t => `
-    <div class="an-stat-tile">
+  grid.innerHTML = tiles.map(_statTileHtml).join('');
+  _bindAnalyticsStatTooltips(grid);
+}
+
+function _statTileHtml(t) {
+  const tip = _statTooltip(t.lbl);
+  const tipAttrs = tip
+    ? ` tabindex="0" aria-label="${QB.esc(`${t.lbl}: ${tip}`)}" data-an-tip="${QB.esc(tip)}"`
+    : '';
+  return `
+    <div class="an-stat-tile${tip ? ' an-stat-tip' : ''}"${tipAttrs}>
       <div class="an-stat-lbl">${QB.esc(t.lbl)}</div>
       <div class="an-stat-val" style="${t.color ? `color:${t.color}` : ''}">${QB.esc(String(t.val))}</div>
     </div>
-  `).join('');
+  `;
+}
+
+function _ensureAnalyticsTooltipEl() {
+  let tip = document.getElementById('an-kpi-tooltip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'an-kpi-tooltip';
+    tip.className = 'hr-kpi-tok-tip an-kpi-tooltip';
+    document.body.appendChild(tip);
+  }
+  return tip;
+}
+
+function _showAnalyticsTooltip(tip, anchor) {
+  tip.textContent = anchor.dataset.anTip || '';
+  const r = anchor.getBoundingClientRect();
+  tip.style.visibility = 'hidden';
+  tip.style.opacity = '0';
+  tip.classList.add('is-visible');
+  const tw = tip.offsetWidth;
+  const th = tip.offsetHeight;
+  tip.classList.remove('is-visible');
+  tip.style.visibility = '';
+  tip.style.opacity = '';
+
+  let left = r.left + r.width / 2 - tw / 2;
+  left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
+  let top = r.top - th - 9;
+  tip.style.transformOrigin = 'bottom center';
+  if (top < 6) { top = r.bottom + 9; tip.style.transformOrigin = 'top center'; }
+  tip.style.left = `${Math.round(left)}px`;
+  tip.style.top = `${Math.round(top)}px`;
+  tip.classList.add('is-visible');
+}
+
+function _hideAnalyticsTooltip(tip) {
+  tip.classList.remove('is-visible');
+}
+
+function _bindAnalyticsStatTooltips(root) {
+  const anchors = root.querySelectorAll('[data-an-tip]');
+  if (!anchors.length) return;
+  const tip = _ensureAnalyticsTooltipEl();
+  anchors.forEach(anchor => {
+    anchor.addEventListener('mouseenter', () => _showAnalyticsTooltip(tip, anchor));
+    anchor.addEventListener('mouseleave', () => _hideAnalyticsTooltip(tip));
+    anchor.addEventListener('focusin', () => _showAnalyticsTooltip(tip, anchor));
+    anchor.addEventListener('focusout', () => _hideAnalyticsTooltip(tip));
+  });
 }
 
 function _buildHourHeatmap(data) {
@@ -1001,12 +1081,8 @@ function _buildCostEfficiency(data) {
   tiles.push({ lbl: 'Tok/session', val: QB.fmtTokens(Math.round(eff.tokensPerSession ?? 0)) });
 
   elTiles.innerHTML = `<div class="an-stats-grid">` +
-    tiles.map(t => `
-      <div class="an-stat-tile">
-        <div class="an-stat-lbl">${QB.esc(t.lbl)}</div>
-        <div class="an-stat-val">${QB.esc(t.val)}</div>
-      </div>
-    `).join('') + '</div>';
+    tiles.map(_statTileHtml).join('') + '</div>';
+  _bindAnalyticsStatTooltips(elTiles);
 }
 
 // ── 5h-Fenster-Historie: ein Chart, beide Anbieter, umschaltbare Metrik ──────
@@ -1204,6 +1280,7 @@ function _fmtWin(n) {
 
 QB.__analyticsTest = {
   activityHeatColor: _activityHeatColor,
+  statTooltip: _statTooltip,
   visibleLineDatasets: _visibleLineDatasets,
   weekdayLabel: _weekdayLabel,
 };

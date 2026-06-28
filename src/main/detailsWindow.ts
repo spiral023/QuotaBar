@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "path";
 import { Worker } from "node:worker_threads";
-import { BrowserWindow, ipcMain, screen, Tray, clipboard, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, Tray, clipboard, shell } from "electron";
 import { UsageSnapshot } from "../providers/types";
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { log } from "./logging";
@@ -28,6 +28,7 @@ import { readDataSourceInfo } from "./dataSourceStatus";
 import { configureHttpProxy, getActiveProxyUrl, httpFetch } from "./httpClient";
 import { normalizeProxySettings, type ProxySettings } from "../config/settings";
 import { QuickStatsLoadMetric } from "./quickStatsLoadMetric";
+import { detectAppVariant } from "./appIdentity";
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -283,6 +284,11 @@ export class DetailsWindowController {
       return await loadSettings();
     });
 
+    ipcMain.handle("app:meta", () => ({
+      version: app.getVersion(),
+      variant: detectAppVariant(),
+    }));
+
     ipcMain.handle("settings:save", async (_, partial: Record<string, unknown>) => {
       const current = await loadSettings();
       const merged = {
@@ -457,7 +463,10 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("system:get", async () => {
-      return await collectSystemData({ quickStatsLoadDurationMs: this.quickStatsLoadMetric.valueMs });
+      return await collectSystemData({
+        quickStatsLoadDurationMs: this.quickStatsLoadMetric.valueMs,
+        appVariant: detectAppVariant(),
+      });
     });
 
     ipcMain.handle("shell:open-url", async (_, url: unknown) => {

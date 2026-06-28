@@ -7,6 +7,7 @@ type LineDataset = { label: string; data: number[] };
 
 function loadAnalyticsHelpers(): {
   activityHeatColor: (value: number, boost?: number) => string;
+  statTooltip: (label: string) => string;
   visibleLineDatasets: (provider: string, datasets: LineDataset[]) => LineDataset[];
   weekdayLabel: (day: { day?: number; label: string }) => string;
 } {
@@ -52,5 +53,12 @@ describe("analytics renderer helpers", () => {
 
     expect(helpers.weekdayLabel({ day: 0, label: "Sonntag" })).toBe("Sunday");
     expect(helpers.weekdayLabel({ day: 3, label: "Mittwoch" })).toBe("Wednesday");
+  });
+
+  it("exposes English explanations for activity and efficiency KPI tooltips", () => {
+    const helpers = loadAnalyticsHelpers();
+
+    expect(helpers.statTooltip("Active days")).toContain("days in the selected period");
+    expect(helpers.statTooltip("$/1k output")).toContain("API cost divided by output tokens");
   });
 });
