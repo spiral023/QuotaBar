@@ -18,7 +18,7 @@ let _from         = null;
 let _to           = null;
 let _lastData     = null;     // aktuell gerendertes AnalyticsData (für Chart-Toggles)
 let _chartMode    = 'cost';   // 'cost' | 'roi'
-let _lineProvider = 'all';    // 'all' | 'claude' | 'codex'
+let _provider     = 'all';    // globaler Provider-Toggle: 'all' | 'claude' | 'codex' — steuert ALLE provider-abhängigen Sektionen
 let _agg          = 'daily';  // 'daily' | 'weekly' | 'monthly' | 'hourly'
 let _hourlyBuckets = null;    // gecachte Stunden-Daten für den Linien-Chart
 const _cache      = new Map(); // `${from}:${to}` → AnalyticsData
@@ -30,6 +30,26 @@ let _hourClockResizeObserver = null;
 
 const ACTIVITY_HEAT_LOW = [38, 66, 79];
 const ACTIVITY_HEAT_HIGH = [125, 220, 196];
+
+// Wählt aus einem ProviderTriple ({claude, codex, all}) die Sicht des aktuellen
+// globalen Toggles; fällt auf die "all"-Sicht bzw. den Fallback zurück.
+function _pick(triple, fallback) {
+  if (!triple) return fallback;
+  const v = triple[_provider];
+  return v !== undefined && v !== null ? v : (triple.all ?? fallback);
+}
+
+// Re-rendert alle provider-abhängigen Sektionen mit den zuletzt geladenen Daten.
+function _applyProvider() {
+  if (!_lastData) return;
+  _buildLineChart(_lastData);
+  _buildStats(_lastData);
+  _buildHourHeatmap(_lastData);
+  _buildWeekdayBars(_lastData);
+  _buildTopDays(_lastData);
+  _buildFiveHourPressure(_lastData);
+  _buildCostEfficiency(_lastData);
+}
 
 function _activityHeatColor(t, boost = 0) {
   const v = Math.max(0, Math.min(1, t || 0));
@@ -182,6 +202,11 @@ function _buildControls(container) {
           <button class="hr-seg-btn${_agg === 'weekly'  ? ' active' : ''}" data-agg="weekly"  title="Weekly">Wk</button>
           <button class="hr-seg-btn${_agg === 'monthly' ? ' active' : ''}" data-agg="monthly" title="Monthly">Mo</button>
         </div>
+        <div class="hr-seg" id="an-provider-pills" role="group" aria-label="Provider">
+          <button class="hr-seg-btn${_provider === 'all' ? ' active' : ''}" data-prov="all">All</button>
+          <button class="hr-seg-btn hr-seg-claude${_provider === 'claude' ? ' active' : ''}" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
+          <button class="hr-seg-btn hr-seg-codex${_provider === 'codex' ? ' active' : ''}" data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
+        </div>
       </div>
     </div>
     <div id="an-results"></div>
@@ -224,6 +249,19 @@ function _buildControls(container) {
       _buildWindowHistoryChart();
     });
   });
+
+  // Globaler Provider-Toggle: steuert alle provider-abhängigen Sektionen.
+  // Lebt in der persistenten Controls-Leiste (nicht im neu gerenderten Ergebnis),
+  // daher Active-State manuell pflegen statt neu zu rendern.
+  container.querySelectorAll('#an-provider-pills .hr-seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('active')) return;
+      container.querySelectorAll('#an-provider-pills .hr-seg-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _provider = btn.dataset.prov;
+      _applyProvider();
+    });
+  });
 }
 
 async function _loadAndRender() {
@@ -259,11 +297,6 @@ function _renderResults(data) {
       <div class="an-section-head">
         <span class="an-section-title" id="an-line-title">${_lineTitle()}</span>
         <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
-          <div class="hr-seg" id="an-line-provider-pills" role="group" aria-label="Provider">
-            <button class="hr-seg-btn${_lineProvider === 'all' ? ' active' : ''}" data-prov="all">All</button>
-            <button class="hr-seg-btn hr-seg-claude${_lineProvider === 'claude' ? ' active' : ''}" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
-            <button class="hr-seg-btn hr-seg-codex${_lineProvider === 'codex' ? ' active' : ''}" data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
-          </div>
           <div class="mod-seg" id="an-ctype-pills">
             <button class="${_chartMode === 'cost' ? 'active' : ''}" data-ctype="cost">$</button>
             <button class="${_chartMode === 'roi'  ? 'active' : ''}" data-ctype="roi">ROI</button>
@@ -318,15 +351,9 @@ function _renderResults(data) {
       <div id="an-peak"></div>
     </div>
 
-    <div class="an-row2">
-      <div class="an-section">
-        <div class="an-section-head"><span class="an-section-title">COST EFFICIENCY</span></div>
-        <div id="an-cost-eff"></div>
-      </div>
-      <div class="an-section">
-        <div class="an-section-head"><span class="an-section-title">ROI BY SUBSCRIPTION TIER</span></div>
-        <div id="an-roi-tiers"></div>
-      </div>
+    <div class="an-section">
+      <div class="an-section-head"><span class="an-section-title">COST EFFICIENCY</span></div>
+      <div id="an-cost-eff"></div>
     </div>
 
     <div class="an-section">
@@ -518,7 +545,7 @@ function _buildLineChart(data) {
     },
   ];
 
-  const visibleDatasets = _visibleLineDatasets(_lineProvider, datasets);
+  const visibleDatasets = _visibleLineDatasets(_provider, datasets);
   _renderLineLegend(visibleDatasets);
 
   _lineChart = QB.charts.createLine(ctx, labels, visibleDatasets, { yFormat: isRoi ? 'roi' : 'cost', planChanges: changes });
@@ -563,16 +590,6 @@ function _renderNoPlanChip(show) {
 }
 
 function _bindLineToggles() {
-  document.querySelectorAll('#an-line-provider-pills .hr-seg-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (btn.classList.contains('active')) return;
-      document.querySelectorAll('#an-line-provider-pills .hr-seg-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      _lineProvider = btn.dataset.prov;
-      if (_lastData) _buildLineChart(_lastData);
-    });
-  });
-
   document.querySelectorAll('#an-ctype-pills button').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.classList.contains('active')) return;
@@ -649,28 +666,47 @@ function _buildStats(data) {
   const grid = document.getElementById('an-stats-grid');
   if (!grid) return;
 
-  const claudeCacheDen = (data.totalTokens?.claude?.input ?? 0) + (data.totalTokens?.claude?.cacheRead ?? 0);
-  const codexCacheDen = (data.totalTokens?.codex?.input ?? 0) + (data.totalTokens?.codex?.cached ?? 0);
-  const cacheWeightedDen = claudeCacheDen + codexCacheDen;
-  const cacheAvg = cacheWeightedDen > 0
-    ? (((data.cacheHitRate?.claude ?? 0) * claudeCacheDen) + ((data.cacheHitRate?.codex ?? 0) * codexCacheDen)) / cacheWeightedDen
-    : 0;
-  const totalIn   = (data.totalTokens?.claude?.input  ?? 0) + (data.totalTokens?.codex?.input  ?? 0);
-  const totalOut  = (data.totalTokens?.claude?.output ?? 0) + (data.totalTokens?.codex?.output ?? 0);
-  const roi       = data.roiFactor?.combined ?? 0;
+  const claudeTok = data.totalTokens?.claude ?? {};
+  const codexTok  = data.totalTokens?.codex  ?? {};
+  const claudeCacheDen = (claudeTok.input ?? 0) + (claudeTok.cacheRead ?? 0);
+  const codexCacheDen  = (codexTok.input ?? 0) + (codexTok.cached ?? 0);
 
-  const sessions = data.sessionStats ?? {};
+  // Cache-Hit folgt dem Provider-Toggle: einzeln pro Anbieter, bei "all"
+  // volumengewichteter Mittelwert (wie bisher).
+  let cacheRate;
+  if (_provider === 'claude')      cacheRate = data.cacheHitRate?.claude ?? 0;
+  else if (_provider === 'codex')  cacheRate = data.cacheHitRate?.codex ?? 0;
+  else {
+    const den = claudeCacheDen + codexCacheDen;
+    cacheRate = den > 0
+      ? (((data.cacheHitRate?.claude ?? 0) * claudeCacheDen) + ((data.cacheHitRate?.codex ?? 0) * codexCacheDen)) / den
+      : 0;
+  }
+
+  // API-Kosten, ROI und Token folgen ebenfalls dem Toggle.
+  const apiCost = _provider === 'all'
+    ? (data.apiCostUSD?.total ?? 0)
+    : (data.apiCostUSD?.[_provider] ?? 0);
+  const roi = _provider === 'all'
+    ? (data.roiFactor?.combined ?? 0)
+    : (data.roiFactor?.[_provider] ?? 0);
+  const tokensFor = (t) => (t?.input ?? 0) + (t?.output ?? 0);
+  const tokens = _provider === 'claude' ? tokensFor(claudeTok)
+               : _provider === 'codex'  ? tokensFor(codexTok)
+               : tokensFor(claudeTok) + tokensFor(codexTok);
+
+  const sessions = _pick(data.sessionStats, {});
 
   const tiles = [
     { lbl: 'Active days',      val: `${data.activeDays ?? 0}/${data.windowDays ?? 30}` },
-    { lbl: 'Cache hit',        val: `${(cacheAvg * 100).toFixed(1)}%` },
-    { lbl: 'Avg session',      val: `${sessions.avgMinutes ?? data.avgSessionMinutes ?? 0} min` },
+    { lbl: 'Cache hit',        val: `${(cacheRate * 100).toFixed(1)}%` },
+    { lbl: 'Avg session',      val: `${sessions.avgMinutes ?? 0} min` },
     { lbl: 'Sessions',         val: `${sessions.count ?? 0}` },
     { lbl: 'Ses/day',          val: `${sessions.sessionsPerActiveDay ?? 0}` },
     { lbl: 'Total hours',      val: `${sessions.totalHours ?? 0} h` },
-    { lbl: 'API cost',         val: `$${(data.apiCostUSD?.total ?? 0).toFixed(0)}`,   color: 'var(--t100)' },
-    { lbl: 'ROI',              val: `${roi.toFixed(1)}×`,                             color: QB.roiColor(roi) },
-    { lbl: 'Tokens',           val: QB.fmtTokens(totalIn + totalOut) },
+    { lbl: 'API cost',         val: `$${apiCost.toFixed(0)}`,   color: 'var(--t100)' },
+    { lbl: 'ROI',              val: `${roi.toFixed(1)}×`,       color: QB.roiColor(roi) },
+    { lbl: 'Tokens',           val: QB.fmtTokens(tokens) },
   ];
 
   grid.innerHTML = tiles.map(t => `
@@ -684,7 +720,7 @@ function _buildStats(data) {
 function _buildHourHeatmap(data) {
   const el = document.getElementById('an-hour-heatmap');
   if (!el) return;
-  const buckets = data.hourHeatmap ?? [];
+  const buckets = _pick(data.hourHeatmap, []);
   if (!buckets.length || buckets.every(b => b.count === 0)) {
     el.innerHTML = '<div style="color:var(--t400);font-size:10px;padding:4px 0">No data</div>';
     return;
@@ -858,7 +894,7 @@ function _initHourClock(wrap, canvas, tip, byHour, totalCount) {
 function _buildWeekdayBars(data) {
   const el = document.getElementById('an-weekday-bars');
   if (!el) return;
-  const dist = data.weekdayDistribution ?? [];
+  const dist = _pick(data.weekdayDistribution, []);
   el.innerHTML = dist.map(d => `
     <div class="an-wkday-row" style="--wk-pct:${(d.pct * 100).toFixed(1)}%">
       <span class="an-wkday-lbl">${QB.esc(_weekdayLabel(d))}</span>
@@ -878,7 +914,7 @@ function _weekdayLabel(d) {
 function _buildTopDays(data) {
   const el = document.getElementById('an-top-days');
   if (!el) return;
-  const days = data.topActiveDays ?? [];
+  const days = _pick(data.topActiveDays, []);
   if (!days.length) {
     el.innerHTML = '<div style="color:var(--t400);font-size:10px">No data</div>';
     return;
@@ -936,57 +972,41 @@ function _pressureColumn(title, dist) {
 function _buildFiveHourPressure(data) {
   const el = document.getElementById('an-peak');
   if (!el) return;
-  const p = data.fiveHourPressure ?? { claude: null, codex: null };
+  const dist  = _pick(data.fiveHourPressure, null);
+  const title = _provider === 'claude' ? 'CLAUDE' : _provider === 'codex' ? 'CODEX' : 'ALL PROVIDERS';
   el.innerHTML = `
     <div class="an-pressure">
-      ${_pressureColumn('CLAUDE', p.claude)}
-      ${_pressureColumn('CODEX', p.codex)}
+      ${_pressureColumn(title, dist)}
     </div>`;
 }
 
 
 function _buildCostEfficiency(data) {
   const elTiles = document.getElementById('an-cost-eff');
-  const elRoi   = document.getElementById('an-roi-tiers');
-  const eff = data.costEfficiency ?? { costPer1kOutputTokens: 0, costPerActiveHour: 0, subCostPerActiveHour: 0, roiByTier: [] };
+  if (!elTiles) return;
+  const eff = _pick(data.costEfficiency, {
+    costPer1kOutputTokens: 0, costPerActiveHour: 0, subCostPerActiveHour: 0,
+    costPerSession: 0, outputTokensPerActiveHour: 0, tokensPerSession: 0,
+  });
 
-  if (elTiles) {
-    const tiles = [
-      { lbl: '$/1k output',  val: `$${eff.costPer1kOutputTokens.toFixed(3)}` },
-      { lbl: '$/hr (API)',   val: `$${eff.costPerActiveHour.toFixed(2)}` },
-    ];
-    if (eff.subCostPerActiveHour > 0) {
-      tiles.push({ lbl: '$/hr (sub)', val: `$${eff.subCostPerActiveHour.toFixed(2)}` });
-    }
-    const cols = tiles.length === 3 ? '1fr 1fr 1fr' : '1fr 1fr';
-    elTiles.innerHTML = `<div class="an-stats-grid" style="grid-template-columns:${cols}">` +
-      tiles.map(t => `
-        <div class="an-stat-tile">
-          <div class="an-stat-lbl">${QB.esc(t.lbl)}</div>
-          <div class="an-stat-val">${QB.esc(t.val)}</div>
-        </div>
-      `).join('') + '</div>';
+  const tiles = [
+    { lbl: '$/1k output',  val: `$${(eff.costPer1kOutputTokens ?? 0).toFixed(3)}` },
+    { lbl: '$/hr (API)',   val: `$${(eff.costPerActiveHour ?? 0).toFixed(2)}` },
+  ];
+  if ((eff.subCostPerActiveHour ?? 0) > 0) {
+    tiles.push({ lbl: '$/hr (sub)', val: `$${eff.subCostPerActiveHour.toFixed(2)}` });
   }
+  tiles.push({ lbl: '$/session',   val: `$${(eff.costPerSession ?? 0).toFixed(2)}` });
+  tiles.push({ lbl: 'Out tok/hr',  val: QB.fmtTokens(Math.round(eff.outputTokensPerActiveHour ?? 0)) });
+  tiles.push({ lbl: 'Tok/session', val: QB.fmtTokens(Math.round(eff.tokensPerSession ?? 0)) });
 
-  if (elRoi) {
-    elRoi.innerHTML = `
-      <table class="an-roi-table">
-        <thead><tr><th>Sub</th><th>Price/mo</th><th>ROI</th></tr></thead>
-        <tbody>
-          ${(eff.roiByTier ?? []).map(t => {
-            const color = t.roi >= 5 ? '#52d017' : t.roi >= 1 ? '#f59830' : '#e55';
-            return `
-              <tr>
-                <td>${QB.esc(t.tier)}</td>
-                <td>$${t.price}</td>
-                <td style="color:${color}">${t.roi.toFixed(1)}×</td>
-              </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-    `;
-  }
+  elTiles.innerHTML = `<div class="an-stats-grid">` +
+    tiles.map(t => `
+      <div class="an-stat-tile">
+        <div class="an-stat-lbl">${QB.esc(t.lbl)}</div>
+        <div class="an-stat-val">${QB.esc(t.val)}</div>
+      </div>
+    `).join('') + '</div>';
 }
 
 // ── 5h-Fenster-Historie: ein Chart, beide Anbieter, umschaltbare Metrik ──────

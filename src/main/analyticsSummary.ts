@@ -5,6 +5,24 @@ import type { CodexTokenEvent } from "../pricing/codex-log-reader";
 import type { PlanChangePoint } from "../pricing/plan-cost";
 import type { PressureDist } from "../usage/windowHistory";
 
+// Provider-neutrale Aktivitäts-Sicht auf einen Usage-Eintrag. Sowohl Claude-
+// (project/session) als auch Codex-Events (directory→project) werden hierauf
+// gemappt, damit die zeit-/session-basierten Aggregationen für beide Anbieter
+// (und die kombinierte "all"-Sicht) dieselbe Logik nutzen können.
+export interface ActivityEntry {
+  timestamp: string;
+  project: string;   // bei "all" provider-präfixiert, damit Keys nicht kollidieren
+  session: string;
+  outputTokens: number;
+}
+
+// Eine pro-Anbieter aufgeschlüsselte Kennzahl plus kombinierte "all"-Sicht.
+export interface ProviderTriple<T> {
+  claude: T;
+  codex: T;
+  all: T;
+}
+
 export interface AnalyticsSummary {
   apiCostUSD: { claude: number; codex: number; total: number };
   subscriptionCostUSD: { claude: number; codex: number; total: number };
@@ -110,25 +128,27 @@ function getLast7Days(): string[] {
   return getLastNDays(7);
 }
 
+export interface SessionStats {
+  count: number;
+  avgMinutes: number;
+  totalHours: number;
+  sessionsPerActiveDay: number;
+}
+
 export interface AnalyticsData extends AnalyticsSummary {
   dailyBuckets: DailyBucket[];
-  sessionStats: {
-    count: number;
-    avgMinutes: number;
-    totalHours: number;
-    sessionsPerActiveDay: number;
-  };
+  sessionStats: ProviderTriple<SessionStats>;
   totalTokens: {
     claude: { input: number; output: number; cacheRead: number; cacheCreate: number };
     codex:  { input: number; output: number; cached: number };
   };
-  // Phase 3:
-  hourHeatmap: { hour: number; count: number; pct: number }[];
-  weekdayDistribution: { day: number; label: string; count: number; pct: number }[];
-  topActiveDays: { date: string; count: number; outputTokens: number }[];
-  fiveHourPressure: { claude: PressureDist; codex: PressureDist };
+  // Phase 3 — pro Anbieter + kombinierte "all"-Sicht, gesteuert vom Provider-Toggle:
+  hourHeatmap: ProviderTriple<{ hour: number; count: number; pct: number }[]>;
+  weekdayDistribution: ProviderTriple<{ day: number; label: string; count: number; pct: number }[]>;
+  topActiveDays: ProviderTriple<{ date: string; count: number; outputTokens: number }[]>;
+  fiveHourPressure: ProviderTriple<PressureDist>;
   weeklySummary: WeeklyBucket[];
-  costEfficiency: CostEfficiency;
+  costEfficiency: ProviderTriple<CostEfficiency>;
   planChanges: PlanChangePoint[];
 }
 
@@ -163,7 +183,7 @@ export function buildDailyBuckets(
 }
 
 export function buildSessionStats(
-  entries: ClaudeUsageEntry[],
+  entries: ActivityEntry[],
   activeDays: number,
 ): { count: number; avgMinutes: number; totalHours: number; sessionsPerActiveDay: number } {
   const sessions = new Map<string, { min: number; max: number; count: number }>();
@@ -222,7 +242,7 @@ export function buildTotalTokens(
 const WEEKDAY_LABELS = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
 
 export function buildHourHeatmap(
-  entries: ClaudeUsageEntry[],
+  entries: ActivityEntry[],
 ): { hour: number; count: number; pct: number }[] {
   const counts = new Array(24).fill(0) as number[];
   for (const e of entries) {
@@ -233,7 +253,7 @@ export function buildHourHeatmap(
 }
 
 export function buildWeekdayDistribution(
-  entries: ClaudeUsageEntry[],
+  entries: ActivityEntry[],
 ): { day: number; label: string; count: number; pct: number }[] {
   const counts = new Array(7).fill(0) as number[];
   for (const e of entries) {
@@ -246,8 +266,8 @@ export function buildWeekdayDistribution(
 }
 
 export function buildTopActiveDays(
-  entries: ClaudeUsageEntry[],
-  claudeRows: ReportRow[],
+  entries: ActivityEntry[],
+  rows: ReportRow[],
   limit: number,
 ): { date: string; count: number; outputTokens: number }[] {
   const countByDate = new Map<string, number>();
@@ -255,7 +275,10 @@ export function buildTopActiveDays(
     const d = localDayKey(e.timestamp); // lokaler Tag — passt zu den bucket-Keys aus dem Report-Layer
     countByDate.set(d, (countByDate.get(d) ?? 0) + 1);
   }
-  const outputByDate = new Map(claudeRows.map(r => [r.bucket, r.outputTokens]));
+  // Über Bucket summieren (statt überschreiben), damit die kombinierte "all"-
+  // Sicht mit claude+codex-Rows korrekte Output-Token pro Tag liefert.
+  const outputByDate = new Map<string, number>();
+  for (const r of rows) outputByDate.set(r.bucket, (outputByDate.get(r.bucket) ?? 0) + r.outputTokens);
   return Array.from(countByDate.entries())
     .map(([date, count]) => ({ date, count, outputTokens: outputByDate.get(date) ?? 0 }))
     .sort((a, b) => b.count - a.count)
@@ -314,7 +337,7 @@ const MIN_BLOCK_MS  = 60 * 1000;
 // Tatsächliche Arbeitszeit: Union aller Entry-Timestamps über alle Sessions
 // (parallele Sessions zählen nicht doppelt), aufgeteilt in Aktivitätsblöcke —
 // Idle-Lücken > 30 min zählen nicht als Arbeitszeit. Liefert ungerundete Stunden.
-export function computeActiveHours(entries: ClaudeUsageEntry[]): number {
+export function computeActiveHours(entries: ActivityEntry[]): number {
   if (entries.length === 0) return 0;
   const timestamps = entries
     .map(e => new Date(e.timestamp).getTime())
@@ -335,31 +358,39 @@ export function computeActiveHours(entries: ClaudeUsageEntry[]): number {
   return totalMs / 3_600_000;
 }
 
+// Effizienz-Kennzahlen eines einzelnen Anbieters (bzw. der kombinierten Sicht).
+// Generisch über Zahlen — der Worker ruft die Funktion je Anbieter mit dessen
+// Kosten/Token/Stunden/Sessions auf.
 export interface CostEfficiency {
   costPer1kOutputTokens: number;
   costPerActiveHour: number;
   subCostPerActiveHour: number;
-  roiByTier: { tier: string; price: number; roi: number }[]; // roi = apiCostUSD / tierPrice (how many times the plan price you've spent)
+  costPerSession: number;            // costUSD / sessions
+  outputTokensPerActiveHour: number; // outputTokens / activeHours
+  tokensPerSession: number;          // (input+output) tokens / sessions
 }
 
 export function buildCostEfficiency(
-  claudeCostUSD: number,
-  claudeOutputTokens: number,
+  costUSD: number,
+  outputTokens: number,
   activeHours: number,
-  claudePeriodSubCost = 0,
+  periodSubCost = 0,
+  sessionCount = 0,
+  totalTokens = 0, // input + output (cache excluded), consistent with the "Tokens" stat tile
 ): CostEfficiency {
   return {
-    costPer1kOutputTokens: claudeOutputTokens > 0
-      ? (claudeCostUSD / claudeOutputTokens) * 1000 : 0,
+    costPer1kOutputTokens: outputTokens > 0
+      ? (costUSD / outputTokens) * 1000 : 0,
     costPerActiveHour: activeHours > 0
-      ? claudeCostUSD / activeHours : 0,
-    subCostPerActiveHour: activeHours > 0 && claudePeriodSubCost > 0
-      ? claudePeriodSubCost / activeHours : 0,
-    roiByTier: [
-      { tier: "Claude Pro",      price: 20  },
-      { tier: "Claude Max",      price: 100 },
-      { tier: "Claude Max 200",  price: 200 },
-    ].map(t => ({ ...t, roi: t.price > 0 ? claudeCostUSD / t.price : 0 })),
+      ? costUSD / activeHours : 0,
+    subCostPerActiveHour: activeHours > 0 && periodSubCost > 0
+      ? periodSubCost / activeHours : 0,
+    costPerSession: sessionCount > 0
+      ? costUSD / sessionCount : 0,
+    outputTokensPerActiveHour: activeHours > 0
+      ? outputTokens / activeHours : 0,
+    tokensPerSession: sessionCount > 0
+      ? totalTokens / sessionCount : 0,
   };
 }
 

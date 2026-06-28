@@ -40,6 +40,9 @@ window.QB = window.QB || {};
         <div class="sys-section-head">
           <span class="sys-section-title">Version & Updates</span>
           <span class="sys-section-count">v${u.currentVersion}</span>
+          <button class="sys-open-btn" id="sys-github-link" title="Open GitHub repository" aria-label="Open GitHub repository" style="margin-left:4px">
+            ${githubIcon()}
+          </button>
         </div>
         <div class="sys-update-row" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0">
           <div>
@@ -356,6 +359,10 @@ window.QB = window.QB || {};
     wrap.querySelector('#sys-update-install')?.addEventListener('click', () => {
       void QB.ipc.invoke('update:quit-and-install');
     });
+
+    wrap.querySelector('#sys-github-link')?.addEventListener('click', () => {
+      void QB.ipc.invoke('shell:open-url', 'https://github.com/spiral023/QuotaBar');
+    });
   }
 
   function updateDeleteConfirmBtn(wrap) {
@@ -405,10 +412,10 @@ window.QB = window.QB || {};
       if (s.ok && s.source === 'live') { text = 'Downloaded'; color = 'var(--green)'; }
       else if (s.source === 'offline') { text = 'Offline mode'; color = '#9aa0a6'; }
       else { text = 'Fallback (download failed)'; color = '#e0a030'; }
-      const parts = [];
-      if (s.detail) parts.push(QB.esc(s.detail));
-      if (s.at) parts.push(`${s.ok && s.source === 'live' ? 'last refreshed' : 'last checked'} ${relativeTime(s.at)}`);
-      meta = parts.join(' · ');
+      const detailHtml = s.detail ? `<div class="sys-path-meta-detail">${QB.esc(s.detail)}</div>` : '';
+      const timeLabel = s.ok && s.source === 'live' ? 'last refreshed' : 'last checked';
+      const timeHtml = s.at ? `<div class="sys-path-meta-time">${timeLabel} ${relativeTime(s.at)}</div>` : '';
+      meta = detailHtml + timeHtml;
     }
     const openFile = sourceOpenFile(info);
     const title = s && s.error ? QB.esc(s.error) : (s && s.at ? formatDateTime(s.at) : '');
@@ -558,6 +565,19 @@ window.QB = window.QB || {};
     const hours = Math.round(min / 60);
     if (hours < 48) return `${hours} h`;
     return `${Math.round(hours / 24)} d`;
+  }
+
+  function githubIcon() {
+    return `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+        0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13
+        -.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66
+        .07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15
+        -.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27
+        c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12
+        .51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48
+        0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+    </svg>`;
   }
 
   function folderIcon() {

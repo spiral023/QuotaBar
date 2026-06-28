@@ -244,17 +244,6 @@ describe("buildCostEfficiency", () => {
     expect(buildCostEfficiency(10, 100_000, 0).costPerActiveHour).toBe(0);
   });
 
-  it("returns exactly 3 ROI tier entries", () => {
-    expect(buildCostEfficiency(200, 1_000_000, 10).roiByTier).toHaveLength(3);
-  });
-
-  it("computes ROI correctly for Pro tier", () => {
-    const r = buildCostEfficiency(200, 1_000_000, 10);
-    const pro = r.roiByTier.find(t => t.tier === "Claude Pro")!;
-    expect(pro.price).toBe(20);
-    expect(pro.roi).toBeCloseTo(10);
-  });
-
   it("computes subCostPerActiveHour from prorated subscription", () => {
     // $20/mo sub, prorated to 7 days = $20*7/30 ≈ $4.67; 10 active hours → ≈$0.467/h
     const r = buildCostEfficiency(50, 1_000_000, 10, 20 * 7 / 30);
@@ -271,6 +260,33 @@ describe("buildCostEfficiency", () => {
 
   it("backward-compatible: subCostPerActiveHour=0 when 4th arg omitted", () => {
     expect(buildCostEfficiency(10, 100_000, 5).subCostPerActiveHour).toBe(0);
+  });
+
+  it("computes costPerSession", () => {
+    const r = buildCostEfficiency(50, 1_000_000, 10, 0, 25);
+    expect(r.costPerSession).toBeCloseTo(2);
+  });
+
+  it("returns 0 costPerSession when sessionCount=0", () => {
+    expect(buildCostEfficiency(50, 1_000_000, 10).costPerSession).toBe(0);
+  });
+
+  it("computes outputTokensPerActiveHour", () => {
+    const r = buildCostEfficiency(50, 1_000_000, 10);
+    expect(r.outputTokensPerActiveHour).toBeCloseTo(100_000);
+  });
+
+  it("returns 0 outputTokensPerActiveHour when activeHours=0", () => {
+    expect(buildCostEfficiency(50, 1_000_000, 0).outputTokensPerActiveHour).toBe(0);
+  });
+
+  it("computes tokensPerSession from input+output total", () => {
+    const r = buildCostEfficiency(50, 1_000_000, 10, 0, 25, 5_000_000);
+    expect(r.tokensPerSession).toBeCloseTo(200_000);
+  });
+
+  it("returns 0 tokensPerSession when sessionCount=0", () => {
+    expect(buildCostEfficiency(50, 1_000_000, 10, 0, 0, 5_000_000).tokensPerSession).toBe(0);
   });
 });
 

@@ -54,6 +54,8 @@ export class NotificationService {
     } catch {
       // File doesn't exist yet or corrupt — start fresh
     }
+    const recent = this.notifLog.readRecent(50);
+    if (recent.length > 0) this.history.add(recent);
   }
 
   private savePersistedState(): void {

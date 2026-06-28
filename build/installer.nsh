@@ -1,6 +1,11 @@
 ; Custom NSIS script for QuotaBar — auto-included by electron-builder
 ; (default include path: build/installer.nsh).
 
+; Set the installer window title bar to "QuotaBar <version> Setup".
+!macro customHeader
+  Caption "QuotaBar ${VERSION} Setup"
+!macroend
+
 ; electron-builder's assisted installer shows no Welcome page by default,
 ; so the installerSidebar image would only appear on the Finish page.
 ; Adding the Welcome page here makes the sidebar visible right at the start

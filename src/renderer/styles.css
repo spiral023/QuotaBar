@@ -990,9 +990,8 @@
     }
 
     .an-pressure {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+      display: grid; grid-template-columns: 1fr; gap: 14px;
     }
-    .view-compact .an-pressure { grid-template-columns: 1fr; }
     .an-pcol { min-width: 0; }
     .an-pcol-head {
       font-size: 10px; color: var(--t300); margin-bottom: 8px;
@@ -1015,23 +1014,6 @@
       font-family: 'IBM Plex Mono', monospace; font-size: 10px;
       font-variant-numeric: tabular-nums; color: var(--t200);
     }
-
-    .an-roi-table { width: 100%; border-collapse: collapse; font-size: 10px; }
-    .an-roi-table th {
-      font-size: 8px; font-weight: 600; letter-spacing: 0.09em;
-      text-transform: uppercase; color: var(--t400);
-      padding: 3px 6px; text-align: left; border-bottom: 1px solid var(--border);
-    }
-    .an-roi-table th:last-child { text-align: right; }
-    .an-roi-table td {
-      padding: 5px 6px; color: var(--t200);
-      border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 10px;
-    }
-    .an-roi-table td:last-child {
-      font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums;
-      text-align: right;
-    }
-    .an-roi-table tr:last-child td { border-bottom: none; }
 
     /* ══ FOOTER ═════════════════════════════════════════════════ */
     .footer {
@@ -2309,7 +2291,7 @@
 
     .sys-path-list { display: flex; flex-direction: column; gap: 4px; }
     .sys-path-row {
-      display: grid; grid-template-columns: 118px minmax(0, 1fr) 74px 40px;
+      display: grid; grid-template-columns: 118px minmax(0, 1fr) 112px 40px;
       align-items: center; gap: 8px; min-height: 42px;
       background: var(--bg-surface); border: 1px solid var(--border);
       border-radius: var(--r-inner); padding: 6px 7px 6px 9px;
@@ -2327,9 +2309,12 @@
       color: var(--t300); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .sys-path-meta {
+      display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
       text-align: right; font-family: 'IBM Plex Mono', monospace; font-size: 9px;
       font-variant-numeric: tabular-nums; color: var(--t400);
     }
+    .sys-path-meta-detail { color: var(--t300); white-space: nowrap; }
+    .sys-path-meta-time { white-space: nowrap; }
     .sys-open-btn {
       position: relative; width: 32px; height: 28px;
       display: flex; align-items: center; justify-content: center;

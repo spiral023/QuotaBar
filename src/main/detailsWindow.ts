@@ -460,6 +460,13 @@ export class DetailsWindowController {
       return await collectSystemData({ quickStatsLoadDurationMs: this.quickStatsLoadMetric.valueMs });
     });
 
+    ipcMain.handle("shell:open-url", async (_, url: unknown) => {
+      const ALLOWED = new Set(["https://github.com/spiral023/QuotaBar"]);
+      if (typeof url !== "string" || !ALLOWED.has(url)) return { ok: false, error: "not_allowed" };
+      await shell.openExternal(url);
+      return { ok: true };
+    });
+
     ipcMain.handle("system:open-path", async (_, requestedPath: unknown) => {
       if (typeof requestedPath !== "string" || requestedPath.trim().length === 0) {
         return { ok: false, error: "invalid_path" };
