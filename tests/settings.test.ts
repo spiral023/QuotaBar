@@ -2,6 +2,11 @@ import { describe, it, expect } from "vitest";
 import { normalizeSettings, defaultSettings } from "../src/config/settings";
 
 describe("normalizeSettings costWindow", () => {
+  it("defaults refresh interval to 120 seconds", () => {
+    const result = normalizeSettings({ ...defaultSettings });
+    expect(result.pollIntervalSeconds).toBe(120);
+  });
+
   it("defaults to '30d'", () => {
     const result = normalizeSettings({ ...defaultSettings });
     expect(result.costWindow).toBe("30d");

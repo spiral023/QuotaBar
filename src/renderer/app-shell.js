@@ -80,7 +80,7 @@
       document.body.classList.toggle('view-compact',   data.viewMode !== 'dashboard');
       const s = await QB.ipc.invoke('settings:get');
       QB.settings = s;
-      pollIntervalSec = s.pollIntervalSeconds ?? 60;
+      pollIntervalSec = s.pollIntervalSeconds ?? 120;
       restartRefreshFuse();
       // Cost Window initialisieren
       const activeCostWindow = s.costWindow ?? '30d';
@@ -209,7 +209,7 @@
         applyProxyModeUI(['off', 'auto', 'manual'].includes(proxy.mode) ? proxy.mode : 'auto');
         QB.settings = s;
 
-        activePillVal = s.pollIntervalSeconds ?? 60;
+        activePillVal = s.pollIntervalSeconds ?? 120;
         const stdVals = [30, 60, 120, 300];
         const closest = stdVals.reduce((a, b) =>
           Math.abs(b - activePillVal) < Math.abs(a - activePillVal) ? b : a);

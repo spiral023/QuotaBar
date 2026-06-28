@@ -1,5 +1,6 @@
 import path from "node:path";
 import { app } from "electron";
+import { configureAppIdentity, ensureWindowsNotificationShortcut } from "./appIdentity";
 import { isFirstRun } from "../config/firstRun";
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { createProviderRegistry } from "../providers/providerRegistry";
@@ -14,6 +15,7 @@ import { DetailsWindowController } from "./detailsWindow";
 import { openOnboardingWindow } from "./onboardingWindow";
 import { initializeUpdater, setUpdateReadyCallback, quitAndInstall } from "./updater";
 import { NotificationService } from "./notifications";
+import { collectSystemData } from "./systemData";
 import { DebugRecorder } from "./debugRecorder";
 import { runBackfill, BACKFILL_REPAIR_VERSION } from "./debugBackfill";
 import { getRepairedVersion, setRepairedVersion } from "./backfillManifest";
@@ -37,6 +39,7 @@ interface CliOptions {
 
 const cli = parseCliArgs(process.argv.slice(2));
 initializeLogging(cli.debug);
+configureAppIdentity();
 
 // Wird in whenReady gesetzt, sobald der NotificationService existiert. Der
 // second-instance-Handler kann eine quotabar://-Aktivierung dann weiterreichen.
@@ -60,7 +63,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady()
     .then(async () => {
-      app.setAppUserModelId("win.quotabar.app");
+      ensureWindowsNotificationShortcut();
       // quotabar://-Protokoll registrieren, damit Windows Toast-Aktivierungen an
       // diese App weiterleitet (Voraussetzung für funktionierende Toast-Buttons).
       if (process.platform === "win32") {
@@ -152,10 +155,10 @@ if (!app.requestSingleInstanceLock()) {
       const notificationService = new NotificationService(settings.notifications);
       detailsWindow.setNotificationService(notificationService);
       notificationService.setActionHandlers({
-        openDashboard: () => detailsWindow.open(
+        openDashboard: (tab = "live") => detailsWindow.open(
           () => void refreshLoop.refreshNow("dashboard"),
           () => void refreshLoop.recomputeCost(),
-          { tab: "live" },
+          { tab },
         ),
         muteRule: async (ruleId: string) => {
           const current = await loadSettings();
@@ -175,6 +178,11 @@ if (!app.requestSingleInstanceLock()) {
       // Kaltstart über eine Toast: URL steht bereits in den Startargumenten.
       const initialUrl = findProtocolUrl(process.argv);
       if (initialUrl) onProtocolUrl(initialUrl);
+      void collectSystemData()
+        .then((report) => notificationService.sendMissingPlanAlerts(report, settings.plans))
+        .catch((err: unknown) => {
+          log.warn(`Missing-plan notification scan failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
         detailsWindow.notifyUpdate(snapshots);

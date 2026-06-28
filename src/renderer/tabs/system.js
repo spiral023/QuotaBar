@@ -132,7 +132,7 @@ window.QB = window.QB || {};
         <div class="sys-toolbar">
           <div class="sys-toolbar-main">
             <div class="sys-title">Local Agent &amp; App Data</div>
-            <div class="sys-sub">Scan: ${formatDateTime(report.generatedAt)} · Credential contents are not read</div>
+            <div class="sys-sub">Scan: ${formatDateTime(report.generatedAt)}</div>
           </div>
           <button class="sys-action secondary" id="sys-open-app" title="Open QuotaBar data folder">
             ${folderIcon()} App

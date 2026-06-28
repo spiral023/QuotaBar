@@ -442,6 +442,40 @@ describe("notification copy", () => {
     });
   });
 
+  it("rounds projected depletion ETA values in the notification reason", () => {
+    const pace = {
+      stage: "farAhead" as const,
+      deltaPercent: 20,
+      expectedUsedPercent: 50,
+      actualUsedPercent: 70,
+      etaSeconds: 1234.5678901234,
+      willLastToReset: false,
+    };
+    const rules = {
+      ...defaultNotificationSettings.rules,
+      projectedDepletion: {
+        ...defaultNotificationSettings.rules.projectedDepletion,
+        enabled: true,
+        cooldownMinutes: 0,
+        minEarlyMinutes: 5,
+      },
+    };
+    const now = new Date("2026-06-29T10:00:00.000Z");
+    const current = [snap("codex", [{
+      name: "fiveHour",
+      usedPercent: 70,
+      resetsAt: "2026-06-29T12:00:00.000Z",
+      pace,
+    }])];
+
+    const [event] = engine.evaluate({ current, previous: [], settings: { ...defaultNotificationSettings, rules }, now }, state);
+
+    expect(event).toMatchObject({
+      ruleId: "projectedDepletion",
+      reason: "etaSeconds=1235, minutesUntilReset=120",
+    });
+  });
+
   it("farBehind copy is window-aware and never says 'weekly' on a 5h window", () => {
     const pace = { stage: "farBehind" as const, deltaPercent: -20, expectedUsedPercent: 40, actualUsedPercent: 20, etaSeconds: null, willLastToReset: true };
     const prevPace = { stage: "onTrack" as const, deltaPercent: 0, expectedUsedPercent: 40, actualUsedPercent: 40, etaSeconds: null, willLastToReset: true };

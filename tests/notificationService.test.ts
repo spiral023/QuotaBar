@@ -71,6 +71,14 @@ describe("buildToastXml", () => {
     expect(xml).toContain('content="Mute"');
   });
 
+  it("can route the Open action to the Plans tab", () => {
+    const xml = buildToastXml({ ...event("codex", "Codex plan missing"), openTab: "plans" }, true);
+
+    expect(xml).toContain('launch="quotabar://open?tab=plans"');
+    expect(xml).toContain('arguments="quotabar://open?tab=plans"');
+    expect(xml).toContain("quotabar://mute?rule=highUsage");
+  });
+
   it("omits the actions block when no handlers are wired", () => {
     const xml = buildToastXml(event("codex", "Codex 5h: 82% used"), false);
     expect(xml).not.toContain("<actions>");

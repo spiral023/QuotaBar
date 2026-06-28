@@ -58,6 +58,7 @@ const RULE_GROUPS = [
   {
     label: 'Cost Efficiency',
     rules: [
+      { id: 'missingPlan',       sev: 'info',    label: 'Missing Plan',             tooltip: 'Local provider usage data exists, but no active subscription plan is configured for ROI calculation.' },
       { id: 'cacheHitDrop',        sev: 'watch',   label: 'Cache Hit Rate Dropped',  pending: true, tooltip: 'Prompt cache hit rate has dropped. Higher costs possible.' },
       { id: 'expensiveModelShare', sev: 'watch',   label: 'Expensive Models (Spike)', pending: true, tooltip: 'Sudden spike in expensive model usage (e.g. Opus).' },
       { id: 'roiMilestone',        sev: 'info',    label: 'ROI Milestone',            pending: true, tooltip: 'An ROI milestone was reached based on usage patterns.' },

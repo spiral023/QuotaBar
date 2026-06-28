@@ -58,8 +58,6 @@ QuotaBar sits in the Windows system tray, reads credentials and usage logs from 
 | Portable | **[quotabar-portable.sp23.online](https://quotabar-portable.sp23.online)** | Single `.exe`, no installation — update manually |
 | ZIP (locked-down PCs) | **[quotabar-zip.sp23.online](https://quotabar-zip.sp23.online)** | Plain folder — extract anywhere and run `QuotaBar for Windows.exe`. Use this when the portable `.exe` is blocked from running out of `%TEMP%`. |
 
-Prefer a specific version? Browse all releases on the [**Releases**](https://github.com/spiral023/QuotaBar/releases) page.
-
 1. Download the installer (or the portable build) from the links above.
 2. Run it — Windows may show a SmartScreen prompt since the app isn't signed; click **More info → Run anyway**.
 3. QuotaBar starts automatically and appears in the system tray.
@@ -89,7 +87,7 @@ flowchart LR
 
 ## Requirements
 
-**For end users (installer from Releases):**
+**For end users:**
 
 - Windows
 - Claude CLI login, Codex CLI login, or both
@@ -214,46 +212,7 @@ Weekly buckets start on Monday.
 
 ## Models Tab
 
-The Models tab breaks down token and cost data by individual model across your full history, combining backfill day records with live JSONL data.
-
-### KPI tiles
-
-| Tile | Description |
-| --- | --- |
-| Ø $/MTok effective | Total cost ÷ total tokens (all token types included), with period-over-period delta |
-| Active models | Number of distinct models used in the selected window |
-| Top by cost | Model with the highest USD spend and its share of total cost |
-| Top by output | Model with the most output tokens |
-| Price/performance | Model with the best benchmark score per dollar (requires benchmark data) |
-| Top-3 share | Cost concentration: combined share of the three most expensive models |
-
-### Model distribution chart
-
-100% stacked bar chart showing the relative share of each model over time. Controls:
-
-| Control | Options |
-| --- | --- |
-| Time window | 30D · 90D · All (ISO-week buckets for "All") |
-| Metric | Output · Input · Cache Read · Cache Creation · Total tokens · Cost |
-| Provider filter | All · Claude · Codex |
-
-The provider ribbon below the chart shows the Claude/Codex split per bucket at a glance.
-
-### Price vs. intelligence scatter
-
-Visible when benchmark data is present (`src/config/model-benchmarks.json`). Each model is plotted with effective $/MTok on the x-axis and the Artificial Analysis Intelligence Index score on the y-axis. Bubble size encodes cost share. Good-value models appear in the upper-left quadrant.
-
-### Model detail table
-
-Sortable table with one row per model. Columns: Input, Output, Cache Read, Cache Creation, Total tokens, Cost (USD), Effective $/MTok, Benchmark score, Score/$, Cost share %, Cache-hit rate, First used, Last used. Click any column header to sort.
-
-### Model adoption timeline
-
-Heatmap by month showing when each model was introduced and how its usage evolved. Cell opacity scales with output token volume relative to the model's peak month.
-
-### Cache efficiency panel
-
-Per-model cache-hit rate bar and estimated USD saved through cache reads (requires LiteLLM pricing data).
+The Models tab breaks down token and cost data by model across your full history. It includes KPI tiles, a model distribution chart, price/performance scatter, sortable model table, adoption timeline, and cache-efficiency summaries.
 
 ---
 
@@ -285,7 +244,7 @@ QuotaBar fires Windows toast notifications for quota and cost events. Rules are 
 | Quota window | Confirmed reset, unexpected reset, reset approaching, high / critical usage |
 | Pace & forecast | Projected depletion, burning too fast, burning too slow |
 | Historical usage | Fresh quota, quota idle, weekly reserve low, output spike, burn-rate spike |
-| Cost efficiency | Cache-hit rate drop, expensive model spike, ROI milestone |
+| Cost efficiency | Missing plan, cache-hit rate drop, expensive model spike, ROI milestone |
 | Data quality | Provider data stale / restored |
 
 All fired notifications are stored in the **Notifications** tab history with timestamps and full details.
@@ -300,41 +259,7 @@ subscription factor = API cost (USD) / (subscription cost (USD) × window_days /
 
 The factor is normalized to the selected cost window, so windows remain comparable. `1x` means API-equivalent cost matches the subscription cost for that period. `10x` means API-equivalent cost is ten times the subscription cost.
 
-Token details (input, output, cache creation, cache read, total) are shown per provider in the live view, scoped to the active cost window. The window label is visible directly in the Token Details toggle (e.g. `Token Details · 30d`).
-
-| Cost setting | Supported values |
-| --- | --- |
-| Claude cost mode | `auto`, `calculate`, `display` |
-| Codex speed mode | `auto`, `standard`, `fast` |
-| Cost window | `7d`, `30d`, `all` |
-| Pricing mode | Online LiteLLM pricing or offline mode |
-
-Claude cost modes:
-
-| Mode | Behavior |
-| --- | --- |
-| `auto` | Use `costUSD` from logs when present; calculate missing entries from tokens |
-| `calculate` | Calculate all entries from tokens and current pricing |
-| `display` | Show only `costUSD` values already present in logs |
-
-For Claude, all four token types contribute to cost: input (uncached), output, cache creation, and cache read — each at their own per-token price. For Codex, cached and uncached input are billed separately (cache-read pricing where available, input pricing as fallback).
-
-For the full calculation model, see [docs/how-quotabar-calculates.md](docs/how-quotabar-calculates.md).
-
-Settings are stored in `%USERPROFILE%\.quotabar-win\settings.json`:
-
-```jsonc
-{
-  "subscriptionCosts": {
-    "claude": 20,
-    "codex": 20
-  },
-  "pricingOfflineMode": false,
-  "costWindow": "30d"
-}
-```
-
-Older settings files may contain extra provider keys. QuotaBar ignores unsupported providers and writes only supported providers on save.
+Token details (input, output, cache creation, cache read, total) are shown per provider in the live view, scoped to the active cost window. For the full calculation model, see [docs/how-quotabar-calculates.md](docs/how-quotabar-calculates.md).
 
 ## Development
 
@@ -402,7 +327,7 @@ renderer/tabs/
 
 ## Release & Auto-Update
 
-Installed builds update automatically via GitHub Releases.
+Installed builds update automatically through GitHub Releases metadata.
 
 ### Publishing a release
 
@@ -414,8 +339,6 @@ git push --follow-tags   # triggers the release workflow
 ```
 
 Use `npm version minor` or `npm version major` for larger bumps.
-
-The GitHub Action (`release.yml`) runs on `windows-latest`, builds the NSIS installer, and publishes it directly as a GitHub Release (not a draft) together with `latest.yml`.
 
 Installed clients check for updates on startup and every 6 hours. An available update is downloaded silently and installed on the next app exit. The tray menu also shows "Update ready — restart now" when an update is waiting.
 

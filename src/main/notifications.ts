@@ -5,19 +5,21 @@ import { pathToFileURL } from "node:url";
 import { Notification } from "electron";
 import type { NotificationConstructorOptions } from "electron";
 import type { UsageSnapshot } from "../providers/types";
-import type { NotificationSettings } from "../config/settings";
+import type { NotificationSettings, PlanPeriod } from "../config/settings";
 import { NotificationEngine, NotificationStateStore } from "./notificationEngine";
-import type { NotificationEvent, PersistedNotificationState } from "./notificationEngine";
+import type { NotificationEvent, NotificationOpenTab, PersistedNotificationState } from "./notificationEngine";
 import { NotificationHistory } from "./notificationHistory";
 import { NotificationLog } from "./notificationLog";
 import { getNotificationStatePath } from "../config/paths";
 import { localISOString, log } from "./logging";
+import { buildMissingPlanNotifications } from "./missingPlanNotifications";
+import type { SystemDataReport } from "./systemData";
 
 export { NotificationEvent };
 
 export interface NotificationActionHandlers {
   /** Open or focus the dashboard on the Notifications tab. */
-  openDashboard: () => void;
+  openDashboard: (tab?: NotificationOpenTab) => void;
   /** Persist rules[ruleId].enabled = false and return the updated settings. */
   muteRule: (ruleId: string) => Promise<NotificationSettings>;
   /** Trigger an immediate app restart to apply a downloaded update. */
@@ -83,15 +85,18 @@ export class NotificationService {
 
     this.previous = snapshots;
 
-    for (const event of events) {
-      this.notifLog.write(event);
-      this.show(event);
-    }
+    this.emitEvents(events);
+  }
 
-    if (events.length > 0) {
-      this.history.add(events);
-      this.savePersistedState();
-    }
+  sendMissingPlanAlerts(report: SystemDataReport, plans: PlanPeriod[]): void {
+    const events = buildMissingPlanNotifications({
+      report,
+      plans,
+      settings: this.settings,
+      state: this.state,
+    });
+    if (events.length > 0) this.state.recordGlobalFired();
+    this.emitEvents(events);
   }
 
   sendUpdateReady(version: string): void {
@@ -146,6 +151,18 @@ export class NotificationService {
     notification.show();
   }
 
+  private emitEvents(events: NotificationEvent[]): void {
+    for (const event of events) {
+      this.notifLog.write(event);
+      this.show(event);
+    }
+
+    if (events.length > 0) {
+      this.history.add(events);
+      this.savePersistedState();
+    }
+  }
+
   private show(event: NotificationEvent): void {
     const withActions = this.actionHandlers != null;
     const notification = new Notification(
@@ -153,13 +170,13 @@ export class NotificationService {
         ? { toastXml: buildToastXml(event, withActions) }
         : buildNotificationOptions(event, withActions),
     );
-    notification.on("click", () => this.actionHandlers?.openDashboard());
+    notification.on("click", () => this.actionHandlers?.openDashboard(event.openTab));
     notification.on("action", (details, legacyIndex) => {
       // Newer Electron versions provide details.actionIndex; older versions pass
       // the index as the second argument.
       const fromDetails = (details as { actionIndex?: number } | undefined)?.actionIndex;
       const index = typeof fromDetails === "number" ? fromDetails : legacyIndex;
-      if (index === 0) this.actionHandlers?.openDashboard();
+      if (index === 0) this.actionHandlers?.openDashboard(event.openTab);
       else if (index === 1) void this.muteRuleFromNotification(event.ruleId);
     });
     notification.show();
@@ -170,6 +187,7 @@ export class NotificationService {
    * Called from the second-instance handler when the app is already running, or
    * from cold start with the protocol URL in process.argv.
    *   quotabar://open            -> open the dashboard
+   *   quotabar://open?tab=plans  -> open the dashboard on a specific tab
    *   quotabar://mute?rule=<id>  -> mute the rule without opening the dashboard
    */
   handleProtocolUrl(rawUrl: string): void {
@@ -196,7 +214,8 @@ export class NotificationService {
       if (version) this.actionHandlers?.dismissUpdate(version);
       return;
     }
-    this.actionHandlers?.openDashboard();
+    const tab = parseOpenTab(parsed.searchParams.get("tab"));
+    this.actionHandlers?.openDashboard(tab);
   }
 
   private async muteRuleFromNotification(ruleId: string): Promise<void> {
@@ -251,18 +270,19 @@ function escapeXml(value: string): string {
  */
 export function buildToastXml(event: NotificationEvent, withActions = false): string {
   const icon = getProviderLogoPath(event.provider);
+  const openArg = buildOpenProtocolUrl(event.openTab);
   const imageXml = icon
     ? `<image placement="appLogoOverride" src="${escapeXml(pathToFileURL(icon).href)}"/>`
     : "";
   const muteArg = `quotabar://mute?rule=${encodeURIComponent(event.ruleId)}`;
   const actionsXml = withActions
     ? `<actions>` +
-      `<action content="Open" activationType="protocol" arguments="quotabar://open"/>` +
+      `<action content="Open" activationType="protocol" arguments="${escapeXml(openArg)}"/>` +
       `<action content="Mute" activationType="protocol" arguments="${escapeXml(muteArg)}"/>` +
       `</actions>`
     : "";
   return (
-    `<toast activationType="protocol" launch="quotabar://open">` +
+    `<toast activationType="protocol" launch="${escapeXml(openArg)}">` +
     `<visual><binding template="ToastGeneric">` +
     imageXml +
     `<text>${escapeXml(event.title)}</text>` +
@@ -271,6 +291,18 @@ export function buildToastXml(event: NotificationEvent, withActions = false): st
     actionsXml +
     `</toast>`
   );
+}
+
+function buildOpenProtocolUrl(tab: NotificationOpenTab | undefined): string {
+  return tab ? `quotabar://open?tab=${encodeURIComponent(tab)}` : "quotabar://open";
+}
+
+function parseOpenTab(value: string | null): NotificationOpenTab | undefined {
+  return value === "live" || value === "analytics" || value === "models" ||
+    value === "notifications" || value === "history" || value === "plans" ||
+    value === "system"
+    ? value
+    : undefined;
 }
 
 export function buildTestToastXml(withActions = false): string {

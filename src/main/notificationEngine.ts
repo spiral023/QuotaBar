@@ -4,6 +4,7 @@ import type { PaceStage } from "../usage/usagePace";
 import { localISOString } from "./logging";
 
 export type NotificationSeverity = "info" | "watch" | "warning" | "critical";
+export type NotificationOpenTab = "live" | "analytics" | "models" | "notifications" | "history" | "plans" | "system";
 
 export interface NotificationEvent {
   ruleId: string;
@@ -14,6 +15,7 @@ export interface NotificationEvent {
   body: string;
   firedAt: string;
   reason: string;
+  openTab?: NotificationOpenTab;
 }
 
 export interface NotificationContext {
@@ -386,7 +388,7 @@ function evaluateWindowRules(
           title: `${cap1(snap.provider)} ${windowLabel(win.name)}: Quota will run out`,
           body: `At the current pace, quota will be depleted before reset.`,
           firedAt: localISOString(now),
-          reason: `etaSeconds=${win.pace.etaSeconds}, minutesUntilReset=${minutesUntilReset.toFixed(0)}`,
+          reason: `etaSeconds=${Math.round(win.pace.etaSeconds)}, minutesUntilReset=${minutesUntilReset.toFixed(0)}`,
         });
         state.recordFired("projectedDepletion", key);
       }

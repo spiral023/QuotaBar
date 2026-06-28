@@ -75,6 +75,7 @@ export interface NotificationRules {
   expensiveModelShare:      NotificationRuleBase & { thresholdPercent: number };
   roiMilestone:             NotificationRuleBase & { milestones: number[] };
   providerDataHealth:       NotificationRuleBase & { staleMinutes: number; notifyRecovered: boolean };
+  missingPlan:              NotificationRuleBase;
 }
 
 export interface NotificationSettings {
@@ -107,6 +108,7 @@ export const defaultNotificationRules: NotificationRules = {
   expensiveModelShare:      { enabled: false, cooldownMinutes: 1440, thresholdPercent: 10 },
   roiMilestone:             { enabled: false, cooldownMinutes: 10_080, milestones: [2, 5, 10] },
   providerDataHealth:       { enabled: false, cooldownMinutes: 60,   staleMinutes: 10, notifyRecovered: true },
+  missingPlan:              { enabled: true,  cooldownMinutes: 1440 },
 };
 
 export const defaultNotificationSettings: NotificationSettings = {
@@ -141,7 +143,7 @@ export interface Settings {
 }
 
 export const defaultSettings: Settings = {
-  pollIntervalSeconds: 60,
+  pollIntervalSeconds: 120,
   providerTimeoutMs: 10_000,
   plans: [],
   pricingOfflineMode: false,
@@ -268,6 +270,7 @@ export function normalizeNotificationSettings(
       expensiveModelShare:      mergeRule(d.rules.expensiveModelShare,      rawRules.expensiveModelShare as Partial<typeof d.rules.expensiveModelShare>),
       roiMilestone:             mergeRule(d.rules.roiMilestone,             rawRules.roiMilestone as Partial<typeof d.rules.roiMilestone>),
       providerDataHealth:       mergeRule(d.rules.providerDataHealth,       rawRules.providerDataHealth as Partial<typeof d.rules.providerDataHealth>),
+      missingPlan:              mergeRule(d.rules.missingPlan,              rawRules.missingPlan as Partial<typeof d.rules.missingPlan>),
     },
   };
 }
