@@ -1,7 +1,7 @@
 {
   "name": "quotabar",
-  "version": "1.1.1",
-  "description": "QuotaBar for Windows - Electron tray app for AI coding quota usage",
+  "version": "1.1.2",
+  "description": "QuotaBar - Electron tray app for AI coding quota usage",
   "main": "dist/main/main.js",
   "type": "commonjs",
   "scripts": {
@@ -20,7 +20,7 @@
     "codex",
     "claude"
   ],
-  "author": "",
+  "author": "Philipp Asanger",
   "license": "MIT",
   "dependencies": {
     "electron-log": "^5.2.4",

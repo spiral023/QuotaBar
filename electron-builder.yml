@@ -1,5 +1,5 @@
-appId: com.quotabar.windows
-productName: QuotaBar for Windows
+appId: win.quotabar.app
+productName: QuotaBar
 publish:
   provider: github
   owner: spiral023
@@ -36,7 +36,14 @@ nsis:
   artifactName: QuotaBar-${version}-setup.${ext}
   installerIcon: assets/icon.ico
   uninstallerIcon: assets/icon.ico
+  installerSidebar: logos/nsis_logo.bmp
+  uninstallerSidebar: logos/nsis_logo.bmp
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   license: LICENSE
+  # Tray-App ohne eigenes Fenster: "Run QuotaBar"-Checkbox auf der Finish-Seite
+  # vorausgewaehlt (User kann abwaehlen). Greift nur beim assisted installer.
+  runAfterFinish: true
+  # Daten-LOeschung wird im Deinstaller per Ja/Nein-Dialog abgefragt
+  # (siehe build/installer.nsh, Default = behalten).
