@@ -11,6 +11,7 @@ import {
   defaultSettings,
   normalizeSettings,
 } from "../src/config/settings";
+import { buildUpdateAvailableToastXml, RELEASES_URL } from "../src/main/notifications";
 import type { UsageSnapshot } from "../src/providers/types";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -544,5 +545,25 @@ describe("quiet hours", () => {
   it("treats invalid quiet-hours strings as not quiet", () => {
     expect(isQuietHours({ enabled: true, start: "bad", end: "08:00" }, new Date())).toBe(false);
     expect(isQuietHours({ enabled: true, start: "22:00", end: "bad" }, new Date())).toBe(false);
+  });
+});
+
+describe("buildUpdateAvailableToastXml (manual ZIP/Portable update)", () => {
+  it("points the body click at the GitHub releases page, not the app", () => {
+    const xml = buildUpdateAvailableToastXml("1.3.0", true);
+    expect(xml).toContain(`launch="${RELEASES_URL}"`);
+    expect(xml).toContain("QuotaBar 1.3.0 available");
+    // No silent download/install is implied for manual builds.
+    expect(xml).not.toContain("Restart");
+  });
+
+  it("offers an Open-GitHub action and a per-version dismiss", () => {
+    const xml = buildUpdateAvailableToastXml("1.3.0", true);
+    expect(xml).toContain(`content="Open GitHub" activationType="protocol" arguments="${RELEASES_URL}"`);
+    expect(xml).toContain("quotabar://update-dismiss?v=1.3.0");
+  });
+
+  it("omits actions when no handlers are wired", () => {
+    expect(buildUpdateAvailableToastXml("1.3.0", false)).not.toContain("<actions>");
   });
 });

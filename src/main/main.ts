@@ -1,6 +1,6 @@
 import path from "node:path";
-import { app } from "electron";
-import { configureAppIdentity, ensureWindowsNotificationShortcut } from "./appIdentity";
+import { app, shell } from "electron";
+import { configureAppIdentity, ensureWindowsNotificationShortcut, detectAppVariant } from "./appIdentity";
 import { isFirstRun } from "../config/firstRun";
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { createProviderRegistry } from "../providers/providerRegistry";
@@ -13,8 +13,8 @@ import { configureHttpProxy } from "./httpClient";
 import { TrayController } from "./tray";
 import { DetailsWindowController } from "./detailsWindow";
 import { openOnboardingWindow } from "./onboardingWindow";
-import { initializeUpdater, setUpdateReadyCallback, quitAndInstall } from "./updater";
-import { NotificationService } from "./notifications";
+import { initializeUpdater, setUpdateReadyCallback, setUpdateManualCallback, quitAndInstall } from "./updater";
+import { NotificationService, RELEASES_URL } from "./notifications";
 import { collectSystemData } from "./systemData";
 import { DebugRecorder } from "./debugRecorder";
 import { runBackfill, BACKFILL_REPAIR_VERSION } from "./debugBackfill";
@@ -172,6 +172,8 @@ if (!app.requestSingleInstanceLock()) {
         // "Later" suppresses the re-notification for this version only — the downloaded
         // update still installs silently on next quit (autoInstallOnAppQuit = true).
         dismissUpdate: (version: string) => notificationService.dismissUpdateVersion(version),
+        // ZIP/Portable: kein Auto-Update, daher Verweis auf die GitHub-Releases.
+        openReleasesPage: () => void shell.openExternal(RELEASES_URL),
       });
       // Toast-Aktivierungen (quotabar://…) an den NotificationService weiterreichen.
       onProtocolUrl = (url: string) => notificationService.handleProtocolUrl(url);
@@ -254,11 +256,18 @@ if (!app.requestSingleInstanceLock()) {
           app.quit();
         });
       });
+      // Nur die installierte Variante kann sich selbst aktualisieren. ZIP/Portable
+      // erhalten nur eine Benachrichtigung mit Verweis auf GitHub.
+      const appVariant = detectAppVariant();
       await initializeUpdater({
         onStateChange: (updateState) => tray.setUpdateState(updateState),
+        canAutoUpdate: appVariant.id === "installed",
       });
       setUpdateReadyCallback((version: string) => {
         notificationService.sendUpdateReady(version);
+      });
+      setUpdateManualCallback((version: string) => {
+        notificationService.sendUpdateAvailableManual(version);
       });
       log.info(`QuotaBar started; poll interval ${settings.pollIntervalSeconds}s; noWindow=${cli.noWindow}`);
     })

@@ -4,6 +4,8 @@
 window.QB = window.QB || {};
 
 (function () {
+  const RELEASES_URL = 'https://github.com/spiral023/QuotaBar/releases/latest';
+
   let _data = null;
   let _dataSources = null;
   let _loading = null;
@@ -30,11 +32,13 @@ window.QB = window.QB || {};
       available: [`Update ${u.newVersion || ''} found`, 'Downloading in the background…'],
       downloading: [`Downloading ${u.newVersion || ''}…`, `${u.downloadPercent}%`],
       ready: [`Update ${u.newVersion || ''} ready`, 'Will be installed on exit.'],
+      manual: [`Update ${u.newVersion || ''} available`, 'This build does not auto-update — download it from GitHub.'],
       error: ['Update error', u.error || ''],
     };
     const [title, sub] = map[u.status] || ['—', ''];
     const canCheck = u.status !== 'disabled' && u.status !== 'checking' && u.status !== 'downloading';
     const canInstall = u.status === 'ready';
+    const canDownload = u.status === 'manual';
     const variantLabel = variant?.label || 'Unknown';
     return `
       <div class="sys-panel">
@@ -58,6 +62,8 @@ window.QB = window.QB || {};
               style="min-height:28px;padding:0 10px;font-size:9.5px">Check for updates</button>
             ${canInstall ? `<button class="sys-action" id="sys-update-install"
               style="min-height:28px;padding:0 10px;font-size:9.5px">Restart now</button>` : ''}
+            ${canDownload ? `<button class="sys-action" id="sys-update-download"
+              style="min-height:28px;padding:0 10px;font-size:9.5px">Download on GitHub</button>` : ''}
           </div>
         </div>
       </div>`;
@@ -362,6 +368,10 @@ window.QB = window.QB || {};
 
     wrap.querySelector('#sys-update-install')?.addEventListener('click', () => {
       void QB.ipc.invoke('update:quit-and-install');
+    });
+
+    wrap.querySelector('#sys-update-download')?.addEventListener('click', () => {
+      void QB.ipc.invoke('shell:open-url', RELEASES_URL);
     });
 
     wrap.querySelector('#sys-github-link')?.addEventListener('click', () => {

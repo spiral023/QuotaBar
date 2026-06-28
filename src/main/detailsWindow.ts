@@ -470,7 +470,10 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("shell:open-url", async (_, url: unknown) => {
-      const ALLOWED = new Set(["https://github.com/spiral023/QuotaBar"]);
+      const ALLOWED = new Set([
+        "https://github.com/spiral023/QuotaBar",
+        "https://github.com/spiral023/QuotaBar/releases/latest",
+      ]);
       if (typeof url !== "string" || !ALLOWED.has(url)) return { ok: false, error: "not_allowed" };
       await shell.openExternal(url);
       return { ok: true };

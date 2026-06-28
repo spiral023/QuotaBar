@@ -278,6 +278,8 @@ npm install
 | `npm run build` | Compile TypeScript into `dist/` (required before running after TS changes) |
 | `npm test` | Run the Vitest test suite |
 | `npm run package` | Build Windows installer and portable artifacts into `package-output/` |
+| `npm run upload:ftp` | Upload artifacts from `package-output/` to the SFTP server (requires `.env`) |
+| `npm run release:local` | **Full local release** — `package` + `upload:ftp` in one step |
 
 ### What needs a restart?
 
@@ -335,10 +337,13 @@ Installed builds update automatically through GitHub Releases metadata.
 git checkout main
 git pull
 npm version patch        # bumps package.json, creates commit + tag vX.Y.Z
-git push --follow-tags   # triggers the release workflow
+git push --follow-tags   # triggers the GitHub release workflow
+npm run release:local    # builds artifacts locally and uploads them to the SFTP server
 ```
 
 Use `npm version minor` or `npm version major` for larger bumps.
+
+`git push --follow-tags` kicks off the GitHub Actions workflow that creates the GitHub Release and attaches the auto-update metadata. `npm run release:local` runs `npm run package` followed by `npm run upload:ftp` to publish the installer, portable, and ZIP to the SFTP server behind the stable download links. Both steps are required for a full release; they can run in parallel. SFTP credentials are read from a `.env` file — see `.env.example` for the required keys.
 
 Installed clients check for updates on startup and every 6 hours. An available update is downloaded silently and installed on the next app exit. The tray menu also shows "Update ready — restart now" when an update is waiting.
 

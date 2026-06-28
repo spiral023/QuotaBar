@@ -23,6 +23,12 @@ describe("reduceUpdateState", () => {
     expect(s.status).toBe("available");
     expect(s.newVersion).toBe("0.2.0");
   });
+  it("records a manual-only update (ZIP/Portable) without downloading", () => {
+    const s = reduceUpdateState(base, { type: "manual-available", version: "0.2.0" });
+    expect(s.status).toBe("manual");
+    expect(s.newVersion).toBe("0.2.0");
+    expect(s.downloadPercent).toBe(0);
+  });
   it("tracks download progress", () => {
     const s = reduceUpdateState(base, { type: "progress", percent: 42 });
     expect(s.status).toBe("downloading");

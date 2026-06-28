@@ -9,9 +9,20 @@ const START_DELAY_MS = 20_000; // App-Init nicht blockieren
 let state: UpdateUiState = initialUpdateState(app.getVersion(), false);
 let notifyStateChange: ((state: UpdateUiState) => void) | null = null;
 let onUpdateReady: ((version: string) => void) | null = null;
+let onUpdateManual: ((version: string) => void) | null = null;
+// ZIP/Portable können sich nicht selbst aktualisieren: nur benachrichtigen,
+// nicht herunterladen. Wird in initializeUpdater anhand der Variante gesetzt.
+let canAutoUpdate = true;
+// Verhindert, dass der periodische 6h-Check bei manuellen Builds dieselbe
+// Version wiederholt als Benachrichtigung auslöst.
+let lastManualNotifiedVersion: string | null = null;
 
 export function setUpdateReadyCallback(cb: (version: string) => void): void {
   onUpdateReady = cb;
+}
+
+export function setUpdateManualCallback(cb: (version: string) => void): void {
+  onUpdateManual = cb;
 }
 
 function apply(event: Parameters<typeof reduceUpdateState>[1]): void {
@@ -49,9 +60,10 @@ export function quitAndInstall(): void {
 }
 
 export async function initializeUpdater(
-  opts: { onStateChange?: (state: UpdateUiState) => void } = {},
+  opts: { onStateChange?: (state: UpdateUiState) => void; canAutoUpdate?: boolean } = {},
 ): Promise<void> {
   notifyStateChange = opts.onStateChange ?? null;
+  canAutoUpdate = opts.canAutoUpdate ?? true;
 
   // IPC-Handler IMMER registrieren, damit der System-Tab auch im Dev funktioniert.
   ipcMain.handle("update:get-state", () => state);
@@ -72,11 +84,25 @@ export async function initializeUpdater(
 
   state = initialUpdateState(app.getVersion(), true);
   autoUpdater.logger = updaterLogger;
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // ZIP/Portable: nur prüfen & benachrichtigen – kein Hintergrund-Download und
+  // kein stiller Install beim Beenden (würde ohnehin fehlschlagen).
+  autoUpdater.autoDownload = canAutoUpdate;
+  autoUpdater.autoInstallOnAppQuit = canAutoUpdate;
 
   autoUpdater.on("checking-for-update", () => apply({ type: "checking" }));
-  autoUpdater.on("update-available", (info) => apply({ type: "available", version: info.version }));
+  autoUpdater.on("update-available", (info) => {
+    if (canAutoUpdate) {
+      apply({ type: "available", version: info.version });
+      return;
+    }
+    // Manuelle Variante: Status auf "manual" setzen und – einmal pro Version –
+    // eine Benachrichtigung mit Verweis auf GitHub auslösen.
+    apply({ type: "manual-available", version: info.version });
+    if (lastManualNotifiedVersion !== info.version) {
+      lastManualNotifiedVersion = info.version;
+      onUpdateManual?.(info.version);
+    }
+  });
   autoUpdater.on("update-not-available", () => apply({ type: "not-available" }));
   autoUpdater.on("download-progress", (p) => apply({ type: "progress", percent: p.percent }));
   autoUpdater.on("update-downloaded", (info) => {

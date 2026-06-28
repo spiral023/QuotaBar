@@ -26,7 +26,12 @@ export interface NotificationActionHandlers {
   installUpdate: () => void;
   /** Suppress the update-ready notification for a specific version. */
   dismissUpdate: (version: string) => void;
+  /** Open the GitHub releases page so the user can download an update manually. */
+  openReleasesPage: () => void;
 }
+
+/** GitHub releases page used for manual downloads (ZIP/Portable builds). */
+export const RELEASES_URL = "https://github.com/spiral023/QuotaBar/releases/latest";
 
 const PROVIDER_LOGO_FILES: Record<string, string> = {
   claude: "claude.png",
@@ -121,6 +126,37 @@ export class NotificationService {
       const fromDetails = (details as { actionIndex?: number } | undefined)?.actionIndex;
       const index = typeof fromDetails === "number" ? fromDetails : legacyIndex;
       if (index === 0) this.actionHandlers?.installUpdate();
+      else if (index === 1) this.actionHandlers?.dismissUpdate(version);
+    });
+    notification.show();
+  }
+
+  /**
+   * Notify about a newer version for builds that cannot auto-update
+   * (ZIP/Portable). No download happens — the user is pointed to GitHub.
+   */
+  sendUpdateAvailableManual(version: string): void {
+    if (this.state.getDismissedUpdateVersion() === version) return;
+    const withActions = this.actionHandlers != null;
+    const notification = new Notification(
+      process.platform === "win32"
+        ? { toastXml: buildUpdateAvailableToastXml(version, withActions) }
+        : {
+            title: `QuotaBar ${version} available`,
+            body: "Download the new version from GitHub.",
+            ...(withActions
+              ? { actions: [
+                  { type: "button" as const, text: "Open GitHub" },
+                  { type: "button" as const, text: "Later" },
+                ] }
+              : {}),
+          },
+    );
+    notification.on("click", () => this.actionHandlers?.openReleasesPage());
+    notification.on("action", (details, legacyIndex) => {
+      const fromDetails = (details as { actionIndex?: number } | undefined)?.actionIndex;
+      const index = typeof fromDetails === "number" ? fromDetails : legacyIndex;
+      if (index === 0) this.actionHandlers?.openReleasesPage();
       else if (index === 1) this.actionHandlers?.dismissUpdate(version);
     });
     notification.show();
@@ -336,6 +372,30 @@ export function buildUpdateToastXml(version: string, withActions = false): strin
     `<visual><binding template="ToastGeneric">` +
     `<text>QuotaBar ${versionXml} ready to install</text>` +
     `<text>Restart now to apply the update.</text>` +
+    `</binding></visual>` +
+    actionsXml +
+    `</toast>`
+  );
+}
+
+export function buildUpdateAvailableToastXml(version: string, withActions = false): string {
+  const versionXml = escapeXml(version);
+  const releasesXml = escapeXml(RELEASES_URL);
+  const dismissArg = escapeXml(`quotabar://update-dismiss?v=${encodeURIComponent(version)}`);
+  // Both the body click and the "Open GitHub" button launch the https URL via
+  // protocol activation, so Windows opens the browser directly without routing
+  // through the app (no download is performed by QuotaBar).
+  const actionsXml = withActions
+    ? `<actions>` +
+      `<action content="Open GitHub" activationType="protocol" arguments="${releasesXml}"/>` +
+      `<action content="Later" activationType="protocol" arguments="${dismissArg}"/>` +
+      `</actions>`
+    : "";
+  return (
+    `<toast activationType="protocol" launch="${releasesXml}">` +
+    `<visual><binding template="ToastGeneric">` +
+    `<text>QuotaBar ${versionXml} available</text>` +
+    `<text>Download the new version from GitHub.</text>` +
     `</binding></visual>` +
     actionsXml +
     `</toast>`

@@ -1,5 +1,7 @@
 export interface UpdateUiState {
-  status: "disabled" | "idle" | "checking" | "available" | "downloading" | "ready" | "error";
+  // "manual": newer version found, but this build cannot auto-update
+  // (ZIP/Portable). The user must download it from GitHub.
+  status: "disabled" | "idle" | "checking" | "available" | "downloading" | "ready" | "manual" | "error";
   currentVersion: string;
   newVersion: string | null;
   downloadPercent: number;
@@ -9,6 +11,7 @@ export interface UpdateUiState {
 export type UpdateEvent =
   | { type: "checking" }
   | { type: "available"; version: string }
+  | { type: "manual-available"; version: string }
   | { type: "not-available" }
   | { type: "progress"; percent: number }
   | { type: "downloaded"; version: string }
@@ -33,6 +36,8 @@ export function reduceUpdateState(state: UpdateUiState, event: UpdateEvent): Upd
       return { ...state, status: "checking", error: null };
     case "available":
       return { ...state, status: "available", newVersion: event.version, error: null };
+    case "manual-available":
+      return { ...state, status: "manual", newVersion: event.version, error: null };
     case "not-available":
       return { ...state, status: "idle", newVersion: null };
     case "progress":
