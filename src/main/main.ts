@@ -15,7 +15,7 @@ import { DetailsWindowController } from "./detailsWindow";
 import { openOnboardingWindow } from "./onboardingWindow";
 import { initializeUpdater, setUpdateReadyCallback, setUpdateManualCallback, quitAndInstall } from "./updater";
 import { NotificationService, RELEASES_URL } from "./notifications";
-import { collectSystemData } from "./systemData";
+import { collectSystemData, discoverWslAgentRoots, formatSystemPathDiagnostics, formatWslDiscoveryDiagnostics } from "./systemData";
 import { DebugRecorder } from "./debugRecorder";
 import { runBackfill, BACKFILL_REPAIR_VERSION } from "./debugBackfill";
 import { getRepairedVersion, setRepairedVersion } from "./backfillManifest";
@@ -39,6 +39,7 @@ interface CliOptions {
 
 const cli = parseCliArgs(process.argv.slice(2));
 initializeLogging(cli.debug);
+log.info("--- QuotaBar session start ---");
 configureAppIdentity();
 
 // Wird in whenReady gesetzt, sobald der NotificationService existiert. Der
@@ -183,9 +184,25 @@ if (!app.requestSingleInstanceLock()) {
       const initialUrl = findProtocolUrl(process.argv);
       if (initialUrl) onProtocolUrl(initialUrl);
       void collectSystemData()
-        .then((report) => notificationService.sendMissingPlanAlerts(report, settings.plans))
+        .then((report) => {
+          const diagnostics = formatSystemPathDiagnostics(report, {
+            settings,
+            env: process.env,
+            platform: process.platform,
+          });
+          for (const line of diagnostics.info) log.info(line);
+          for (const line of diagnostics.debug) log.debug(line);
+          notificationService.sendMissingPlanAlerts(report, settings.plans);
+        })
         .catch((err: unknown) => {
           log.warn(`Missing-plan notification scan failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      void discoverWslAgentRoots()
+        .then((discovery) => {
+          for (const line of formatWslDiscoveryDiagnostics(discovery)) log.info(line);
+        })
+        .catch((err: unknown) => {
+          log.warn(`WSL discovery failed: ${err instanceof Error ? err.message : String(err)}`);
         });
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);

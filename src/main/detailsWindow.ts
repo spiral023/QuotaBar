@@ -21,7 +21,13 @@ import type { NotificationService } from "./notifications";
 import type { DebugRecorder } from "./debugRecorder";
 import { AsyncResultCache } from "./asyncResultCache";
 import { PersistentWorkerClient } from "./workerClient";
-import { collectSystemData, findOpenableSystemPath, suggestClaudeRoots, suggestCodexHomes } from "./systemData";
+import {
+  collectSystemData,
+  findOpenableSystemPath,
+  formatWslSuggestionDiagnostics,
+  suggestClaudeRoots,
+  suggestCodexHomes,
+} from "./systemData";
 import { sharedFxFetcher } from "../pricing/fx-fetcher";
 import { planChangePoints } from "../pricing/plan-cost";
 import { readDataSourceInfo } from "./dataSourceStatus";
@@ -298,6 +304,12 @@ export class DetailsWindowController {
       };
       await saveSettings(merged);
       log.info("Settings saved via dashboard");
+      if (Object.prototype.hasOwnProperty.call(partial, "claudeRoots")) {
+        log.info(`Settings saved via dashboard: claudeRoots=${formatPathListForLog(partial.claudeRoots)}`);
+      }
+      if (Object.prototype.hasOwnProperty.call(partial, "codexHomes")) {
+        log.info(`Settings saved via dashboard: codexHomes=${formatPathListForLog(partial.codexHomes)}`);
+      }
       // Re-apply proxy settings without a restart when Network settings change.
       if (Object.prototype.hasOwnProperty.call(partial, "proxy")) {
         const fresh = await loadSettings();
@@ -471,11 +483,15 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("system:codex-homes:suggest", async () => {
-      return await suggestCodexHomes();
+      const suggestions = await suggestCodexHomes();
+      for (const line of formatWslSuggestionDiagnostics("Codex homes", suggestions)) log.info(line);
+      return suggestions;
     });
 
     ipcMain.handle("system:claude-roots:suggest", async () => {
-      return await suggestClaudeRoots();
+      const suggestions = await suggestClaudeRoots();
+      for (const line of formatWslSuggestionDiagnostics("Claude roots", suggestions)) log.info(line);
+      return suggestions;
     });
 
     ipcMain.handle("shell:open-url", async (_, url: unknown) => {
@@ -594,6 +610,12 @@ function normalizeCostWindow(value: unknown): CostWindow | null {
 function formatSeconds(durationMs: number): string {
   const seconds = Math.max(0, durationMs) / 1000;
   return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)}s`;
+}
+
+function formatPathListForLog(value: unknown): string {
+  if (!Array.isArray(value)) return "[]";
+  const paths = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  return paths.length ? `[${paths.join(", ")}]` : "[]";
 }
 
 // Datumsbereich für den Analytics-Tab. Akzeptiert ein konkretes {since, until}

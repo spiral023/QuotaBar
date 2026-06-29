@@ -22,6 +22,7 @@ const execFileAsync = promisify(execFile);
 
 export type SystemAgentStatus = "connected" | "detected" | "not_found";
 export type SystemPathKind = "file" | "folder";
+export type SystemPathSource = "env" | "settings" | "default";
 export type SystemDataCategoryId = "logs" | "credentials" | "config" | "cache";
 
 export interface SystemDataContext {
@@ -46,6 +47,8 @@ export interface SystemDataPath {
   totalBytes: number;
   lastModifiedAt: string | null;
   openPath: string | null;
+  source?: SystemPathSource;
+  active?: boolean;
 }
 
 export interface SystemAgentData {
@@ -104,12 +107,36 @@ export interface ClaudeRootSuggestion {
   hasProjects: boolean;
 }
 
+export interface SystemPathDiagnosticsOptions {
+  settings?: {
+    claudeRoots?: string[];
+    codexHomes?: string[];
+  };
+  env?: Record<string, string | undefined>;
+  platform?: string;
+  homeDir?: string;
+}
+
+export interface SystemPathDiagnostics {
+  info: string[];
+  debug: string[];
+}
+
+export interface WslAgentDiscovery {
+  platform: string;
+  available: boolean;
+  distros: string[];
+  claudeRoots: ClaudeRootSuggestion[];
+  codexHomes: CodexHomeSuggestion[];
+}
+
 interface PathSpec {
   id: string;
   label: string;
   category: SystemDataCategoryId;
   kind: SystemPathKind;
   path: string;
+  source?: SystemPathSource;
 }
 
 const CATEGORY_LABELS: Record<SystemDataCategoryId, string> = {
@@ -124,7 +151,7 @@ export async function collectSystemData(context: SystemDataContext = {}): Promis
   const generatedAt = (context.now ?? new Date()).toISOString();
   const agentSpecs = buildAgentSpecs(context);
   const agents = await Promise.all(agentSpecs.map(async (agent) => {
-    const paths = await scanSpecs(agent.paths);
+    const paths = markActiveAgentPaths(agent.id, await scanSpecs(agent.paths));
     return {
       id: agent.id,
       name: agent.name,
@@ -169,10 +196,38 @@ export function findOpenableSystemPath(report: SystemDataReport, requestedPath: 
 
 export async function suggestCodexHomes(): Promise<CodexHomeSuggestion[]> {
   if (process.platform !== "win32") return [];
-  const suggestions: CodexHomeSuggestion[] = [];
-  const seen = new Set<string>();
+  const hosts = ["\\\\wsl.localhost", "\\\\wsl$"];
+  return scanCodexWslHomes(await listWslDistros(hosts), hosts);
+}
+
+export async function suggestClaudeRoots(): Promise<ClaudeRootSuggestion[]> {
+  if (process.platform !== "win32") return [];
+  const hosts = ["\\\\wsl.localhost", "\\\\wsl$"];
+  return scanClaudeWslRoots(await listWslDistros(hosts), hosts);
+}
+
+export async function discoverWslAgentRoots(platform = process.platform): Promise<WslAgentDiscovery> {
+  if (platform !== "win32") {
+    return { platform, available: false, distros: [], claudeRoots: [], codexHomes: [] };
+  }
   const hosts = ["\\\\wsl.localhost", "\\\\wsl$"];
   const distros = await listWslDistros(hosts);
+  const [claudeRoots, codexHomes] = await Promise.all([
+    scanClaudeWslRoots(distros, hosts),
+    scanCodexWslHomes(distros, hosts),
+  ]);
+  return {
+    platform,
+    available: distros.length > 0,
+    distros,
+    claudeRoots,
+    codexHomes,
+  };
+}
+
+async function scanCodexWslHomes(distros: string[], hosts: string[]): Promise<CodexHomeSuggestion[]> {
+  const suggestions: CodexHomeSuggestion[] = [];
+  const seen = new Set<string>();
   for (const host of hosts) {
     for (const distro of distros) {
       const homeRoot = path.win32.join(host, distro, "home");
@@ -203,12 +258,9 @@ export async function suggestCodexHomes(): Promise<CodexHomeSuggestion[]> {
   return suggestions;
 }
 
-export async function suggestClaudeRoots(): Promise<ClaudeRootSuggestion[]> {
-  if (process.platform !== "win32") return [];
+async function scanClaudeWslRoots(distros: string[], hosts: string[]): Promise<ClaudeRootSuggestion[]> {
   const suggestions: ClaudeRootSuggestion[] = [];
   const seen = new Set<string>();
-  const hosts = ["\\\\wsl.localhost", "\\\\wsl$"];
-  const distros = await listWslDistros(hosts);
   for (const host of hosts) {
     for (const distro of distros) {
       const homeRoot = path.win32.join(host, distro, "home");
@@ -241,12 +293,73 @@ export async function suggestClaudeRoots(): Promise<ClaudeRootSuggestion[]> {
   return suggestions;
 }
 
+export function formatSystemPathDiagnostics(
+  report: SystemDataReport,
+  options: SystemPathDiagnosticsOptions = {},
+): SystemPathDiagnostics {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const settings = options.settings ?? {};
+  const info = [
+    `Agent path summary: ${report.agents.map((agent) => `${agent.name} ${agent.status}`).join(", ")}`,
+    `Agent paths: platform=${platform} home=${options.homeDir ?? getHomeDir()} scan=${report.scanDurationMs}ms`,
+    `Agent paths: settings claudeRoots=${formatPathList(settings.claudeRoots)} codexHomes=${formatPathList(settings.codexHomes)} env CLAUDE_CONFIG_DIR=${env.CLAUDE_CONFIG_DIR?.trim() ? "set" : "unset"} CODEX_HOME=${env.CODEX_HOME?.trim() ? "set" : "unset"}`,
+  ];
+  const debug: string[] = [];
+
+  for (const agent of report.agents) {
+    const activeCredential = agent.paths.find((item) => item.category === "credentials" && item.active);
+    if (activeCredential) {
+      info.push(
+        `Agent paths: ${agent.name} liveAuth=${activeCredential.path} source=${activeCredential.source ?? "unknown"} status=${activeCredential.exists ? "exists" : "missing"}`,
+      );
+    }
+    const logPaths = agent.paths.filter((item) => item.category === "logs" && item.exists);
+    info.push(
+      `Agent paths: ${agent.name} sessions included=${logPaths.length} files=${logPaths.reduce((sum, item) => sum + item.fileCount, 0)} size=${formatBytes(logPaths.reduce((sum, item) => sum + item.totalBytes, 0))}`,
+    );
+    for (const item of agent.paths) {
+      debug.push(
+        `Agent path: ${agent.name} ${item.label} ${item.exists ? "exists" : "missing"} source=${item.source ?? "unknown"} active=${item.active === true} files=${item.fileCount} size=${formatBytes(item.totalBytes)} path=${item.path}`,
+      );
+    }
+  }
+  return { info, debug };
+}
+
+export function formatWslSuggestionDiagnostics(
+  label: string,
+  suggestions: Array<CodexHomeSuggestion | ClaudeRootSuggestion>,
+  platform = process.platform,
+): string[] {
+  if (platform !== "win32") return [`WSL discovery: ${label} skipped platform=${platform}`];
+  if (suggestions.length === 0) return [`WSL discovery: ${label} found=0`];
+  return [
+    `WSL discovery: ${label} found=${suggestions.length}`,
+    ...suggestions.map((item) =>
+      `WSL discovery: ${label} ${item.label} ${formatSuggestionFlags(item)} path=${item.path}`,
+    ),
+  ];
+}
+
+export function formatWslDiscoveryDiagnostics(discovery: WslAgentDiscovery): string[] {
+  if (discovery.platform !== "win32") {
+    return [`WSL discovery: skipped platform=${discovery.platform}`];
+  }
+  const distros = discovery.distros.filter(isUserWslDistro);
+  return [
+    `WSL discovery: available=${distros.length > 0} distros=${formatPathList(distros)}`,
+    ...formatWslSuggestionDiagnostics("Claude roots", discovery.claudeRoots, discovery.platform),
+    ...formatWslSuggestionDiagnostics("Codex homes", discovery.codexHomes, discovery.platform),
+  ];
+}
+
 async function listWslDistros(hosts: string[]): Promise<string[]> {
   const names = new Set<string>();
   for (const host of hosts) {
     try {
       for (const name of await fs.readdir(host)) {
-        if (name && !name.startsWith(".")) names.add(name);
+        if (isUserWslDistro(name)) names.add(name);
       }
     } catch {
       // Some Windows builds allow direct distro UNC access but not host listing.
@@ -259,12 +372,20 @@ async function listWslDistros(hosts: string[]): Promise<string[]> {
       : String(stdout);
     for (const line of text.split(/\r?\n/)) {
       const name = line.replace(/^\uFEFF/, "").trim();
-      if (name && !name.includes("docker-desktop-data")) names.add(name);
+      if (isUserWslDistro(name)) names.add(name);
     }
   } catch {
     // WSL is optional; manual paths still work when discovery is unavailable.
   }
   return [...names];
+}
+
+function isUserWslDistro(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  return normalized.length > 0
+    && !normalized.startsWith(".")
+    && normalized !== "docker-desktop"
+    && normalized !== "docker-desktop-data";
 }
 
 function buildAgentSpecs(context: SystemDataContext): Array<{
@@ -280,16 +401,27 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
   const savedCodexHomes = context.codexHomes ?? (context.homeDir || context.appConfigDir || context.env ? [] : getConfiguredCodexHomes());
   const pathContext = { homeDir: home, env, claudeRoots: savedClaudeRoots, codexHomes: savedCodexHomes };
   const claudeRootCandidates = getClaudeRootCandidates(pathContext);
+  const claudeSources = buildRootSources(
+    parseConfiguredPathList(env.CLAUDE_CONFIG_DIR, home),
+    savedClaudeRoots,
+    [path.join(home, ".claude"), path.join(home, ".config", "claude")],
+  );
   const claudeRoots = uniquePaths([...getClaudeRoots(pathContext), ...claudeRootCandidates]);
   const claudeCredentialPaths = uniquePaths([
     ...getClaudeCredentialPaths(pathContext),
     ...claudeRootCandidates.map((root) => path.join(root, ".credentials.json")),
   ]);
+  const claudeConfigs = uniquePaths(claudeRootCandidates.map((root) => path.join(root, "settings.json")));
   const claudeProjects = uniquePaths([
     ...getClaudeProjectsDirs(pathContext),
     ...claudeRootCandidates.map((root) => path.join(root, "projects")),
   ]);
   const codexHomeCandidates = getCodexHomeCandidates(pathContext);
+  const codexSources = buildRootSources(
+    parseConfiguredPathList(env.CODEX_HOME, home),
+    savedCodexHomes,
+    [path.join(home, ".codex")],
+  );
   const codexHomes = uniquePaths([...getCodexHomes(pathContext), ...codexHomeCandidates]);
   const codexSessions = uniquePaths([
     ...getCodexSessionsDirs(pathContext),
@@ -313,6 +445,15 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
           category: "credentials" as const,
           kind: "file" as const,
           path: credentialsPath,
+          source: sourceForRoot(path.dirname(credentialsPath), claudeSources),
+        })),
+        ...claudeConfigs.map((configPath, index) => ({
+          id: `claude-config-${index + 1}`,
+          label: claudeConfigs.length > 1 ? `Config ${index + 1}` : "Config",
+          category: "config" as const,
+          kind: "file" as const,
+          path: configPath,
+          source: sourceForRoot(path.dirname(configPath), claudeSources),
         })),
         ...claudeProjects.map((projectDir, index) => ({
           id: `claude-projects-${index + 1}`,
@@ -320,6 +461,7 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
           category: "logs" as const,
           kind: "folder" as const,
           path: projectDir,
+          source: sourceForRoot(path.dirname(projectDir), claudeSources),
         })),
       ],
     },
@@ -335,6 +477,7 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
           category: "credentials" as const,
           kind: "file" as const,
           path: path.join(codexHome, "auth.json"),
+          source: sourceForRoot(codexHome, codexSources),
         })),
         ...codexConfigs.map((configPath, index) => ({
           id: `codex-config-${index + 1}`,
@@ -342,6 +485,7 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
           category: "config" as const,
           kind: "file" as const,
           path: configPath,
+          source: sourceForRoot(path.dirname(configPath), codexSources),
         })),
         ...codexSessions.map((sessionsDir, index) => ({
           id: `codex-sessions-${index + 1}`,
@@ -349,6 +493,7 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
           category: "logs" as const,
           kind: "folder" as const,
           path: sessionsDir,
+          source: sourceForRoot(path.dirname(sessionsDir), codexSources),
         })),
       ],
     },
@@ -537,4 +682,72 @@ function uniquePaths(paths: string[]): string[] {
 function pathKey(value: string): string {
   const resolved = path.resolve(value);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function markActiveAgentPaths(agentId: string, paths: SystemDataPath[]): SystemDataPath[] {
+  const next = paths.map((item) => ({ ...item, active: false }));
+  if (agentId === "claude") {
+    const credential = next.find((item) => item.category === "credentials" && item.exists);
+    if (credential) credential.active = true;
+    return next;
+  }
+  if (agentId === "codex") {
+    const credential = next.find((item) => item.category === "credentials");
+    if (credential) credential.active = true;
+    return next;
+  }
+  return next;
+}
+
+function parseConfiguredPathList(value: string | undefined, homeDir: string): string[] {
+  if (!value?.trim()) return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const expanded = item.replace(/^~(?=$|[\\/])/, homeDir);
+      if (process.platform === "win32" && /^\\\\/.test(expanded)) return path.win32.normalize(expanded);
+      return path.resolve(expanded);
+    });
+}
+
+function buildRootSources(
+  envRoots: string[],
+  settingsRoots: string[],
+  defaultRoots: string[],
+): Map<string, SystemPathSource> {
+  const sources = new Map<string, SystemPathSource>();
+  for (const root of defaultRoots) sources.set(pathKey(root), "default");
+  for (const root of settingsRoots) sources.set(pathKey(root), "settings");
+  for (const root of envRoots) sources.set(pathKey(root), "env");
+  return sources;
+}
+
+function sourceForRoot(root: string, sources: Map<string, SystemPathSource>): SystemPathSource {
+  return sources.get(pathKey(root)) ?? "default";
+}
+
+function formatPathList(paths: string[] | undefined): string {
+  if (!paths || paths.length === 0) return "[]";
+  return `[${paths.join(", ")}]`;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function formatSuggestionFlags(item: CodexHomeSuggestion | ClaudeRootSuggestion): string {
+  if ("hasAuth" in item) {
+    return `auth=${item.hasAuth ? "yes" : "no"} sessions=${item.hasSessions ? "yes" : "no"}`;
+  }
+  return `credentials=${item.hasCredentials ? "yes" : "no"} projects=${item.hasProjects ? "yes" : "no"}`;
 }

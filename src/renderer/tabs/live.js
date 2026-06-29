@@ -128,6 +128,19 @@ function providerIconHtml(provider) {
   return `<div class="${cls}"><img class="prov-logo" src="${src}" alt="" aria-hidden="true" draggable="false"></div>`;
 }
 
+function effectiveUsageWindow(fiveH, weekly) {
+  const windows = [fiveH, weekly].filter(w => typeof w?.usedPercent === 'number');
+  if (windows.length === 0) return null;
+  return windows.reduce((best, win) => win.usedPercent > best.usedPercent ? win : best);
+}
+
+function effectiveUsageLabel(win) {
+  if (!win || typeof win.usedPercent !== 'number') return '—';
+  const prefix = win.name === 'weekly' ? 'Wk' : win.name === 'fiveHour' ? '5h' : '';
+  const pct = `${Math.round(win.usedPercent)}%`;
+  return prefix ? `${prefix} ${pct}` : pct;
+}
+
 function tokenDetailInnerHtml(cf) {
   if (!cf?.tokenUsage) return '';
   const t = cf.tokenUsage;
@@ -344,8 +357,12 @@ function renderStandard(snap, name, delay, acctIdx) {
   const rawPct = fiveH?.usedPercent;
   const hasPct = typeof rawPct === 'number';
   const pct    = hasPct ? rawPct : 0;
-  const color  = hasPct ? QB.usageColor(pct) : 'gray';
-  const pctTxt = hasPct ? `${Math.round(pct)}%` : '—';
+  const fiveColor = hasPct ? QB.usageColor(pct) : 'gray';
+  const effective = effectiveUsageWindow(fiveH, weekly);
+  const effectivePct = effective?.usedPercent;
+  const hasEffectivePct = typeof effectivePct === 'number';
+  const effectiveColor = hasEffectivePct ? QB.usageColor(effectivePct) : 'gray';
+  const pctTxt = effectiveUsageLabel(effective);
   const fhId   = `cd-${snap.provider}-5h`;
   const wkId   = `cd-${snap.provider}-wk`;
   if (fiveH?.resetsAt)  _countdowns.push({ id: fhId, resetsAt: fiveH.resetsAt });
@@ -361,7 +378,7 @@ function renderStandard(snap, name, delay, acctIdx) {
       <span class="bar-cd" id="${fhId}">${fhCd}</span>
     </div>
     <div class="bar-track thick">
-      <div class="bar-fill c-${color}" style="width:${clamp(pct,0,100)}%"></div>
+      <div class="bar-fill c-${fiveColor}" style="width:${clamp(pct,0,100)}%"></div>
       ${timeMarkerHtml(pct, fhExpected)}
     </div>
     ${fhInsight}
@@ -390,7 +407,7 @@ function renderStandard(snap, name, delay, acctIdx) {
   if (costHtml) bdgs.push(costHtml);
   const winHtml = windowBadgeHtml(snap.costFactor);
   if (winHtml) bdgs.push(winHtml);
-  const accent = QB.accentVar(hasPct ? pct : null);
+  const accent = QB.accentVar(hasEffectivePct ? effectivePct : null);
 
   return `<div class="card has-accent" style="--card-accent:${accent};${delay}">
     <div class="card-body">
@@ -399,7 +416,7 @@ function renderStandard(snap, name, delay, acctIdx) {
         <div class="card-head">
           <span class="prov-name">${QB.esc(name)}</span>
           <div class="card-right">
-            <span class="prov-pct" style="color:var(--${color})">${pctTxt}</span>
+            <span class="prov-pct" style="color:var(--${effectiveColor})">${pctTxt}</span>
             <span class="card-chevron">›</span>
           </div>
         </div>
@@ -489,6 +506,11 @@ QB.renderLive = function renderLive(snapshots) {
   const wbGen = ++_wbGeneration;
   void hydrateWindowBudgets(snapshots, wbGen);
   startCd();
+};
+
+QB.__liveTest = {
+  effectiveUsageWindow,
+  effectiveUsageLabel,
 };
 
 })();
