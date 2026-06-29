@@ -1,7 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
+  getClaudeCredentialPaths,
+  getClaudeRootCandidates,
+  getClaudeRoots,
+  getConfiguredClaudeRoots,
+  getConfiguredCodexHomes,
   getCodexConfigPaths,
+  getCodexHomeCandidates,
   getCodexHomes,
   getCodexSessionsDirs,
   getClaudeProjectsDirs,
@@ -9,6 +17,8 @@ import {
   getLiteLLMModelPricesPath,
 } from "../config/paths";
 import type { AppVariantInfo } from "./appIdentity";
+
+const execFileAsync = promisify(execFile);
 
 export type SystemAgentStatus = "connected" | "detected" | "not_found";
 export type SystemPathKind = "file" | "folder";
@@ -21,6 +31,8 @@ export interface SystemDataContext {
   now?: Date;
   quickStatsLoadDurationMs?: number | null;
   appVariant?: AppVariantInfo;
+  claudeRoots?: string[];
+  codexHomes?: string[];
 }
 
 export interface SystemDataPath {
@@ -74,6 +86,22 @@ export interface SystemDataReport {
   app: SystemAppData;
   categories: SystemDataCategory[];
   totals: SystemDataTotals;
+}
+
+export interface CodexHomeSuggestion {
+  path: string;
+  label: string;
+  source: "wsl";
+  hasAuth: boolean;
+  hasSessions: boolean;
+}
+
+export interface ClaudeRootSuggestion {
+  path: string;
+  label: string;
+  source: "wsl";
+  hasCredentials: boolean;
+  hasProjects: boolean;
 }
 
 interface PathSpec {
@@ -139,6 +167,106 @@ export function findOpenableSystemPath(report: SystemDataReport, requestedPath: 
   return null;
 }
 
+export async function suggestCodexHomes(): Promise<CodexHomeSuggestion[]> {
+  if (process.platform !== "win32") return [];
+  const suggestions: CodexHomeSuggestion[] = [];
+  const seen = new Set<string>();
+  const hosts = ["\\\\wsl.localhost", "\\\\wsl$"];
+  const distros = await listWslDistros(hosts);
+  for (const host of hosts) {
+    for (const distro of distros) {
+      const homeRoot = path.win32.join(host, distro, "home");
+      let users: string[];
+      try {
+        users = await fs.readdir(homeRoot);
+      } catch {
+        continue;
+      }
+      for (const user of users) {
+        const codexHome = path.win32.join(homeRoot, user, ".codex");
+        const key = `${distro}\\${user}`.toLowerCase();
+        if (seen.has(key)) continue;
+        const hasAuth = await existsAsFile(path.win32.join(codexHome, "auth.json"));
+        const hasSessions = await existsAsDirectory(path.win32.join(codexHome, "sessions"));
+        if (!hasAuth && !hasSessions) continue;
+        seen.add(key);
+        suggestions.push({
+          path: codexHome,
+          label: `${distro} / ${user}`,
+          source: "wsl",
+          hasAuth,
+          hasSessions,
+        });
+      }
+    }
+  }
+  return suggestions;
+}
+
+export async function suggestClaudeRoots(): Promise<ClaudeRootSuggestion[]> {
+  if (process.platform !== "win32") return [];
+  const suggestions: ClaudeRootSuggestion[] = [];
+  const seen = new Set<string>();
+  const hosts = ["\\\\wsl.localhost", "\\\\wsl$"];
+  const distros = await listWslDistros(hosts);
+  for (const host of hosts) {
+    for (const distro of distros) {
+      const homeRoot = path.win32.join(host, distro, "home");
+      let users: string[];
+      try {
+        users = await fs.readdir(homeRoot);
+      } catch {
+        continue;
+      }
+      for (const user of users) {
+        for (const relRoot of [".claude", path.win32.join(".config", "claude")]) {
+          const claudeRoot = path.win32.join(homeRoot, user, relRoot);
+          const key = `${distro}\\${user}\\${relRoot}`.toLowerCase();
+          if (seen.has(key)) continue;
+          const hasCredentials = await existsAsFile(path.win32.join(claudeRoot, ".credentials.json"));
+          const hasProjects = await existsAsDirectory(path.win32.join(claudeRoot, "projects"));
+          if (!hasCredentials && !hasProjects) continue;
+          seen.add(key);
+          suggestions.push({
+            path: claudeRoot,
+            label: `${distro} / ${user} / ${relRoot.replace(/\\/g, "/")}`,
+            source: "wsl",
+            hasCredentials,
+            hasProjects,
+          });
+        }
+      }
+    }
+  }
+  return suggestions;
+}
+
+async function listWslDistros(hosts: string[]): Promise<string[]> {
+  const names = new Set<string>();
+  for (const host of hosts) {
+    try {
+      for (const name of await fs.readdir(host)) {
+        if (name && !name.startsWith(".")) names.add(name);
+      }
+    } catch {
+      // Some Windows builds allow direct distro UNC access but not host listing.
+    }
+  }
+  try {
+    const { stdout } = await execFileAsync("wsl.exe", ["-l", "-q"], { encoding: "buffer" });
+    const text = Buffer.isBuffer(stdout)
+      ? stdout.toString("utf16le").replace(/\0/g, "")
+      : String(stdout);
+    for (const line of text.split(/\r?\n/)) {
+      const name = line.replace(/^\uFEFF/, "").trim();
+      if (name && !name.includes("docker-desktop-data")) names.add(name);
+    }
+  } catch {
+    // WSL is optional; manual paths still work when discovery is unavailable.
+  }
+  return [...names];
+}
+
 function buildAgentSpecs(context: SystemDataContext): Array<{
   id: string;
   name: string;
@@ -148,8 +276,20 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
 }> {
   const home = context.homeDir ?? getHomeDir();
   const env = context.env ?? process.env;
-  const pathContext = { homeDir: home, env };
-  const codexHomeCandidates = configuredRoots(env.CODEX_HOME, [path.join(home, ".codex")], home);
+  const savedClaudeRoots = context.claudeRoots ?? (context.homeDir || context.appConfigDir || context.env ? [] : getConfiguredClaudeRoots());
+  const savedCodexHomes = context.codexHomes ?? (context.homeDir || context.appConfigDir || context.env ? [] : getConfiguredCodexHomes());
+  const pathContext = { homeDir: home, env, claudeRoots: savedClaudeRoots, codexHomes: savedCodexHomes };
+  const claudeRootCandidates = getClaudeRootCandidates(pathContext);
+  const claudeRoots = uniquePaths([...getClaudeRoots(pathContext), ...claudeRootCandidates]);
+  const claudeCredentialPaths = uniquePaths([
+    ...getClaudeCredentialPaths(pathContext),
+    ...claudeRootCandidates.map((root) => path.join(root, ".credentials.json")),
+  ]);
+  const claudeProjects = uniquePaths([
+    ...getClaudeProjectsDirs(pathContext),
+    ...claudeRootCandidates.map((root) => path.join(root, "projects")),
+  ]);
+  const codexHomeCandidates = getCodexHomeCandidates(pathContext);
   const codexHomes = uniquePaths([...getCodexHomes(pathContext), ...codexHomeCandidates]);
   const codexSessions = uniquePaths([
     ...getCodexSessionsDirs(pathContext),
@@ -159,15 +299,6 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
     ...getCodexConfigPaths(pathContext),
     ...codexHomeCandidates.map((codexHome) => path.join(codexHome, "config.toml")),
   ]);
-  const claudeRootCandidates = configuredRoots(
-    env.CLAUDE_CONFIG_DIR,
-    [path.join(home, ".config", "claude"), path.join(home, ".claude")],
-    home,
-  );
-  const claudeProjects = uniquePaths([
-    ...getClaudeProjectsDirs(pathContext),
-    ...claudeRootCandidates.map((root) => path.join(root, "projects")),
-  ]);
 
   return [
     {
@@ -176,13 +307,13 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
       vendor: "Anthropic",
       logo: "../../logos/claude.png",
       paths: [
-        {
-          id: "claude-credentials",
-          label: "Credentials",
-          category: "credentials",
-          kind: "file",
-          path: path.join(home, ".claude", ".credentials.json"),
-        },
+        ...claudeCredentialPaths.map((credentialsPath, index) => ({
+          id: `claude-credentials-${index + 1}`,
+          label: claudeRoots.length > 1 ? `Credentials ${index + 1}` : "Credentials",
+          category: "credentials" as const,
+          kind: "file" as const,
+          path: credentialsPath,
+        })),
         ...claudeProjects.map((projectDir, index) => ({
           id: `claude-projects-${index + 1}`,
           label: claudeProjects.length > 1 ? `Projects ${index + 1}` : "Projects",
@@ -283,6 +414,22 @@ async function scanFile(filePath: string): Promise<SystemDataTotals & { exists: 
   }
 }
 
+async function existsAsFile(filePath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function existsAsDirectory(folderPath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(folderPath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 async function scanFolder(folderPath: string): Promise<SystemDataTotals & { exists: boolean }> {
   try {
     const stat = await fs.stat(folderPath);
@@ -372,13 +519,6 @@ function openTarget(targetPath: string, kind: SystemPathKind): string {
 
 function allReportPaths(report: SystemDataReport): SystemDataPath[] {
   return [...report.agents.flatMap((agent) => agent.paths), ...report.app.paths];
-}
-
-function configuredRoots(value: string | undefined, fallback: string[], home: string): string[] {
-  const raw = value?.trim()
-    ? value.split(",").map((part) => part.trim()).filter(Boolean)
-    : fallback;
-  return raw.map((item) => path.resolve(item.replace(/^~(?=$|[\\/])/, home)));
 }
 
 function uniquePaths(paths: string[]): string[] {

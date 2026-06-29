@@ -69,6 +69,47 @@ describe("collectSystemData", () => {
     expect(claude?.paths.map((p) => p.path)).toContain(path.join(homeDir, ".config", "claude", "projects"));
   });
 
+  it("includes additional configured Claude roots in credentials and project paths", async () => {
+    const defaultRoot = path.join(homeDir, ".claude");
+    const extraRoot = path.join(tmpDir, "wsl-claude");
+    await writeFile(path.join(defaultRoot, ".credentials.json"), "token");
+    await writeFile(path.join(extraRoot, "projects", "p1", "log.jsonl"), "{}\n");
+
+    const report = await collectSystemData({
+      homeDir,
+      appConfigDir,
+      env: {},
+      claudeRoots: [extraRoot],
+    });
+    const claude = report.agents.find((agent) => agent.id === "claude");
+    const paths = claude?.paths.map((p) => p.path) ?? [];
+
+    expect(paths).toContain(path.join(extraRoot, ".credentials.json"));
+    expect(paths).toContain(path.join(extraRoot, "projects"));
+    expect(claude?.paths.find((p) => p.path === path.join(extraRoot, "projects"))?.fileCount).toBe(1);
+  });
+
+  it("includes additional configured Codex homes in auth, config, and session paths", async () => {
+    const defaultHome = path.join(homeDir, ".codex");
+    const extraHome = path.join(tmpDir, "wsl-codex");
+    await writeFile(path.join(defaultHome, "auth.json"), "token");
+    await writeFile(path.join(extraHome, "sessions", "s.jsonl"), "{}\n");
+
+    const report = await collectSystemData({
+      homeDir,
+      appConfigDir,
+      env: {},
+      codexHomes: [extraHome],
+    });
+    const codex = report.agents.find((agent) => agent.id === "codex");
+    const paths = codex?.paths.map((p) => p.path) ?? [];
+
+    expect(paths).toContain(path.join(extraHome, "auth.json"));
+    expect(paths).toContain(path.join(extraHome, "config.toml"));
+    expect(paths).toContain(path.join(extraHome, "sessions"));
+    expect(codex?.paths.find((p) => p.path === path.join(extraHome, "sessions"))?.fileCount).toBe(1);
+  });
+
   it("includes QuotaBar app files and debug data in app sections", async () => {
     await writeFile(path.join(appConfigDir, "settings.json"), "{}");
     await writeFile(path.join(appConfigDir, "quotabar.log"), "line\n");

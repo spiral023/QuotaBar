@@ -71,6 +71,43 @@ describe("debugLog settings", () => {
   });
 });
 
+describe("normalizeSettings provider roots", () => {
+  it("defaults to no additional provider roots", () => {
+    expect(defaultSettings.claudeRoots).toEqual([]);
+    expect(defaultSettings.codexHomes).toEqual([]);
+  });
+
+  it("keeps unique non-empty Claude root entries", () => {
+    const out = normalizeSettings({
+      ...defaultSettings,
+      claudeRoots: [" C:\\Users\\asi\\.claude ", "", "C:\\Users\\asi\\.claude", "\\\\wsl.localhost\\Ubuntu\\home\\asi\\.claude"],
+    });
+
+    expect(out.claudeRoots).toEqual([
+      "C:\\Users\\asi\\.claude",
+      "\\\\wsl.localhost\\Ubuntu\\home\\asi\\.claude",
+    ]);
+  });
+
+  it("keeps unique non-empty Codex home entries", () => {
+    const out = normalizeSettings({
+      ...defaultSettings,
+      codexHomes: [" C:\\Users\\asi\\.codex ", "", "C:\\Users\\asi\\.codex", "\\\\wsl.localhost\\Ubuntu\\home\\asi\\.codex"],
+    });
+
+    expect(out.codexHomes).toEqual([
+      "C:\\Users\\asi\\.codex",
+      "\\\\wsl.localhost\\Ubuntu\\home\\asi\\.codex",
+    ]);
+  });
+
+  it("rejects non-array provider root settings", () => {
+    const out = normalizeSettings({ ...defaultSettings, claudeRoots: "x" as never, codexHomes: "x" as never });
+    expect(out.claudeRoots).toEqual([]);
+    expect(out.codexHomes).toEqual([]);
+  });
+});
+
 describe("normalizeSettings minModelTokenSharePct", () => {
   it("defaults to 0 (filter disabled)", () => {
     expect(defaultSettings.minModelTokenSharePct).toBe(0);

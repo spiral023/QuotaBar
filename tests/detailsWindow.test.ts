@@ -64,6 +64,8 @@ describe("DetailsWindowController system IPC", () => {
 
     expect(channels).toContain("app:meta");
     expect(channels).toContain("system:get");
+    expect(channels).toContain("system:claude-roots:suggest");
+    expect(channels).toContain("system:codex-homes:suggest");
     expect(channels).toContain("system:open-path");
   });
 });

@@ -5,6 +5,7 @@ import { redactObject } from "../shared/redaction";
 import { NotAuthenticatedError, RateLimitError, toErrorMessage } from "../shared/errors";
 import { parseRetryAfterMs } from "./claude";
 import { errorSnapshot, UsageProvider, UsageSnapshot, UsageWindow } from "./types";
+import type { ProviderSettingsLoader } from "./providerRegistry";
 
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 
@@ -13,10 +14,10 @@ export class CodexProvider implements UsageProvider {
   displayName = "Codex";
   private lastLoggedUsageShape: string | undefined;
 
-  constructor(private readonly timeoutMs = 10_000) {}
+  constructor(private readonly timeoutMs = 10_000, private readonly settingsLoader?: ProviderSettingsLoader) {}
 
   async isAvailable(): Promise<boolean> {
-    return (await loadCodexCredentials()) !== null;
+    return (await loadCodexCredentials(await this.pathContext())) !== null;
   }
 
   async getAuthHint(): Promise<string | null> {
@@ -25,7 +26,7 @@ export class CodexProvider implements UsageProvider {
 
   async fetchUsage(): Promise<UsageSnapshot> {
     try {
-      const credentials = await loadCodexCredentials();
+      const credentials = await loadCodexCredentials(await this.pathContext());
       if (!credentials) {
         throw new NotAuthenticatedError("Codex auth.json not found or has no access token");
       }
@@ -63,6 +64,12 @@ export class CodexProvider implements UsageProvider {
     if (key === this.lastLoggedUsageShape) return;
     this.lastLoggedUsageShape = key;
     log.debug(`Codex usage payload shape changed: ${redactObject(shape)}`);
+  }
+
+  private async pathContext(): Promise<{ codexHomes: string[] }> {
+    if (!this.settingsLoader) return { codexHomes: [] };
+    const settings = await this.settingsLoader();
+    return { codexHomes: settings.codexHomes ?? [] };
   }
 }
 

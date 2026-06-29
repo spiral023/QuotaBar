@@ -2368,6 +2368,69 @@
       line-height: 1.45; text-wrap: pretty;
     }
 
+    .sys-root-list {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .sys-root-row,
+    .sys-root-add-row {
+      display: grid; grid-template-columns: minmax(0, 1fr) 40px;
+      gap: 6px; align-items: center;
+    }
+    .sys-root-add-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      margin-top: 6px;
+    }
+    .sys-root-input {
+      width: 100%; min-width: 0; height: 30px;
+      border-radius: var(--r-inner); border: 1px solid var(--border);
+      background: var(--bg-input); color: var(--t200);
+      padding: 0 9px; outline: none;
+      font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .sys-root-input:focus {
+      border-color: rgba(82,208,23,0.35);
+      box-shadow: 0 0 0 1px rgba(82,208,23,0.12);
+    }
+    .sys-root-empty {
+      padding: 8px 9px; border: 1px solid var(--border);
+      border-radius: var(--r-inner); background: var(--bg-surface);
+      color: var(--t400); font-size: 9.5px; line-height: 1.4;
+    }
+    .sys-root-actions {
+      display: flex; align-items: center; gap: 6px;
+      margin-top: 7px;
+    }
+    .sys-root-actions .sys-del-result {
+      min-width: 0; text-align: right;
+    }
+    .sys-root-suggestions {
+      display: flex; flex-direction: column; gap: 4px;
+      margin-top: 7px; padding-top: 7px;
+      border-top: 1px solid var(--border);
+    }
+    .sys-root-suggestion {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 7px; align-items: center;
+      min-height: 40px; padding: 6px 7px 6px 9px;
+      border: 1px solid var(--border); border-radius: var(--r-inner);
+      background: var(--bg-surface);
+    }
+    .sys-root-suggestion-main { min-width: 0; }
+    .sys-root-suggestion-label {
+      font-size: 10.5px; font-weight: 600; color: var(--t200);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sys-root-suggestion-path {
+      margin-top: 1px; font-family: 'IBM Plex Mono', monospace;
+      font-size: 8.5px; color: var(--t400);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sys-root-suggestion-meta {
+      font-size: 8.5px; color: var(--t400);
+      text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap;
+    }
+
     .sys-delete-panel {
       display: none; margin-top: 8px; padding-top: 8px;
       border-top: 1px solid var(--border);
@@ -2449,6 +2512,8 @@
       .sys-kpis, .sys-cat-grid { grid-template-columns: repeat(2, 1fr); }
       .sys-path-row { grid-template-columns: 110px minmax(0, 1fr) 40px; }
       .sys-path-meta { display: none; }
+      .sys-root-suggestion { grid-template-columns: minmax(0, 1fr) auto; }
+      .sys-root-suggestion-meta { display: none; }
     }
 
     /* ══ PLANS / ABOS TAB ═══════════════════════════════════════ */

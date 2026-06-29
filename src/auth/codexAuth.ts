@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { getCodexAuthPath } from "../config/paths";
+import { getCodexAuthPath, type PathContext } from "../config/paths";
 import { decodeJwtClaim } from "./jwt";
 
 export interface CodexCredentials {
@@ -32,8 +32,8 @@ export function parseCodexAuthJson(content: string): CodexCredentials | null {
   };
 }
 
-export async function loadCodexCredentials(): Promise<CodexCredentials | null> {
-  const path = getCodexAuthPath();
+export async function loadCodexCredentials(context: PathContext = {}): Promise<CodexCredentials | null> {
+  const path = getCodexAuthPath(context);
   try {
     return parseCodexAuthJson(await fs.readFile(path, "utf8"));
   } catch {

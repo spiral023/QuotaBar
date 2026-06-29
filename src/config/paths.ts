@@ -5,6 +5,8 @@ import fs from "node:fs";
 export interface PathContext {
   homeDir?: string;
   env?: Record<string, string | undefined>;
+  claudeRoots?: string[];
+  codexHomes?: string[];
 }
 
 export function getHomeDir(): string {
@@ -59,12 +61,12 @@ export function getInstalledMarkerPath(): string {
   return path.join(getAppConfigDir(), ".installed");
 }
 
-export function getCodexAuthPath(): string {
-  return path.join(firstCodexHome(), "auth.json");
+export function getCodexAuthPath(context: PathContext = {}): string {
+  return path.join(firstCodexHome(context), "auth.json");
 }
 
-export function getClaudeCredentialsPath(): string {
-  return path.join(getHomeDir(), ".claude", ".credentials.json");
+export function getClaudeCredentialsPath(context: PathContext = {}): string {
+  return firstExistingPath(getClaudeCredentialPaths(context)) ?? path.join(firstClaudeRoot(context), ".credentials.json");
 }
 
 export function getClaudeProjectsDir(): string {
@@ -72,21 +74,41 @@ export function getClaudeProjectsDir(): string {
 }
 
 export function getClaudeProjectsDirs(context: PathContext = {}): string[] {
-  const home = context.homeDir ?? getHomeDir();
-  const env = context.env ?? process.env;
-  const roots = env.CLAUDE_CONFIG_DIR?.trim()
-    ? parsePathList(env.CLAUDE_CONFIG_DIR)
-    : [path.join(home, ".config", "claude"), path.join(home, ".claude")];
-  return uniqueExisting(roots.map((root) => path.join(root, "projects")));
+  return uniqueExisting(getClaudeRoots(context).map((root) => path.join(root, "projects")));
+}
+
+export function getClaudeCredentialPaths(context: PathContext = {}): string[] {
+  return uniquePaths(getClaudeCredentialRoots(context).map((root) => path.join(root, ".credentials.json")));
+}
+
+export function getClaudeRoots(context: PathContext = {}): string[] {
+  return uniqueExisting(getClaudeRootCandidates(context));
+}
+
+export function getConfiguredClaudeRoots(context: PathContext = {}): string[] {
+  return uniquePaths([
+    ...parseOptionalPathList(context.env?.CLAUDE_CONFIG_DIR, context.homeDir ?? getHomeDir()),
+    ...(context.claudeRoots ?? readSavedClaudeRoots(context)),
+  ]);
 }
 
 export function getCodexHomes(context: PathContext = {}): string[] {
+  return uniqueExisting(getCodexHomeCandidates(context));
+}
+
+export function getCodexHomeCandidates(context: PathContext = {}): string[] {
   const home = context.homeDir ?? getHomeDir();
   const env = context.env ?? process.env;
-  const roots = env.CODEX_HOME?.trim()
-    ? parsePathList(env.CODEX_HOME)
-    : [path.join(home, ".codex")];
-  return uniqueExisting(roots);
+  const envRoots = env.CODEX_HOME?.trim() ? parsePathList(env.CODEX_HOME, home) : [];
+  const savedRoots = context.codexHomes ?? readSavedCodexHomes(context);
+  return uniquePaths([...envRoots, ...savedRoots, path.join(home, ".codex")]);
+}
+
+export function getConfiguredCodexHomes(context: PathContext = {}): string[] {
+  return uniquePaths([
+    ...parseOptionalPathList(context.env?.CODEX_HOME, context.homeDir ?? getHomeDir()),
+    ...(context.codexHomes ?? readSavedCodexHomes(context)),
+  ]);
 }
 
 export function getCodexSessionsDir(): string {
@@ -105,8 +127,8 @@ export function getCodexConfigPaths(context: PathContext = {}): string[] {
   return getCodexHomes(context).map((home) => path.join(home, "config.toml"));
 }
 
-function firstCodexHome(): string {
-  return getCodexHomes()[0] ?? path.join(getHomeDir(), ".codex");
+function firstCodexHome(context: PathContext = {}): string {
+  return getCodexHomes(context)[0] ?? path.join(context.homeDir ?? getHomeDir(), ".codex");
 }
 
 export function getDebugLogDir(): string {
@@ -128,15 +150,19 @@ function utcDateKey(date: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function parsePathList(value: string): string[] {
+function parsePathList(value: string, homeDir = getHomeDir()): string[] {
   return value
     .split(",")
     .map((part) => part.trim())
     .filter((part) => part.length > 0)
-    .map((part) => path.resolve(part.replace(/^~(?=$|[\\/])/, getHomeDir())));
+    .map((part) => resolveUserPath(part, homeDir));
 }
 
 function uniqueExisting(paths: string[]): string[] {
+  return uniquePaths(paths).filter((resolved) => fs.existsSync(resolved));
+}
+
+function uniquePaths(paths: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const item of paths) {
@@ -144,7 +170,61 @@ function uniqueExisting(paths: string[]): string[] {
     const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
     if (seen.has(key)) continue;
     seen.add(key);
-    if (fs.existsSync(resolved)) result.push(resolved);
+    result.push(resolved);
   }
   return result;
+}
+
+function parseOptionalPathList(value: string | undefined, homeDir = getHomeDir()): string[] {
+  return value?.trim() ? parsePathList(value, homeDir) : [];
+}
+
+function readSavedCodexHomes(context: PathContext): string[] {
+  return readSavedPathList(context, "codexHomes");
+}
+
+function readSavedClaudeRoots(context: PathContext): string[] {
+  return readSavedPathList(context, "claudeRoots");
+}
+
+function readSavedPathList(context: PathContext, key: "claudeRoots" | "codexHomes"): string[] {
+  if (context.homeDir || context.env || (key === "claudeRoots" ? context.claudeRoots : context.codexHomes)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(getSettingsPath(), "utf8")) as Record<string, unknown>;
+    const value = parsed[key];
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .map((item) => resolveUserPath(item.trim()));
+  } catch {
+    return [];
+  }
+}
+
+export function getClaudeRootCandidates(context: PathContext = {}): string[] {
+  const home = context.homeDir ?? getHomeDir();
+  return uniquePaths([
+    ...parseOptionalPathList(context.env?.CLAUDE_CONFIG_DIR, home),
+    ...(context.claudeRoots ?? readSavedClaudeRoots(context)),
+    path.join(home, ".claude"),
+    path.join(home, ".config", "claude"),
+  ]);
+}
+
+function getClaudeCredentialRoots(context: PathContext = {}): string[] {
+  return getClaudeRootCandidates(context);
+}
+
+function firstClaudeRoot(context: PathContext = {}): string {
+  return getClaudeRoots(context)[0] ?? path.join(context.homeDir ?? getHomeDir(), ".claude");
+}
+
+function firstExistingPath(paths: string[]): string | undefined {
+  return paths.find((candidate) => fs.existsSync(candidate));
+}
+
+function resolveUserPath(value: string, homeDir = getHomeDir()): string {
+  const expanded = value.replace(/^~(?=$|[\\/])/, homeDir);
+  if (process.platform === "win32" && /^\\\\/.test(expanded)) return path.win32.normalize(expanded);
+  return path.resolve(expanded);
 }

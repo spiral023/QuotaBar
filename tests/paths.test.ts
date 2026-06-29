@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  getClaudeCredentialPaths,
   getClaudeProjectsDirs,
+  getClaudeRoots,
+  getConfiguredClaudeRoots,
+  getConfiguredCodexHomes,
   getCodexConfigPaths,
   getCodexHomes,
   getCodexSessionsDirs,
@@ -27,7 +31,7 @@ describe("data path resolution", () => {
     await fs.mkdir(current, { recursive: true });
     await fs.mkdir(legacy, { recursive: true });
 
-    expect(getClaudeProjectsDirs({ homeDir: home, env: {} })).toEqual([current, legacy]);
+    expect(getClaudeProjectsDirs({ homeDir: home, env: {} })).toEqual([legacy, current]);
   });
 
   it("uses comma-separated CLAUDE_CONFIG_DIR roots and skips duplicates and missing dirs", async () => {
@@ -40,6 +44,34 @@ describe("data path resolution", () => {
       homeDir: tmpRoot,
       env: { CLAUDE_CONFIG_DIR: `${rootA},${rootA},${path.join(tmpRoot, "missing")},${rootB}` },
     })).toEqual([path.join(rootA, "projects"), path.join(rootB, "projects")]);
+  });
+
+  it("merges CLAUDE_CONFIG_DIR, saved Claude roots, and default roots", async () => {
+    const envRoot = path.join(tmpRoot, "claude-env");
+    const savedRoot = path.join(tmpRoot, "claude-saved");
+    const currentDefault = path.join(tmpRoot, ".config", "claude");
+    const legacyDefault = path.join(tmpRoot, ".claude");
+    await fs.mkdir(path.join(envRoot, "projects"), { recursive: true });
+    await fs.mkdir(path.join(savedRoot, "projects"), { recursive: true });
+    await fs.mkdir(path.join(currentDefault, "projects"), { recursive: true });
+    await fs.mkdir(path.join(legacyDefault, "projects"), { recursive: true });
+
+    const ctx = { homeDir: tmpRoot, env: { CLAUDE_CONFIG_DIR: envRoot }, claudeRoots: [savedRoot] };
+
+    expect(getConfiguredClaudeRoots(ctx)).toEqual([envRoot, savedRoot]);
+    expect(getClaudeRoots(ctx)).toEqual([envRoot, savedRoot, legacyDefault, currentDefault]);
+    expect(getClaudeProjectsDirs(ctx)).toEqual([
+      path.join(envRoot, "projects"),
+      path.join(savedRoot, "projects"),
+      path.join(legacyDefault, "projects"),
+      path.join(currentDefault, "projects"),
+    ]);
+    expect(getClaudeCredentialPaths(ctx)).toEqual([
+      path.join(envRoot, ".credentials.json"),
+      path.join(savedRoot, ".credentials.json"),
+      path.join(legacyDefault, ".credentials.json"),
+      path.join(currentDefault, ".credentials.json"),
+    ]);
   });
 
   it("uses comma-separated CODEX_HOME roots for sessions and configs", async () => {
@@ -58,6 +90,25 @@ describe("data path resolution", () => {
     expect(getCodexConfigPaths(ctx)).toEqual([
       path.join(homeA, "config.toml"),
       path.join(homeB, "config.toml"),
+    ]);
+  });
+
+  it("merges CODEX_HOME, saved Codex roots, and the default home", async () => {
+    const envHome = path.join(tmpRoot, "codex-env");
+    const savedHome = path.join(tmpRoot, "codex-saved");
+    const defaultHome = path.join(tmpRoot, ".codex");
+    await fs.mkdir(path.join(envHome, "sessions"), { recursive: true });
+    await fs.mkdir(path.join(savedHome, "sessions"), { recursive: true });
+    await fs.mkdir(path.join(defaultHome, "sessions"), { recursive: true });
+
+    const ctx = { homeDir: tmpRoot, env: { CODEX_HOME: envHome }, codexHomes: [savedHome] };
+
+    expect(getConfiguredCodexHomes(ctx)).toEqual([envHome, savedHome]);
+    expect(getCodexHomes(ctx)).toEqual([envHome, savedHome, defaultHome]);
+    expect(getCodexSessionsDirs(ctx)).toEqual([
+      path.join(envHome, "sessions"),
+      path.join(savedHome, "sessions"),
+      path.join(defaultHome, "sessions"),
     ]);
   });
 });

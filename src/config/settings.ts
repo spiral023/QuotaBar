@@ -123,6 +123,8 @@ export const defaultNotificationSettings: NotificationSettings = {
 export interface Settings {
   pollIntervalSeconds: number;
   providerTimeoutMs: number;
+  claudeRoots: string[];
+  codexHomes: string[];
   plans: PlanPeriod[];
   pricingOfflineMode: boolean;
   anonymizeAccounts: boolean;
@@ -145,6 +147,8 @@ export interface Settings {
 export const defaultSettings: Settings = {
   pollIntervalSeconds: 120,
   providerTimeoutMs: 10_000,
+  claudeRoots: [],
+  codexHomes: [],
   plans: [],
   pricingOfflineMode: false,
   anonymizeAccounts: false,
@@ -216,6 +220,8 @@ export function normalizeSettings(settings: Settings): Settings {
   return {
     pollIntervalSeconds: Math.max(15, Math.floor(Number(settings.pollIntervalSeconds) || defaultSettings.pollIntervalSeconds)),
     providerTimeoutMs: Math.max(1000, Math.floor(Number(settings.providerTimeoutMs) || defaultSettings.providerTimeoutMs)),
+    claudeRoots: normalizePathList((settings as { claudeRoots?: unknown }).claudeRoots),
+    codexHomes: normalizePathList((settings as { codexHomes?: unknown }).codexHomes),
     plans,
     pricingOfflineMode: Boolean(settings.pricingOfflineMode),
     anonymizeAccounts: Boolean(settings.anonymizeAccounts),
@@ -228,6 +234,22 @@ export function normalizeSettings(settings: Settings): Settings {
     proxy: normalizeProxySettings(settings.proxy),
     notifications: normalizeNotificationSettings(settings.notifications),
   };
+}
+
+function normalizePathList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const trimmed = item.trim();
+    if (!trimmed || /[\0\r\n]/.test(trimmed)) continue;
+    const key = process.platform === "win32" ? trimmed.toLowerCase() : trimmed;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
 }
 
 export function normalizeNotificationSettings(

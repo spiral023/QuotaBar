@@ -14,9 +14,9 @@ export class PricingEngine {
 
   constructor(
     private readonly settings: Settings,
-    private readonly claudeProjectsDir: string | string[] = getClaudeProjectsDirs(),
-    private readonly codexSessionsDir: string | string[] = getCodexSessionsDirs(),
-    private readonly codexConfigPath: string | string[] = getCodexConfigPaths(),
+    private readonly claudeProjectsDir?: string | string[],
+    private readonly codexSessionsDir?: string | string[],
+    private readonly codexConfigPath?: string | string[],
     // Optional: liefert in der Produktion immer die aktuellen Disk-Settings (z. B. nach
     // Laufzeit-Änderung des costWindow). Ohne Provider — etwa in Tests — verwendet die
     // Engine die im Konstruktor injizierten Settings, bleibt also eine reine Funktion
@@ -46,7 +46,10 @@ export class PricingEngine {
   private async calculateClaudeFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
     const currentSettings = await this.resolveSettings();
     const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(currentSettings.costWindow, snapshot, "claude");
-    const entries = await readClaudeUsageEntriesForPeriod(this.claudeProjectsDir, billingStart);
+    const entries = await readClaudeUsageEntriesForPeriod(
+      this.claudeProjectsDir ?? getClaudeProjectsDirs({ claudeRoots: currentSettings.claudeRoots ?? [] }),
+      billingStart,
+    );
     const tokens = aggregateClaudeEntries(entries);
 
     let apiCostUSD = 0;
@@ -130,7 +133,10 @@ export class PricingEngine {
   private async calculateCodexFactor(snapshot: UsageSnapshot): Promise<CostFactorResult> {
     const currentSettings = await this.resolveSettings();
     const { billingStart, windowLabel, windowDays, calculationMode } = resolveBillingStart(currentSettings.costWindow, snapshot, "codex");
-    const events = await readCodexTokensForPeriod(this.codexSessionsDir, billingStart);
+    const events = await readCodexTokensForPeriod(
+      this.codexSessionsDir ?? getCodexSessionsDirs({ codexHomes: currentSettings.codexHomes ?? [] }),
+      billingStart,
+    );
     if (events.length === 0) {
       return {
         apiCostUSD: 0,
@@ -143,7 +149,8 @@ export class PricingEngine {
         label: "Keine Logs verfügbar",
       };
     }
-    const speedTier = await readCodexSpeedTierFromPaths(Array.isArray(this.codexConfigPath) ? this.codexConfigPath : [this.codexConfigPath]);
+    const configPaths = this.codexConfigPath ?? getCodexConfigPaths({ codexHomes: currentSettings.codexHomes ?? [] });
+    const speedTier = await readCodexSpeedTierFromPaths(Array.isArray(configPaths) ? configPaths : [configPaths]);
     const apiCostUSD = await calculateCodexApiCost(events, this.fetcher, speedTier);
     const missingPricingModels = await findUnpricedCodexModels(events, this.fetcher);
     const effectiveDays = windowDays > 0

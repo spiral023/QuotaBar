@@ -95,7 +95,7 @@ if (!app.requestSingleInstanceLock()) {
         noWindow: cli.noWindow,
         platform: process.platform,
       });
-      const providers = createProviderRegistry(settings.providerTimeoutMs);
+      const providers = createProviderRegistry(settings.providerTimeoutMs, () => loadSettings());
       if (firstRun) openOnboardingWindow(providers);
       const usageSnapshotCachePath = getUsageSnapshotCachePath();
       const cachedSnapshots = markSnapshotsFromCache(await loadCachedSnapshots(usageSnapshotCachePath));
@@ -124,12 +124,14 @@ if (!app.requestSingleInstanceLock()) {
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder, windowRatioTracker, bonusTracker);
       const backfillFetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
       const tray = new TrayController(providers, refreshLoop, async () => {
+        const currentSettings = await loadSettings();
+        const pathContext = { claudeRoots: currentSettings.claudeRoots ?? [], codexHomes: currentSettings.codexHomes ?? [] };
         await runBackfill({
           recorder,
           logDir: getDebugLogDir(),
-          claudeProjectsDirs: getClaudeProjectsDirs(),
-          codexSessionsDirs: getCodexSessionsDirs(),
-          codexConfigPaths: getCodexConfigPaths(),
+          claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
+          codexSessionsDirs: getCodexSessionsDirs(pathContext),
+          codexConfigPaths: getCodexConfigPaths(pathContext),
           fetcher: backfillFetcher,
           force: true,
         }).catch((err: unknown) => {
@@ -227,12 +229,14 @@ if (!app.requestSingleInstanceLock()) {
           if (needsRepair) {
             log.info(`Backfill repair: forcing one-time rebuild to version ${BACKFILL_REPAIR_VERSION}`);
           }
+          const currentSettings = await loadSettings();
+          const pathContext = { claudeRoots: currentSettings.claudeRoots ?? [], codexHomes: currentSettings.codexHomes ?? [] };
           const result = await runBackfill({
             recorder,
             logDir,
-            claudeProjectsDirs: getClaudeProjectsDirs(),
-            codexSessionsDirs: getCodexSessionsDirs(),
-            codexConfigPaths: getCodexConfigPaths(),
+            claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
+            codexSessionsDirs: getCodexSessionsDirs(pathContext),
+            codexConfigPaths: getCodexConfigPaths(pathContext),
             fetcher: backfillFetcher,
             force: needsRepair,
           });

@@ -8,7 +8,11 @@ window.QB = window.QB || {};
 
   let _data = null;
   let _dataSources = null;
+  let _settings = null;
+  let _claudeSuggestions = null;
+  let _codexSuggestions = null;
   let _loading = null;
+  let _rootSaveBusy = false;
   let _animated = false;
 
   let _update = null;
@@ -100,10 +104,10 @@ window.QB = window.QB || {};
   QB.renderSystem = async function renderSystem() {
     const wrap = document.getElementById('system-content');
     if (!wrap) return;
-    if (_data) { renderUI(wrap, _data); return; }
+    if (_data && _settings) { renderUI(wrap, _data); return; }
     wrap.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
     try {
-      const [report] = await Promise.all([loadData(), loadUpdateState(false), loadDataSources()]);
+      const [report] = await Promise.all([loadData(), loadUpdateState(false), loadDataSources(), loadSystemSettings()]);
       _data = report;
       renderUI(wrap, _data);
     } catch (e) {
@@ -125,6 +129,12 @@ window.QB = window.QB || {};
     return QB.ipc.invoke('dataSources:get')
       .then((d) => { _dataSources = d; return d; })
       .catch((e) => { console.error('dataSources:get failed', e); _dataSources = null; return null; });
+  }
+
+  function loadSystemSettings() {
+    return QB.ipc.invoke('settings:get')
+      .then((settings) => { _settings = settings; return settings; })
+      .catch((e) => { console.error('settings:get failed', e); _settings = null; return null; });
   }
 
   function renderUI(wrap, report) {
@@ -185,6 +195,8 @@ window.QB = window.QB || {};
           </div>
 
           <div>
+            ${claudeRootsPanelHtml(_settings, report)}
+            ${codexRootsPanelHtml(_settings, report)}
             <div class="sys-panel">
               <div class="sys-section-head">
                 <span class="sys-section-title">Agent Paths</span>
@@ -239,6 +251,7 @@ window.QB = window.QB || {};
       btn.classList.add('loading');
       try {
         const [report] = await Promise.all([loadData(true), loadDataSources()]);
+        await loadSystemSettings();
         renderUI(wrap, report);
       } catch (e) {
         console.error('system refresh failed', e);
@@ -377,6 +390,245 @@ window.QB = window.QB || {};
     wrap.querySelector('#sys-github-link')?.addEventListener('click', () => {
       void QB.ipc.invoke('shell:open-url', 'https://github.com/spiral023/QuotaBar');
     });
+
+    bindClaudeRootEvents(wrap);
+    bindCodexRootEvents(wrap);
+  }
+
+  function bindClaudeRootEvents(wrap) {
+    const resultEl = wrap.querySelector('#sys-claude-roots-result');
+    const setResult = (text, isError) => {
+      if (!resultEl) return;
+      resultEl.textContent = text || '';
+      resultEl.classList.toggle('error', Boolean(isError));
+    };
+
+    wrap.querySelector('#sys-claude-roots-save')?.addEventListener('click', async (event) => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      setResult('Saving…', false);
+      try {
+        if (await saveClaudeRoots(collectClaudeRootInputs(wrap, false))) setResult('Saved', false);
+      } catch (e) {
+        console.error('saving Claude roots failed', e);
+        setResult('Error saving', true);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    wrap.querySelector('#sys-claude-root-add')?.addEventListener('click', async (event) => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      const next = collectClaudeRootInputs(wrap, true);
+      try {
+        if (next.length !== collectClaudeRootInputs(wrap, false).length) {
+          setResult('Saving…', false);
+          if (await saveClaudeRoots(next)) setResult('Added', false);
+        }
+      } catch (e) {
+        console.error('adding Claude root failed', e);
+        setResult('Error adding', true);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    wrap.querySelectorAll('.sys-claude-root-remove').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const index = Number(btn.dataset.index);
+        const current = collectClaudeRootInputs(wrap, false);
+        current.splice(index, 1);
+        setResult('Saving…', false);
+        try {
+          if (await saveClaudeRoots(current)) setResult('Removed', false);
+        } catch (e) {
+          console.error('removing Claude root failed', e);
+          setResult('Error removing', true);
+        }
+      });
+    });
+
+    wrap.querySelector('#sys-claude-wsl-detect')?.addEventListener('click', async (event) => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      btn.classList.add('loading');
+      setResult('Scanning WSL…', false);
+      try {
+        _claudeSuggestions = await QB.ipc.invoke('system:claude-roots:suggest');
+        renderUI(wrap, _data);
+      } catch (e) {
+        console.error('system:claude-roots:suggest failed', e);
+        setResult('WSL scan failed', true);
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+      }
+    });
+
+    wrap.querySelectorAll('.sys-claude-suggestion-add').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const root = btn.dataset.path;
+        if (!root) return;
+        btn.disabled = true;
+        const current = collectClaudeRootInputs(wrap, false);
+        setResult('Saving…', false);
+        try {
+          if (await saveClaudeRoots([...current, root])) setResult('Added', false);
+        } catch (e) {
+          console.error('adding WSL Claude root failed', e);
+          setResult('Error adding', true);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  function bindCodexRootEvents(wrap) {
+    const resultEl = wrap.querySelector('#sys-codex-roots-result');
+    const setResult = (text, isError) => {
+      if (!resultEl) return;
+      resultEl.textContent = text || '';
+      resultEl.classList.toggle('error', Boolean(isError));
+    };
+
+    wrap.querySelector('#sys-codex-roots-save')?.addEventListener('click', async (event) => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      setResult('Saving…', false);
+      try {
+        if (await saveCodexHomes(collectCodexHomeInputs(wrap, false))) setResult('Saved', false);
+      } catch (e) {
+        console.error('saving Codex roots failed', e);
+        setResult('Error saving', true);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    wrap.querySelector('#sys-codex-root-add')?.addEventListener('click', async (event) => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      const next = collectCodexHomeInputs(wrap, true);
+      try {
+        if (next.length !== collectCodexHomeInputs(wrap, false).length) {
+          setResult('Saving…', false);
+          if (await saveCodexHomes(next)) setResult('Added', false);
+        }
+      } catch (e) {
+        console.error('adding Codex root failed', e);
+        setResult('Error adding', true);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    wrap.querySelectorAll('.sys-codex-root-remove').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const index = Number(btn.dataset.index);
+        const current = collectCodexHomeInputs(wrap, false);
+        current.splice(index, 1);
+        setResult('Saving…', false);
+        try {
+          if (await saveCodexHomes(current)) setResult('Removed', false);
+        } catch (e) {
+          console.error('removing Codex root failed', e);
+          setResult('Error removing', true);
+        }
+      });
+    });
+
+    wrap.querySelector('#sys-codex-wsl-detect')?.addEventListener('click', async (event) => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      btn.classList.add('loading');
+      setResult('Scanning WSL…', false);
+      try {
+        _codexSuggestions = await QB.ipc.invoke('system:codex-homes:suggest');
+        renderUI(wrap, _data);
+      } catch (e) {
+        console.error('system:codex-homes:suggest failed', e);
+        setResult('WSL scan failed', true);
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+      }
+    });
+
+    wrap.querySelectorAll('.sys-codex-suggestion-add').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const root = btn.dataset.path;
+        if (!root) return;
+        btn.disabled = true;
+        const current = collectCodexHomeInputs(wrap, false);
+        setResult('Saving…', false);
+        try {
+          if (await saveCodexHomes([...current, root])) setResult('Added', false);
+        } catch (e) {
+          console.error('adding WSL Codex root failed', e);
+          setResult('Error adding', true);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  function collectCodexHomeInputs(wrap, includeNew) {
+    const values = [...wrap.querySelectorAll('.sys-codex-root-input')]
+      .map((input) => input.value.trim())
+      .filter(Boolean);
+    if (includeNew) {
+      const next = wrap.querySelector('#sys-codex-root-new')?.value?.trim();
+      if (next) values.push(next);
+    }
+    return uniqueStrings(values);
+  }
+
+  function collectClaudeRootInputs(wrap, includeNew) {
+    const values = [...wrap.querySelectorAll('.sys-claude-root-input')]
+      .map((input) => input.value.trim())
+      .filter(Boolean);
+    if (includeNew) {
+      const next = wrap.querySelector('#sys-claude-root-new')?.value?.trim();
+      if (next) values.push(next);
+    }
+    return uniqueStrings(values);
+  }
+
+  async function saveClaudeRoots(claudeRoots) {
+    if (_rootSaveBusy) return false;
+    _rootSaveBusy = true;
+    try {
+      await QB.ipc.invoke('settings:save', { claudeRoots: uniqueStrings(claudeRoots) });
+      _settings = await QB.ipc.invoke('settings:get');
+      _data = await loadData(true);
+      QB.ipc.send('quota:refresh');
+      QB.ipc.send('quota:recompute-cost');
+      const wrap = document.getElementById('system-content');
+      if (wrap) renderUI(wrap, _data);
+      return true;
+    } finally {
+      _rootSaveBusy = false;
+    }
+  }
+
+  async function saveCodexHomes(codexHomes) {
+    if (_rootSaveBusy) return false;
+    _rootSaveBusy = true;
+    try {
+      await QB.ipc.invoke('settings:save', { codexHomes: uniqueStrings(codexHomes) });
+      _settings = await QB.ipc.invoke('settings:get');
+      _data = await loadData(true);
+      QB.ipc.send('quota:refresh');
+      QB.ipc.send('quota:recompute-cost');
+      const wrap = document.getElementById('system-content');
+      if (wrap) renderUI(wrap, _data);
+      return true;
+    } finally {
+      _rootSaveBusy = false;
+    }
   }
 
   function updateDeleteConfirmBtn(wrap) {
@@ -462,6 +714,150 @@ window.QB = window.QB || {};
         ${dsRow('FX rates (EUR→USD)', ds.fx)}
       </div>
       <div class="sys-note">Downloaded = last successful remote refresh. Fallback = refresh failed and cached/built-in data is used. Offline = pricing offline mode.</div>
+    </div>`;
+  }
+
+  function claudeRootsPanelHtml(settings, report) {
+    const roots = Array.isArray(settings?.claudeRoots) ? settings.claudeRoots : [];
+    const claude = report.agents.find((agent) => agent.id === 'claude');
+    const activeProjectRoots = (claude?.paths ?? [])
+      .filter((item) => item.id.startsWith('claude-projects-') && item.exists)
+      .length;
+    return `<div class="sys-panel">
+      <div class="sys-section-head">
+        <span class="sys-section-title">Claude Data Roots</span>
+        <span class="sys-section-count">${activeProjectRoots} active</span>
+      </div>
+      <div class="sys-root-list">
+        ${roots.length ? roots.map((root, index) => claudeRootRow(root, index)).join('') : '<div class="sys-root-empty">Using CLAUDE_CONFIG_DIR and the default Windows Claude folders.</div>'}
+      </div>
+      <div class="sys-root-add-row">
+        <input class="sys-root-input" id="sys-claude-root-new" type="text" spellcheck="false"
+          placeholder="C:\\Users\\you\\.claude or \\\\wsl.localhost\\Ubuntu\\home\\you\\.claude">
+        <button class="sys-action" id="sys-claude-root-add" title="Add Claude data root">
+          ${plusIcon()} Add
+        </button>
+      </div>
+      <div class="sys-root-actions">
+        <button class="sys-action secondary" id="sys-claude-wsl-detect" title="Find Claude data roots in WSL">
+          ${refreshIcon()} Detect WSL
+        </button>
+        <button class="sys-action secondary" id="sys-claude-roots-save" title="Save edited Claude data roots">
+          ${saveIcon()} Save
+        </button>
+        <div class="sys-del-result" id="sys-claude-roots-result"></div>
+      </div>
+      ${claudeSuggestionsHtml(roots)}
+      <div class="sys-note">Roots are merged with CLAUDE_CONFIG_DIR. The first root with .credentials.json is used for live quota; projects from all roots are combined for history and cost analytics.</div>
+    </div>`;
+  }
+
+  function claudeRootRow(root, index) {
+    return `<div class="sys-root-row">
+      <input class="sys-root-input sys-claude-root-input" type="text" value="${QB.esc(root)}" spellcheck="false" aria-label="Claude data root">
+      <button class="sys-open-btn sys-claude-root-remove" data-index="${index}" title="Remove Claude data root" aria-label="Remove Claude data root">
+        ${trashIcon()}
+      </button>
+    </div>`;
+  }
+
+  function claudeSuggestionsHtml(roots) {
+    if (!_claudeSuggestions) return '';
+    const suggestions = Array.isArray(_claudeSuggestions) ? _claudeSuggestions : [];
+    if (suggestions.length === 0) {
+      return '<div class="sys-root-suggestions"><div class="sys-root-empty">No WSL Claude folders found.</div></div>';
+    }
+    const rootKeys = new Set(roots.map((root) => root.toLowerCase()));
+    return `<div class="sys-root-suggestions">
+      ${suggestions.map((item) => {
+        const added = rootKeys.has(String(item.path).toLowerCase());
+        const meta = [
+          item.hasCredentials ? 'credentials' : null,
+          item.hasProjects ? 'projects' : null,
+        ].filter(Boolean).join(' + ') || 'detected';
+        return `<div class="sys-root-suggestion">
+          <div class="sys-root-suggestion-main">
+            <div class="sys-root-suggestion-label">${QB.esc(item.label || 'WSL')}</div>
+            <div class="sys-root-suggestion-path" title="${QB.esc(item.path)}">${QB.esc(item.path)}</div>
+          </div>
+          <div class="sys-root-suggestion-meta">${QB.esc(meta)}</div>
+          <button class="sys-action secondary sys-claude-suggestion-add" data-path="${QB.esc(item.path)}" ${added ? 'disabled' : ''}>
+            ${added ? 'Added' : 'Add'}
+          </button>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
+  function codexRootsPanelHtml(settings, report) {
+    const roots = Array.isArray(settings?.codexHomes) ? settings.codexHomes : [];
+    const codex = report.agents.find((agent) => agent.id === 'codex');
+    const activeSessionRoots = (codex?.paths ?? [])
+      .filter((item) => item.id.startsWith('codex-sessions-') && item.exists)
+      .length;
+    return `<div class="sys-panel">
+      <div class="sys-section-head">
+        <span class="sys-section-title">Codex Data Roots</span>
+        <span class="sys-section-count">${activeSessionRoots} active</span>
+      </div>
+      <div class="sys-root-list">
+        ${roots.length ? roots.map((root, index) => codexRootRow(root, index)).join('') : '<div class="sys-root-empty">Using CODEX_HOME and the default Windows Codex folder.</div>'}
+      </div>
+      <div class="sys-root-add-row">
+        <input class="sys-root-input" id="sys-codex-root-new" type="text" spellcheck="false"
+          placeholder="C:\\Users\\you\\.codex or \\\\wsl.localhost\\Ubuntu\\home\\you\\.codex">
+        <button class="sys-action" id="sys-codex-root-add" title="Add Codex data root">
+          ${plusIcon()} Add
+        </button>
+      </div>
+      <div class="sys-root-actions">
+        <button class="sys-action secondary" id="sys-codex-wsl-detect" title="Find Codex data roots in WSL">
+          ${refreshIcon()} Detect WSL
+        </button>
+        <button class="sys-action secondary" id="sys-codex-roots-save" title="Save edited Codex data roots">
+          ${saveIcon()} Save
+        </button>
+        <div class="sys-del-result" id="sys-codex-roots-result"></div>
+      </div>
+      ${codexSuggestionsHtml(roots)}
+      <div class="sys-note">Roots are merged with CODEX_HOME. The first root with auth.json is used for live quota; sessions from all roots are combined for history and cost analytics.</div>
+    </div>`;
+  }
+
+  function codexRootRow(root, index) {
+    return `<div class="sys-root-row">
+      <input class="sys-root-input sys-codex-root-input" type="text" value="${QB.esc(root)}" spellcheck="false" aria-label="Codex data root">
+      <button class="sys-open-btn sys-codex-root-remove" data-index="${index}" title="Remove Codex data root" aria-label="Remove Codex data root">
+        ${trashIcon()}
+      </button>
+    </div>`;
+  }
+
+  function codexSuggestionsHtml(roots) {
+    if (!_codexSuggestions) return '';
+    const suggestions = Array.isArray(_codexSuggestions) ? _codexSuggestions : [];
+    if (suggestions.length === 0) {
+      return '<div class="sys-root-suggestions"><div class="sys-root-empty">No WSL Codex folders found.</div></div>';
+    }
+    const rootKeys = new Set(roots.map((root) => root.toLowerCase()));
+    return `<div class="sys-root-suggestions">
+      ${suggestions.map((item) => {
+        const added = rootKeys.has(String(item.path).toLowerCase());
+        const meta = [
+          item.hasAuth ? 'auth' : null,
+          item.hasSessions ? 'sessions' : null,
+        ].filter(Boolean).join(' + ') || 'detected';
+        return `<div class="sys-root-suggestion">
+          <div class="sys-root-suggestion-main">
+            <div class="sys-root-suggestion-label">${QB.esc(item.label || 'WSL')}</div>
+            <div class="sys-root-suggestion-path" title="${QB.esc(item.path)}">${QB.esc(item.path)}</div>
+          </div>
+          <div class="sys-root-suggestion-meta">${QB.esc(meta)}</div>
+          <button class="sys-action secondary sys-codex-suggestion-add" data-path="${QB.esc(item.path)}" ${added ? 'disabled' : ''}>
+            ${added ? 'Added' : 'Add'}
+          </button>
+        </div>`;
+      }).join('')}
     </div>`;
   }
 
@@ -557,6 +953,20 @@ window.QB = window.QB || {};
     return typeof ms === 'number' && Number.isFinite(ms) ? fmtSeconds(ms) : '—';
   }
 
+  function uniqueStrings(values) {
+    const seen = new Set();
+    const out = [];
+    for (const value of values) {
+      const trimmed = String(value || '').trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(trimmed);
+    }
+    return out;
+  }
+
   function newestDate(values) {
     return values.filter(Boolean).sort().pop() ?? null;
   }
@@ -624,6 +1034,21 @@ window.QB = window.QB || {};
     return `<svg width="12" height="12" viewBox="0 0 14 14" fill="none"
       stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M2 4h10M5 4V2.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V4M12 4l-.8 7.5a1 1 0 0 1-1 .9H3.8a1 1 0 0 1-1-.9L2 4"/>
+    </svg>`;
+  }
+
+  function plusIcon() {
+    return `<svg width="13" height="13" viewBox="0 0 14 14" fill="none"
+      stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+      <path d="M7 2.5v9M2.5 7h9"/>
+    </svg>`;
+  }
+
+  function saveIcon() {
+    return `<svg width="13" height="13" viewBox="0 0 14 14" fill="none"
+      stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M2.2 2h8.1l1.5 1.5v8.3H2.2V2Z"/>
+      <path d="M4 2v3.2h5.4V2M4.2 11.8V8h5.6v3.8"/>
     </svg>`;
   }
 })();

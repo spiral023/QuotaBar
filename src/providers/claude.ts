@@ -6,6 +6,7 @@ import { log } from "../main/logging";
 import { httpFetch } from "../main/httpClient";
 import { NotAuthenticatedError, RateLimitError, toErrorMessage } from "../shared/errors";
 import { errorSnapshot, UsageProvider, UsageSnapshot, UsageWindow } from "./types";
+import type { ProviderSettingsLoader } from "./providerRegistry";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
@@ -14,10 +15,10 @@ export class ClaudeProvider implements UsageProvider {
   id = "claude";
   displayName = "Claude";
 
-  constructor(private readonly timeoutMs = 10_000) {}
+  constructor(private readonly timeoutMs = 10_000, private readonly settingsLoader?: ProviderSettingsLoader) {}
 
   async isAvailable(): Promise<boolean> {
-    return (await loadClaudeCredentials()) !== null;
+    return (await loadClaudeCredentials(await this.pathContext())) !== null;
   }
 
   async getAuthHint(): Promise<string | null> {
@@ -26,7 +27,7 @@ export class ClaudeProvider implements UsageProvider {
 
   async fetchUsage(): Promise<UsageSnapshot> {
     try {
-      let credentials = await loadClaudeCredentials();
+      let credentials = await loadClaudeCredentials(await this.pathContext());
       if (!credentials) {
         throw new NotAuthenticatedError("Claude OAuth credentials not found");
       }
@@ -67,6 +68,12 @@ export class ClaudeProvider implements UsageProvider {
       log.warn(`Claude fetch failed: ${toErrorMessage(error)}`);
       return errorSnapshot("claude", toErrorMessage(error), status);
     }
+  }
+
+  private async pathContext(): Promise<{ claudeRoots: string[] }> {
+    if (!this.settingsLoader) return { claudeRoots: [] };
+    const settings = await this.settingsLoader();
+    return { claudeRoots: settings.claudeRoots ?? [] };
   }
 }
 

@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getClaudeCredentialsPath } from "../config/paths";
+import { getClaudeCredentialsPath, type PathContext } from "../config/paths";
 
 export interface ClaudeCredentials {
   accessToken: string;
@@ -36,7 +36,7 @@ export function parseClaudeCredentialsJson(content: string): ClaudeCredentials |
   };
 }
 
-export async function loadClaudeCredentials(): Promise<ClaudeCredentials | null> {
+export async function loadClaudeCredentials(context: PathContext = {}): Promise<ClaudeCredentials | null> {
   const envToken = process.env.QUOTABAR_CLAUDE_OAUTH_TOKEN?.trim();
   if (envToken) {
     return {
@@ -46,7 +46,7 @@ export async function loadClaudeCredentials(): Promise<ClaudeCredentials | null>
   }
 
   try {
-    return parseClaudeCredentialsJson(await fs.readFile(getClaudeCredentialsPath(), "utf8"));
+    return parseClaudeCredentialsJson(await fs.readFile(getClaudeCredentialsPath(context), "utf8"));
   } catch {
     return null;
   }

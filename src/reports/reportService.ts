@@ -60,16 +60,20 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
   const fetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
   const rows: ReportRow[] = [];
   const start = new Date("1970-01-01T00:00:00.000Z");
+  const pathContext = {
+    claudeRoots: settings.claudeRoots ?? [],
+    codexHomes: settings.codexHomes ?? [],
+  };
 
   if (normalized.provider === "all" || normalized.provider === "claude") {
-    const entries = deps.claudeEntries ?? await readClaudeUsageEntriesForPeriod(deps.claudeProjectsDirs ?? getClaudeProjectsDirs(), start);
+    const entries = deps.claudeEntries ?? await readClaudeUsageEntriesForPeriod(deps.claudeProjectsDirs ?? getClaudeProjectsDirs(pathContext), start);
     rows.push(...(await buildClaudeRows(entries, normalized, fetcher)));
   }
 
   if (normalized.provider === "all" || normalized.provider === "codex") {
-    const events = deps.codexEvents ?? await readCodexTokensForPeriod(deps.codexSessionsDirs ?? getCodexSessionsDirs(), start);
+    const events = deps.codexEvents ?? await readCodexTokensForPeriod(deps.codexSessionsDirs ?? getCodexSessionsDirs(pathContext), start);
     const speed = normalized.codexSpeed === "auto"
-      ? await readCodexSpeedTierFromPaths(deps.codexConfigPaths ?? getCodexConfigPaths())
+      ? await readCodexSpeedTierFromPaths(deps.codexConfigPaths ?? getCodexConfigPaths(pathContext))
       : normalized.codexSpeed;
     rows.push(...(await buildCodexRows(events, normalized, fetcher, speed)));
   }

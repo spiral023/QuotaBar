@@ -21,7 +21,7 @@ import type { NotificationService } from "./notifications";
 import type { DebugRecorder } from "./debugRecorder";
 import { AsyncResultCache } from "./asyncResultCache";
 import { PersistentWorkerClient } from "./workerClient";
-import { collectSystemData, findOpenableSystemPath } from "./systemData";
+import { collectSystemData, findOpenableSystemPath, suggestClaudeRoots, suggestCodexHomes } from "./systemData";
 import { sharedFxFetcher } from "../pricing/fx-fetcher";
 import { planChangePoints } from "../pricing/plan-cost";
 import { readDataSourceInfo } from "./dataSourceStatus";
@@ -147,13 +147,14 @@ export class DetailsWindowController {
     const workerWindow = resolveAnalyticsWindow(costWindow);
     const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
     const cacheKey = `summary:${costWindow}`;
+    const pathContext = { claudeRoots: settings.claudeRoots ?? [], codexHomes: settings.codexHomes ?? [] };
 
     return this.analyticsSummaryCache.get(cacheKey, async () => {
       const startedAtMs = Date.now();
       const summary = await runAnalyticsWorker({
         task: "summary",
-        claudeProjectsDirs: getClaudeProjectsDirs(),
-        codexSessionsDirs:  getCodexSessionsDirs(),
+        claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
+        codexSessionsDirs:  getCodexSessionsDirs(pathContext),
         periodStartMs: workerWindow.periodStartMs,
         windowDays: workerWindow.windowDays,
         since: workerWindow.since,
@@ -368,8 +369,8 @@ export class DetailsWindowController {
 
       return this.analyticsDataCache.get(`get:${since}:${until}:${planSig}`, () => runAnalyticsWorker({
         task: "get",
-        claudeProjectsDirs: getClaudeProjectsDirs(),
-        codexSessionsDirs:  getCodexSessionsDirs(),
+        claudeProjectsDirs: getClaudeProjectsDirs({ claudeRoots: settings.claudeRoots ?? [] }),
+        codexSessionsDirs:  getCodexSessionsDirs({ codexHomes: settings.codexHomes ?? [] }),
         periodStartMs, windowDays, since, until, settings, cacheHitRate,
         eurUsdRates, fxEstimated,
         logDir: getDebugLogDir(),
@@ -467,6 +468,14 @@ export class DetailsWindowController {
         quickStatsLoadDurationMs: this.quickStatsLoadMetric.valueMs,
         appVariant: detectAppVariant(),
       });
+    });
+
+    ipcMain.handle("system:codex-homes:suggest", async () => {
+      return await suggestCodexHomes();
+    });
+
+    ipcMain.handle("system:claude-roots:suggest", async () => {
+      return await suggestClaudeRoots();
     });
 
     ipcMain.handle("shell:open-url", async (_, url: unknown) => {
