@@ -122,6 +122,29 @@ describe("collectSystemData", () => {
     expect(codex?.paths.find((p) => p.path === path.join(extraHome, "sessions"))?.fileCount).toBe(1);
   });
 
+  it("includes automatically discovered WSL roots in agent status without saving them first", async () => {
+    const wslClaudeRoot = path.join(tmpDir, "wsl", "Ubuntu", "home", "asi", ".claude");
+    const wslCodexHome = path.join(tmpDir, "wsl", "Ubuntu", "home", "asi", ".codex");
+    await writeFile(path.join(wslClaudeRoot, ".credentials.json"), "secret-token");
+    await writeFile(path.join(wslCodexHome, "auth.json"), "secret-token");
+    await writeFile(path.join(wslCodexHome, "sessions", "s.jsonl"), "{}\n");
+
+    const report = await collectSystemData({
+      homeDir,
+      appConfigDir,
+      env: {},
+      wslClaudeRoots: [wslClaudeRoot],
+      wslCodexHomes: [wslCodexHome],
+    });
+    const claude = report.agents.find((agent) => agent.id === "claude");
+    const codex = report.agents.find((agent) => agent.id === "codex");
+
+    expect(claude?.status).toBe("connected");
+    expect(codex?.status).toBe("connected");
+    expect(claude?.paths.find((p) => p.path === path.join(wslClaudeRoot, ".credentials.json"))?.source).toBe("wsl");
+    expect(codex?.paths.find((p) => p.path === path.join(wslCodexHome, "auth.json"))?.source).toBe("wsl");
+  });
+
   it("includes QuotaBar app files and debug data in app sections", async () => {
     await writeFile(path.join(appConfigDir, "settings.json"), "{}");
     await writeFile(path.join(appConfigDir, "quotabar.log"), "line\n");
@@ -210,13 +233,15 @@ describe("system path diagnostics", () => {
     const lines = formatWslDiscoveryDiagnostics({
       platform: "win32",
       available: true,
+      hosts: ["\\\\wsl.localhost", "\\\\wsl$"],
+      durationMs: 42,
       distros: ["Ubuntu", "docker-desktop", "docker-desktop-data"],
       claudeRoots: [],
       codexHomes: [],
     });
 
     expect(lines).toEqual([
-      "WSL discovery: available=true distros=[Ubuntu]",
+      "WSL discovery: available=true hosts=[\\\\wsl.localhost, \\\\wsl$] distros=[Ubuntu] duration=42ms",
       "WSL discovery: Claude roots found=0",
       "WSL discovery: Codex homes found=0",
     ]);

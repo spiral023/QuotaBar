@@ -22,7 +22,7 @@ const execFileAsync = promisify(execFile);
 
 export type SystemAgentStatus = "connected" | "detected" | "not_found";
 export type SystemPathKind = "file" | "folder";
-export type SystemPathSource = "env" | "settings" | "default";
+export type SystemPathSource = "env" | "settings" | "wsl" | "default";
 export type SystemDataCategoryId = "logs" | "credentials" | "config" | "cache";
 
 export interface SystemDataContext {
@@ -34,6 +34,8 @@ export interface SystemDataContext {
   appVariant?: AppVariantInfo;
   claudeRoots?: string[];
   codexHomes?: string[];
+  wslClaudeRoots?: string[];
+  wslCodexHomes?: string[];
 }
 
 export interface SystemDataPath {
@@ -125,6 +127,8 @@ export interface SystemPathDiagnostics {
 export interface WslAgentDiscovery {
   platform: string;
   available: boolean;
+  hosts: string[];
+  durationMs: number;
   distros: string[];
   claudeRoots: ClaudeRootSuggestion[];
   codexHomes: CodexHomeSuggestion[];
@@ -207,8 +211,9 @@ export async function suggestClaudeRoots(): Promise<ClaudeRootSuggestion[]> {
 }
 
 export async function discoverWslAgentRoots(platform = process.platform): Promise<WslAgentDiscovery> {
+  const startedAtMs = Date.now();
   if (platform !== "win32") {
-    return { platform, available: false, distros: [], claudeRoots: [], codexHomes: [] };
+    return { platform, available: false, hosts: [], durationMs: Math.max(0, Date.now() - startedAtMs), distros: [], claudeRoots: [], codexHomes: [] };
   }
   const hosts = ["\\\\wsl.localhost", "\\\\wsl$"];
   const distros = await listWslDistros(hosts);
@@ -219,6 +224,8 @@ export async function discoverWslAgentRoots(platform = process.platform): Promis
   return {
     platform,
     available: distros.length > 0,
+    hosts,
+    durationMs: Math.max(0, Date.now() - startedAtMs),
     distros,
     claudeRoots,
     codexHomes,
@@ -347,8 +354,10 @@ export function formatWslDiscoveryDiagnostics(discovery: WslAgentDiscovery): str
     return [`WSL discovery: skipped platform=${discovery.platform}`];
   }
   const distros = discovery.distros.filter(isUserWslDistro);
+  const hosts = discovery.hosts?.length ? ` hosts=${formatPathList(discovery.hosts)}` : "";
+  const duration = Number.isFinite(discovery.durationMs) ? ` duration=${Math.max(0, Math.round(discovery.durationMs))}ms` : "";
   return [
-    `WSL discovery: available=${distros.length > 0} distros=${formatPathList(distros)}`,
+    `WSL discovery: available=${distros.length > 0}${hosts} distros=${formatPathList(distros)}${duration}`,
     ...formatWslSuggestionDiagnostics("Claude roots", discovery.claudeRoots, discovery.platform),
     ...formatWslSuggestionDiagnostics("Codex homes", discovery.codexHomes, discovery.platform),
   ];
@@ -366,7 +375,11 @@ async function listWslDistros(hosts: string[]): Promise<string[]> {
     }
   }
   try {
-    const { stdout } = await execFileAsync("wsl.exe", ["-l", "-q"], { encoding: "buffer" });
+    const { stdout } = await execFileAsync("wsl.exe", ["-l", "-q"], {
+      encoding: "buffer",
+      timeout: 3_000,
+      windowsHide: true,
+    });
     const text = Buffer.isBuffer(stdout)
       ? stdout.toString("utf16le").replace(/\0/g, "")
       : String(stdout);
@@ -399,11 +412,19 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
   const env = context.env ?? process.env;
   const savedClaudeRoots = context.claudeRoots ?? (context.homeDir || context.appConfigDir || context.env ? [] : getConfiguredClaudeRoots());
   const savedCodexHomes = context.codexHomes ?? (context.homeDir || context.appConfigDir || context.env ? [] : getConfiguredCodexHomes());
-  const pathContext = { homeDir: home, env, claudeRoots: savedClaudeRoots, codexHomes: savedCodexHomes };
+  const wslClaudeRoots = context.wslClaudeRoots ?? [];
+  const wslCodexHomes = context.wslCodexHomes ?? [];
+  const pathContext = {
+    homeDir: home,
+    env,
+    claudeRoots: [...savedClaudeRoots, ...wslClaudeRoots],
+    codexHomes: [...savedCodexHomes, ...wslCodexHomes],
+  };
   const claudeRootCandidates = getClaudeRootCandidates(pathContext);
   const claudeSources = buildRootSources(
     parseConfiguredPathList(env.CLAUDE_CONFIG_DIR, home),
     savedClaudeRoots,
+    wslClaudeRoots,
     [path.join(home, ".claude"), path.join(home, ".config", "claude")],
   );
   const claudeRoots = uniquePaths([...getClaudeRoots(pathContext), ...claudeRootCandidates]);
@@ -420,6 +441,7 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
   const codexSources = buildRootSources(
     parseConfiguredPathList(env.CODEX_HOME, home),
     savedCodexHomes,
+    wslCodexHomes,
     [path.join(home, ".codex")],
   );
   const codexHomes = uniquePaths([...getCodexHomes(pathContext), ...codexHomeCandidates]);
@@ -715,10 +737,12 @@ function parseConfiguredPathList(value: string | undefined, homeDir: string): st
 function buildRootSources(
   envRoots: string[],
   settingsRoots: string[],
+  wslRoots: string[],
   defaultRoots: string[],
 ): Map<string, SystemPathSource> {
   const sources = new Map<string, SystemPathSource>();
   for (const root of defaultRoots) sources.set(pathKey(root), "default");
+  for (const root of wslRoots) sources.set(pathKey(root), "wsl");
   for (const root of settingsRoots) sources.set(pathKey(root), "settings");
   for (const root of envRoots) sources.set(pathKey(root), "env");
   return sources;

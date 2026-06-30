@@ -15,7 +15,8 @@ import { DetailsWindowController } from "./detailsWindow";
 import { openOnboardingWindow } from "./onboardingWindow";
 import { initializeUpdater, setUpdateReadyCallback, setUpdateManualCallback, quitAndInstall } from "./updater";
 import { NotificationService, RELEASES_URL } from "./notifications";
-import { collectSystemData, discoverWslAgentRoots, formatSystemPathDiagnostics, formatWslDiscoveryDiagnostics } from "./systemData";
+import { collectSystemData, formatSystemPathDiagnostics, formatWslDiscoveryDiagnostics } from "./systemData";
+import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { DebugRecorder } from "./debugRecorder";
 import { runBackfill, BACKFILL_REPAIR_VERSION } from "./debugBackfill";
 import { getRepairedVersion, setRepairedVersion } from "./backfillManifest";
@@ -79,6 +80,8 @@ if (!app.requestSingleInstanceLock()) {
 
       const firstRun = await isFirstRun();
       const settings = await loadSettings(cli.pollIntervalSeconds ? { pollIntervalSeconds: cli.pollIntervalSeconds } : {});
+      const appVariant = detectAppVariant();
+      log.info(`QuotaBar startup: version=${app.getVersion()} variant=${appVariant.id} packaged=${app.isPackaged} noWindow=${cli.noWindow}`);
       // Route live requests through a proxy when configured. This must run
       // before the first refresh, but failures must never block startup.
       await configureHttpProxy(settings.proxy).catch((err: unknown) => {
@@ -92,16 +95,27 @@ if (!app.requestSingleInstanceLock()) {
       recorder.write({
         kind: "app.start",
         version: app.getVersion(),
+        variant: appVariant.id,
         pollIntervalSeconds: settings.pollIntervalSeconds,
         noWindow: cli.noWindow,
         platform: process.platform,
       });
-      const providers = createProviderRegistry(settings.providerTimeoutMs, () => loadSettings());
+      await refreshRuntimeWslAgentRoots()
+        .then(({ discovery, roots }) => {
+          for (const line of formatWslDiscoveryDiagnostics(discovery)) log.info(line);
+          log.info(`WSL discovery: runtime roots claudeRoots=${formatPathListForLog(roots.claudeRoots)} codexHomes=${formatPathListForLog(roots.codexHomes)}`);
+        })
+        .catch((err: unknown) => {
+          log.warn(`WSL discovery failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      const loadRuntimeSettings = async () => mergeSettingsWithAgentRoots(await loadSettings());
+      const runtimeSettings = mergeSettingsWithAgentRoots(settings);
+      const providers = createProviderRegistry(settings.providerTimeoutMs, loadRuntimeSettings);
       if (firstRun) openOnboardingWindow(providers);
       const usageSnapshotCachePath = getUsageSnapshotCachePath();
       const cachedSnapshots = markSnapshotsFromCache(await loadCachedSnapshots(usageSnapshotCachePath));
       const store = new UsageStore(cachedSnapshots);
-      const pricingEngine = new PricingEngine(settings, undefined, undefined, undefined, () => loadSettings());
+      const pricingEngine = new PricingEngine(runtimeSettings, undefined, undefined, undefined, loadRuntimeSettings);
       const windowRatioPath = getWindowRatioPath();
       const ratioFile = await loadWindowRatioFile(windowRatioPath);
       const windowRatioTracker = new WindowRatioTracker(clearTransients(ratioFile));
@@ -126,7 +140,8 @@ if (!app.requestSingleInstanceLock()) {
       const backfillFetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
       const tray = new TrayController(providers, refreshLoop, async () => {
         const currentSettings = await loadSettings();
-        const pathContext = { claudeRoots: currentSettings.claudeRoots ?? [], codexHomes: currentSettings.codexHomes ?? [] };
+        const runtime = mergeSettingsWithAgentRoots(currentSettings);
+        const pathContext = { claudeRoots: runtime.claudeRoots ?? [], codexHomes: runtime.codexHomes ?? [] };
         await runBackfill({
           recorder,
           logDir: getDebugLogDir(),
@@ -183,7 +198,10 @@ if (!app.requestSingleInstanceLock()) {
       // Kaltstart über eine Toast: URL steht bereits in den Startargumenten.
       const initialUrl = findProtocolUrl(process.argv);
       if (initialUrl) onProtocolUrl(initialUrl);
-      void collectSystemData()
+      void collectSystemData({
+          appVariant,
+          ...runtimeRootContext(),
+        })
         .then((report) => {
           const diagnostics = formatSystemPathDiagnostics(report, {
             settings,
@@ -196,13 +214,6 @@ if (!app.requestSingleInstanceLock()) {
         })
         .catch((err: unknown) => {
           log.warn(`Missing-plan notification scan failed: ${err instanceof Error ? err.message : String(err)}`);
-        });
-      void discoverWslAgentRoots()
-        .then((discovery) => {
-          for (const line of formatWslDiscoveryDiagnostics(discovery)) log.info(line);
-        })
-        .catch((err: unknown) => {
-          log.warn(`WSL discovery failed: ${err instanceof Error ? err.message : String(err)}`);
         });
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
@@ -247,7 +258,8 @@ if (!app.requestSingleInstanceLock()) {
             log.info(`Backfill repair: forcing one-time rebuild to version ${BACKFILL_REPAIR_VERSION}`);
           }
           const currentSettings = await loadSettings();
-          const pathContext = { claudeRoots: currentSettings.claudeRoots ?? [], codexHomes: currentSettings.codexHomes ?? [] };
+          const runtime = mergeSettingsWithAgentRoots(currentSettings);
+          const pathContext = { claudeRoots: runtime.claudeRoots ?? [], codexHomes: runtime.codexHomes ?? [] };
           const result = await runBackfill({
             recorder,
             logDir,
@@ -279,7 +291,6 @@ if (!app.requestSingleInstanceLock()) {
       });
       // Nur die installierte Variante kann sich selbst aktualisieren. ZIP/Portable
       // erhalten nur eine Benachrichtigung mit Verweis auf GitHub.
-      const appVariant = detectAppVariant();
       await initializeUpdater({
         onStateChange: (updateState) => tray.setUpdateState(updateState),
         canAutoUpdate: appVariant.id === "installed",
@@ -320,4 +331,16 @@ function parseCliArgs(args: string[]): CliOptions {
     }
   }
   return options;
+}
+
+function runtimeRootContext(): { wslClaudeRoots: string[]; wslCodexHomes: string[] } {
+  const roots = getRuntimeAgentRoots();
+  return {
+    wslClaudeRoots: roots.claudeRoots,
+    wslCodexHomes: roots.codexHomes,
+  };
+}
+
+function formatPathListForLog(paths: string[]): string {
+  return paths.length === 0 ? "[]" : `[${paths.join(", ")}]`;
 }

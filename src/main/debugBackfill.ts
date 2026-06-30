@@ -70,9 +70,10 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   }
 
   // Nur geänderte/neue Dateien parsen (bzw. bei force: alle).
-  const rebuildAll = opts.force || deleted.length > 0;
-  if (rebuildAll) await removeBackfillFiles(opts.logDir);
-
+  // Wichtig: `deleted` bedeutet nur "nicht mehr im aktuellen Source-Set sichtbar".
+  // Das kann durch Root-/WSL-Konfigurationsänderungen oder temporär unerreichbare
+  // UNC-Pfade passieren und darf persistierte QuotaBar-Historie nicht löschen.
+  const rebuildAll = opts.force;
   const changedSet = new Set(rebuildAll ? Object.keys(currentSources) : changed);
   const claudeChanged = claudeRefs.filter((r) => changedSet.has(r.file));
   const codexChanged = codexRefs.filter((r) => changedSet.has(r.file));
@@ -183,18 +184,6 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
     sourcesChanged: changedSet.size + deleted.length,
   });
   return { daysWritten: written, daysSkipped: 0, durationMs, errors };
-}
-
-async function removeBackfillFiles(logDir: string): Promise<void> {
-  let files: string[];
-  try {
-    files = await fs.readdir(logDir);
-  } catch {
-    return;
-  }
-  await Promise.all(files
-    .filter((file) => file.endsWith(".backfill.jsonl"))
-    .map((file) => fs.rm(path.join(logDir, file), { force: true })));
 }
 
 async function summarizeClaude(date: string, entries: ClaudeUsageEntry[], fetcher?: LiteLLMFetcher): Promise<TokensDaySummaryEvent> {

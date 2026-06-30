@@ -25,7 +25,7 @@ export type DebugEvent =
   | NetworkRecoveredEvent
   | CostWindowChangedEvent;
 
-export interface AppStartEvent { kind: "app.start"; version: string; pollIntervalSeconds: number; noWindow: boolean; platform: string; }
+export interface AppStartEvent { kind: "app.start"; version: string; variant?: string; pollIntervalSeconds: number; noWindow: boolean; platform: string; }
 export interface AppExitEvent { kind: "app.exit"; reason: string; }
 export interface RefreshStartEvent { kind: "refresh.start"; providers: string[]; trigger: "interval" | "manual" | "dashboard"; }
 export interface RefreshSkippedEvent { kind: "refresh.skipped"; provider: string; reason: "rate-limited"; remainingSeconds: number; }

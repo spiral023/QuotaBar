@@ -206,4 +206,33 @@ describe("runBackfill", () => {
 
     expect(result.daysWritten).toBeGreaterThan(0);
   });
+
+  it("preserves existing backfill files when a source disappears from the configured roots", async () => {
+    const originalSource = path.join(claudeDir, "proj", "session.jsonl");
+    await writeClaudeJsonl(originalSource, [
+      { type: "assistant", timestamp: "2026-05-20T14:00:00Z",
+        message: { id: "m1", model: "claude-sonnet-4-6",
+          usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } },
+    ]);
+    const logDir = path.join(tmpDir, "debug");
+    const recorder = new DebugRecorder({ enabled: true, logDir });
+
+    await runBackfill({ recorder, logDir, claudeProjectsDirs: [claudeDir], codexSessionsDirs: [codexDir] });
+    await recorder.flush();
+
+    const replacementRoot = path.join(tmpDir, "new-claude", "projects");
+    await fs.mkdir(replacementRoot, { recursive: true });
+    const result = await runBackfill({
+      recorder,
+      logDir,
+      claudeProjectsDirs: [replacementRoot],
+      codexSessionsDirs: [codexDir],
+    });
+    await recorder.flush();
+
+    expect(result.daysWritten).toBe(0);
+    const existing = await fs.readFile(path.join(logDir, "2026-05-20.backfill.jsonl"), "utf8");
+    expect(existing).toContain("tokens.daySummary");
+    expect(existing).toContain("claude-sonnet-4-6");
+  });
 });

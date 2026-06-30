@@ -24,9 +24,7 @@ import { PersistentWorkerClient } from "./workerClient";
 import {
   collectSystemData,
   findOpenableSystemPath,
-  formatWslSuggestionDiagnostics,
-  suggestClaudeRoots,
-  suggestCodexHomes,
+  formatWslDiscoveryDiagnostics,
 } from "./systemData";
 import { sharedFxFetcher } from "../pricing/fx-fetcher";
 import { planChangePoints } from "../pricing/plan-cost";
@@ -35,6 +33,7 @@ import { configureHttpProxy, getActiveProxyUrl, httpFetch } from "./httpClient";
 import { normalizeProxySettings, type ProxySettings } from "../config/settings";
 import { QuickStatsLoadMetric } from "./quickStatsLoadMetric";
 import { detectAppVariant } from "./appIdentity";
+import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -45,6 +44,18 @@ const analyticsWorker = new PersistentWorkerClient(
 
 function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
   return analyticsWorker.request(data);
+}
+
+async function loadRuntimeSettings(): Promise<Settings> {
+  return mergeSettingsWithAgentRoots(await loadSettings());
+}
+
+function runtimeRootContext(): { wslClaudeRoots: string[]; wslCodexHomes: string[] } {
+  const roots = getRuntimeAgentRoots();
+  return {
+    wslClaudeRoots: roots.claudeRoots,
+    wslCodexHomes: roots.codexHomes,
+  };
 }
 
 export class DetailsWindowController {
@@ -150,10 +161,11 @@ export class DetailsWindowController {
   }
 
   private computeSummary(settings: Settings, costWindow: CostWindow): Promise<AnalyticsSummary> {
+    const runtimeSettings = mergeSettingsWithAgentRoots(settings);
     const workerWindow = resolveAnalyticsWindow(costWindow);
     const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
     const cacheKey = `summary:${costWindow}`;
-    const pathContext = { claudeRoots: settings.claudeRoots ?? [], codexHomes: settings.codexHomes ?? [] };
+    const pathContext = { claudeRoots: runtimeSettings.claudeRoots ?? [], codexHomes: runtimeSettings.codexHomes ?? [] };
 
     return this.analyticsSummaryCache.get(cacheKey, async () => {
       const startedAtMs = Date.now();
@@ -164,7 +176,7 @@ export class DetailsWindowController {
         periodStartMs: workerWindow.periodStartMs,
         windowDays: workerWindow.windowDays,
         since: workerWindow.since,
-        settings: { ...settings, costWindow },
+        settings: { ...runtimeSettings, costWindow },
         cacheHitRate,
       }) as AnalyticsSummary;
       const durationMs = Math.max(0, Date.now() - startedAtMs);
@@ -185,7 +197,7 @@ export class DetailsWindowController {
    * die spätere echte Anfrage die Dateien nur noch neu statt parst.
    */
   prewarmAnalytics(): void {
-    void loadSettings()
+    void loadRuntimeSettings()
       .then(settings => this.computeSummary(settings, settings.costWindow))
       .catch(err => log.warn(`Analytics prewarm failed: ${err instanceof Error ? err.message : String(err)}`));
   }
@@ -303,7 +315,7 @@ export class DetailsWindowController {
         ...partial,
       };
       await saveSettings(merged);
-      log.info("Settings saved via dashboard");
+      log.info(`Dashboard action: settings:save keys=${Object.keys(partial).join(",") || "none"}`);
       if (Object.prototype.hasOwnProperty.call(partial, "claudeRoots")) {
         log.info(`Settings saved via dashboard: claudeRoots=${formatPathListForLog(partial.claudeRoots)}`);
       }
@@ -344,7 +356,7 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("reports:get", async (_, request: ReportRequest) => {
-      const settings = await loadSettings();
+      const settings = await loadRuntimeSettings();
       const report = await generateUsageReport(request, { settings });
       const sinceDay = request.since ?? report.rows[0]?.bucket?.slice(0, 10);
       const untilDay = request.until ?? new Date().toISOString().slice(0, 10);
@@ -356,20 +368,20 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("reports:copy-json", async (_, request: ReportRequest) => {
-      const settings = await loadSettings();
+      const settings = await loadRuntimeSettings();
       const report = await generateUsageReport(request, { settings });
       clipboard.writeText(JSON.stringify(report, null, 2));
       return { ok: true };
     });
 
     ipcMain.handle("analytics:summary", async (_, request?: { costWindow?: string }) => {
-      const settings = await loadSettings();
+      const settings = await loadRuntimeSettings();
       const costWindow = normalizeCostWindow(request?.costWindow) ?? settings.costWindow;
       return this.computeSummary(settings, costWindow);
     });
 
     ipcMain.handle("analytics:get", async (_, request?: { since?: string; until?: string }) => {
-      const settings     = await loadSettings();
+      const settings     = await loadRuntimeSettings();
       const { periodStartMs, windowDays, since, until } = resolveAnalyticsGetWindow(request);
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
@@ -479,19 +491,24 @@ export class DetailsWindowController {
       return await collectSystemData({
         quickStatsLoadDurationMs: this.quickStatsLoadMetric.valueMs,
         appVariant: detectAppVariant(),
+        ...runtimeRootContext(),
       });
     });
 
     ipcMain.handle("system:codex-homes:suggest", async () => {
-      const suggestions = await suggestCodexHomes();
-      for (const line of formatWslSuggestionDiagnostics("Codex homes", suggestions)) log.info(line);
-      return suggestions;
+      log.info("Dashboard action: Detect WSL clicked for Codex homes");
+      const { discovery, roots } = await refreshRuntimeWslAgentRoots();
+      for (const line of formatWslDiscoveryDiagnostics(discovery)) log.info(line);
+      log.info(`WSL discovery: runtime roots claudeRoots=${formatPathListForLog(roots.claudeRoots)} codexHomes=${formatPathListForLog(roots.codexHomes)}`);
+      return discovery.codexHomes;
     });
 
     ipcMain.handle("system:claude-roots:suggest", async () => {
-      const suggestions = await suggestClaudeRoots();
-      for (const line of formatWslSuggestionDiagnostics("Claude roots", suggestions)) log.info(line);
-      return suggestions;
+      log.info("Dashboard action: Detect WSL clicked for Claude roots");
+      const { discovery, roots } = await refreshRuntimeWslAgentRoots();
+      for (const line of formatWslDiscoveryDiagnostics(discovery)) log.info(line);
+      log.info(`WSL discovery: runtime roots claudeRoots=${formatPathListForLog(roots.claudeRoots)} codexHomes=${formatPathListForLog(roots.codexHomes)}`);
+      return discovery.claudeRoots;
     });
 
     ipcMain.handle("shell:open-url", async (_, url: unknown) => {
@@ -508,7 +525,7 @@ export class DetailsWindowController {
       if (typeof requestedPath !== "string" || requestedPath.trim().length === 0) {
         return { ok: false, error: "invalid_path" };
       }
-      const report = await collectSystemData();
+      const report = await collectSystemData(runtimeRootContext());
       const openPath = findOpenableSystemPath(report, requestedPath);
       if (!openPath) return { ok: false, error: "path_not_allowed" };
       const error = await shell.openPath(openPath);
