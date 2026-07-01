@@ -31,7 +31,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { Write-Verbose "Konnte Console-Encoding nicht setzen: $($_.Exception.Message)" }
 
 $AppName = "ai-coding"
 $DevRoot = "C:\Entwicklung"
@@ -56,11 +56,11 @@ function Format-Value([string] $Value) {
 
 function Write-Log([string] $Message) {
   if ($Script:LogFile) {
-    try { Add-Content -Path $Script:LogFile -Value $Message -Encoding UTF8 } catch { }
+    try { Add-Content -Path $Script:LogFile -Value $Message -Encoding UTF8 } catch { Write-Verbose "Konnte nicht in Logdatei schreiben: $($_.Exception.Message)" }
   }
 }
 
-function Ensure-Directory([string] $Path, [switch] $DryRun) {
+function Initialize-Directory([string] $Path, [switch] $DryRun) {
   $exists = Test-Path $Path
   if ($exists) {
     Write-Change "Ordner $Path" "present" "present" "Skipped - already exists" -DryRun:$DryRun
@@ -134,8 +134,11 @@ function Invoke-ExternalCommand([string] $Command, [string[]] $Arguments, [strin
   $cmdLine = "$Command $($Arguments -join ' ')"
   Write-Info $DisplayName
   try {
+    $savedEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $out = & $Command @Arguments 2>&1
     $code = $LASTEXITCODE
+    $ErrorActionPreference = $savedEAP
     if ($out) {
       foreach ($line in $out) {
         $text = "$line"
@@ -156,7 +159,7 @@ function Invoke-ExternalCommand([string] $Command, [string[]] $Arguments, [strin
   }
 }
 
-function Pause-Menu {
+function Wait-Menu {
   Write-ConsoleLine "" ""
   Read-Host "Weiter mit [Enter]" | Out-Null
 }
@@ -180,7 +183,7 @@ function Confirm-YesNo([string] $Prompt, [bool] $DefaultYes = $true) {
   return $DefaultYes
 }
 
-function Reset-ActionCounters([string] $Name) {
+function Reset-ActionCounter([string] $Name) {
   $Script:ActionName = $Name
   $Script:ChangedCount = 0
   $Script:SkippedCount = 0
@@ -227,11 +230,11 @@ function Get-NodeMajorMinor([string] $VersionText) {
     $r = $VersionText
     if (-not $r) { $r = (& node --version) 2>$null }
     if ($r -match 'v(\d+)\.(\d+)') { return @([int]$Matches[1], [int]$Matches[2]) }
-  } catch { }
+  } catch { Write-Verbose "Konnte Node-Version nicht ermitteln: $($_.Exception.Message)" }
   return $null
 }
 
-function Test-CmdExists([string] $name) {
+function Test-CmdExist([string] $name) {
   try { return [bool](Get-Command $name -ErrorAction SilentlyContinue) } catch { return $false }
 }
 
@@ -328,12 +331,13 @@ function Set-NpmConfigValue([string] $Name, [string] $Value, [switch] $DryRun) {
 }
 
 function Set-NpmConfig([switch] $DryRun) {
-  Ensure-Directory $NpmPrefix -DryRun:$DryRun
-  Ensure-Directory $NpmCache -DryRun:$DryRun
+  Initialize-Directory $NpmPrefix -DryRun:$DryRun
+  Initialize-Directory $NpmCache -DryRun:$DryRun
   Set-NpmConfigValue "prefix" $NpmPrefix -DryRun:$DryRun
   Set-NpmConfigValue "cache" $NpmCache -DryRun:$DryRun
   Set-NpmConfigValue "proxy" $px -DryRun:$DryRun
   Set-NpmConfigValue "https-proxy" $px -DryRun:$DryRun
+  Set-NpmConfigValue "allow-scripts" $claudePkg -DryRun:$DryRun
   if (-not $DryRun) { Write-Ok "npm wurde konfiguriert." }
 }
 
@@ -343,7 +347,7 @@ function Export-WindowsCaBundle([string] $OutFile, [switch] $DryRun) {
     Write-Change "CA-Bundle $OutFile" $old "present" "Would create or update" -DryRun
     return 0
   }
-  if (-not (Test-CmdExists "certutil")) {
+  if (-not (Test-CmdExist "certutil")) {
     Write-Err "certutil wurde nicht gefunden. CA-Bundle kann nicht exportiert werden."
     Write-Change "CA-Bundle $OutFile" $old $old "Failed - certutil missing"
     return 0
@@ -374,7 +378,7 @@ function Export-WindowsCaBundle([string] $OutFile, [switch] $DryRun) {
             Add-Content -Path $tmpOut -Value (Get-Content -Path $pem) -Encoding ascii
             $exported++
           }
-        } catch { }
+        } catch { Write-Verbose "Zertifikat $($cert.Thumbprint) konnte nicht exportiert werden: $($_.Exception.Message)" }
       }
     }
 
@@ -386,7 +390,7 @@ function Export-WindowsCaBundle([string] $OutFile, [switch] $DryRun) {
       return 0
     }
 
-    Ensure-Directory (Split-Path $OutFile -Parent)
+    Initialize-Directory (Split-Path $OutFile -Parent)
     Move-Item -Path $tmpOut -Destination $OutFile -Force
     $finalHasPem = $false
     try { $finalHasPem = [bool](Select-String -Path $OutFile -Pattern "-----BEGIN CERTIFICATE-----" -SimpleMatch -Quiet -ErrorAction SilentlyContinue) } catch { $finalHasPem = $false }
@@ -396,7 +400,7 @@ function Export-WindowsCaBundle([string] $OutFile, [switch] $DryRun) {
       return 0
     }
     $size = 0
-    try { $size = (Get-Item -Path $OutFile -ErrorAction Stop).Length } catch { }
+    try { $size = (Get-Item -Path $OutFile -ErrorAction Stop).Length } catch { Write-Verbose "Konnte Dateigröße von $OutFile nicht ermitteln: $($_.Exception.Message)" }
     Write-Change "CA-Bundle $OutFile" $old "present ($exported certificates, $size bytes)" "Changed"
     return $exported
   } finally {
@@ -414,7 +418,7 @@ function Set-ProxyEnvPersistent([switch] $DryRun) {
   Set-PersistentEnv "NODE_USE_SYSTEM_CA" "1" -DryRun:$DryRun
 }
 
-function Resolve-PxPaths {
+function Resolve-PxPath {
   if ($PxIni -and (Test-Path $PxIni)) {
     $dir = Split-Path $PxIni -Parent
     $candidateExe = Join-Path $dir "px.exe"
@@ -444,7 +448,7 @@ function Resolve-PxPaths {
         break
       }
     }
-  } catch { }
+  } catch { Write-Verbose "Suche nach px.ini unter $DevRoot fehlgeschlagen: $($_.Exception.Message)" }
 
   if (-not $found) { $found = $fallback }
   if (-not $found) { return $false }
@@ -455,7 +459,7 @@ function Resolve-PxPaths {
 }
 
 function Show-PxHelp {
-  Resolve-PxPaths | Out-Null
+  Resolve-PxPath | Out-Null
   $dir = if ($PxExe) { Split-Path $PxExe -Parent } else { $DevRoot }
   Write-Info "Px ist eine einmalige manuelle Voraussetzung."
   Write-Info "1) Lade Px herunter: https://github.com/genotrance/px/releases"
@@ -472,9 +476,9 @@ function Show-PxHelp {
   Write-Info "Nutze Werkzeuge & Ordner > Px-Downloadseite öffnen, um die Px-Downloadseite zu öffnen."
 }
 
-function Ensure-Px {
+function Initialize-Px {
   if (Test-Port $PxAddr $PxPort) { Write-Ok "Px läuft bereits auf ${PxAddr}:${PxPort}."; return $true }
-  if (-not (Resolve-PxPaths)) { Write-Err "px.ini und px.exe wurden unter $DevRoot nicht gemeinsam gefunden."; Show-PxHelp; return $false }
+  if (-not (Resolve-PxPath)) { Write-Err "px.ini und px.exe wurden unter $DevRoot nicht gemeinsam gefunden."; Show-PxHelp; return $false }
   if (-not (Test-Path $PxExe)) { Write-Err "px.exe wurde nicht gefunden: $PxExe"; Show-PxHelp; return $false }
   if (-not (Test-Path $PxIni)) { Write-Err "px.ini wurde nicht gefunden: $PxIni"; Show-PxHelp; return $false }
   Write-Info "Px wird im Hintergrund gestartet ..."
@@ -520,8 +524,8 @@ function Remove-CompetingClaudeNativeInstall([switch] $DryRun) {
 
 function Install-ClaudeCode([switch] $DryRun) {
   Write-Head "Claude Code installieren / neu installieren"
-  if (-not (Test-CmdExists "npm")) { Write-Err "npm/Node wurde nicht gefunden. Installiere Node 18+."; return }
-  if (-not $DryRun -and -not (Ensure-Px)) { Write-Err "Die Installation benötigt einen laufenden Px-Proxy."; return }
+  if (-not (Test-CmdExist "npm")) { Write-Err "npm/Node wurde nicht gefunden. Installiere Node 18+."; return }
+  if (-not $DryRun -and -not (Initialize-Px)) { Write-Err "Die Installation benötigt einen laufenden Px-Proxy."; return }
   if (-not $DryRun) { Set-SessionProxyEnv }
   $nv = Get-NodeMajorMinor
   if ($nv -and ($nv[0] -lt 22 -or ($nv[0] -eq 22 -and $nv[1] -lt 15))) {
@@ -546,10 +550,10 @@ function Install-ClaudeCode([switch] $DryRun) {
 
 function Install-CodexCli([switch] $DryRun) {
   Write-Head "Codex CLI installieren / neu installieren"
-  if (-not (Test-CmdExists "npm")) { Write-Err "npm/Node wurde nicht gefunden. Installiere Node 22+."; return }
+  if (-not (Test-CmdExist "npm")) { Write-Err "npm/Node wurde nicht gefunden. Installiere Node 22+."; return }
   $nv = Get-NodeMajorMinor
   if ($nv -and $nv[0] -lt 22) { Write-Warn "Node $($nv[0]).$($nv[1]) ist kleiner als 22; Codex CLI benötigt Node 22+." }
-  if (-not $DryRun -and -not (Ensure-Px)) { Write-Err "Die Installation benötigt einen laufenden Px-Proxy."; return }
+  if (-not $DryRun -and -not (Initialize-Px)) { Write-Err "Die Installation benötigt einen laufenden Px-Proxy."; return }
   if (-not (Test-Path $CaBundlePath)) {
     Write-Info "CA-Bundle wird erstellt ..."
     $caCount = Export-WindowsCaBundle $CaBundlePath -DryRun:$DryRun
@@ -591,7 +595,7 @@ function Update-CaBundle([switch] $DryRun) {
 
 function Test-UrlViaPx([string] $Url) {
   if (-not (Test-Port $PxAddr $PxPort)) { return "nicht getestet, Px läuft nicht" }
-  if (-not (Test-CmdExists "curl.exe")) { return "nicht getestet, curl.exe fehlt" }
+  if (-not (Test-CmdExist "curl.exe")) { return "nicht getestet, curl.exe fehlt" }
   try {
     $code = (& curl.exe -s -o NUL -w "%{http_code}" --max-time 10 --proxy $px $Url) 2>$null
     if ($code -match '^\d{3}$') { return "HTTP $code" }
@@ -599,7 +603,7 @@ function Test-UrlViaPx([string] $Url) {
   } catch { return "Fehler: $($_.Exception.Message)" }
 }
 
-function Get-QuotaBarStatusLines {
+function Get-QuotaBarStatusLine {
   $paths = @(
     (Join-Path $env:USERPROFILE ".quotabar-win"),
     (Join-Path $env:APPDATA "QuotaBar"),
@@ -630,7 +634,7 @@ function Get-PxIniProxyText {
     foreach ($line in (Get-Content -Path $PxIni -ErrorAction SilentlyContinue)) {
       if ($line -match '^\s*(server|pac)\s*=\s*(.+)\s*$') { $values += "$($Matches[1])=$($Matches[2])" }
     }
-  } catch { }
+  } catch { Write-Verbose "Konnte $PxIni nicht lesen: $($_.Exception.Message)" }
   if ($values.Count -gt 0) { return ($values -join "; ") }
   return "<not set>"
 }
@@ -642,7 +646,7 @@ function Test-PemFile([string] $Path) {
 
 function Invoke-HealthCheck {
   Write-Head "Healthcheck"
-  Resolve-PxPaths | Out-Null
+  Resolve-PxPath | Out-Null
   Write-Info "Windows-Version / Build: $((cmd.exe /c ver) -join ' ')"
   $psMajor = $PSVersionTable.PSVersion.Major
   if ($psMajor -ge 5) { Write-SelfCheck "PowerShell-Version" "OK" "$($PSVersionTable.PSVersion)" } else { Write-SelfCheck "PowerShell-Version" "FAIL" "$($PSVersionTable.PSVersion)" }
@@ -654,11 +658,11 @@ function Invoke-HealthCheck {
     } catch { Write-SelfCheck "Schreibzugriff auf $DevRoot" "FAIL" $_.Exception.Message }
   } else { Write-SelfCheck "Schreibzugriff auf $DevRoot" "WARN" "Ordner existiert nicht" }
   foreach ($cmd in @("setx", "curl.exe", "certutil", "schtasks", "node", "npm")) {
-    if (Test-CmdExists $cmd) { Write-SelfCheck "$cmd vorhanden" "OK" (Get-CmdSource $cmd) } else { Write-SelfCheck "$cmd vorhanden" "FAIL" "nicht gefunden" }
+    if (Test-CmdExist $cmd) { Write-SelfCheck "$cmd vorhanden" "OK" (Get-CmdSource $cmd) } else { Write-SelfCheck "$cmd vorhanden" "FAIL" "nicht gefunden" }
   }
-  if (Test-CmdExists "winget") { Write-SelfCheck "winget vorhanden" "OK" (Get-CmdSource "winget") } else { Write-SelfCheck "winget vorhanden" "WARN" "nicht gefunden" }
-  if (Test-CmdExists "git") { Write-SelfCheck "git vorhanden" "OK" (Get-CmdSource "git") } else { Write-SelfCheck "git vorhanden" "WARN" "nicht gefunden" }
-  if (Test-CmdExists "pwsh") { Write-SelfCheck "pwsh vorhanden" "OK" (Get-CmdSource "pwsh") } else { Write-SelfCheck "pwsh vorhanden" "WARN" "PowerShell 7 wurde nicht gefunden" }
+  if (Test-CmdExist "winget") { Write-SelfCheck "winget vorhanden" "OK" (Get-CmdSource "winget") } else { Write-SelfCheck "winget vorhanden" "WARN" "nicht gefunden" }
+  if (Test-CmdExist "git") { Write-SelfCheck "git vorhanden" "OK" (Get-CmdSource "git") } else { Write-SelfCheck "git vorhanden" "WARN" "nicht gefunden" }
+  if (Test-CmdExist "pwsh") { Write-SelfCheck "pwsh vorhanden" "OK" (Get-CmdSource "pwsh") } else { Write-SelfCheck "pwsh vorhanden" "WARN" "PowerShell 7 wurde nicht gefunden" }
   Write-Info "node --version: $(Get-VersionOutput 'node' @('--version'))"
   Write-Info "npm --version: $(Get-VersionOutput 'npm' @('--version'))"
   $nv = Get-NodeMajorMinor
@@ -675,9 +679,9 @@ function Invoke-HealthCheck {
     Get-ItemProperty -Path "HKCU:\Environment" -ErrorAction Stop | Out-Null
     Write-SelfCheck "HKCU:\Environment lesbar/schreibbar" "WARN" "lesbar; der Healthcheck schreibt keine Registry-Testwerte"
   } catch { Write-SelfCheck "HKCU:\Environment lesbar/schreibbar" "FAIL" $_.Exception.Message }
-  if (Test-CmdExists "claude") { Write-Ok "Claude Code vorhanden: $(Get-CmdSource 'claude')" } else { Write-Warn "Claude Code ist nicht installiert." }
+  if (Test-CmdExist "claude") { Write-Ok "Claude Code vorhanden: $(Get-CmdSource 'claude')" } else { Write-Warn "Claude Code ist nicht installiert." }
   Write-Info "claude --version: $(Get-VersionOutput 'claude' @('--version'))"
-  if (Test-CmdExists "codex") { Write-Ok "Codex CLI vorhanden: $(Get-CmdSource 'codex')" } else { Write-Warn "Codex CLI ist nicht installiert." }
+  if (Test-CmdExist "codex") { Write-Ok "Codex CLI vorhanden: $(Get-CmdSource 'codex')" } else { Write-Warn "Codex CLI ist nicht installiert." }
   Write-Info "codex --version: $(Get-VersionOutput 'codex' @('--version'))"
   foreach ($nativePath in @((Join-Path $env:USERPROFILE ".local\bin\claude.exe"), (Join-Path $env:USERPROFILE ".local\share\claude"))) {
     if (Test-Path $nativePath) { Write-SelfCheck "Native Claude-Installation" "WARN" "vorhanden: $nativePath" } else { Write-SelfCheck "Native Claude-Installation" "OK" "nicht vorhanden: $nativePath" }
@@ -700,10 +704,10 @@ function Invoke-HealthCheck {
   else { Write-Warn "CODEX_CA_CERTIFICATE ist nicht gesetzt." }
   if (Test-Path $CaBundlePath) {
     $caSize = 0
-    try { $caSize = (Get-Item -Path $CaBundlePath -ErrorAction Stop).Length } catch { }
+    try { $caSize = (Get-Item -Path $CaBundlePath -ErrorAction Stop).Length } catch { Write-Verbose "Konnte Dateigröße von $CaBundlePath nicht ermitteln: $($_.Exception.Message)" }
     if (Test-PemFile $CaBundlePath) { Write-SelfCheck "CA-Bundle" "OK" "$CaBundlePath ($caSize Bytes, PEM erkannt)" } else { Write-SelfCheck "CA-Bundle" "FAIL" "$CaBundlePath ($caSize Bytes, kein PEM erkannt)" }
   } else { Write-SelfCheck "CA-Bundle" "WARN" "nicht vorhanden: $CaBundlePath" }
-  foreach ($line in (Get-QuotaBarStatusLines)) { Write-Info $line }
+  foreach ($line in (Get-QuotaBarStatusLine)) { Write-Info $line }
   foreach ($u in @("https://api.anthropic.com", "https://auth.openai.com")) { Write-Info "Verbindung via Px: $u -> $(Test-UrlViaPx $u)" }
 }
 
@@ -711,10 +715,46 @@ function Get-VersionOutput([string] $Command, [string[]] $Arguments) {
   try { return ((& $Command @Arguments) 2>$null) -join " " } catch { return "" }
 }
 
+function Get-SemVer([string] $Text) {
+  if ($Text -match '(\d+\.\d+\.\d+)') { return $Matches[1] }
+  return $null
+}
+
+function Get-NpmLatestVersion([string] $Package) {
+  try {
+    $value = (& npm view $Package version 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $value) { return $null }
+    return (Get-SemVer "$value")
+  } catch { return $null }
+}
+
+function Show-CodingAgentUpdate {
+  $agents = @(
+    @{ Label = "Claude Code"; Command = "claude"; Package = $claudePkg },
+    @{ Label = "Codex CLI"; Command = "codex"; Package = $codexPkg }
+  )
+  foreach ($agent in $agents) {
+    if (-not (Test-CmdExist $agent.Command)) { continue }
+    $installed = Get-SemVer (Get-VersionOutput $agent.Command @("--version"))
+    $latest = Get-NpmLatestVersion $agent.Package
+    if (-not $installed -or -not $latest) {
+      Write-Info "$($agent.Label): Versionsvergleich nicht möglich (installiert: $(Format-Value $installed), aktuell: $(Format-Value $latest))."
+      continue
+    }
+    $isNewer = $false
+    try { $isNewer = ([version]$latest -gt [version]$installed) } catch { $isNewer = ($latest -ne $installed) }
+    if ($isNewer) {
+      Write-Warn "$($agent.Label): Update verfügbar ($installed -> $latest). npm install -g $($agent.Package)@latest ausführen."
+    } else {
+      Write-Ok "$($agent.Label): aktuell ($installed)."
+    }
+  }
+}
+
 function Export-DiagnosticReport {
   Write-Head "Diagnosebericht exportieren"
-  Resolve-PxPaths | Out-Null
-  Ensure-Directory $ReportRoot
+  Resolve-PxPath | Out-Null
+  Initialize-Directory $ReportRoot
   $ts = Get-Date -Format "yyyyMMdd-HHmmss"
   $report = Join-Path $ReportRoot "${ts}_${AppName}-diagnostic.txt"
   $userPath = Get-UserEnvValue "Path"
@@ -748,17 +788,17 @@ function Export-DiagnosticReport {
   foreach ($name in @("prefix", "cache", "proxy", "https-proxy")) { $lines += "npm ${name}: $(Format-Value (Get-NpmConfigValue $name))" }
   $lines += "User-PATH enthält NpmPrefix: $pathHasPrefix"
   foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NODE_USE_SYSTEM_CA", "CODEX_CA_CERTIFICATE")) { $lines += "UserEnv ${name}: $(Format-Value (Get-UserEnvValue $name))" }
-  $lines += "Claude installiert: $(if (Test-CmdExists 'claude') { 'ja' } else { 'nein' })"
+  $lines += "Claude installiert: $(if (Test-CmdExist 'claude') { 'ja' } else { 'nein' })"
   $lines += "Claude Version: $(Get-VersionOutput 'claude' @('--version'))"
   $lines += "Claude Pfad: $(Format-Value (Get-CmdSource 'claude'))"
-  $lines += "Codex installiert: $(if (Test-CmdExists 'codex') { 'ja' } else { 'nein' })"
+  $lines += "Codex installiert: $(if (Test-CmdExist 'codex') { 'ja' } else { 'nein' })"
   $lines += "Codex Version: $(Get-VersionOutput 'codex' @('--version'))"
   $lines += "Codex Pfad: $(Format-Value (Get-CmdSource 'codex'))"
   $lines += "CA-Bundle vorhanden: $(if (Test-Path $CaBundlePath) { 'ja' } else { 'nein' })"
   $lines += "Connectivity https://api.anthropic.com: $(Test-UrlViaPx 'https://api.anthropic.com')"
   $lines += "Connectivity https://auth.openai.com: $(Test-UrlViaPx 'https://auth.openai.com')"
   $lines += ""
-  foreach ($line in (Get-QuotaBarStatusLines)) { $lines += $line }
+  foreach ($line in (Get-QuotaBarStatusLine)) { $lines += $line }
   Set-Content -Path $report -Value $lines -Encoding UTF8
   Write-Change "Diagnosebericht $report" "<not present>" "present" "Changed"
   Write-Ok "Diagnosebericht gespeichert: $report"
@@ -766,7 +806,7 @@ function Export-DiagnosticReport {
 
 function Show-CurrentConfiguration {
   Write-Head "Aktuelle Konfiguration"
-  Resolve-PxPaths | Out-Null
+  Resolve-PxPath | Out-Null
   foreach ($line in @(
     "AppName      : $AppName",
     "NpmPrefix    : $NpmPrefix",
@@ -832,11 +872,11 @@ function Set-NpmCacheFolder {
   $oldCache = $NpmCache
   Set-Variable -Scope Script -Name NpmCache -Value $newCache
   Write-Change "ScriptConfig NpmCache" $oldCache $NpmCache "Changed"
-  Ensure-Directory $NpmCache
+  Initialize-Directory $NpmCache
   Set-NpmConfigValue "cache" $NpmCache
 }
 
-function Open-FolderIfExists([string] $Path) {
+function Open-FolderIfExist([string] $Path) {
   if (-not (Test-Path $Path)) { Write-Warn "Ordner existiert nicht: $Path"; return }
   Write-Info "Öffne Ordner: $Path"
   Start-Process "explorer.exe" $Path | Out-Null
@@ -854,12 +894,12 @@ function Open-ImportantFoldersMenu {
     Write-ConsoleLine "  0) Zurück" ""
     $c = (Read-Host "Auswahl").Trim()
     switch ($c) {
-      "1" { Open-FolderIfExists $NpmPrefix }
-      "2" { Open-FolderIfExists $NpmCache }
-      "3" { Resolve-PxPaths | Out-Null; if ($PxExe) { Open-FolderIfExists (Split-Path $PxExe -Parent) } else { Write-Warn "Px-Ordner wurde nicht gefunden. Lege px.ini und px.exe unter $DevRoot ab." } }
-      "4" { Open-FolderIfExists (Split-Path $CaBundlePath -Parent) }
-      "5" { Open-FolderIfExists $LogRoot }
-      "6" { Open-FolderIfExists $ReportRoot }
+      "1" { Open-FolderIfExist $NpmPrefix }
+      "2" { Open-FolderIfExist $NpmCache }
+      "3" { Resolve-PxPath | Out-Null; if ($PxExe) { Open-FolderIfExist (Split-Path $PxExe -Parent) } else { Write-Warn "Px-Ordner wurde nicht gefunden. Lege px.ini und px.exe unter $DevRoot ab." } }
+      "4" { Open-FolderIfExist (Split-Path $CaBundlePath -Parent) }
+      "5" { Open-FolderIfExist $LogRoot }
+      "6" { Open-FolderIfExist $ReportRoot }
       "0" { }
       default { Write-Warn "Ungültige Auswahl: '$c'" }
     }
@@ -945,13 +985,13 @@ function Show-ToolsMenu {
 }
 
 function Show-Menu {
-  try { Clear-Host } catch { }
+  try { Clear-Host } catch { Write-Verbose "Konnte Konsole nicht leeren: $($_.Exception.Message)" }
   Write-ConsoleLine "==================================================" "Cyan"
   Write-ConsoleLine "  $AppName - Setup für Claude / Codex hinter Px" "Cyan"
   Write-ConsoleLine "==================================================" "Cyan"
   $pxState = if (Test-Port $PxAddr $PxPort) { "läuft" } else { "gestoppt" }
-  $cl = if (Test-CmdExists "claude") { "installiert" } else { "fehlt" }
-  $cx = if (Test-CmdExists "codex") { "installiert" } else { "fehlt" }
+  $cl = if (Test-CmdExist "claude") { "installiert" } else { "fehlt" }
+  $cx = if (Test-CmdExist "codex") { "installiert" } else { "fehlt" }
   Write-ConsoleLine ("  Benutzer : {0}" -f $env:USERNAME) "DarkGray"
   Write-ConsoleLine ("  Px       : {0} ({1})" -f $pxState, $px) "DarkGray"
   Write-ConsoleLine ("  Claude   : {0}" -f $cl) "DarkGray"
@@ -964,21 +1004,21 @@ function Show-Menu {
   Write-ConsoleLine "  0) Beenden" ""
   Write-ConsoleLine "" ""
   Write-ConsoleLine "  Claude/Codex-Benutzerdaten bleiben bei allen Aktionen erhalten." "DarkGray"
-  foreach ($line in (Get-QuotaBarStatusLines)) { Write-ConsoleLine "  $line" "DarkGray" }
+  foreach ($line in (Get-QuotaBarStatusLine)) { Write-ConsoleLine "  $line" "DarkGray" }
 }
 
 function Invoke-MenuAction([string] $Name, [scriptblock] $Action) {
-  Reset-ActionCounters $Name
+  Reset-ActionCounter $Name
   try { & $Action } catch { Write-Err $_.Exception.Message }
   Show-ActionSummary
-  Pause-Menu
+  Wait-Menu
 }
 
 function Invoke-SelectedAction([string] $SelectedAction, [switch] $DryRun) {
-  Reset-ActionCounters $SelectedAction
+  Reset-ActionCounter $SelectedAction
   try {
     switch ($SelectedAction) {
-      "StartPx" { Write-Head "Px-Proxy"; if (-not (Ensure-Px)) { Write-Err "Action StartPx ist fehlgeschlagen." } }
+      "StartPx" { Write-Head "Px-Proxy"; if (Initialize-Px) { Show-CodingAgentUpdate } else { Write-Err "Action StartPx ist fehlgeschlagen." } }
       "HealthCheck" { Invoke-HealthCheck }
       "DiagnosticReport" { Export-DiagnosticReport }
       "DryRun" { Invoke-DryRun }
@@ -1004,7 +1044,7 @@ if ($Action -eq "Menu") {
     Show-Menu
     $choice = (Read-Host "Auswahl").Trim()
     switch ($choice) {
-      "1" { Invoke-MenuAction "Px-Proxy starten / prüfen" { Write-Head "Px-Proxy"; Ensure-Px | Out-Null } }
+      "1" { Invoke-MenuAction "Px-Proxy starten / prüfen" { Write-Head "Px-Proxy"; if (Initialize-Px) { Show-CodingAgentUpdate } } }
       "2" { Show-InstallMenu }
       "3" { Show-DiagnosticsMenu }
       "4" { Show-ToolsMenu }
