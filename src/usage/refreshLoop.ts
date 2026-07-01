@@ -24,6 +24,13 @@ export class RefreshLoop {
   private readonly consecutiveRateLimits = new Map<string, number>();
   private offline = false;
   private lastCostWindow: string | undefined;
+  // Diagnose für anomale Rate-Limit-Bursts (siehe ANALYSIS.md): tickSeq zählt
+  // jede refreshNow()-Ausführung, callSeq jeden tatsächlichen fetchWithTimeout-
+  // Aufruf pro Provider. So lässt sich am nächsten Burst ablesen, ob mehrere
+  // echte Ticks in kurzer Folge laufen (z. B. durch wiederholte "dashboard"/
+  // "manual"-Trigger) oder ob ein einzelner Tick mehrfach loggt.
+  private tickSeq = 0;
+  private readonly callSeq = new Map<string, number>();
 
   constructor(
     private readonly providers: UsageProvider[],
@@ -75,6 +82,7 @@ export class RefreshLoop {
     }
 
     this.isRefreshing = true;
+    const tick = ++this.tickSeq;
     try {
       const nowMs = Date.now();
       const active = this.providers.filter((p) => {
@@ -85,14 +93,14 @@ export class RefreshLoop {
         }
         if (this.skipLoggedUntil.get(p.id) !== until) {
           const remainingSeconds = Math.ceil((until - nowMs) / 1000);
-          log.debug(`${p.id} rate-limited, skipping refresh (${remainingSeconds}s remaining)`);
+          log.debug(`${p.id} rate-limited, skipping refresh (${remainingSeconds}s remaining) [tick=${tick}]`);
           this.recorder?.write({ kind: "refresh.skipped", provider: p.id, reason: "rate-limited", remainingSeconds });
           this.skipLoggedUntil.set(p.id, until);
         }
         return false;
       });
-      this.recorder?.write({ kind: "refresh.start", providers: active.map((p) => p.id), trigger });
-      const snapshots = await Promise.all(active.map((provider) => this.fetchWithTimeout(provider)));
+      this.recorder?.write({ kind: "refresh.start", providers: active.map((p) => p.id), trigger, tick });
+      const snapshots = await Promise.all(active.map((provider) => this.fetchWithTimeout(provider, tick)));
       const now = new Date();
       for (const snapshot of snapshots) {
         for (const window of snapshot.windows) {
@@ -160,14 +168,17 @@ export class RefreshLoop {
     }
   }
 
-  private async fetchWithTimeout(provider: UsageProvider): Promise<UsageSnapshot> {
+  private async fetchWithTimeout(provider: UsageProvider, tick: number): Promise<UsageSnapshot> {
+    const call = (this.callSeq.get(provider.id) ?? 0) + 1;
+    this.callSeq.set(provider.id, call);
+    const ctx = `tick=${tick} call=${call}`;
     try {
       const snapshot = await withTimeout(provider.fetchUsage(), this.timeoutMs, `${provider.displayName} timed out`);
       this.consecutiveRateLimits.delete(provider.id);
       if (this.offline) {
         this.offline = false;
         this.recorder?.write({ kind: "network.recovered" });
-        log.info("network recovered");
+        log.info(`network recovered [${ctx}]`);
       }
       return snapshot;
     } catch (error) {
@@ -177,7 +188,7 @@ export class RefreshLoop {
         const backoffMs = computeBackoffMs(error.retryAfterMs, consecutive);
         this.backoff.set(provider.id, Date.now() + backoffMs);
         this.skipLoggedUntil.delete(provider.id);
-        const message = `${provider.id} rate-limited (#${consecutive}), backing off for ${Math.round(backoffMs / 1000)}s`;
+        const message = `${provider.id} rate-limited (#${consecutive}), backing off for ${Math.round(backoffMs / 1000)}s [${ctx}]`;
         if (consecutive === 1) log.warn(message);
         else log.debug(message);
         return errorSnapshot(provider.id, toErrorMessage(error), "error");
@@ -190,7 +201,7 @@ export class RefreshLoop {
         this.offline = true;
         this.recorder?.write({ kind: "network.check.failed", provider: provider.id, code: cls.code });
       }
-      log.warn(`${provider.id} refresh failed: ${toErrorMessage(error)}`);
+      log.warn(`${provider.id} refresh failed: ${toErrorMessage(error)} [${ctx}]`);
       return errorSnapshot(provider.id, toErrorMessage(error), "error");
     }
   }

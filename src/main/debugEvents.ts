@@ -27,7 +27,7 @@ export type DebugEvent =
 
 export interface AppStartEvent { kind: "app.start"; version: string; variant?: string; pollIntervalSeconds: number; noWindow: boolean; platform: string; }
 export interface AppExitEvent { kind: "app.exit"; reason: string; }
-export interface RefreshStartEvent { kind: "refresh.start"; providers: string[]; trigger: "interval" | "manual" | "dashboard"; }
+export interface RefreshStartEvent { kind: "refresh.start"; providers: string[]; trigger: "interval" | "manual" | "dashboard"; tick: number; }
 export interface RefreshSkippedEvent { kind: "refresh.skipped"; provider: string; reason: "rate-limited"; remainingSeconds: number; }
 export interface RefreshErrorEvent { kind: "refresh.error"; message: string; }
 export interface SnapshotEvent {
