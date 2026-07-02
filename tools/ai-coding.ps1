@@ -24,7 +24,7 @@ param(
   [string] $CaBundlePath = "C:\Entwicklung\certs\windows-ca-bundle.pem",
   [string] $LogRoot      = "C:\Entwicklung\ai-coding",
   [string] $ReportRoot   = "C:\Entwicklung\ai-coding",
-  [ValidateSet("Menu", "StartPx", "HealthCheck", "DiagnosticReport", "DryRun", "UpdateCaBundle", "InstallClaude", "InstallCodex", "InstallBoth", "ShowConfiguration")]
+  [ValidateSet("Menu", "StartPx", "HealthCheck", "DiagnosticReport", "DryRun", "UpdateCaBundle", "InstallClaude", "InstallCodex", "InstallBoth", "UpdateAll", "ShowConfiguration")]
   [string] $Action = "Menu",
   [switch] $DryRun,
   [switch] $AssumeYes
@@ -48,6 +48,8 @@ $Script:WarningCount = 0
 $Script:RestartNeeded = $false
 $Script:IsInteractive = ($Action -eq "Menu")
 $Script:AssumeYes = [bool]$AssumeYes
+$Script:ClaudeStatus = $null
+$Script:CodexStatus = $null
 
 function Format-Value([string] $Value) {
   if ($null -eq $Value -or $Value -eq "") { return "<not set>" }
@@ -222,6 +224,28 @@ function Test-Port([string] $a, [int] $p) {
       $out = & netstat -ano 2>$null
       return [bool]($out | Where-Object { ($_ -match (":" + $p + "\s")) -and (($_ -match "0\.0\.0\.0:0\s") -or ($_ -match "\[::\]:0\s")) })
     } catch { return $false }
+  }
+}
+
+function Get-PxStatus {
+  $listening = Test-Port $PxAddr $PxPort
+  $owners = @()
+  try {
+    $ids = @(Get-NetTCPConnection -LocalPort $PxPort -State Listen -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty OwningProcess -Unique | Where-Object { $_ -gt 0 })
+    if ($ids.Count -gt 0) { $owners = @(Get-Process -Id $ids -ErrorAction SilentlyContinue) }
+  } catch { Write-Verbose "Konnte Port-Owner für Port $PxPort nicht ermitteln: $($_.Exception.Message)" }
+  $pxOwner = @($owners | Where-Object { $_.ProcessName -ieq "px" })
+  $pxByName = @(Get-Process -Name "px" -ErrorAction SilentlyContinue)
+  # Owner nicht ermittelbar (z. B. Get-NetTCPConnection nicht verfügbar): px-Prozessname als Näherung
+  $pxRunning = ($pxOwner.Count -gt 0) -or (($owners.Count -eq 0) -and $listening -and ($pxByName.Count -gt 0))
+  $pxProcessId = if ($pxOwner.Count -gt 0) { $pxOwner[0].Id } elseif ($pxByName.Count -gt 0) { $pxByName[0].Id } else { $null }
+  $ownerText = if ($owners.Count -gt 0) { ($owners | ForEach-Object { "{0} (PID {1})" -f $_.ProcessName, $_.Id }) -join ", " } else { "unbekannter Prozess" }
+  return [pscustomobject]@{
+    Listening = $listening
+    PxRunning = $pxRunning
+    PxPid     = $pxProcessId
+    OwnerText = $ownerText
   }
 }
 
@@ -477,14 +501,29 @@ function Show-PxHelp {
 }
 
 function Initialize-Px {
-  if (Test-Port $PxAddr $PxPort) { Write-Ok "Px läuft bereits auf ${PxAddr}:${PxPort}."; return $true }
+  $status = Get-PxStatus
+  if ($status.Listening) {
+    if ($status.PxRunning) {
+      $pidText = if ($status.PxPid) { " (PID $($status.PxPid))" } else { "" }
+      Write-Ok "Px läuft bereits auf ${PxAddr}:${PxPort}$pidText."
+      return $true
+    }
+    Write-Err "Port ${PxAddr}:${PxPort} ist belegt, aber es läuft kein px-Prozess. Belegt durch: $($status.OwnerText)."
+    Write-Info "Beende den fremden Prozess oder nutze einen anderen Port (-PxPort), damit Px gestartet werden kann."
+    return $false
+  }
   if (-not (Resolve-PxPath)) { Write-Err "px.ini und px.exe wurden unter $DevRoot nicht gemeinsam gefunden."; Show-PxHelp; return $false }
   if (-not (Test-Path $PxExe)) { Write-Err "px.exe wurde nicht gefunden: $PxExe"; Show-PxHelp; return $false }
   if (-not (Test-Path $PxIni)) { Write-Err "px.ini wurde nicht gefunden: $PxIni"; Show-PxHelp; return $false }
   Write-Info "Px wird im Hintergrund gestartet ..."
-  Start-Process -FilePath $PxExe -ArgumentList @("--config=$PxIni") -WorkingDirectory (Split-Path $PxExe -Parent) -WindowStyle Hidden | Out-Null
+  $proc = Start-Process -FilePath $PxExe -ArgumentList @("--config=$PxIni") -WorkingDirectory (Split-Path $PxExe -Parent) -WindowStyle Hidden -PassThru
   for ($n = 0; $n -lt 60; $n++) {
-    if (Test-Port $PxAddr $PxPort) { Write-Ok "Px wurde gestartet und ist erreichbar auf ${PxAddr}:${PxPort}."; return $true }
+    if (Test-Port $PxAddr $PxPort) { Write-Ok "Px wurde gestartet und ist erreichbar auf ${PxAddr}:${PxPort} (PID $($proc.Id))."; return $true }
+    # px.exe kann per fork/daemonize einen Kindprozess hinterlassen; nur Fehler, wenn gar kein px mehr läuft
+    if ($proc.HasExited -and -not (Get-Process -Name "px" -ErrorAction SilentlyContinue)) {
+      Write-Err "px.exe wurde unerwartet beendet (ExitCode $($proc.ExitCode)). Prüfe px.ini und Px-Logs."
+      return $false
+    }
     Start-Sleep -Milliseconds 250
   }
   Write-Err "Px lauscht nicht auf ${PxAddr}:${PxPort}. Prüfe px.ini und Px-Logs."
@@ -542,6 +581,7 @@ function Install-ClaudeCode([switch] $DryRun) {
   Write-Change "npm install $claudePkg@latest" "<not run>" "exit $code" $(if ($code -eq 0) { "Changed" } else { "Failed - npm exit $code" })
   if ($code -ne 0) { Write-Err "npm install ist fehlgeschlagen. Prüfe Proxy- und CA-Einstellungen."; return }
   Write-Ok "Claude Code wurde installiert."
+  Initialize-AgentVersionCache
   Set-ProxyEnvPersistent
   Write-Ok "Proxy und NODE_USE_SYSTEM_CA wurden als Benutzer-Umgebungsvariablen gespeichert."
   Write-Info "Nach der Installation funktionieren die Claude CLI und die Claude-Erweiterung in einem neu gestarteten VS Code mit diesen Einstellungen."
@@ -576,6 +616,7 @@ function Install-CodexCli([switch] $DryRun) {
   Write-Change "npm install $codexPkg@latest" "<not run>" "exit $code" $(if ($code -eq 0) { "Changed" } else { "Failed - npm exit $code" })
   if ($code -ne 0) { Write-Err "npm install ist fehlgeschlagen. Prüfe Proxy- und CA-Einstellungen."; return }
   Write-Ok "Codex CLI wurde installiert."
+  Initialize-AgentVersionCache
   Set-PersistentEnv "CODEX_CA_CERTIFICATE" $CaBundlePath
   Set-ProxyEnvPersistent
   Write-Info "Nach der Installation funktionieren Codex CLI, Codex Login, die VS Code Extension und die MS Store App mit laufendem Px und diesen Benutzer-Umgebungsvariablen."
@@ -593,6 +634,27 @@ function Update-CaBundle([switch] $DryRun) {
   }
 }
 
+function Update-AllTools([switch] $DryRun) {
+  Write-Head "Alle Tools auf neueste Version aktualisieren"
+  if (-not (Test-CmdExist "npm")) { Write-Err "npm/Node wurde nicht gefunden. Installiere Node 22+."; return }
+  if (-not $DryRun -and -not (Initialize-Px)) { Write-Err "Das Update benötigt einen laufenden Px-Proxy."; return }
+  if (-not $DryRun) { Set-SessionProxyEnv }
+  $tools = @(
+    @{ Label = "Claude Code"; Package = $claudePkg },
+    @{ Label = "Codex CLI"; Package = $codexPkg }
+  )
+  foreach ($tool in $tools) {
+    if ($DryRun) {
+      Write-Change "npm install $($tool.Package)@latest" "<not run>" "would run" "Would execute" -DryRun
+      continue
+    }
+    $code = Invoke-ExternalCommand "npm" @("install", "-g", "$($tool.Package)@latest") "npm install -g $($tool.Package)@latest ..."
+    Write-Change "npm install $($tool.Package)@latest" "<not run>" "exit $code" $(if ($code -eq 0) { "Changed" } else { "Failed - npm exit $code" })
+    if ($code -ne 0) { Write-Err "$($tool.Label): Update ist fehlgeschlagen. Prüfe Proxy- und CA-Einstellungen." }
+  }
+  if (-not $DryRun) { Show-CodingAgentUpdate }
+}
+
 function Test-UrlViaPx([string] $Url) {
   if (-not (Test-Port $PxAddr $PxPort)) { return "nicht getestet, Px läuft nicht" }
   if (-not (Test-CmdExist "curl.exe")) { return "nicht getestet, curl.exe fehlt" }
@@ -603,15 +665,18 @@ function Test-UrlViaPx([string] $Url) {
   } catch { return "Fehler: $($_.Exception.Message)" }
 }
 
-function Get-QuotaBarStatusLine {
+function Test-QuotaBarInstalled {
   $paths = @(
     (Join-Path $env:USERPROFILE ".quotabar-win"),
     (Join-Path $env:APPDATA "QuotaBar"),
     (Join-Path $env:LOCALAPPDATA "QuotaBar")
   )
-  $found = @()
-  foreach ($p in $paths) { if (Test-Path $p) { $found += $p } }
-  if ($found.Count -gt 0) {
+  foreach ($p in $paths) { if (Test-Path $p) { return $true } }
+  return $false
+}
+
+function Get-QuotaBarStatusLine {
+  if (Test-QuotaBarInstalled) {
     return @("QuotaBar auf diesem PC: ja")
   }
   return @(
@@ -674,7 +739,11 @@ function Invoke-HealthCheck {
   Write-Info "PxExe bekannt: $(Format-Value $PxExe)"
   Write-Info "PxIni bekannt: $(Format-Value $PxIni)"
   Write-Info "Proxy aus px.ini: $(Get-PxIniProxyText)"
-  if (Test-Port $PxAddr $PxPort) { Write-SelfCheck "Px erreichbar" "OK" $px } else { Write-SelfCheck "Px erreichbar" "WARN" $px }
+  $pxStatus = Get-PxStatus
+  if ($pxStatus.Listening) { Write-SelfCheck "Px erreichbar" "OK" $px } else { Write-SelfCheck "Px erreichbar" "WARN" $px }
+  if ($pxStatus.PxRunning) { Write-SelfCheck "Px-Prozess läuft" "OK" ("PID {0}" -f $pxStatus.PxPid) }
+  elseif ($pxStatus.Listening) { Write-SelfCheck "Px-Prozess läuft" "WARN" ("Port belegt durch: {0}" -f $pxStatus.OwnerText) }
+  else { Write-SelfCheck "Px-Prozess läuft" "WARN" "kein px-Prozess gefunden" }
   try {
     Get-ItemProperty -Path "HKCU:\Environment" -ErrorAction Stop | Out-Null
     Write-SelfCheck "HKCU:\Environment lesbar/schreibbar" "WARN" "lesbar; der Healthcheck schreibt keine Registry-Testwerte"
@@ -728,25 +797,44 @@ function Get-NpmLatestVersion([string] $Package) {
   } catch { return $null }
 }
 
+function Get-AgentVersionStatus([string] $Command, [string] $Package) {
+  if (-not (Test-CmdExist $Command)) {
+    return [pscustomobject]@{ State = "missing"; Text = "fehlt"; Installed = $null; Latest = $null }
+  }
+  $installed = Get-SemVer (Get-VersionOutput $Command @("--version"))
+  $latest = Get-NpmLatestVersion $Package
+  if (-not $installed -or -not $latest) {
+    $text = if ($installed) { "installiert ($installed), Update-Check nicht möglich" } else { "installiert, Update-Check nicht möglich" }
+    return [pscustomobject]@{ State = "unknown"; Text = $text; Installed = $installed; Latest = $latest }
+  }
+  $isNewer = $false
+  try { $isNewer = ([version]$latest -gt [version]$installed) } catch { $isNewer = ($latest -ne $installed) }
+  if ($isNewer) {
+    return [pscustomobject]@{ State = "update"; Text = "Update verfügbar ($installed -> $latest)"; Installed = $installed; Latest = $latest }
+  }
+  return [pscustomobject]@{ State = "current"; Text = "aktuell ($installed)"; Installed = $installed; Latest = $latest }
+}
+
+function Initialize-AgentVersionCache {
+  $Script:ClaudeStatus = Get-AgentVersionStatus "claude" $claudePkg
+  $Script:CodexStatus = Get-AgentVersionStatus "codex" $codexPkg
+}
+
 function Show-CodingAgentUpdate {
+  Initialize-AgentVersionCache
   $agents = @(
-    @{ Label = "Claude Code"; Command = "claude"; Package = $claudePkg },
-    @{ Label = "Codex CLI"; Command = "codex"; Package = $codexPkg }
+    @{ Label = "Claude Code"; Status = $Script:ClaudeStatus; Package = $claudePkg },
+    @{ Label = "Codex CLI"; Status = $Script:CodexStatus; Package = $codexPkg }
   )
   foreach ($agent in $agents) {
-    if (-not (Test-CmdExist $agent.Command)) { continue }
-    $installed = Get-SemVer (Get-VersionOutput $agent.Command @("--version"))
-    $latest = Get-NpmLatestVersion $agent.Package
-    if (-not $installed -or -not $latest) {
-      Write-Info "$($agent.Label): Versionsvergleich nicht möglich (installiert: $(Format-Value $installed), aktuell: $(Format-Value $latest))."
-      continue
-    }
-    $isNewer = $false
-    try { $isNewer = ([version]$latest -gt [version]$installed) } catch { $isNewer = ($latest -ne $installed) }
-    if ($isNewer) {
-      Write-Warn "$($agent.Label): Update verfügbar ($installed -> $latest). npm install -g $($agent.Package)@latest ausführen."
+    $s = $agent.Status
+    if ($s.State -eq "missing") { continue }
+    if ($s.State -eq "unknown") {
+      Write-Info "$($agent.Label): Versionsvergleich nicht möglich (installiert: $(Format-Value $s.Installed), aktuell: $(Format-Value $s.Latest))."
+    } elseif ($s.State -eq "update") {
+      Write-Warn "$($agent.Label): Update verfügbar ($($s.Installed) -> $($s.Latest)). Menüpunkt u oder npm install -g $($agent.Package)@latest ausführen."
     } else {
-      Write-Ok "$($agent.Label): aktuell ($installed)."
+      Write-Ok "$($agent.Label): aktuell ($($s.Installed))."
     }
   }
 }
@@ -782,7 +870,9 @@ function Export-DiagnosticReport {
   $lines += "LogRoot: $LogRoot"
   $lines += "ReportRoot: $ReportRoot"
   $lines += ""
-  $lines += "Px erreichbar: $(if (Test-Port $PxAddr $PxPort) { 'ja' } else { 'nein' })"
+  $pxStatus = Get-PxStatus
+  $lines += "Px erreichbar: $(if ($pxStatus.Listening) { 'ja' } else { 'nein' })"
+  $lines += "Px-Prozess: $(if ($pxStatus.PxRunning) { "läuft (PID $($pxStatus.PxPid))" } elseif ($pxStatus.Listening) { "läuft nicht, Port belegt durch: $($pxStatus.OwnerText)" } else { 'läuft nicht' })"
   $lines += "Node-Version: $(Get-VersionOutput 'node' @('--version'))"
   $lines += "npm-Version: $(Get-VersionOutput 'npm' @('--version'))"
   foreach ($name in @("prefix", "cache", "proxy", "https-proxy")) { $lines += "npm ${name}: $(Format-Value (Get-NpmConfigValue $name))" }
@@ -989,22 +1079,31 @@ function Show-Menu {
   Write-ConsoleLine "==================================================" "Cyan"
   Write-ConsoleLine "  $AppName - Setup für Claude / Codex hinter Px" "Cyan"
   Write-ConsoleLine "==================================================" "Cyan"
-  $pxState = if (Test-Port $PxAddr $PxPort) { "läuft" } else { "gestoppt" }
-  $cl = if (Test-CmdExist "claude") { "installiert" } else { "fehlt" }
-  $cx = if (Test-CmdExist "codex") { "installiert" } else { "fehlt" }
+  $pxStatus = Get-PxStatus
+  $pxState = if ($pxStatus.PxRunning) { "läuft" } elseif ($pxStatus.Listening) { "Port belegt, px.exe läuft nicht" } else { "gestoppt" }
+  if (-not $Script:ClaudeStatus -or -not $Script:CodexStatus) { Initialize-AgentVersionCache }
+  $clColor = if ($Script:ClaudeStatus.State -eq "update") { "Yellow" } else { "DarkGray" }
+  $cxColor = if ($Script:CodexStatus.State -eq "update") { "Yellow" } else { "DarkGray" }
+  $qbInstalled = Test-QuotaBarInstalled
+  $qb = if ($qbInstalled) { "vorhanden" } else { "fehlt" }
   Write-ConsoleLine ("  Benutzer : {0}" -f $env:USERNAME) "DarkGray"
   Write-ConsoleLine ("  Px       : {0} ({1})" -f $pxState, $px) "DarkGray"
-  Write-ConsoleLine ("  Claude   : {0}" -f $cl) "DarkGray"
-  Write-ConsoleLine ("  Codex    : {0}" -f $cx) "DarkGray"
+  Write-ConsoleLine ("  Claude   : {0}" -f $Script:ClaudeStatus.Text) $clColor
+  Write-ConsoleLine ("  Codex    : {0}" -f $Script:CodexStatus.Text) $cxColor
+  Write-ConsoleLine ("  QuotaBar : {0}" -f $qb) "DarkGray"
   Write-ConsoleLine "" ""
   Write-ConsoleLine "  1) Px-Proxy starten / prüfen" ""
   Write-ConsoleLine "  2) Installation & Aktualisierung" ""
   Write-ConsoleLine "  3) Diagnose & Status" ""
   Write-ConsoleLine "  4) Werkzeuge & Ordner" ""
+  Write-ConsoleLine "  u) Alle Tools auf neueste Version aktualisieren" ""
   Write-ConsoleLine "  0) Beenden" ""
-  Write-ConsoleLine "" ""
-  Write-ConsoleLine "  Claude/Codex-Benutzerdaten bleiben bei allen Aktionen erhalten." "DarkGray"
-  foreach ($line in (Get-QuotaBarStatusLine)) { Write-ConsoleLine "  $line" "DarkGray" }
+  if (-not $qbInstalled) {
+    Write-ConsoleLine "" ""
+    Write-ConsoleLine "  QuotaBar herunterladen:" "DarkGray"
+    Write-ConsoleLine "  ZIP-Version: http://quotabar-zip.sp23.online" "DarkGray"
+    Write-ConsoleLine "  GitHub Repo: https://github.com/spiral023/QuotaBar" "DarkGray"
+  }
 }
 
 function Invoke-MenuAction([string] $Name, [scriptblock] $Action) {
@@ -1026,6 +1125,7 @@ function Invoke-SelectedAction([string] $SelectedAction, [switch] $DryRun) {
       "InstallClaude" { Install-ClaudeCode -DryRun:$DryRun }
       "InstallCodex" { Install-CodexCli -DryRun:$DryRun }
       "InstallBoth" { Install-ClaudeCode -DryRun:$DryRun; if ($Script:FailedCount -eq 0) { Install-CodexCli -DryRun:$DryRun } }
+      "UpdateAll" { Update-AllTools -DryRun:$DryRun }
       "ShowConfiguration" { Show-CurrentConfiguration }
       default { Write-Err "Unbekannte Action: $SelectedAction"; Show-ActionSummary; return $false }
     }
@@ -1040,6 +1140,8 @@ function Invoke-SelectedAction([string] $SelectedAction, [switch] $DryRun) {
 Initialize-Logging
 
 if ($Action -eq "Menu") {
+  Write-ConsoleLine "Prüfe installierte Versionen ..." "DarkGray"
+  Initialize-AgentVersionCache
   do {
     Show-Menu
     $choice = (Read-Host "Auswahl").Trim()
@@ -1048,6 +1150,7 @@ if ($Action -eq "Menu") {
       "2" { Show-InstallMenu }
       "3" { Show-DiagnosticsMenu }
       "4" { Show-ToolsMenu }
+      "u" { Invoke-MenuAction "Alle Tools aktualisieren" { Update-AllTools } }
       "0" { Write-ConsoleLine "`nBeendet." "Cyan" }
       default { Write-Warn "Ungültige Auswahl: '$choice'"; Start-Sleep -Milliseconds 800 }
     }
