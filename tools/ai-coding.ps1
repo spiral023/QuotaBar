@@ -605,6 +605,8 @@ function Install-CodexCli([switch] $DryRun) {
     Set-SessionProxyEnv
     $env:CODEX_CA_CERTIFICATE = $CaBundlePath
     $env:SSL_CERT_FILE = $CaBundlePath
+    $env:NODE_EXTRA_CA_CERTS = $CaBundlePath
+    $env:NODE_USE_ENV_PROXY = "1"
   }
   Set-UserPathAdd $NpmPrefix -DryRun:$DryRun
   Set-NpmConfig -DryRun:$DryRun
@@ -618,6 +620,9 @@ function Install-CodexCli([switch] $DryRun) {
   Write-Ok "Codex CLI wurde installiert."
   Initialize-AgentVersionCache
   Set-PersistentEnv "CODEX_CA_CERTIFICATE" $CaBundlePath
+  Set-PersistentEnv "SSL_CERT_FILE" $CaBundlePath
+  Set-PersistentEnv "NODE_EXTRA_CA_CERTS" $CaBundlePath
+  Set-PersistentEnv "NODE_USE_ENV_PROXY" "1"
   Set-ProxyEnvPersistent
   Write-Info "Nach der Installation funktionieren Codex CLI, Codex Login, die VS Code Extension und die MS Store App mit laufendem Px und diesen Benutzer-Umgebungsvariablen."
   Show-RestartNotice
@@ -629,6 +634,9 @@ function Update-CaBundle([switch] $DryRun) {
   if (-not $DryRun) {
     if ($n -lt 1) { Write-Err "CA-Bundle wurde nicht aktualisiert."; return }
     Set-PersistentEnv "CODEX_CA_CERTIFICATE" $CaBundlePath
+    Set-PersistentEnv "SSL_CERT_FILE" $CaBundlePath
+    Set-PersistentEnv "NODE_EXTRA_CA_CERTS" $CaBundlePath
+    Set-PersistentEnv "NODE_USE_ENV_PROXY" "1"
     Write-Ok "CA-Bundle wurde aktualisiert: $CaBundlePath ($n Zertifikate)"
     Show-RestartNotice
   }
@@ -771,13 +779,21 @@ function Invoke-HealthCheck {
   if ($codexCa -and (Test-Path $codexCa)) { Write-Ok "CODEX_CA_CERTIFICATE zeigt auf vorhandene Datei: $codexCa" }
   elseif ($codexCa) { Write-Err "CODEX_CA_CERTIFICATE ist gesetzt, aber die Datei fehlt: $codexCa" }
   else { Write-Warn "CODEX_CA_CERTIFICATE ist nicht gesetzt." }
+  foreach ($name in @("SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS")) {
+    $value = Get-UserEnvValue $name
+    if ($value -and (Test-Path $value)) { Write-Ok "$name zeigt auf vorhandene Datei: $value" }
+    elseif ($value) { Write-Err "$name ist gesetzt, aber die Datei fehlt: $value" }
+    else { Write-Warn "$name ist nicht gesetzt." }
+  }
+  $nodeEnvProxy = Get-UserEnvValue "NODE_USE_ENV_PROXY"
+  if ($nodeEnvProxy -eq "1") { Write-Ok "NODE_USE_ENV_PROXY ist gesetzt." } else { Write-Warn "NODE_USE_ENV_PROXY ist nicht auf 1 gesetzt." }
   if (Test-Path $CaBundlePath) {
     $caSize = 0
     try { $caSize = (Get-Item -Path $CaBundlePath -ErrorAction Stop).Length } catch { Write-Verbose "Konnte Dateigröße von $CaBundlePath nicht ermitteln: $($_.Exception.Message)" }
     if (Test-PemFile $CaBundlePath) { Write-SelfCheck "CA-Bundle" "OK" "$CaBundlePath ($caSize Bytes, PEM erkannt)" } else { Write-SelfCheck "CA-Bundle" "FAIL" "$CaBundlePath ($caSize Bytes, kein PEM erkannt)" }
   } else { Write-SelfCheck "CA-Bundle" "WARN" "nicht vorhanden: $CaBundlePath" }
   foreach ($line in (Get-QuotaBarStatusLine)) { Write-Info $line }
-  foreach ($u in @("https://api.anthropic.com", "https://auth.openai.com")) { Write-Info "Verbindung via Px: $u -> $(Test-UrlViaPx $u)" }
+  foreach ($u in @("https://api.anthropic.com", "https://auth.openai.com", "https://chatgpt.com", "https://chatgpt.com/backend-api/codex/responses")) { Write-Info "Verbindung via Px: $u -> $(Test-UrlViaPx $u)" }
 }
 
 function Get-VersionOutput([string] $Command, [string[]] $Arguments) {
@@ -877,7 +893,7 @@ function Export-DiagnosticReport {
   $lines += "npm-Version: $(Get-VersionOutput 'npm' @('--version'))"
   foreach ($name in @("prefix", "cache", "proxy", "https-proxy")) { $lines += "npm ${name}: $(Format-Value (Get-NpmConfigValue $name))" }
   $lines += "User-PATH enthält NpmPrefix: $pathHasPrefix"
-  foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NODE_USE_SYSTEM_CA", "CODEX_CA_CERTIFICATE")) { $lines += "UserEnv ${name}: $(Format-Value (Get-UserEnvValue $name))" }
+  foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NODE_USE_SYSTEM_CA", "NODE_USE_ENV_PROXY", "CODEX_CA_CERTIFICATE", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS")) { $lines += "UserEnv ${name}: $(Format-Value (Get-UserEnvValue $name))" }
   $lines += "Claude installiert: $(if (Test-CmdExist 'claude') { 'ja' } else { 'nein' })"
   $lines += "Claude Version: $(Get-VersionOutput 'claude' @('--version'))"
   $lines += "Claude Pfad: $(Format-Value (Get-CmdSource 'claude'))"
@@ -887,6 +903,8 @@ function Export-DiagnosticReport {
   $lines += "CA-Bundle vorhanden: $(if (Test-Path $CaBundlePath) { 'ja' } else { 'nein' })"
   $lines += "Connectivity https://api.anthropic.com: $(Test-UrlViaPx 'https://api.anthropic.com')"
   $lines += "Connectivity https://auth.openai.com: $(Test-UrlViaPx 'https://auth.openai.com')"
+  $lines += "Connectivity https://chatgpt.com: $(Test-UrlViaPx 'https://chatgpt.com')"
+  $lines += "Connectivity https://chatgpt.com/backend-api/codex/responses: $(Test-UrlViaPx 'https://chatgpt.com/backend-api/codex/responses')"
   $lines += ""
   foreach ($line in (Get-QuotaBarStatusLine)) { $lines += $line }
   Set-Content -Path $report -Value $lines -Encoding UTF8

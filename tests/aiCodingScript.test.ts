@@ -26,7 +26,7 @@ describe("ai-coding PowerShell setup script", () => {
   });
 
   it("discovers Px from px.ini under C:\\Entwicklung instead of hard-coding a Px version", () => {
-    expect(script).toContain("function Resolve-PxPaths");
+    expect(script).toContain("function Resolve-PxPath");
     expect(script).toContain("[string] $PxExe        = \"\"");
     expect(script).toContain("[string] $PxIni        = \"\"");
     expect(script).toContain("Get-ChildItem -Path $DevRoot -Filter \"px.ini\" -Recurse");
@@ -63,7 +63,7 @@ describe("ai-coding PowerShell setup script", () => {
       "Write-Log",
       "Write-Change",
       "Write-ExternalCommandLog",
-      "Reset-ActionCounters",
+      "Reset-ActionCounter",
       "Show-ActionSummary",
       "Export-DiagnosticReport",
       "Show-CurrentConfiguration",
@@ -83,7 +83,7 @@ describe("ai-coding PowerShell setup script", () => {
     expect(script).toContain('"$AppName.log"');
     expect(script).not.toContain('${ts}_${AppName}.log');
     expect(functionBody("Write-ConsoleLine")).not.toContain("Write-Log");
-    expect(functionBody("Reset-ActionCounters")).not.toContain("Write-Log");
+    expect(functionBody("Reset-ActionCounter")).not.toContain("Write-Log");
   });
 
   it("does not remove Claude or Codex user data directories or auth files", () => {
@@ -95,7 +95,7 @@ describe("ai-coding PowerShell setup script", () => {
   });
 
   it("supports non-interactive actions and keeps menu as the default action", () => {
-    expect(script).toContain('[ValidateSet("Menu", "StartPx", "HealthCheck", "DiagnosticReport", "DryRun", "UpdateCaBundle", "InstallClaude", "InstallCodex", "InstallBoth", "ShowConfiguration")]');
+    expect(script).toContain('[ValidateSet("Menu", "StartPx", "HealthCheck", "DiagnosticReport", "DryRun", "UpdateCaBundle", "InstallClaude", "InstallCodex", "InstallBoth", "UpdateAll", "ShowConfiguration")]');
     expect(script).toContain('[string] $Action = "Menu"');
     expect(script).toContain("[switch] $DryRun");
     expect(script).toContain("[switch] $AssumeYes");
@@ -109,6 +109,7 @@ describe("ai-coding PowerShell setup script", () => {
       '"InstallClaude"',
       '"InstallCodex"',
       '"InstallBoth"',
+      '"UpdateAll"',
       '"ShowConfiguration"',
     ].forEach((action) => expect(functionBody("Invoke-SelectedAction")).toContain(action));
   });
@@ -123,7 +124,7 @@ describe("ai-coding PowerShell setup script", () => {
 
   it("exports the CA bundle through a temporary file before replacing the existing file", () => {
     const body = functionBody("Export-WindowsCaBundle");
-    expect(body).toContain('Test-CmdExists "certutil"');
+    expect(body).toContain('Test-CmdExist "certutil"');
     expect(body).toContain("$tmpRoot");
     expect(body).toContain("$tmpOut");
     expect(body).toContain("Move-Item");
@@ -186,5 +187,35 @@ describe("ai-coding PowerShell setup script", () => {
     expect(codex).toContain("Set-SessionProxyEnv");
     expect(codex).toContain('$env:CODEX_CA_CERTIFICATE = $CaBundlePath');
     expect(codex).toContain('$env:SSL_CERT_FILE = $CaBundlePath');
+  });
+
+  it("persists Codex-specific CA variables and checks chatgpt.com connectivity", () => {
+    const codex = functionBody("Install-CodexCli");
+    const updateCa = functionBody("Update-CaBundle");
+    const health = functionBody("Invoke-HealthCheck");
+    const diagnostic = functionBody("Export-DiagnosticReport");
+
+    [
+      'Set-PersistentEnv "CODEX_CA_CERTIFICATE" $CaBundlePath',
+      'Set-PersistentEnv "SSL_CERT_FILE" $CaBundlePath',
+      'Set-PersistentEnv "NODE_EXTRA_CA_CERTS" $CaBundlePath',
+      'Set-PersistentEnv "NODE_USE_ENV_PROXY" "1"',
+    ].forEach((text) => {
+      expect(codex).toContain(text);
+      expect(updateCa).toContain(text);
+    });
+
+    [
+      '$env:CODEX_CA_CERTIFICATE = $CaBundlePath',
+      '$env:SSL_CERT_FILE = $CaBundlePath',
+      '$env:NODE_EXTRA_CA_CERTS = $CaBundlePath',
+      '$env:NODE_USE_ENV_PROXY = "1"',
+    ].forEach((text) => expect(codex).toContain(text));
+
+    expect(health).toContain('"https://chatgpt.com"');
+    expect(health).toContain('"https://chatgpt.com/backend-api/codex/responses"');
+    expect(diagnostic).toContain("SSL_CERT_FILE");
+    expect(diagnostic).toContain("NODE_EXTRA_CA_CERTS");
+    expect(diagnostic).toContain("NODE_USE_ENV_PROXY");
   });
 });

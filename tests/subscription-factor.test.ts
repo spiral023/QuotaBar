@@ -27,6 +27,11 @@ function makeSnapshot(provider: string, overrides: Partial<UsageSnapshot> = {}):
   };
 }
 
+function daysInCurrentLocalMonth(): number {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+}
+
 describe("PricingEngine", () => {
   it("returns undefined for error snapshots", async () => {
     const engine = new PricingEngine(settings, "/nonexistent/path");
@@ -41,12 +46,12 @@ describe("PricingEngine", () => {
   it("returns zero cost for Claude when no JSONL dir exists", async () => {
     const engine = new PricingEngine(settings, "/nonexistent/path");
     const result = await engine.calculateFactor(makeSnapshot("claude"));
-    // No entries → sinceDay = untilDay = today, so the plan window is a single day.
-    // Claude Pro plan: $20/30 per day × 1 day = $0.6667. apiCost is 0 → factor 0.
+    // No entries means sinceDay = untilDay = today, so the plan window is a single day.
+    // Monthly plan cost is prorated by the number of days in the current local month.
     expect(result!.apiCostUSD).toBe(0);
     expect(result!.isEstimate).toBe(false);
     expect(result!.factor).toBe(0);
-    expect(result!.subscriptionCostUSD).toBeCloseTo(20 / 30, 6);
+    expect(result!.subscriptionCostUSD).toBeCloseTo(20 / daysInCurrentLocalMonth(), 6);
   });
 
   it("returns Keine Logs for Codex when sessions dir is empty", async () => {
@@ -103,9 +108,9 @@ describe("PricingEngine", () => {
       expect(result!.factor).not.toBeNull();
       expect(result!.isEstimate).toBe(false);
       expect(result!.apiCostUSD).toBeGreaterThan(0);
-      // Events are ~now → sinceDay = untilDay = today (single day).
-      // Codex Team plan: $10/30 per day × 1 day = $0.3333.
-      expect(result!.subscriptionCostUSD).toBeCloseTo(10 / 30, 6);
+      // Events are near now, so sinceDay = untilDay = today (single day).
+      // Monthly plan cost is prorated by the number of days in the current local month.
+      expect(result!.subscriptionCostUSD).toBeCloseTo(10 / daysInCurrentLocalMonth(), 6);
     } finally {
       await fs.rm(sessionsDir, { recursive: true, force: true });
     }
