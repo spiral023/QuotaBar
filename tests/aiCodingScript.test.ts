@@ -58,6 +58,7 @@ describe("ai-coding PowerShell setup script", () => {
   });
 
   it("defines logging, change journal, diagnostic report, dry run, and summary helpers", () => {
+    const report = functionBody("Export-DiagnosticReport");
     [
       "Initialize-Logging",
       "Write-Log",
@@ -84,6 +85,7 @@ describe("ai-coding PowerShell setup script", () => {
     expect(script).not.toContain('${ts}_${AppName}.log');
     expect(functionBody("Write-ConsoleLine")).not.toContain("Write-Log");
     expect(functionBody("Reset-ActionCounter")).not.toContain("Write-Log");
+    ["PxAddr:", "PxPort:", "Proxy-URL:", "LogRoot:", "ReportRoot:"].forEach((text) => expect(report).not.toContain(text));
   });
 
   it("does not remove Claude or Codex user data directories or auth files", () => {
@@ -136,6 +138,8 @@ describe("ai-coding PowerShell setup script", () => {
     const health = functionBody("Invoke-HealthCheck");
     const pxIni = functionBody("Get-PxIniSettingsText");
     const diagnostic = functionBody("Export-DiagnosticReport");
+    const pxStatus = functionBody("Get-PxStatus");
+    const languageMode = functionBody("Get-PowerShellLanguageModeText");
     [
       "Windows-Version",
       "winget vorhanden",
@@ -167,6 +171,12 @@ describe("ai-coding PowerShell setup script", () => {
 
     expect(health).toContain("px.ini settings");
     expect(diagnostic).toContain("px.ini settings: $(Get-PxIniSettingsText)");
+    expect(diagnostic).toContain("PowerShell LanguageMode: $(Get-PowerShellLanguageModeText)");
+    expect(pxStatus).toContain("$pxRunning = ($pxByName.Count -gt 0) -or ($pxOwner.Count -gt 0)");
+    expect(diagnostic).toContain("Px-Port-Owner");
+    expect(languageMode).toContain("current=");
+    expect(languageMode).toContain('"powershell.exe", "pwsh"');
+    expect(languageMode).toContain('$parts += "$cmd=$mode"');
 
     expect(script).toContain("function Set-OptionalNodeEnvMenu");
     expect(script).toContain("NODE_USE_ENV_PROXY");

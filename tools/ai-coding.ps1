@@ -237,8 +237,7 @@ function Get-PxStatus {
   } catch { Write-Verbose "Konnte Port-Owner für Port $PxPort nicht ermitteln: $($_.Exception.Message)" }
   $pxOwner = @($owners | Where-Object { $_.ProcessName -ieq "px" })
   $pxByName = @(Get-Process -Name "px" -ErrorAction SilentlyContinue)
-  # Owner nicht ermittelbar (z. B. Get-NetTCPConnection nicht verfügbar): px-Prozessname als Näherung
-  $pxRunning = ($pxOwner.Count -gt 0) -or (($owners.Count -eq 0) -and $listening -and ($pxByName.Count -gt 0))
+  $pxRunning = ($pxByName.Count -gt 0) -or ($pxOwner.Count -gt 0)
   $pxProcessId = if ($pxOwner.Count -gt 0) { $pxOwner[0].Id } elseif ($pxByName.Count -gt 0) { $pxByName[0].Id } else { $null }
   $ownerText = if ($owners.Count -gt 0) { ($owners | ForEach-Object { "{0} (PID {1})" -f $_.ProcessName, $_.Id }) -join ", " } else { "unbekannter Prozess" }
   return [pscustomobject]@{
@@ -700,6 +699,30 @@ function Write-SelfCheck([string] $Name, [string] $State, [string] $Detail) {
   else { Write-Err "$Name - $Detail" }
 }
 
+function Get-PowerShellLanguageModeText {
+  $current = "<not detected>"
+  try {
+    if ($ExecutionContext.SessionState.LanguageMode) { $current = "$($ExecutionContext.SessionState.LanguageMode)" }
+  } catch { Write-Verbose "Konnte aktuellen PowerShell LanguageMode nicht ermitteln: $($_.Exception.Message)" }
+
+  $parts = @("current=$current")
+  foreach ($cmd in @("powershell.exe", "pwsh")) {
+    if (-not (Test-CmdExist $cmd)) {
+      $parts += "$cmd=<not found>"
+      continue
+    }
+    try {
+      $out = (& $cmd -NoProfile -NonInteractive -Command '$ExecutionContext.SessionState.LanguageMode') 2>$null
+      $mode = (($out | Select-Object -First 1) -join " ").Trim()
+      if (-not $mode) { $mode = "<empty>" }
+      $parts += "$cmd=$mode"
+    } catch {
+      $parts += "$cmd=<error>"
+    }
+  }
+  return ($parts -join "; ")
+}
+
 function Get-PxIniSettingsText {
   if (-not $PxIni -or -not (Test-Path $PxIni)) { return "<not set>" }
   $keys = @("server", "pac", "listen", "port", "noproxy", "client_auth", "idle", "proxyreload")
@@ -733,7 +756,7 @@ function Invoke-HealthCheck {
   Write-Info "Windows-Version / Build: $((cmd.exe /c ver) -join ' ')"
   $psMajor = $PSVersionTable.PSVersion.Major
   if ($psMajor -ge 5) { Write-SelfCheck "PowerShell-Version" "OK" "$($PSVersionTable.PSVersion)" } else { Write-SelfCheck "PowerShell-Version" "FAIL" "$($PSVersionTable.PSVersion)" }
-  if ($ExecutionContext.SessionState.LanguageMode) { Write-SelfCheck "LanguageMode" "OK" "$($ExecutionContext.SessionState.LanguageMode)" } else { Write-SelfCheck "LanguageMode" "WARN" "nicht ermittelt" }
+  Write-SelfCheck "LanguageMode" "OK" (Get-PowerShellLanguageModeText)
   if (Test-Path $DevRoot) {
     try {
       Get-Item -Path $DevRoot -ErrorAction Stop | Out-Null
@@ -762,6 +785,7 @@ function Invoke-HealthCheck {
   if ($pxStatus.PxRunning) { Write-SelfCheck "Px-Prozess läuft" "OK" ("PID {0}" -f $pxStatus.PxPid) }
   elseif ($pxStatus.Listening) { Write-SelfCheck "Px-Prozess läuft" "WARN" ("Port belegt durch: {0}" -f $pxStatus.OwnerText) }
   else { Write-SelfCheck "Px-Prozess läuft" "WARN" "kein px-Prozess gefunden" }
+  if ($pxStatus.Listening) { Write-Info "Px-Port-Owner: $($pxStatus.OwnerText)" }
   try {
     Get-ItemProperty -Path "HKCU:\Environment" -ErrorAction Stop | Out-Null
     Write-SelfCheck "HKCU:\Environment lesbar/schreibbar" "WARN" "lesbar; der Healthcheck schreibt keine Registry-Testwerte"
@@ -880,7 +904,7 @@ function Export-DiagnosticReport {
   $lines += "Computername: $env:COMPUTERNAME"
   $lines += "Windows-Version: $((cmd.exe /c ver) -join ' ')"
   $lines += "PowerShell-Version: $($PSVersionTable.PSVersion)"
-  $lines += "PowerShell LanguageMode: $($ExecutionContext.SessionState.LanguageMode)"
+  $lines += "PowerShell LanguageMode: $(Get-PowerShellLanguageModeText)"
   $lines += "Scriptpfad: $PSCommandPath"
   $lines += ""
   $lines += "Aktuelle Script-Konfiguration:"
@@ -890,16 +914,12 @@ function Export-DiagnosticReport {
   $lines += "PxExe: $PxExe"
   $lines += "PxIni: $PxIni"
   $lines += "px.ini settings: $(Get-PxIniSettingsText)"
-  $lines += "PxAddr: $PxAddr"
-  $lines += "PxPort: $PxPort"
-  $lines += "Proxy-URL: $px"
   $lines += "CaBundlePath: $CaBundlePath"
-  $lines += "LogRoot: $LogRoot"
-  $lines += "ReportRoot: $ReportRoot"
   $lines += ""
   $pxStatus = Get-PxStatus
   $lines += "Px erreichbar: $(if ($pxStatus.Listening) { 'ja' } else { 'nein' })"
-  $lines += "Px-Prozess: $(if ($pxStatus.PxRunning) { "läuft (PID $($pxStatus.PxPid))" } elseif ($pxStatus.Listening) { "läuft nicht, Port belegt durch: $($pxStatus.OwnerText)" } else { 'läuft nicht' })"
+  $lines += "Px-Prozess: $(if ($pxStatus.PxRunning) { "läuft (PID $($pxStatus.PxPid))" } else { 'läuft nicht' })"
+  $lines += "Px-Port-Owner: $(if ($pxStatus.Listening) { $pxStatus.OwnerText } else { '<not listening>' })"
   $lines += "Node-Version: $(Get-VersionOutput 'node' @('--version'))"
   $lines += "npm-Version: $(Get-VersionOutput 'npm' @('--version'))"
   foreach ($name in @("prefix", "cache", "proxy", "https-proxy")) { $lines += "npm ${name}: $(Format-Value (Get-NpmConfigValue $name))" }
