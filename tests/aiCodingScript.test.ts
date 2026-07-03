@@ -134,6 +134,8 @@ describe("ai-coding PowerShell setup script", () => {
 
   it("extends healthcheck and tools without changing default proxy variables", () => {
     const health = functionBody("Invoke-HealthCheck");
+    const pxIni = functionBody("Get-PxIniSettingsText");
+    const diagnostic = functionBody("Export-DiagnosticReport");
     [
       "Windows-Version",
       "winget vorhanden",
@@ -145,12 +147,26 @@ describe("ai-coding PowerShell setup script", () => {
       ".codex vorhanden",
       "config.toml",
       "CA-Bundle",
-      "Proxy aus px.ini",
+      "px.ini settings",
       "node --version",
       "npm --version",
       "claude --version",
       "codex --version",
     ].forEach((text) => expect(health).toContain(text));
+
+    [
+      "server",
+      "pac",
+      "listen",
+      "port",
+      "noproxy",
+      "client_auth",
+      "idle",
+      "proxyreload",
+    ].forEach((text) => expect(pxIni).toContain(text));
+
+    expect(health).toContain("px.ini settings");
+    expect(diagnostic).toContain("px.ini settings: $(Get-PxIniSettingsText)");
 
     expect(script).toContain("function Set-OptionalNodeEnvMenu");
     expect(script).toContain("NODE_USE_ENV_PROXY");

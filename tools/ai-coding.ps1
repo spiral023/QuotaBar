@@ -700,14 +700,24 @@ function Write-SelfCheck([string] $Name, [string] $State, [string] $Detail) {
   else { Write-Err "$Name - $Detail" }
 }
 
-function Get-PxIniProxyText {
+function Get-PxIniSettingsText {
   if (-not $PxIni -or -not (Test-Path $PxIni)) { return "<not set>" }
+  $keys = @("server", "pac", "listen", "port", "noproxy", "client_auth", "idle", "proxyreload")
+  $seen = @{}
   $values = @()
   try {
     foreach ($line in (Get-Content -Path $PxIni -ErrorAction SilentlyContinue)) {
-      if ($line -match '^\s*(server|pac)\s*=\s*(.+)\s*$') { $values += "$($Matches[1])=$($Matches[2])" }
+      if ($line -match '^\s*(server|pac|listen|port|noproxy|client_auth|idle|proxyreload)\s*=\s*(.*)\s*$') {
+        $key = $Matches[1].ToLowerInvariant()
+        $value = $Matches[2].Trim()
+        if ($value -eq "") { $value = "<empty>" }
+        $seen[$key] = $value
+      }
     }
   } catch { Write-Verbose "Konnte $PxIni nicht lesen: $($_.Exception.Message)" }
+  foreach ($key in $keys) {
+    if ($seen.ContainsKey($key)) { $values += "$key = $($seen[$key])" }
+  }
   if ($values.Count -gt 0) { return ($values -join "; ") }
   return "<not set>"
 }
@@ -746,7 +756,7 @@ function Invoke-HealthCheck {
   if ($PxIni -and (Test-Path $PxIni)) { Write-SelfCheck "PxIni vorhanden" "OK" $PxIni } else { Write-SelfCheck "PxIni vorhanden" "WARN" "$(Format-Value $PxIni)" }
   Write-Info "PxExe bekannt: $(Format-Value $PxExe)"
   Write-Info "PxIni bekannt: $(Format-Value $PxIni)"
-  Write-Info "Proxy aus px.ini: $(Get-PxIniProxyText)"
+  Write-Info "px.ini settings: $(Get-PxIniSettingsText)"
   $pxStatus = Get-PxStatus
   if ($pxStatus.Listening) { Write-SelfCheck "Px erreichbar" "OK" $px } else { Write-SelfCheck "Px erreichbar" "WARN" $px }
   if ($pxStatus.PxRunning) { Write-SelfCheck "Px-Prozess läuft" "OK" ("PID {0}" -f $pxStatus.PxPid) }
@@ -879,6 +889,7 @@ function Export-DiagnosticReport {
   $lines += "NpmCache: $NpmCache"
   $lines += "PxExe: $PxExe"
   $lines += "PxIni: $PxIni"
+  $lines += "px.ini settings: $(Get-PxIniSettingsText)"
   $lines += "PxAddr: $PxAddr"
   $lines += "PxPort: $PxPort"
   $lines += "Proxy-URL: $px"
