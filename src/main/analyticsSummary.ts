@@ -135,8 +135,29 @@ export interface SessionStats {
   sessionsPerActiveDay: number;
 }
 
+export interface SessionDurationBucket {
+  date: string;
+  days: number;
+  claudeMinutes: number;
+  codexMinutes: number;
+  allMinutes: number;
+}
+
+type SessionDurationMeta = {
+  claude: { totalMs: number; count: number };
+  codex: { totalMs: number; count: number };
+  all: { totalMs: number; count: number };
+};
+
+const SESSION_DURATION_META = Symbol("sessionDurationMeta");
+
 export interface AnalyticsData extends AnalyticsSummary {
   dailyBuckets: DailyBucket[];
+  sessionDurationBuckets: {
+    daily: SessionDurationBucket[];
+    weekly: SessionDurationBucket[];
+    monthly: SessionDurationBucket[];
+  };
   sessionStats: ProviderTriple<SessionStats>;
   totalTokens: {
     claude: { input: number; output: number; cacheRead: number; cacheCreate: number };
@@ -214,6 +235,127 @@ export function buildSessionStats(
     totalHours:          Math.round(totalMs / 3_600_000 * 10) / 10,
     sessionsPerActiveDay: activeDays > 0 ? Math.round(count / activeDays * 10) / 10 : 0,
   };
+}
+
+function emptySessionDurationMeta(): SessionDurationMeta {
+  return {
+    claude: { totalMs: 0, count: 0 },
+    codex: { totalMs: 0, count: 0 },
+    all: { totalMs: 0, count: 0 },
+  };
+}
+
+function durationMinutes(part: { totalMs: number; count: number }): number {
+  return part.count > 0 ? Math.round(part.totalMs / part.count / 60_000) : 0;
+}
+
+function attachSessionDurationMeta(bucket: SessionDurationBucket, meta: SessionDurationMeta): SessionDurationBucket {
+  Object.defineProperty(bucket, SESSION_DURATION_META, {
+    value: meta,
+    enumerable: false,
+    configurable: false,
+  });
+  return bucket;
+}
+
+function getSessionDurationMeta(bucket: SessionDurationBucket): SessionDurationMeta {
+  const withMeta = bucket as SessionDurationBucket & { [SESSION_DURATION_META]?: SessionDurationMeta };
+  if (withMeta[SESSION_DURATION_META]) return withMeta[SESSION_DURATION_META];
+  return {
+    claude: bucket.claudeMinutes > 0 ? { totalMs: bucket.claudeMinutes * 60_000, count: 1 } : { totalMs: 0, count: 0 },
+    codex:  bucket.codexMinutes  > 0 ? { totalMs: bucket.codexMinutes  * 60_000, count: 1 } : { totalMs: 0, count: 0 },
+    all:    bucket.allMinutes    > 0 ? { totalMs: bucket.allMinutes    * 60_000, count: 1 } : { totalMs: 0, count: 0 },
+  };
+}
+
+function addSessionDurations(
+  target: Map<string, SessionDurationMeta>,
+  provider: keyof SessionDurationMeta,
+  entries: ActivityEntry[],
+): void {
+  const sessions = new Map<string, { day: string; min: number; max: number; count: number }>();
+  for (const entry of entries) {
+    const ts = new Date(entry.timestamp).getTime();
+    if (Number.isNaN(ts)) continue;
+    const day = localDayKey(entry.timestamp);
+    const key = `${entry.project}\0${entry.session}`;
+    const ex = sessions.get(key);
+    if (!ex) {
+      sessions.set(key, { day, min: ts, max: ts, count: 1 });
+    } else {
+      if (ts < ex.min) {
+        ex.min = ts;
+        ex.day = day;
+      }
+      if (ts > ex.max) ex.max = ts;
+      ex.count++;
+    }
+  }
+  for (const session of sessions.values()) {
+    if (session.count < 2 || session.max <= session.min) continue;
+    const meta = target.get(session.day) ?? emptySessionDurationMeta();
+    meta[provider].totalMs += session.max - session.min;
+    meta[provider].count++;
+    target.set(session.day, meta);
+  }
+}
+
+export function buildSessionDurationBuckets(
+  claudeEntries: ActivityEntry[],
+  codexEntries: ActivityEntry[],
+  allEntries: ActivityEntry[],
+  since: string,
+  until: string,
+): SessionDurationBucket[] {
+  const byDay = new Map<string, SessionDurationMeta>();
+  addSessionDurations(byDay, "claude", claudeEntries);
+  addSessionDurations(byDay, "codex", codexEntries);
+  addSessionDurations(byDay, "all", allEntries);
+
+  return localDaysInRange(since, until).map(date => {
+    const meta = byDay.get(date) ?? emptySessionDurationMeta();
+    return attachSessionDurationMeta({
+      date,
+      days: 1,
+      claudeMinutes: durationMinutes(meta.claude),
+      codexMinutes: durationMinutes(meta.codex),
+      allMinutes: durationMinutes(meta.all),
+    }, meta);
+  });
+}
+
+export function aggregateSessionDurationBuckets(
+  daily: SessionDurationBucket[],
+  agg: "daily" | "weekly" | "monthly",
+): SessionDurationBucket[] {
+  if (agg === "daily") return daily;
+  const keyOf = agg === "weekly"
+    ? (b: SessionDurationBucket) => getWeekStart(b.date)
+    : (b: SessionDurationBucket) => `${b.date.slice(0, 7)}-01`;
+  const grouped = new Map<string, { date: string; days: number; meta: SessionDurationMeta }>();
+  for (const bucket of daily) {
+    const key = keyOf(bucket);
+    let group = grouped.get(key);
+    if (!group) {
+      group = { date: key, days: 0, meta: emptySessionDurationMeta() };
+      grouped.set(key, group);
+    }
+    group.days += bucket.days;
+    const meta = getSessionDurationMeta(bucket);
+    for (const provider of ["claude", "codex", "all"] as const) {
+      group.meta[provider].totalMs += meta[provider].totalMs;
+      group.meta[provider].count += meta[provider].count;
+    }
+  }
+  return Array.from(grouped.values())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(group => attachSessionDurationMeta({
+      date: group.date,
+      days: group.days,
+      claudeMinutes: durationMinutes(group.meta.claude),
+      codexMinutes: durationMinutes(group.meta.codex),
+      allMinutes: durationMinutes(group.meta.all),
+    }, group.meta));
 }
 
 export function buildTotalTokens(

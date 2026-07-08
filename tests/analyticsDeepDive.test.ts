@@ -10,6 +10,8 @@ import {
   buildCostEfficiency,
   computeActiveHours,
   buildSessionStats,
+  buildSessionDurationBuckets,
+  aggregateSessionDurationBuckets,
 } from "../src/main/analyticsSummary";
 
 function makeEntry(isoTimestamp: string, out = 0): ClaudeUsageEntry {
@@ -368,5 +370,106 @@ describe("buildSessionStats", () => {
     expect(stats.count).toBe(2);
     expect(stats.avgMinutes).toBe(60);
     expect(stats.totalHours).toBe(1);
+  });
+});
+
+function makeActivityEntry(isoTimestamp: string, provider: "claude" | "codex", session: string, project = "p1") {
+  return {
+    timestamp: isoTimestamp,
+    project: `${provider}\0${project}`,
+    session,
+    outputTokens: 0,
+  };
+}
+
+describe("buildSessionDurationBuckets", () => {
+  it("computes daily average measurable session minutes per provider", () => {
+    const claude = [
+      makeActivityEntry("2026-05-01T10:00:00.000Z", "claude", "c1"),
+      makeActivityEntry("2026-05-01T10:30:00.000Z", "claude", "c1"),
+    ];
+    const codex = [
+      makeActivityEntry("2026-05-01T12:00:00.000Z", "codex", "x1"),
+      makeActivityEntry("2026-05-01T13:00:00.000Z", "codex", "x1"),
+    ];
+
+    const buckets = buildSessionDurationBuckets(claude, codex, [...claude, ...codex], "2026-05-01", "2026-05-01");
+
+    expect(buckets).toEqual([
+      { date: "2026-05-01", days: 1, claudeMinutes: 30, codexMinutes: 60, allMinutes: 45 },
+    ]);
+  });
+
+  it("excludes single-entry sessions from averages", () => {
+    const claude = [
+      makeActivityEntry("2026-05-01T10:00:00.000Z", "claude", "multi"),
+      makeActivityEntry("2026-05-01T10:20:00.000Z", "claude", "multi"),
+      makeActivityEntry("2026-05-01T11:00:00.000Z", "claude", "single"),
+    ];
+
+    const buckets = buildSessionDurationBuckets(claude, [], claude, "2026-05-01", "2026-05-01");
+
+    expect(buckets[0].claudeMinutes).toBe(20);
+    expect(buckets[0].codexMinutes).toBe(0);
+    expect(buckets[0].allMinutes).toBe(20);
+  });
+
+  it("keeps providers separated when session ids match", () => {
+    const claude = [
+      makeActivityEntry("2026-05-01T10:00:00.000Z", "claude", "same", "proj"),
+      makeActivityEntry("2026-05-01T10:10:00.000Z", "claude", "same", "proj"),
+    ];
+    const codex = [
+      makeActivityEntry("2026-05-01T10:00:00.000Z", "codex", "same", "proj"),
+      makeActivityEntry("2026-05-01T10:50:00.000Z", "codex", "same", "proj"),
+    ];
+
+    const buckets = buildSessionDurationBuckets(claude, codex, [...claude, ...codex], "2026-05-01", "2026-05-01");
+
+    expect(buckets[0].claudeMinutes).toBe(10);
+    expect(buckets[0].codexMinutes).toBe(50);
+    expect(buckets[0].allMinutes).toBe(30);
+  });
+
+  it("ignores invalid timestamps", () => {
+    const claude = [
+      makeActivityEntry("2026-05-01T10:00:00.000Z", "claude", "s1"),
+      makeActivityEntry("not-a-date", "claude", "s1"),
+      makeActivityEntry("2026-05-01T10:15:00.000Z", "claude", "s1"),
+    ];
+
+    const buckets = buildSessionDurationBuckets(claude, [], claude, "2026-05-01", "2026-05-01");
+
+    expect(buckets[0].claudeMinutes).toBe(15);
+  });
+
+  it("aggregates daily buckets into ISO weeks", () => {
+    const daily = [
+      { date: "2026-05-04", days: 1, claudeMinutes: 30, codexMinutes: 0, allMinutes: 30 },
+      { date: "2026-05-05", days: 1, claudeMinutes: 90, codexMinutes: 60, allMinutes: 75 },
+      { date: "2026-05-11", days: 1, claudeMinutes: 10, codexMinutes: 20, allMinutes: 15 },
+    ];
+
+    const weekly = aggregateSessionDurationBuckets(daily, "weekly");
+
+    expect(weekly).toEqual([
+      { date: "2026-05-04", days: 2, claudeMinutes: 60, codexMinutes: 60, allMinutes: 53 },
+      { date: "2026-05-11", days: 1, claudeMinutes: 10, codexMinutes: 20, allMinutes: 15 },
+    ]);
+  });
+
+  it("aggregates daily buckets into calendar months", () => {
+    const daily = [
+      { date: "2026-05-04", days: 1, claudeMinutes: 30, codexMinutes: 0, allMinutes: 30 },
+      { date: "2026-05-05", days: 1, claudeMinutes: 90, codexMinutes: 60, allMinutes: 75 },
+      { date: "2026-06-01", days: 1, claudeMinutes: 10, codexMinutes: 20, allMinutes: 15 },
+    ];
+
+    const monthly = aggregateSessionDurationBuckets(daily, "monthly");
+
+    expect(monthly).toEqual([
+      { date: "2026-05-01", days: 2, claudeMinutes: 60, codexMinutes: 60, allMinutes: 53 },
+      { date: "2026-06-01", days: 1, claudeMinutes: 10, codexMinutes: 20, allMinutes: 15 },
+    ]);
   });
 });

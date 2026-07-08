@@ -11,6 +11,7 @@ window.QB = window.QB || {};
 
 let _lineChart    = null;
 let _donutChart   = null;
+let _sessionTimeChart = null;
 let _initialized  = false;
 let _minDate      = null;
 let _activePreset = null;
@@ -65,6 +66,7 @@ function _pick(triple, fallback) {
 function _applyProvider() {
   if (!_lastData) return;
   _buildLineChart(_lastData);
+  _buildSessionTimeChart(_lastData);
   _buildStats(_lastData);
   _buildHourHeatmap(_lastData);
   _buildWeekdayBars(_lastData);
@@ -266,6 +268,7 @@ function _buildControls(container) {
       _updateLineTitle();
       if (_agg === 'hourly') await _ensureHourlyBuckets();
       if (_lastData) _buildLineChart(_lastData);
+      if (_lastData) _buildSessionTimeChart(_lastData);
       // Auch die 5h-Fenster-Historie folgt der Auflösung (Woche ↔ Monat).
       _updateWhTitle();
       _buildWindowHistoryChart();
@@ -355,6 +358,18 @@ function _renderResults(data) {
       <div class="an-stats-grid" id="an-stats-grid"></div>
     </div>
 
+    <div class="an-section">
+      <div class="an-section-head">
+        <span class="an-section-title" id="an-session-time-title">${_sessionTimeTitle()}</span>
+        <div class="hr-chart-legend" id="an-session-time-legend">
+          <span class="hr-legend-dot" style="background:var(--claude-col)"></span>
+          <span class="hr-legend-dot" style="background:var(--codex-col)"></span>
+        </div>
+      </div>
+      <div class="an-wh-sub">Average session time is the average duration of measurable sessions in each bucket. A session duration is last recorded activity minus first recorded activity; sessions with only one activity entry are excluded because their length cannot be measured.</div>
+      <div class="an-chart-wrap"><canvas id="an-session-time-canvas"></canvas></div>
+    </div>
+
     <div class="an-row2">
       <div class="an-section">
         <div class="an-section-head"><span class="an-section-title">HOUR HEATMAP (${winLabel})</span></div>
@@ -405,6 +420,7 @@ function _renderResults(data) {
   _buildDonut(data);
   _buildTopModels(data);
   _buildStats(data);
+  _buildSessionTimeChart(data);
   _buildHourHeatmap(data);
   _buildWeekdayBars(data);
   _buildTopDays(data);
@@ -423,6 +439,22 @@ function _lineTitle() {
             : _agg === 'hourly'  ? 'API COST PER HOUR'
             : 'API COST PER DAY';
   return `${per} (${winLabel})`;
+}
+
+function _sessionTimeAgg() {
+  return _agg === 'hourly' ? 'daily' : _agg;
+}
+
+function _sessionTimeTitle() {
+  const unit = _sessionTimeAgg() === 'monthly' ? 'MONTH'
+             : _sessionTimeAgg() === 'weekly' ? 'WEEK'
+             : 'DAY';
+  return `AVG SESSION TIME · ${unit} (${_winLabel()})`;
+}
+
+function _updateSessionTimeTitle() {
+  const el = document.getElementById('an-session-time-title');
+  if (el) el.textContent = _sessionTimeTitle();
 }
 
 // Laufender ("kumulativer") ROI je Anbieter: an jedem Tag das Verhältnis der bis
@@ -573,6 +605,50 @@ function _buildLineChart(data) {
   _lineChart = QB.charts.createLine(ctx, labels, visibleDatasets, { yFormat: isRoi ? 'roi' : 'cost', planChanges: changes });
 }
 
+function _sessionDurationBucketsFor(data) {
+  const buckets = data.sessionDurationBuckets || {};
+  return buckets[_sessionTimeAgg()] || [];
+}
+
+function _buildSessionTimeChart(data) {
+  if (_sessionTimeChart) { _sessionTimeChart.destroy(); _sessionTimeChart = null; }
+  const ctx = document.getElementById('an-session-time-canvas');
+  if (!ctx || typeof Chart === 'undefined') return;
+
+  const agg = _sessionTimeAgg();
+  const buckets = _sessionDurationBucketsFor(data);
+  const labels = buckets.map(b => _bucketLabel(b.date, agg));
+  const datasets = [
+    {
+      label: 'Claude',
+      data: buckets.map(b => b.claudeMinutes || 0),
+      borderColor: '#DA785B',
+      backgroundColor: 'rgba(218,120,91,0.08)',
+      borderWidth: 1.5,
+      pointRadius: 2,
+      pointHoverRadius: 4,
+      tension: 0.3,
+      fill: true,
+    },
+    {
+      label: 'Codex',
+      data: buckets.map(b => b.codexMinutes || 0),
+      borderColor: '#4B55C8',
+      backgroundColor: 'rgba(75,85,200,0.07)',
+      borderWidth: 1.5,
+      pointRadius: 2,
+      pointHoverRadius: 4,
+      tension: 0.3,
+      fill: true,
+    },
+  ];
+
+  const visibleDatasets = _visibleLineDatasets(_provider, datasets);
+  _renderSessionTimeLegend(visibleDatasets);
+  _updateSessionTimeTitle();
+  _sessionTimeChart = QB.charts.createLine(ctx, labels, visibleDatasets, { yFormat: 'minutes' });
+}
+
 function _visibleLineDatasets(provider, datasets) {
   if (provider === 'claude') return datasets.filter(d => d.label === 'Claude');
   if (provider === 'codex') return datasets.filter(d => d.label === 'Codex');
@@ -581,6 +657,14 @@ function _visibleLineDatasets(provider, datasets) {
 
 function _renderLineLegend(datasets) {
   const legend = document.getElementById('an-line-legend');
+  if (!legend) return;
+  legend.innerHTML = datasets.map(d => (
+    `<span class="hr-legend-dot" style="background:${QB.esc(d.borderColor)}"></span>`
+  )).join('');
+}
+
+function _renderSessionTimeLegend(datasets) {
+  const legend = document.getElementById('an-session-time-legend');
   if (!legend) return;
   legend.innerHTML = datasets.map(d => (
     `<span class="hr-legend-dot" style="background:${QB.esc(d.borderColor)}"></span>`
@@ -1282,6 +1366,8 @@ QB.__analyticsTest = {
   activityHeatColor: _activityHeatColor,
   statTooltip: _statTooltip,
   visibleLineDatasets: _visibleLineDatasets,
+  sessionTimeAgg: _sessionTimeAgg,
+  sessionDurationBucketsFor: _sessionDurationBucketsFor,
   weekdayLabel: _weekdayLabel,
 };
 

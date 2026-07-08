@@ -9,6 +9,7 @@ import {
   buildDailyBuckets, buildSessionStats, buildTotalTokens,
   buildHourHeatmap, buildWeekdayDistribution, buildTopActiveDays,
   buildWeeklySummary, buildCostEfficiency, computeActiveHours,
+  buildSessionDurationBuckets, aggregateSessionDurationBuckets,
   localDayKey,
   type AnalyticsSummary, type AnalyticsData, type ActivityEntry, type ProviderTriple,
 } from "./analyticsSummary";
@@ -215,6 +216,18 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     buildSessionStats(codexActivity, activeDays),
     buildSessionStats(allActivity, activeDays),
   );
+  const dailySessionDurationBuckets = buildSessionDurationBuckets(
+    claudeActivity,
+    codexActivity,
+    allActivity,
+    input.since,
+    untilDay,
+  );
+  const sessionDurationBuckets = {
+    daily: dailySessionDurationBuckets,
+    weekly: aggregateSessionDurationBuckets(dailySessionDurationBuckets, "weekly"),
+    monthly: aggregateSessionDurationBuckets(dailySessionDurationBuckets, "monthly"),
+  };
   const hourHeatmap = byProvider(
     buildHourHeatmap(claudeActivity),
     buildHourHeatmap(codexActivity),
@@ -263,7 +276,7 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     roiFactor,
     activeDays, avgSessionMinutes, cacheHitRate, sparkline7d, topModels,
     windowDays,
-    dailyBuckets, sessionStats, totalTokens,
+    dailyBuckets, sessionDurationBuckets, sessionStats, totalTokens,
     hourHeatmap, weekdayDistribution, topActiveDays, fiveHourPressure, weeklySummary, costEfficiency,
     planChanges,
   };
