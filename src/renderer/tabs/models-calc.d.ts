@@ -87,3 +87,6 @@ export function scatterBubbleColors(
 export function scatterAxisColorScale(
   points: Array<Pick<ScatterPoint, 'x' | 'y'>>,
 ): { costColor: (value: number) => string; scoreColor: (value: number) => string };
+export function scatterOptimumRegion(
+  points: Array<Pick<ScatterPoint, 'x' | 'y'>>,
+): { xMin: number; xMax: number; yMin: number; yMax: number } | null;

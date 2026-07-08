@@ -349,6 +349,70 @@
     };
   }
 
+  function scatterOptimumRegion(points) {
+    if (!Array.isArray(points) || points.length < 2) return null;
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const minCost = Math.min(...xs);
+    const maxCost = Math.max(...xs);
+    const minScore = Math.min(...ys);
+    const maxScore = Math.max(...ys);
+    if (!Number.isFinite(minCost) || !Number.isFinite(maxCost) || maxCost <= minCost) return null;
+    if (!Number.isFinite(minScore) || !Number.isFinite(maxScore) || maxScore <= minScore) return null;
+    return {
+      xMin: minCost,
+      xMax: minCost + (maxCost - minCost) * 0.5,
+      yMin: minScore + (maxScore - minScore) * 0.5,
+      yMax: maxScore,
+    };
+  }
+
+  // Trendkurve „erwartete Intelligenz für diesen Preis": OLS-Fit y = a + b·ln(x)
+  // durch alle Punkte (ungewichtet — Kostenanteil/Blasengröße geht NICHT ein).
+  // → { a, b, samples: [{x,y}] } über den beobachteten x-Bereich, oder null.
+  function scatterTrendCurve(points, sampleCount = 48) {
+    if (!Array.isArray(points) || points.length < 4) return null;
+    const us = [];
+    const ys = [];
+    for (const p of points) {
+      if (!(p.x > 0) || !Number.isFinite(p.y)) return null; // ln(x) undefiniert
+      us.push(Math.log(p.x));
+      ys.push(p.y);
+    }
+    const n = us.length;
+    const uMean = us.reduce((s, u) => s + u, 0) / n;
+    const yMean = ys.reduce((s, y) => s + y, 0) / n;
+    let suu = 0;
+    let suy = 0;
+    for (let i = 0; i < n; i++) {
+      const du = us[i] - uMean;
+      suu += du * du;
+      suy += du * (ys[i] - yMean);
+    }
+    if (suu === 0) return null; // alle x identisch → keine Steigung schätzbar
+    const b = suy / suu;
+    const a = yMean - b * uMean;
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+
+    const xs = points.map((p) => p.x);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const samples = [];
+    const steps = Math.max(2, sampleCount);
+    for (let i = 0; i < steps; i++) {
+      const x = minX + ((maxX - minX) * i) / (steps - 1);
+      samples.push({ x, y: a + b * Math.log(x) });
+    }
+    return { a, b, samples };
+  }
+
+  // Vertikaler Abstand eines Punkts zur Trendkurve: >0 = besser als für den Preis
+  // erwartbar (über der Kurve), <0 = schlechter. null, wenn kein Fit/ungültig.
+  function trendResidual(point, fit) {
+    if (!fit || !point || !(point.x > 0) || !Number.isFinite(point.y)) return null;
+    return point.y - (fit.a + fit.b * Math.log(point.x));
+  }
+
   function normalizeRange(value, min, max) {
     if (!Number.isFinite(value) || !Number.isFinite(min) || !Number.isFinite(max)) return 0.5;
     if (max <= min) return 0.5;
@@ -515,5 +579,5 @@
     };
   }
 
-  return { isoAddDays, filterWindow, previousWindow, filterRange, previousRange, metricOf, isoWeek, bucketFnFor, nextBucket, bucketAxis, buildStack, buildRateSeries, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown, providerCostBreakdown };
+  return { isoAddDays, filterWindow, previousWindow, filterRange, previousRange, metricOf, isoWeek, bucketFnFor, nextBucket, bucketAxis, buildStack, buildRateSeries, modelColorOrder, aggregateByModel, computeKpis, tableRows, scatterPoints, scatterBubbleColors, scatterAxisColorScale, scatterOptimumRegion, scatterTrendCurve, trendResidual, adoptionTimeline, cacheEfficiency, providerRibbon, tokenTypeBreakdown, providerCostBreakdown };
 });

@@ -76,6 +76,38 @@ window.QB = window.QB || {};
   const CLAUDE_PALETTE = ['#DA785B', '#E89B6F', '#C05A45', '#F0B27A', '#A8442F', '#F5D0A9'];
   const CODEX_PALETTE  = ['#4B55C8', '#6E8EE8', '#56C8D8', '#3A3F8F', '#7A6FF0', '#2E6FBF'];
   const OTHER_COLOR = '#475460';
+  const SCATTER_OPTIMUM_PLUGIN = {
+    id: 'scatterOptimumRegion',
+    beforeDatasetsDraw(chart, _args, opts) {
+      const region = opts && opts.region;
+      const x = chart.scales && chart.scales.x;
+      const y = chart.scales && chart.scales.y;
+      if (!region || !x || !y || !chart.chartArea) return;
+      const { ctx, chartArea } = chart;
+      const left = chartArea.left;
+      const top = chartArea.top;
+      const right = chartArea.right;
+      const bottom = chartArea.bottom;
+      const xRight = clamp(x.getPixelForValue(region.xMax), left, right);
+      const yBottom = clamp(y.getPixelForValue(region.yMin), top, bottom);
+      if (xRight <= left + 4 || yBottom <= top + 4) return;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(82, 208, 23, 0.085)';
+      ctx.strokeStyle = 'rgba(82, 208, 23, 0.35)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 4]);
+      roundedRect(ctx, left + 1, top + 1, xRight - left - 2, yBottom - top - 2, 5);
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = "700 9px 'IBM Plex Mono', monospace";
+      ctx.fillStyle = 'rgba(155, 255, 113, 0.92)';
+      ctx.textBaseline = 'top';
+      ctx.fillText('OPTIMUM', left + 8, top + 8);
+      ctx.restore();
+    },
+  };
 
   QB.renderModels = async function renderModels() {
     const container = document.getElementById('models-content');
@@ -150,6 +182,26 @@ window.QB = window.QB || {};
     const palette = provider === 'claude' ? CLAUDE_PALETTE : CODEX_PALETTE;
     const siblings = order.filter((m) => _modelProvider.get(m) === provider);
     return palette[Math.max(siblings.indexOf(model), 0) % palette.length];
+  }
+
+  function clamp(value, min, max) {
+    if (!Number.isFinite(value)) return min;
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function roundedRect(ctx, x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + width - r, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+    ctx.lineTo(x + width, y + height - r);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+    ctx.lineTo(x + r, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
   }
 
   function renderUI() {
@@ -228,7 +280,7 @@ window.QB = window.QB || {};
           <div class="an-section-head"><span class="an-section-title">COST vs. INTELLIGENCE</span></div>
           <div class="mod-scatter-wrap"><canvas id="mod-scatter-canvas"></canvas></div>
           <div class="mod-note" id="mod-scatter-empty" hidden></div>
-          <div class="mod-scatter-note">x = $/MTok effective (incl. cache) · green = better, red = worse · ${_data.benchmarksAsOf ? 'as of ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
+          <div class="mod-scatter-note">x = $/MTok effective (incl. cache) · green = better, red = worse · white line = expected score for price · ${_data.benchmarksAsOf ? 'as of ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
         </div>` : ''}
 
         <div id="mod-tt-section" hidden></div>
@@ -557,22 +609,42 @@ window.QB = window.QB || {};
       canvas.style.visibility = isEmpty ? 'hidden' : '';
     }
 
-    const data = {
-      datasets: [{
-        data: pts.map((p) => ({ x: p.x, y: p.y, r: p.r })),
-        pointsMeta: pts,
-        ...calc.scatterBubbleColors(pts, QB.providerColor),
-        borderWidth: 1,
-        hoverRadius: 2,
-      }],
-    };
+    // Trendkurve „erwartete Intelligenz für diesen Preis" (y = a + b·ln x) über die
+    // sichtbaren Punkte; null bei < 4 Punkten o. entarteten x → keine Linie.
+    const trendFit = calc.scatterTrendCurve(pts);
+    const datasets = [{
+      data: pts.map((p) => ({ x: p.x, y: p.y, r: p.r })),
+      pointsMeta: pts,
+      trendFit, // vom Tooltip fürs Residuum gelesen (überlebt den Update-Pfad)
+      ...calc.scatterBubbleColors(pts, QB.providerColor),
+      borderWidth: 1,
+      hoverRadius: 2,
+      order: 0, // über der Trendlinie
+    }];
+    if (trendFit) {
+      datasets.push({
+        type: 'line',
+        data: trendFit.samples,
+        parsing: false,
+        pointRadius: 0,
+        pointHitRadius: 0,
+        fill: false,
+        borderColor: 'rgba(255,255,255,0.7)',
+        borderWidth: 2,
+        tension: 0,
+        order: 10, // hinter den Blasen gezeichnet
+      });
+    }
+    const data = { datasets };
     const axisColors = calc.scatterAxisColorScale(pts);
+    const optimumRegion = calc.scatterOptimumRegion(pts);
     // Beim (Neu-)Aufbau der UI ist das Canvas-Element frisch — ein zuvor an das
     // alte (jetzt detachte) Canvas gebundenes Chart würde sonst ins Leere
     // zeichnen. Daher bei initial=true zerstören und neu erstellen.
     if (_scatterChart && !initial) {
       _scatterChart.data = data;
       applyScatterAxisColors(_scatterChart, axisColors);
+      _scatterChart.options.plugins.scatterOptimumRegion.region = optimumRegion;
       _scatterChart.update();
       return;
     }
@@ -581,6 +653,7 @@ window.QB = window.QB || {};
     _scatterChart = new Chart(ctx, {
       type: 'bubble',
       data,
+      plugins: [SCATTER_OPTIMUM_PLUGIN],
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -590,13 +663,20 @@ window.QB = window.QB || {};
           tooltip: {
             backgroundColor: '#0f1319', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1,
             titleColor: '#b4c8d8', bodyColor: '#8298aa', padding: 8,
+            filter: (item) => Array.isArray(item.dataset.pointsMeta), // Trendlinie nicht hoverbar
             callbacks: {
               label: (item) => {
                 const p = item.dataset.pointsMeta[item.dataIndex];
-                return ' ' + p.model + ': Score ' + p.y + ' · $' + p.x.toFixed(2) + '/MTok · ' + p.sharePct.toFixed(1) + '% of cost';
+                const base = ' ' + p.model + ': Score ' + p.y + ' · $' + p.x.toFixed(2) + '/MTok · ' + p.sharePct.toFixed(1) + '% of cost';
+                const resid = calc.trendResidual(p, item.dataset.trendFit);
+                if (resid == null) return base;
+                const sign = resid >= 0 ? '+' : '−';
+                const arrow = resid >= 0 ? '▲' : '▼';
+                return [base, ' ' + sign + Math.abs(resid).toFixed(1) + ' ' + (resid >= 0 ? 'above' : 'below') + ' trend ' + arrow];
               },
             },
           },
+          scatterOptimumRegion: { region: optimumRegion },
         },
         scales: {
           x: {

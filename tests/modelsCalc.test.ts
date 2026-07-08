@@ -396,6 +396,94 @@ describe("scatterPoints", () => {
     expect(scale.costColor(5)).toBe("#ffd21a");
     expect(scale.costColor(9)).toBe("#ff4b5c");
   });
+
+  it("defines the optimum region as cheap and high-score", () => {
+    const region = calc.scatterOptimumRegion([
+      { x: 1, y: 50 },
+      { x: 5, y: 70 },
+      { x: 9, y: 90 },
+    ]);
+
+    expect(region).toEqual({
+      xMin: 1,
+      xMax: 5,
+      yMin: 70,
+      yMax: 90,
+    });
+  });
+
+  it("omits the optimum region when scatter ranges are not meaningful", () => {
+    expect(calc.scatterOptimumRegion([{ x: 5, y: 70 }])).toBeNull();
+    expect(calc.scatterOptimumRegion([{ x: 5, y: 70 }, { x: 5, y: 90 }])).toBeNull();
+    expect(calc.scatterOptimumRegion([{ x: 1, y: 70 }, { x: 9, y: 70 }])).toBeNull();
+  });
+});
+
+describe("scatterTrendCurve", () => {
+  // Punkte exakt auf y = 2 + 5·ln(x) → OLS muss a≈2, b≈5 zurückgeben.
+  const onCurve = [1, 2, 4, 8, 16].map((x) => ({ x, y: 2 + 5 * Math.log(x) }));
+
+  it("recovers a known logarithmic relationship", () => {
+    const fit = calc.scatterTrendCurve(onCurve)!;
+    expect(fit).not.toBeNull();
+    expect(fit.a).toBeCloseTo(2, 6);
+    expect(fit.b).toBeCloseTo(5, 6);
+  });
+
+  it("samples across the observed x-range, ascending, on the fitted curve", () => {
+    const fit = calc.scatterTrendCurve(onCurve, 20)!;
+    expect(fit.samples).toHaveLength(20);
+    expect(fit.samples[0].x).toBeCloseTo(1, 6);
+    expect(fit.samples[fit.samples.length - 1].x).toBeCloseTo(16, 6);
+    for (let i = 1; i < fit.samples.length; i++) {
+      expect(fit.samples[i].x).toBeGreaterThan(fit.samples[i - 1].x);
+    }
+    // jede Stützstelle liegt auf y = a + b·ln(x)
+    for (const s of fit.samples) {
+      expect(s.y).toBeCloseTo(fit.a + fit.b * Math.log(s.x), 6);
+    }
+  });
+
+  it("returns null with fewer than 4 points", () => {
+    expect(calc.scatterTrendCurve(onCurve.slice(0, 3))).toBeNull();
+  });
+
+  it("returns null when all x are identical (no slope)", () => {
+    expect(
+      calc.scatterTrendCurve([
+        { x: 3, y: 10 },
+        { x: 3, y: 20 },
+        { x: 3, y: 30 },
+        { x: 3, y: 40 },
+      ]),
+    ).toBeNull();
+  });
+
+  it("returns null when any x <= 0 (ln undefined)", () => {
+    expect(
+      calc.scatterTrendCurve([
+        { x: 1, y: 10 },
+        { x: 2, y: 20 },
+        { x: 0, y: 5 },
+        { x: 4, y: 30 },
+      ]),
+    ).toBeNull();
+  });
+});
+
+describe("trendResidual", () => {
+  const fit = { a: 2, b: 5, samples: [] };
+
+  it("is positive above the curve, negative below, ~0 on it", () => {
+    expect(calc.trendResidual({ x: Math.E, y: 10 }, fit)).toBeCloseTo(3, 6); // curve at x=e → 7
+    expect(calc.trendResidual({ x: Math.E, y: 4 }, fit)).toBeCloseTo(-3, 6);
+    expect(calc.trendResidual({ x: Math.E, y: 7 }, fit)).toBeCloseTo(0, 6);
+  });
+
+  it("returns null without a fit or on invalid input", () => {
+    expect(calc.trendResidual({ x: 1, y: 10 }, null)).toBeNull();
+    expect(calc.trendResidual({ x: 0, y: 10 }, fit)).toBeNull();
+  });
 });
 
 describe("adoptionTimeline", () => {
