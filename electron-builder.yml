@@ -34,9 +34,6 @@ portable:
   artifactName: QuotaBar-${version}-portable.${ext}
 nsis:
   artifactName: QuotaBar-${version}-setup.${ext}
-  # Kein Web-Installer im Einsatz; vermeidet die electron-updater-Warnung und
-  # das künftige Default-Flip auf true.
-  disableWebInstaller: true
   installerIcon: assets/icon.ico
   uninstallerIcon: assets/icon.ico
   installerSidebar: logos/nsis_logo.bmp
