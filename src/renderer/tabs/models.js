@@ -21,6 +21,7 @@ window.QB = window.QB || {};
   let _resolution = 'daily';
   let _metric = 'output';
   let _provider = 'all';
+  let _benchmarkIndex = 'intelligence';
   let _showEmpty = true; // Leere Zeiteinheiten im Verteilungs-Chart einblenden (wie History)
   let _sortKey = 'costUSD';
   let _sortDesc = true;
@@ -184,6 +185,25 @@ window.QB = window.QB || {};
     return palette[Math.max(siblings.indexOf(model), 0) % palette.length];
   }
 
+  function selectedBenchmark() {
+    const indexes = _data?.benchmarkIndexes || {};
+    if (!indexes[_benchmarkIndex]) {
+      _benchmarkIndex = indexes.intelligence ? 'intelligence' : (Object.keys(indexes)[0] || 'intelligence');
+    }
+    return indexes[_benchmarkIndex] || {
+      label: 'Intelligence',
+      asOf: _data?.benchmarksAsOf || '',
+      methodology: '',
+      methodologyUrl: '',
+      reasoningNote: '',
+      scores: _data?.benchmarks || {},
+    };
+  }
+
+  function benchmarkAxisTitle(benchmark) {
+    return `${benchmark?.label || 'Intelligence'} Index`;
+  }
+
   function clamp(value, min, max) {
     if (!Number.isFinite(value)) return min;
     return Math.max(min, Math.min(max, value));
@@ -209,7 +229,8 @@ window.QB = window.QB || {};
     ensureRange();
     _modelProvider = new Map(_data.days.map((d) => [d.model, d.provider]));
     _colorOrder = calc.modelColorOrder(_data.days);
-    const hasBenchmarks = Object.keys(_data.benchmarks).length > 0;
+    const benchmark = selectedBenchmark();
+    const hasBenchmarks = Object.keys(benchmark.scores).length > 0;
 
     container.innerHTML = `
       <div class="${_animated ? '' : 'mod-stagger'}" id="mod-root">
@@ -277,10 +298,18 @@ window.QB = window.QB || {};
 
         ${hasBenchmarks ? `
         <div class="an-section">
-          <div class="an-section-head"><span class="an-section-title">COST vs. INTELLIGENCE</span></div>
+          <div class="an-section-head mod-scatter-head">
+            <span class="an-section-title">COST vs. INTELLIGENCE</span>
+            <div class="hr-seg mod-benchmark-switch" role="group" aria-label="Benchmark index">
+              ${Object.entries(_data.benchmarkIndexes || { intelligence: benchmark }).map(([key, index]) =>
+                `<button class="hr-seg-btn${key === _benchmarkIndex ? ' active' : ''}" data-benchmark-index="${QB.esc(key)}" aria-pressed="${key === _benchmarkIndex}">${QB.esc(index.label)}</button>`).join('')}
+            </div>
+          </div>
           <div class="mod-scatter-wrap"><canvas id="mod-scatter-canvas"></canvas></div>
           <div class="mod-note" id="mod-scatter-empty" hidden></div>
-          <div class="mod-scatter-note">x = $/MTok effective (incl. cache) · green = better, red = worse · white line = expected score for price · ${_data.benchmarksAsOf ? 'as of ' + QB.esc(_data.benchmarksAsOf) : 'Artificial Analysis'}</div>
+          <div class="mod-scatter-note" id="mod-scatter-note"></div>
+          <div class="mod-scatter-methodology"><span id="mod-methodology-text"></span> <button type="button" class="mod-methodology-link" id="mod-methodology-link" hidden>Methodology</button></div>
+          <div class="mod-scatter-reasoning" id="mod-scatter-reasoning" hidden></div>
         </div>` : ''}
 
         <div id="mod-tt-section" hidden></div>
@@ -296,6 +325,7 @@ window.QB = window.QB || {};
 
     bindPills();
     syncPills();
+    syncBenchmarkContent();
     renderKpis();
     renderProviderCosts();
     renderStack();
@@ -338,6 +368,16 @@ window.QB = window.QB || {};
       refreshChart();
     });
     document.getElementById('mod-load-btn')?.addEventListener('click', reloadData);
+    document.querySelectorAll('[data-benchmark-index]').forEach((button) =>
+      button.addEventListener('click', () => {
+        _benchmarkIndex = button.dataset.benchmarkIndex || 'intelligence';
+        renderBenchmarkView(button);
+      }));
+    document.getElementById('mod-methodology-link')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      const url = event.currentTarget.dataset.methodologyUrl;
+      if (url) void QB.ipc.invoke('shell:open-url', url);
+    });
   }
 
   // Daten frisch aus dem Hauptprozess holen und den ganzen Tab neu rendern.
@@ -362,6 +402,43 @@ window.QB = window.QB || {};
     document.querySelectorAll('#mod-prov-pills .hr-seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.prov === _provider));
   }
 
+  function syncBenchmarkContent() {
+    const benchmark = selectedBenchmark();
+    document.querySelectorAll('[data-benchmark-index]').forEach((button) => {
+      const active = button.dataset.benchmarkIndex === _benchmarkIndex;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+
+    const note = document.getElementById('mod-scatter-note');
+    if (note) {
+      note.textContent = 'x = $/MTok effective (incl. cache) · green = better, red = worse · white line = expected score for price'
+        + (benchmark.asOf ? ` · as of ${benchmark.asOf}` : '');
+    }
+
+    const methodology = document.getElementById('mod-methodology-text');
+    if (methodology) methodology.textContent = benchmark.methodology || '';
+    const methodologyLink = document.getElementById('mod-methodology-link');
+    if (methodologyLink) {
+      methodologyLink.hidden = !benchmark.methodologyUrl;
+      methodologyLink.dataset.methodologyUrl = benchmark.methodologyUrl || '';
+    }
+
+    const reasoning = document.getElementById('mod-scatter-reasoning');
+    if (reasoning) {
+      reasoning.hidden = !benchmark.reasoningNote;
+      reasoning.textContent = benchmark.reasoningNote || '';
+    }
+  }
+
+  function renderBenchmarkView(focusButton) {
+    syncBenchmarkContent();
+    renderKpis();
+    renderScatter(false);
+    renderTable();
+    focusButton?.focus();
+  }
+
   // Voller Refresh (Zeitraum-/Provider-Wechsel betreffen den ganzen Tab).
   function refreshLocal() {
     syncPills();
@@ -381,7 +458,7 @@ window.QB = window.QB || {};
     const days = visibleDays();
     const prevAll = calc.previousRange(_data.days, _from, _to);
     const prev = _provider === 'all' ? prevAll : prevAll.filter((d) => d.provider === _provider);
-    const k = calc.computeKpis(days, prev, _data.benchmarks, _data.minModelTokenSharePct || 0);
+    const k = calc.computeKpis(days, prev, selectedBenchmark().scores, _data.minModelTokenSharePct || 0);
 
     const trend = (deltaPct, invert) => {
       if (deltaPct == null) return '';
@@ -594,7 +671,8 @@ window.QB = window.QB || {};
     const canvas = document.getElementById('mod-scatter-canvas');
     if (!canvas) return; // Benchmark-Sektion nicht gerendert (keine Benchmarks)
 
-    const rows = calc.tableRows(visibleDays(), _data.benchmarks);
+    const benchmark = selectedBenchmark();
+    const rows = calc.tableRows(visibleDays(), benchmark.scores);
     const pts = calc.scatterPoints(rows, _data.minModelTokenSharePct || 0);
 
     // Hinweis statt leerem Graph, wenn im gewählten Fenster/Provider-Filter
@@ -644,6 +722,7 @@ window.QB = window.QB || {};
     if (_scatterChart && !initial) {
       _scatterChart.data = data;
       applyScatterAxisColors(_scatterChart, axisColors);
+      _scatterChart.options.scales.y.title.text = benchmarkAxisTitle(benchmark);
       _scatterChart.options.plugins.scatterOptimumRegion.region = optimumRegion;
       _scatterChart.update();
       return;
@@ -686,7 +765,7 @@ window.QB = window.QB || {};
                      callback: (v) => '$' + Number(v).toFixed(1) },
           },
           y: {
-            title: { display: true, text: 'Intelligence Index', color: '#708090', font: { size: 9 } },
+            title: { display: true, text: benchmarkAxisTitle(benchmark), color: '#708090', font: { size: 9 } },
             grid: { color: 'rgba(255,255,255,0.04)' }, border: { display: false },
             ticks: { color: (ctx) => axisColors.scoreColor(tickValue(ctx)), font: { family: "'IBM Plex Mono', monospace", size: 9 } },
           },
@@ -717,7 +796,7 @@ window.QB = window.QB || {};
     const compact = document.body.classList.contains('view-compact');
     const cols = compact ? COLUMNS_COMPACT : COLUMNS;
 
-    const rows = calc.tableRows(visibleDays(), _data.benchmarks);
+    const rows = calc.tableRows(visibleDays(), selectedBenchmark().scores);
     rows.sort((a, b) => {
       const av = a[_sortKey], bv = b[_sortKey];
       if (av == null && bv == null) return 0;
@@ -873,5 +952,7 @@ window.QB = window.QB || {};
           </div>`).join('')}
       </div>`;
   }
+
+  QB.__modelsTest = { benchmarkAxisTitle };
 
 })();

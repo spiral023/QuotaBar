@@ -33,10 +33,21 @@ export interface ModelPricingRate {
   cacheReadPerMTok: number;
 }
 
+export interface BenchmarkIndex {
+  label: string;
+  source: string;
+  asOf: string;
+  methodology: string;
+  methodologyUrl: string;
+  reasoningNote: string;
+  scores: Record<string, number>;
+}
+
 export interface ModelsData {
   days: ModelDay[];
   benchmarks: Record<string, number>;
   benchmarksAsOf: string;
+  benchmarkIndexes: Record<string, BenchmarkIndex>;
   pricing: Record<string, ModelPricingRate>;
   /** Mindest-Token-Anteil (%) für Berücksichtigung in KPI/Scatter (aus Settings). */
   minModelTokenSharePct: number;
@@ -83,11 +94,11 @@ export async function buildModelsData(deps: ModelsDataDeps = {}): Promise<Models
   const days = Array.from(dayMap.values())
     .sort((a, b) => a.date.localeCompare(b.date) || a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
 
-  const { benchmarks, benchmarksAsOf } = await readBenchmarks(deps.benchmarksFile ?? DEFAULT_BENCHMARKS_FILE);
+  const { benchmarks, benchmarksAsOf, benchmarkIndexes } = await readBenchmarks(deps.benchmarksFile ?? DEFAULT_BENCHMARKS_FILE);
   const pricing = await collectPricing(days, settings);
 
   return {
-    days, benchmarks, benchmarksAsOf, pricing,
+    days, benchmarks, benchmarksAsOf, benchmarkIndexes, pricing,
     minModelTokenSharePct: settings.minModelTokenSharePct,
     generatedAt: new Date().toISOString(),
   };
@@ -169,19 +180,54 @@ async function mergeLiveTail(
   }
 }
 
-async function readBenchmarks(file: string): Promise<{ benchmarks: Record<string, number>; benchmarksAsOf: string }> {
+async function readBenchmarks(file: string): Promise<{
+  benchmarks: Record<string, number>;
+  benchmarksAsOf: string;
+  benchmarkIndexes: Record<string, BenchmarkIndex>;
+}> {
   try {
     const json = JSON.parse(await fs.readFile(file, "utf8")) as {
       asOf?: string;
+      source?: string;
       scores?: Record<string, unknown>;
+      indexes?: Record<string, {
+        label?: string;
+        source?: string;
+        asOf?: string;
+        methodology?: string;
+        methodologyUrl?: string;
+        reasoningNote?: string;
+        scores?: Record<string, unknown>;
+      }>;
     };
-    const benchmarks: Record<string, number> = {};
-    for (const [model, score] of Object.entries(json.scores ?? {})) {
-      if (typeof score === "number" && Number.isFinite(score)) benchmarks[model] = score;
+    const parseIndex = (index: NonNullable<typeof json.indexes>[string]): BenchmarkIndex => {
+      const scores: Record<string, number> = {};
+      for (const [model, score] of Object.entries(index.scores ?? {})) {
+        if (typeof score === "number" && Number.isFinite(score)) scores[model] = score;
+      }
+      return {
+        label: index.label ?? "Intelligence",
+        source: index.source ?? "Artificial Analysis",
+        asOf: index.asOf ?? "",
+        methodology: index.methodology ?? "",
+        methodologyUrl: index.methodologyUrl ?? "",
+        reasoningNote: index.reasoningNote ?? "",
+        scores,
+      };
+    };
+    const benchmarkIndexes: Record<string, BenchmarkIndex> = {};
+    for (const [key, index] of Object.entries(json.indexes ?? {})) {
+      benchmarkIndexes[key] = parseIndex(index);
     }
-    return { benchmarks, benchmarksAsOf: json.asOf ?? "" };
+    if (Object.keys(benchmarkIndexes).length === 0) {
+      benchmarkIndexes.intelligence = parseIndex({
+        label: "Intelligence", source: json.source, asOf: json.asOf, scores: json.scores,
+      });
+    }
+    const defaultIndex = benchmarkIndexes.intelligence ?? Object.values(benchmarkIndexes)[0];
+    return { benchmarks: defaultIndex?.scores ?? {}, benchmarksAsOf: defaultIndex?.asOf ?? "", benchmarkIndexes };
   } catch {
-    return { benchmarks: {}, benchmarksAsOf: "" };
+    return { benchmarks: {}, benchmarksAsOf: "", benchmarkIndexes: {} };
   }
 }
 

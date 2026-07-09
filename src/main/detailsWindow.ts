@@ -515,6 +515,8 @@ export class DetailsWindowController {
       const ALLOWED = new Set([
         "https://github.com/spiral023/QuotaBar",
         "https://github.com/spiral023/QuotaBar/releases/latest",
+        "https://artificialanalysis.ai/methodology/intelligence-benchmarking",
+        "https://artificialanalysis.ai/methodology/coding-agents-benchmarking",
       ]);
       if (typeof url !== "string" || !ALLOWED.has(url)) return { ok: false, error: "not_allowed" };
       await shell.openExternal(url);

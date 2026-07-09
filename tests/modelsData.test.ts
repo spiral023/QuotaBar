@@ -193,9 +193,13 @@ describe("buildModelsData — pricing & benchmarks", () => {
     });
     // Gegen die gepflegte JSON prüfen statt einen festen Score zu pinnen — Scores
     // werden regelmäßig aktualisiert; der Test verifiziert das Durchreichen, nicht den Wert.
-    const fileScores = (JSON.parse(fs.readFileSync(BENCHMARKS_FILE, "utf8")) as { scores: Record<string, number> }).scores;
+    const fileScores = (JSON.parse(fs.readFileSync(BENCHMARKS_FILE, "utf8")) as {
+      indexes: { intelligence: { scores: Record<string, number> } };
+    }).indexes.intelligence.scores;
     expect(data.benchmarks["claude-opus-4-8"]).toBe(fileScores["claude-opus-4-8"]);
     expect(data.benchmarksAsOf).toMatch(/^\d{4}-\d{2}(-\d{2})?$/);
+    expect(data.benchmarkIndexes.codingAgent.scores["gpt-5.6-sol"]).toBe(79);
+    expect(data.benchmarkIndexes.codingAgent.asOf).toMatch(/^\d{4}-\d{2}(-\d{2})?$/);
   });
 
   it("returns empty benchmarks when the file is missing (spec error case)", async () => {

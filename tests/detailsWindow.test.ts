@@ -22,13 +22,13 @@ vi.mock("electron", () => {
     screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }) },
     Tray: class {},
     clipboard: { writeText: vi.fn() },
-    shell: { openPath: vi.fn() },
+    shell: { openPath: vi.fn(), openExternal: vi.fn() },
   };
 });
 
 import { DebugRecorder } from "../src/main/debugRecorder";
 import { DetailsWindowController } from "../src/main/detailsWindow";
-import { ipcMain } from "electron";
+import { ipcMain, shell } from "electron";
 
 let tmpDir: string;
 
@@ -67,5 +67,33 @@ describe("DetailsWindowController system IPC", () => {
     expect(channels).toContain("system:claude-roots:suggest");
     expect(channels).toContain("system:codex-homes:suggest");
     expect(channels).toContain("system:open-path");
+  });
+
+  it("opens the Artificial Analysis methodology in the external browser", async () => {
+    new DetailsWindowController(() => null);
+
+    const handler = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .find((call: unknown[]) => call[0] === "shell:open-url")?.[1] as
+        | ((event: unknown, url: unknown) => Promise<{ ok: boolean }>)
+        | undefined;
+
+    const result = await handler?.({}, "https://artificialanalysis.ai/methodology/intelligence-benchmarking");
+
+    expect(result).toEqual({ ok: true });
+    expect(shell.openExternal).toHaveBeenCalledWith("https://artificialanalysis.ai/methodology/intelligence-benchmarking");
+  });
+
+  it("opens the Coding Agent methodology in the external browser", async () => {
+    new DetailsWindowController(() => null);
+
+    const handler = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .find((call: unknown[]) => call[0] === "shell:open-url")?.[1] as
+        | ((event: unknown, url: unknown) => Promise<{ ok: boolean }>)
+        | undefined;
+
+    const result = await handler?.({}, "https://artificialanalysis.ai/methodology/coding-agents-benchmarking");
+
+    expect(result).toEqual({ ok: true });
+    expect(shell.openExternal).toHaveBeenCalledWith("https://artificialanalysis.ai/methodology/coding-agents-benchmarking");
   });
 });

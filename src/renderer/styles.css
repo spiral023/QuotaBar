@@ -1983,6 +1983,19 @@
 
     .mod-scatter-wrap { height: 220px; position: relative; }
     .mod-scatter-note { font-size: 8.5px; color: var(--t400); margin-top: 6px; }
+    .mod-scatter-methodology { font-size: 8.5px; line-height: 1.45; color: var(--t400); margin-top: 4px; text-wrap: pretty; }
+    .mod-scatter-reasoning { font-size: 8.5px; line-height: 1.45; color: var(--t400); margin-top: 2px; text-wrap: pretty; }
+    .mod-methodology-link {
+      padding: 0; border: 0; background: none; color: var(--green); cursor: pointer;
+      font: inherit; text-decoration: none;
+    }
+    .mod-methodology-link:hover { text-decoration: underline; }
+    .mod-methodology-link:focus-visible { outline: 1px solid var(--green); outline-offset: 2px; border-radius: 2px; }
+    .mod-scatter-head { gap: 8px; }
+    .mod-benchmark-switch { margin-left: auto; flex-shrink: 0; }
+    .mod-benchmark-switch .hr-seg-btn { font-size: 8.5px; }
+    .view-compact .mod-scatter-head { align-items: flex-start; flex-direction: column; }
+    .view-compact .mod-benchmark-switch { margin-left: 0; }
 
     .mod-table-scroll { overflow-x: auto; }
     .mod-table { width: 100%; border-collapse: collapse; font-size: 10px; white-space: nowrap; }

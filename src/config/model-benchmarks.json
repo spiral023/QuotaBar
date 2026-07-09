@@ -1,27 +1,54 @@
 {
-  "note": "Manuell gepflegt. Quelle: https://artificialanalysis.ai — Schlüssel in normalisierter Form (ohne Datums-Suffix). Modelle ohne Eintrag erscheinen nicht im Scatter.",
-  "source": "Artificial Analysis Intelligence Index",
-  "asOf": "2026-06-23",
-  "scores": {
-    "claude-fable-5": 60,
-    "claude-opus-4-8": 56,
-    "claude-opus-4-7": 54,
-    "claude-sonnet-5": 53,
-    "gpt-5.5": 53,
-    "gpt-5.4": 51,
-    "glm-5.2": 51,
-    "claude-sonnet-4-6": 47,
-    "deepseek-v4-pro": 44,
-    "gpt-5.3-codex": 44,
-    "gpt-5.2": 42,
-    "claude-opus-4-5": 41,
-    "deepseek-v4-flash": 40,
-    "gpt-5.2-codex": 40,
-    "gpt-5.1": 39,
-    "gpt-5": 36,
-    "gpt-5.1-codex": 35,
-    "claude-haiku-4-5": 30,
-    "mistral-medium-3.5": 30,
-    "gpt-5.1-codex-mini": 31
+  "note": "Manually maintained. Model keys are normalized without date suffixes. When multiple reasoning variants are available, scores average variants from high through the highest setting, for example max.",
+  "indexes": {
+    "intelligence": {
+      "label": "Intelligence",
+      "source": "Artificial Analysis Intelligence Index v4.1",
+      "asOf": "2026-07-09",
+      "methodology": "Intelligence Index v4.1 combines nine evaluations: GDPval-AA v2, τ³-Banking, Terminal-Bench v2.1, SciCode, Humanity's Last Exam, GPQA Diamond, CritPt, AA-Omniscience, and AA-LCR.",
+      "methodologyUrl": "https://artificialanalysis.ai/methodology/intelligence-benchmarking",
+      "reasoningNote": "When multiple reasoning variants are available, scores average variants from high through the highest setting, for example max.",
+      "scores": {
+        "claude-fable-5": 60,
+        "claude-opus-4-8": 56,
+        "claude-opus-4-7": 54,
+        "claude-sonnet-5": 53,
+        "gpt-5.5": 55,
+        "gpt-5.6-sol": 58,
+        "gpt-5.6-terra": 52,
+        "gpt-5.6-luna": 49,
+        "gpt-5.4": 51,
+        "glm-5.2": 51,
+        "claude-sonnet-4-6": 47,
+        "deepseek-v4-pro": 44,
+        "gpt-5.3-codex": 44,
+        "gpt-5.2": 42,
+        "claude-opus-4-5": 41,
+        "deepseek-v4-flash": 40,
+        "gpt-5.2-codex": 40,
+        "gpt-5.1": 39,
+        "gpt-5": 36,
+        "gpt-5.1-codex": 35,
+        "claude-haiku-4-5": 30,
+        "mistral-medium-3.5": 30,
+        "gpt-5.1-codex-mini": 31
+      }
+    },
+    "codingAgent": {
+      "label": "Coding Agent",
+      "source": "Artificial Analysis Coding Agent Index v1.1",
+      "asOf": "2026-07-10",
+      "methodology": "Composite average pass@1 across DeepSWE, Terminal-Bench v2, and SWE-Atlas-QnA. Higher is better.",
+      "methodologyUrl": "https://artificialanalysis.ai/methodology/coding-agents-benchmarking",
+      "reasoningNote": "When multiple reasoning variants are available, scores average variants from high through the highest setting, for example max.",
+      "scores": {
+        "claude-fable-5": 77,
+        "claude-opus-4-8": 73,
+        "gpt-5.5": 76,
+        "gpt-5.6-sol": 79,
+        "gpt-5.6-terra": 74,
+        "gpt-5.6-luna": 71
+      }
+    }
   }
 }
