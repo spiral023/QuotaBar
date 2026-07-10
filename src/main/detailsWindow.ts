@@ -34,6 +34,7 @@ import { normalizeProxySettings, type ProxySettings } from "../config/settings";
 import { QuickStatsLoadMetric } from "./quickStatsLoadMetric";
 import { detectAppVariant } from "./appIdentity";
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
+import { mergeAndSaveSettings } from "./settingsSave";
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -73,7 +74,8 @@ export class DetailsWindowController {
 
   constructor(
     private readonly getTray: () => Tray | null,
-    private readonly recorder?: DebugRecorder
+    private readonly recorder?: DebugRecorder,
+    private readonly onSettingsSaved?: (settings: Settings, changedKeys: string[]) => void,
   ) {
     this.registerIpcHandlers();
   }
@@ -309,12 +311,7 @@ export class DetailsWindowController {
     }));
 
     ipcMain.handle("settings:save", async (_, partial: Record<string, unknown>) => {
-      const current = await loadSettings();
-      const merged = {
-        ...current,
-        ...partial,
-      };
-      await saveSettings(merged);
+      const saved = await mergeAndSaveSettings(partial, this.onSettingsSaved);
       log.info(`Dashboard action: settings:save keys=${Object.keys(partial).join(",") || "none"}`);
       if (Object.prototype.hasOwnProperty.call(partial, "claudeRoots")) {
         log.info(`Settings saved via dashboard: claudeRoots=${formatPathListForLog(partial.claudeRoots)}`);
@@ -324,13 +321,13 @@ export class DetailsWindowController {
       }
       // Re-apply proxy settings without a restart when Network settings change.
       if (Object.prototype.hasOwnProperty.call(partial, "proxy")) {
-        const fresh = await loadSettings();
-        await configureHttpProxy(fresh.proxy).catch((err: unknown) => {
+        await configureHttpProxy(saved.proxy).catch((err: unknown) => {
           log.warn(`Proxy re-apply failed: ${err instanceof Error ? err.message : String(err)}`);
           return null;
         });
       }
       this.clearAnalyticsCaches();
+      return saved;
     });
 
     // Applies pending proxy settings and checks live API reachability. Any HTTP

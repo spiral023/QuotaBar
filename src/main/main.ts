@@ -153,8 +153,16 @@ if (!app.requestSingleInstanceLock()) {
         }).catch((err: unknown) => {
           log.warn(`Backfill regenerate failed: ${err instanceof Error ? err.message : String(err)}`);
         });
-      });
-      const detailsWindow = new DetailsWindowController(() => tray.getTray(), recorder);
+      }, settings.providerOrder);
+      const detailsWindow = new DetailsWindowController(
+        () => tray.getTray(),
+        recorder,
+        (savedSettings, changedKeys) => {
+          if (changedKeys.includes("providerOrder")) {
+            tray.setProviderOrder(savedSettings.providerOrder);
+          }
+        },
+      );
       tray.setDetailsWindow(detailsWindow);
       if (cachedSnapshots.length > 0) {
         tray.setSnapshots(cachedSnapshots);
