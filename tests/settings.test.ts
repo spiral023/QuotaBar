@@ -108,6 +108,21 @@ describe("normalizeSettings provider roots", () => {
   });
 });
 
+describe("normalizeSettings providerOrder", () => {
+  it("defaults to Claude followed by Codex", () => {
+    expect(defaultSettings.providerOrder).toEqual(["claude", "codex"]);
+  });
+
+  it("normalizes duplicate, unknown, and missing providers", () => {
+    const out = normalizeSettings({
+      ...defaultSettings,
+      providerOrder: ["codex", "invalid", "codex"],
+    });
+
+    expect(out.providerOrder).toEqual(["codex", "claude"]);
+  });
+});
+
 describe("normalizeSettings minModelTokenSharePct", () => {
   it("defaults to 0 (filter disabled)", () => {
     expect(defaultSettings.minModelTokenSharePct).toBe(0);

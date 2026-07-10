@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { ensureConfigDir } from "../main/logging";
+import { DEFAULT_PROVIDER_ORDER, normalizeProviderOrder } from "../providers/providerOrder";
 import { getSettingsPath } from "./paths";
 
 export type CostWindow = "7d" | "30d" | "all";
@@ -123,6 +124,7 @@ export const defaultNotificationSettings: NotificationSettings = {
 export interface Settings {
   pollIntervalSeconds: number;
   providerTimeoutMs: number;
+  providerOrder: string[];
   claudeRoots: string[];
   codexHomes: string[];
   plans: PlanPeriod[];
@@ -147,6 +149,7 @@ export interface Settings {
 export const defaultSettings: Settings = {
   pollIntervalSeconds: 120,
   providerTimeoutMs: 10_000,
+  providerOrder: [...DEFAULT_PROVIDER_ORDER],
   claudeRoots: [],
   codexHomes: [],
   plans: [],
@@ -220,6 +223,7 @@ export function normalizeSettings(settings: Settings): Settings {
   return {
     pollIntervalSeconds: Math.max(15, Math.floor(Number(settings.pollIntervalSeconds) || defaultSettings.pollIntervalSeconds)),
     providerTimeoutMs: Math.max(1000, Math.floor(Number(settings.providerTimeoutMs) || defaultSettings.providerTimeoutMs)),
+    providerOrder: normalizeProviderOrder(settings.providerOrder),
     claudeRoots: normalizePathList((settings as { claudeRoots?: unknown }).claudeRoots),
     codexHomes: normalizePathList((settings as { codexHomes?: unknown }).codexHomes),
     plans,
