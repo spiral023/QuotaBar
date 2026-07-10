@@ -18,39 +18,37 @@ function snap(
 describe("buildIconState", () => {
   it("returns codex bar with usedPercent from fiveHour window", () => {
     const state = buildIconState([snap("codex", "ok", [{ name: "fiveHour", usedPercent: 75 }])]);
-    expect(state.codex).toEqual({ usedPercent: 75, isStale: false });
-    expect(state.claude).toBeUndefined();
+    expect(state.bars).toEqual([{ provider: "codex", usedPercent: 75, isStale: false }]);
   });
 
   it("returns claude bar with usedPercent from fiveHour window", () => {
     const state = buildIconState([snap("claude", "ok", [{ name: "fiveHour", usedPercent: 50 }])]);
-    expect(state.claude).toEqual({ usedPercent: 50, isStale: false });
-    expect(state.codex).toBeUndefined();
+    expect(state.bars).toEqual([{ provider: "claude", usedPercent: 50, isStale: false }]);
   });
 
   it("returns bar with isStale=true for stale provider", () => {
     const state = buildIconState([snap("codex", "stale", [{ name: "fiveHour", usedPercent: 90 }])]);
-    expect(state.codex).toEqual({ usedPercent: 90, isStale: true });
+    expect(state.bars).toEqual([{ provider: "codex", usedPercent: 90, isStale: true }]);
   });
 
   it("returns undefined for not_authenticated provider", () => {
     const state = buildIconState([snap("codex", "not_authenticated")]);
-    expect(state.codex).toBeUndefined();
+    expect(state.bars).toEqual([]);
   });
 
   it("returns undefined for error provider", () => {
     const state = buildIconState([snap("codex", "error")]);
-    expect(state.codex).toBeUndefined();
+    expect(state.bars).toEqual([]);
   });
 
   it("returns usedPercent=undefined when fiveHour window exists but has no usedPercent", () => {
     const state = buildIconState([snap("codex", "ok", [{ name: "fiveHour" }])]);
-    expect(state.codex).toEqual({ usedPercent: undefined, isStale: false });
+    expect(state.bars).toEqual([{ provider: "codex", usedPercent: undefined, isStale: false }]);
   });
 
   it("returns usedPercent=undefined when no fiveHour window present", () => {
     const state = buildIconState([snap("codex", "ok", [{ name: "weekly", usedPercent: 30 }])]);
-    expect(state.codex).toEqual({ usedPercent: undefined, isStale: false });
+    expect(state.bars).toEqual([{ provider: "codex", usedPercent: undefined, isStale: false }]);
   });
 
   it("sets hasError=true when any snapshot is stale", () => {
@@ -70,8 +68,7 @@ describe("buildIconState", () => {
 
   it("returns all undefined bars for empty snapshot list", () => {
     const state = buildIconState([]);
-    expect(state.codex).toBeUndefined();
-    expect(state.claude).toBeUndefined();
+    expect(state.bars).toEqual([]);
     expect(state.hasError).toBe(false);
   });
 
@@ -79,9 +76,23 @@ describe("buildIconState", () => {
     const state = buildIconState([
       snap("codex", "ok", [{ name: "fiveHour", usedPercent: 100 }]),
       snap("claude", "ok", [{ name: "fiveHour", usedPercent: 50 }]),
+    ], ["codex", "claude"]);
+    expect(state.bars).toEqual([
+      { provider: "codex", usedPercent: 100, isStale: false },
+      { provider: "claude", usedPercent: 50, isStale: false },
     ]);
-    expect(state.codex).toEqual({ usedPercent: 100, isStale: false });
-    expect(state.claude).toEqual({ usedPercent: 50, isStale: false });
     expect(state.hasError).toBe(false);
+  });
+
+  it("orders bars from the configured provider order", () => {
+    const snapshots = [
+      snap("claude", "ok", [{ name: "fiveHour", usedPercent: 50 }]),
+      snap("codex", "ok", [{ name: "fiveHour", usedPercent: 75 }]),
+    ];
+
+    expect(buildIconState(snapshots, ["codex", "claude"]).bars.map((bar) => bar.provider))
+      .toEqual(["codex", "claude"]);
+    expect(buildIconState(snapshots, ["claude", "codex"]).bars.map((bar) => bar.provider))
+      .toEqual(["claude", "codex"]);
   });
 });

@@ -6,13 +6,13 @@ let _cachedStateKey: string | null = null;
 let _cachedImage: NativeImage | null = null;
 
 export interface BarData {
+  provider: string;
   usedPercent?: number;
   isStale: boolean;
 }
 
 export interface TrayIconState {
-  codex?: BarData;
-  claude?: BarData;
+  bars: BarData[];
   hasError: boolean;
 }
 
@@ -23,9 +23,10 @@ const BAR_WIDTH = 26;
 const TRACK_COLOR: RGBA = [40, 40, 40, 255];
 
 function trayStateKey(state: TrayIconState, size: number): string {
-  const c = state.claude;
-  const d = state.codex;
-  return `${size}|${state.hasError}|${c?.usedPercent ?? ""}|${c?.isStale}|${d?.usedPercent ?? ""}|${d?.isStale}`;
+  const bars = state.bars
+    .map((bar) => `${bar.provider}:${bar.usedPercent ?? ""}:${bar.isStale}`)
+    .join("|");
+  return `${size}|${state.hasError}|${bars}`;
 }
 
 export function renderTrayIcon(state: TrayIconState, size = 32): NativeImage {
@@ -35,9 +36,7 @@ export function renderTrayIcon(state: TrayIconState, size = 32): NativeImage {
   const png = new PNG({ width: size, height: size });
   fillTransparent(png);
 
-  const slots = [state.codex, state.claude].filter(
-    (s): s is BarData => s !== undefined
-  );
+  const slots = state.bars;
 
   if (slots.length === 0) {
     const barH = 8;
