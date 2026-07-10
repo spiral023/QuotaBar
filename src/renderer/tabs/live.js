@@ -12,6 +12,7 @@ window.QB = window.QB || {};
 // ── Countdowns ───────────────────────────────────────────────────────
 let _countdowns = [];
 let _cdTimer    = null;
+let _detachProviderDrag = null;
 
 function startCd() {
   _cdTimer = setInterval(() => {
@@ -28,6 +29,19 @@ function stopCd() {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+function orderSnapshots(snapshots, order = QB.settings?.providerOrder) {
+  const preferred = Array.isArray(order) ? order : ['claude', 'codex'];
+  const rank = new Map(preferred.map((provider, index) => [provider, index]));
+  return [...snapshots].sort((a, b) =>
+    (rank.get(a.provider) ?? Number.MAX_SAFE_INTEGER)
+      - (rank.get(b.provider) ?? Number.MAX_SAFE_INTEGER));
+}
+
+function providerCardAttrs(provider) {
+  const name = provider.charAt(0).toUpperCase() + provider.slice(1);
+  return `data-provider-card data-provider="${QB.esc(provider)}" tabindex="0" aria-roledescription="Draggable provider card" aria-label="${QB.esc(name)} provider card. Drag to reorder."`;
+}
 
 function fmtDuration(seconds) {
   const s = Math.abs(seconds);
@@ -409,7 +423,7 @@ function renderStandard(snap, name, delay, acctIdx) {
   if (winHtml) bdgs.push(winHtml);
   const accent = QB.accentVar(hasEffectivePct ? effectivePct : null);
 
-  return `<div class="card has-accent" style="--card-accent:${accent};${delay}">
+  return `<div class="card provider-card has-accent" ${providerCardAttrs(snap.provider)} style="--card-accent:${accent};${delay}">
     <div class="card-body">
       ${providerIconHtml(snap.provider)}
       <div class="card-info">
@@ -438,7 +452,7 @@ function renderGemini(snap, name, delay) {
   if (costHtml) bdgs.push(costHtml);
   const winHtml = windowBadgeHtml(snap.costFactor);
   if (winHtml) bdgs.push(winHtml);
-  return `<div class="card has-accent" style="--card-accent:var(--gray);${delay}">
+  return `<div class="card provider-card has-accent" ${providerCardAttrs(snap.provider)} style="--card-accent:var(--gray);${delay}">
     <div class="card-body">
       ${providerIconHtml('gemini')}
       <div class="card-info">
@@ -456,11 +470,11 @@ function renderCard(snap, idx, acctIdx) {
   const delay = `animation-delay:${idx * 65}ms`;
   if (snap.status === 'not_authenticated') {
     const authLbl = /expired/i.test(snap.errorMessage || '') ? 'Token Expired' : 'Not Authenticated';
-    return `<div class="card card-status-row" style="--card-accent:var(--gray);${delay}"><span class="prov-name">${QB.esc(name)}</span><span class="badge b-auth">${authLbl}</span></div>`;
+    return `<div class="card provider-card card-status-row" ${providerCardAttrs(snap.provider)} style="--card-accent:var(--gray);${delay}"><span class="prov-name">${QB.esc(name)}</span><span class="badge b-auth">${authLbl}</span></div>`;
   }
   if (snap.status === 'error' && snap.windows.length === 0) {
     const msg = (snap.errorMessage || 'Error').slice(0, 42);
-    return `<div class="card card-status-row has-accent" style="--card-accent:var(--red);${delay}"><span class="prov-name">${QB.esc(name)}</span><span class="badge b-error">${QB.esc(msg)}</span></div>`;
+    return `<div class="card provider-card card-status-row has-accent" ${providerCardAttrs(snap.provider)} style="--card-accent:var(--red);${delay}"><span class="prov-name">${QB.esc(name)}</span><span class="badge b-error">${QB.esc(msg)}</span></div>`;
   }
   if (snap.provider === 'gemini') return renderGemini(snap, name, delay);
   return renderStandard(snap, name, delay, acctIdx);
@@ -487,6 +501,7 @@ QB.toggleWindowBudget = function toggleWindowBudget(id, _provider) {
 
 QB.renderLive = function renderLive(snapshots) {
   const el = document.getElementById('content');
+  if (_detachProviderDrag) { _detachProviderDrag(); _detachProviderDrag = null; }
   stopCd();
   _countdowns = [];
   if (snapshots === null) {
@@ -497,21 +512,33 @@ QB.renderLive = function renderLive(snapshots) {
     el.innerHTML = '<div class="empty"><span>No provider data</span></div>';
     return;
   }
+  const orderedSnapshots = orderSnapshots(snapshots);
   const providerSeq = {};
-  const cards    = snapshots.map((snap, i) => {
+  const cards    = orderedSnapshots.map((snap, i) => {
     providerSeq[snap.provider] = (providerSeq[snap.provider] || 0) + 1;
     return renderCard(snap, i + 1, providerSeq[snap.provider]);
   }).join('');
   el.innerHTML   = cards;
+  if (QB.providerOrderDrag?.attach) {
+    _detachProviderDrag = QB.providerOrderDrag.attach(el, {
+      onCommit: async (nextOrder) => {
+        const saved = await QB.ipc.invoke('settings:save', { providerOrder: nextOrder });
+        const providerOrder = Array.isArray(saved?.providerOrder) ? saved.providerOrder : nextOrder;
+        QB.settings = { ...(QB.settings || {}), providerOrder };
+        return { providerOrder };
+      },
+    });
+  }
   _wbDataPromise = null; // neue Snapshots → Budget-Daten neu laden
   const wbGen = ++_wbGeneration;
-  void hydrateWindowBudgets(snapshots, wbGen);
+  void hydrateWindowBudgets(orderedSnapshots, wbGen);
   startCd();
 };
 
 QB.__liveTest = {
   effectiveUsageWindow,
   effectiveUsageLabel,
+  orderSnapshots,
 };
 
 })();

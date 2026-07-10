@@ -4,10 +4,12 @@ import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 
 type UsageWindow = { name: string; usedPercent?: number };
+type Snapshot = { provider: string; status: string; windows: UsageWindow[] };
 
 function loadLiveHelpers(): {
   effectiveUsageWindow: (fiveH?: UsageWindow, weekly?: UsageWindow) => UsageWindow | null;
   effectiveUsageLabel: (win?: UsageWindow | null) => string;
+  orderSnapshots: (snapshots: Snapshot[], order: string[]) => Snapshot[];
 } {
   const qb = {};
   const context = vm.createContext({
@@ -46,5 +48,17 @@ describe("live renderer helpers", () => {
 
     expect(helpers.effectiveUsageWindow({ name: "fiveHour" }, { name: "weekly" })).toBeNull();
     expect(helpers.effectiveUsageLabel(null)).toBe("—");
+  });
+
+  it("orders healthy and authentication-error cards from settings", () => {
+    const helpers = loadLiveHelpers();
+    const snapshots = [
+      { provider: "claude", status: "ok", windows: [] },
+      { provider: "codex", status: "not_authenticated", windows: [] },
+    ];
+
+    expect(helpers.orderSnapshots(snapshots, ["codex", "claude"])
+      .map((snapshot) => snapshot.provider)).toEqual(["codex", "claude"]);
+    expect(snapshots.map((snapshot) => snapshot.provider)).toEqual(["claude", "codex"]);
   });
 });

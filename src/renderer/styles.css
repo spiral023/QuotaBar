@@ -209,6 +209,40 @@
     .card:last-child { margin-bottom: 0; }
     .card:hover { background: var(--bg-card-hover); }
 
+    .provider-card {
+      cursor: grab;
+      touch-action: pan-y;
+    }
+    .provider-card:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--green) 72%, white);
+      outline-offset: 1px;
+    }
+    .provider-card.is-dragging {
+      animation: none;
+      cursor: grabbing;
+      box-shadow:
+        0 2px 8px rgba(0, 0, 0, 0.28),
+        0 18px 42px rgba(0, 0, 0, 0.42);
+      transform: scale(1.015);
+      transition-property: transform, box-shadow, opacity;
+      transition-duration: 120ms;
+      transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+      user-select: none;
+    }
+    .provider-card-placeholder {
+      box-sizing: border-box;
+      margin-bottom: 5px;
+      border: 1px dashed color-mix(in srgb, var(--green) 70%, transparent);
+      border-radius: var(--r-card);
+      background: color-mix(in srgb, var(--green) 7%, transparent);
+      box-shadow: inset 0 0 18px color-mix(in srgb, var(--green) 5%, transparent);
+    }
+    body.is-provider-dragging,
+    body.is-provider-dragging * {
+      cursor: grabbing !important;
+      user-select: none !important;
+    }
+
     .card.has-accent::before {
       content: '';
       position: absolute;
@@ -1097,6 +1131,8 @@
     @keyframes fuseOverdue { 0%, 100% { opacity: 0.8; } 50% { opacity: 0.25; } }
     @media (prefers-reduced-motion: reduce) {
       .refresh-fuse-fill.run { animation: none; transform: scaleX(1); opacity: 0.3; }
+      .provider-card,
+      .provider-card-placeholder { transition: none; }
     }
 
     /* Default: insights panel hidden until body class is set */
