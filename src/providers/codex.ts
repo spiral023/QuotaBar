@@ -1,4 +1,4 @@
-import { loadCodexCredentials, CodexCredentials } from "../auth/codexAuth";
+import { resolveCodexCredentials, CodexCredentials } from "../auth/codexAuth";
 import { log } from "../main/logging";
 import { httpFetch } from "../main/httpClient";
 import { redactObject } from "../shared/redaction";
@@ -17,16 +17,23 @@ export class CodexProvider implements UsageProvider {
   constructor(private readonly timeoutMs = 10_000, private readonly settingsLoader?: ProviderSettingsLoader) {}
 
   async isAvailable(): Promise<boolean> {
-    return (await loadCodexCredentials(await this.pathContext())) !== null;
+    return (await resolveCodexCredentials(await this.pathContext())).state === "ok";
   }
 
   async getAuthHint(): Promise<string | null> {
-    return (await this.isAvailable()) ? null : "Codex: Run 'codex login' to authenticate";
+    const resolution = await resolveCodexCredentials(await this.pathContext());
+    if (resolution.state === "ok") return null;
+    if (resolution.state === "expired") return "Codex: Token expired — run 'codex login' to re-authenticate";
+    return "Codex: Run 'codex login' to authenticate";
   }
 
   async fetchUsage(): Promise<UsageSnapshot> {
     try {
-      const credentials = await loadCodexCredentials(await this.pathContext());
+      const resolution = await resolveCodexCredentials(await this.pathContext());
+      if (resolution.state === "expired") {
+        throw new NotAuthenticatedError("Codex token expired — run 'codex login' to re-authenticate");
+      }
+      const credentials = resolution.credentials;
       if (!credentials) {
         throw new NotAuthenticatedError("Codex auth.json not found or has no access token");
       }

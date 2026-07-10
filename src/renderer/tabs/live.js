@@ -455,7 +455,8 @@ function renderCard(snap, idx, acctIdx) {
   const name  = snap.provider.charAt(0).toUpperCase() + snap.provider.slice(1);
   const delay = `animation-delay:${idx * 65}ms`;
   if (snap.status === 'not_authenticated') {
-    return `<div class="card card-status-row" style="--card-accent:var(--gray);${delay}"><span class="prov-name">${QB.esc(name)}</span><span class="badge b-auth">Not Authenticated</span></div>`;
+    const authLbl = /expired/i.test(snap.errorMessage || '') ? 'Token Expired' : 'Not Authenticated';
+    return `<div class="card card-status-row" style="--card-accent:var(--gray);${delay}"><span class="prov-name">${QB.esc(name)}</span><span class="badge b-auth">${authLbl}</span></div>`;
   }
   if (snap.status === 'error' && snap.windows.length === 0) {
     const msg = (snap.errorMessage || 'Error').slice(0, 42);

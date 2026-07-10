@@ -7,9 +7,13 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/auth/codexAuth", () => ({
-  loadCodexCredentials: vi.fn(async () => ({
-    accessToken: "token-redacted-by-test",
-    accountId: "acct_test",
+  resolveCodexCredentials: vi.fn(async () => ({
+    state: "ok",
+    credentials: {
+      accessToken: "token-redacted-by-test",
+      accountId: "acct_test",
+    },
+    path: "/home/test/.codex/auth.json",
   })),
 }));
 
