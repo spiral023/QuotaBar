@@ -3,15 +3,33 @@ import path from "node:path";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 
-type UsageWindow = { name: string; usedPercent?: number };
-type Snapshot = { provider: string; status: string; windows: UsageWindow[] };
+type UsageWindow = {
+  name: string;
+  usedPercent?: number;
+  resetsAt?: string;
+  windowSeconds?: number;
+};
+type Snapshot = {
+  provider: string;
+  status: string;
+  windows: UsageWindow[];
+  identity?: { email?: string };
+};
 
 function loadLiveHelpers(): {
   effectiveUsageWindow: (fiveH?: UsageWindow, weekly?: UsageWindow) => UsageWindow | null;
   effectiveUsageLabel: (win?: UsageWindow | null) => string;
   orderSnapshots: (snapshots: Snapshot[], order: string[]) => Snapshot[];
+  renderStandard: (snapshot: Snapshot, name: string, delay: string, accountIndex: number) => string;
 } {
-  const qb = {};
+  const qb = {
+    esc: (value: unknown) => String(value),
+    usageColor: () => "green",
+    accentVar: () => "var(--green)",
+    formatCountdown: () => "1h 00m",
+    fmtTokens: (value: unknown) => String(value),
+    settings: {},
+  };
   const context = vm.createContext({
     window: { QB: qb },
     QB: qb,
@@ -60,5 +78,33 @@ describe("live renderer helpers", () => {
     expect(helpers.orderSnapshots(snapshots, ["codex", "claude"])
       .map((snapshot) => snapshot.provider)).toEqual(["codex", "claude"]);
     expect(snapshots.map((snapshot) => snapshot.provider)).toEqual(["claude", "codex"]);
+  });
+
+  it("renders a weekly-only Codex snapshot without a five-hour row", () => {
+    const helpers = loadLiveHelpers();
+    const html = helpers.renderStandard({
+      provider: "codex",
+      status: "ok",
+      windows: [{ name: "weekly", usedPercent: 1 }],
+    }, "Codex", "", 1);
+
+    expect(html).toContain("Wk 1%");
+    expect(html).toContain("Weekly");
+    expect(html).not.toContain("5-Hour");
+  });
+
+  it("renders both quota rows when five-hour and weekly windows are available", () => {
+    const helpers = loadLiveHelpers();
+    const html = helpers.renderStandard({
+      provider: "codex",
+      status: "ok",
+      windows: [
+        { name: "fiveHour", usedPercent: 12 },
+        { name: "weekly", usedPercent: 34 },
+      ],
+    }, "Codex", "", 1);
+
+    expect(html).toContain("5-Hour");
+    expect(html).toContain("Weekly");
   });
 });

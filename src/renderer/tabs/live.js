@@ -386,22 +386,26 @@ function renderStandard(snap, name, delay, acctIdx) {
   const fhExpected = timeProgressPct(fiveH);
   const fhInsight  = windowInsightHtml(fiveH);
 
-  let bars = `<div class="bar-group">
-    <div class="bar-meta">
-      <span class="bar-tag">5-Hour</span>
-      <span class="bar-cd" id="${fhId}">${fhCd}</span>
-    </div>
-    <div class="bar-track thick">
-      <div class="bar-fill c-${fiveColor}" style="width:${clamp(pct,0,100)}%"></div>
-      ${timeMarkerHtml(pct, fhExpected)}
-    </div>
-    ${fhInsight}
-  </div>`;
+  const barGroups = [];
+
+  if (hasPct) {
+    barGroups.push(`<div class="bar-group">
+      <div class="bar-meta">
+        <span class="bar-tag">5-Hour</span>
+        <span class="bar-cd" id="${fhId}">${fhCd}</span>
+      </div>
+      <div class="bar-track thick">
+        <div class="bar-fill c-${fiveColor}" style="width:${clamp(pct,0,100)}%"></div>
+        ${timeMarkerHtml(pct, fhExpected)}
+      </div>
+      ${fhInsight}
+    </div>`);
+  }
 
   if (weekly && typeof weekly.usedPercent === 'number') {
     const wc = QB.usageColor(weekly.usedPercent);
     const wkExpected = weekly.pace?.expectedUsedPercent ?? timeProgressPct(weekly);
-    bars += `<div class="bar-group">
+    barGroups.push(`<div class="bar-group">
       <div class="bar-meta">
         <span class="bar-tag">Weekly</span>
         <span class="bar-cd" id="${wkId}">${wkCd}</span>
@@ -411,8 +415,9 @@ function renderStandard(snap, name, delay, acctIdx) {
         ${timeMarkerHtml(weekly.usedPercent, wkExpected)}
       </div>
       ${windowBudgetRowHtml(snap)}
-    </div>`;
+    </div>`);
   }
+  const bars = barGroups.join('');
 
   const bdgs = [];
   if (snap.status === 'stale') bdgs.push(`<span class="badge b-stale">Stale</span>`);
@@ -539,6 +544,7 @@ QB.__liveTest = {
   effectiveUsageWindow,
   effectiveUsageLabel,
   orderSnapshots,
+  renderStandard,
 };
 
 })();
