@@ -152,6 +152,50 @@ describe("runBackfill", () => {
     expect(summary.perModel["claude-sonnet-4-5"].costUSD).toBeCloseTo(0.0111, 6);
   });
 
+  it("attributes authoritative Claude source costs across token components without changing their total", async () => {
+    const model = "source-priced-model";
+    const resolver = new HistoricalPricingResolver({
+      getModelPricing: async () => ({
+        input_cost_per_token: 1,
+        output_cost_per_token: 2,
+        cache_creation_input_token_cost: 3,
+        cache_read_input_token_cost: 4,
+      }),
+    }, {
+      historyPath: path.join(tmpDir, "source-cost-prices.json"),
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+    });
+    await writeClaudeJsonl(path.join(claudeDir, "proj", "session.jsonl"), [
+      { type: "assistant", timestamp: "2026-05-20T14:00:00Z", costUSD: 20,
+        message: { id: "m1", model,
+          usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 1, cache_read_input_tokens: 1 } } },
+    ]);
+    const logDir = path.join(tmpDir, "debug");
+    const recorder = new DebugRecorder({ enabled: true, logDir });
+
+    await runBackfill({
+      recorder, logDir,
+      claudeProjectsDirs: [claudeDir],
+      codexSessionsDirs: [codexDir],
+      pricingResolver: resolver,
+    });
+    await recorder.flush();
+
+    const lines = (await fs.readFile(path.join(logDir, "2026-05-20.backfill.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    const summary = lines.find((entry) => entry.kind === "tokens.daySummary" && entry.provider === "claude");
+    const components = summary.perModel[model];
+    expect(summary.totalCostUSD).toBe(20);
+    expect(components.costUSD).toBe(20);
+    expect(components).toMatchObject({
+      inputCostUSD: 2,
+      outputCostUSD: 4,
+      cacheCreationCostUSD: 6,
+      cacheReadCostUSD: 8,
+    });
+    expect(components.inputCostUSD + components.outputCostUSD + components.cacheCreationCostUSD + components.cacheReadCostUSD).toBe(20);
+  });
+
   it("uses each Codex event's historical price when forced backfill rebuilds daily summaries", async () => {
     const model = "historical-codex";
     let currentOutputPrice = 2e-6;

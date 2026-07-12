@@ -3,7 +3,7 @@ import path from "node:path";
 import { listClaudeSourceFiles, readClaudeUsageEntriesFromFiles, type ClaudeUsageEntry, type SourceFileRef } from "../pricing/jsonl-reader";
 import { listCodexSourceFiles, readCodexTokensFromFiles, type CodexTokenEvent, type CodexSourceFileRef } from "../pricing/codex-log-reader";
 import { calculateCodexApiCostBreakdown, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
-import { calculateCostBreakdown, sumBreakdown } from "../pricing/cost-calculator";
+import { calculateCostBreakdown, scaleBreakdownTo, sumBreakdown } from "../pricing/cost-calculator";
 import type { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
 import type { DebugRecorder } from "./debugRecorder";
 import type { TokensDaySummaryEvent, TokensUsageEvent } from "./debugEvents";
@@ -201,7 +201,19 @@ async function summarizeClaude(date: string, entries: ClaudeUsageEntry[], pricin
     if (e.costUSD !== undefined) {
       totalCostUSD += e.costUSD;
       pm.costUSD += e.costUSD;
-      pm.outputCostUSD = (pm.outputCostUSD ?? 0) + e.costUSD;
+      // Provider cost remains authoritative; pricing is used only to proportionally
+      // attribute that fixed total across token components.
+      const pricing = pricingResolver && await pricingResolver.getModelPricing(e.model, e.timestamp);
+      const breakdown = pricing ? scaleBreakdownTo(calculateCostBreakdown({
+        input_tokens: e.inputTokens,
+        output_tokens: e.outputTokens,
+        cache_creation_input_tokens: e.cacheCreationTokens,
+        cache_read_input_tokens: e.cacheReadTokens,
+      }, pricing), e.costUSD) : undefined;
+      pm.inputCostUSD = (pm.inputCostUSD ?? 0) + (breakdown?.inputCostUSD ?? 0);
+      pm.outputCostUSD = (pm.outputCostUSD ?? 0) + (breakdown?.outputCostUSD ?? 0);
+      pm.cacheCreationCostUSD = (pm.cacheCreationCostUSD ?? 0) + (breakdown?.cacheCreationCostUSD ?? 0);
+      pm.cacheReadCostUSD = (pm.cacheReadCostUSD ?? 0) + (breakdown?.cacheReadCostUSD ?? 0);
     } else if (pricingResolver) {
       const pricing = await pricingResolver.getModelPricing(e.model, e.timestamp);
       if (pricing) {
