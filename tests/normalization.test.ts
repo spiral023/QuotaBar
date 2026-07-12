@@ -20,6 +20,63 @@ describe("provider snapshot normalization", () => {
     expect(snapshot.windows[1]).toMatchObject({ name: "weekly", usedPercent: 31, windowSeconds: 604800 });
   });
 
+  it("classifies a weekly Codex primary window by duration", () => {
+    const snapshot = normalizeCodexUsageResponse({
+      rate_limit: {
+        primary_window: { used_percent: 31, limit_window_seconds: 604800 }
+      }
+    });
+
+    expect(snapshot.windows).toEqual([
+      { name: "weekly", usedPercent: 31, windowSeconds: 604800 }
+    ]);
+  });
+
+  it("orders Codex windows semantically when the primary window is weekly", () => {
+    const snapshot = normalizeCodexUsageResponse({
+      rate_limit: {
+        primary_window: { used_percent: 31, limit_window_seconds: 604800 },
+        secondary_window: { used_percent: 67, limit_window_seconds: 18000 }
+      }
+    });
+
+    expect(snapshot.windows.map((window) => window.name)).toEqual(["fiveHour", "weekly"]);
+  });
+
+  it("keeps the most complete Codex window when durations are duplicated", () => {
+    const snapshot = normalizeCodexUsageResponse({
+      rate_limit: {
+        primary_window: { limit_window_seconds: 604800 },
+        secondary_window: {
+          used_percent: 31,
+          reset_at: 1770000000,
+          limit_window_seconds: 604800
+        }
+      }
+    });
+
+    expect(snapshot.windows).toEqual([
+      {
+        name: "weekly",
+        usedPercent: 31,
+        resetsAt: new Date(1770000000 * 1000).toISOString(),
+        windowSeconds: 604800
+      }
+    ]);
+  });
+
+  it("does not guess Codex window types from unknown durations or top-level usage", () => {
+    const snapshot = normalizeCodexUsageResponse({
+      used_percent: 42,
+      rate_limit: {
+        primary_window: { used_percent: 67 },
+        secondary_window: { used_percent: 31, limit_window_seconds: 3600 }
+      }
+    });
+
+    expect(snapshot.windows).toEqual([]);
+  });
+
   it("sets Codex identity when only email is provided", () => {
     const snapshot = normalizeCodexUsageResponse({}, { email: "dev@example.com" });
 

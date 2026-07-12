@@ -88,11 +88,15 @@ export function normalizeCodexUsageResponse(input: unknown, identity: { accountI
   const secondary = rateLimit ? asRecord(rateLimit.secondary_window) : undefined;
   const credits = asRecord(root.credits);
 
-  if (primary) windows.push(toUsageWindow(primary, "fiveHour"));
-  if (secondary) windows.push(toUsageWindow(secondary, "weekly"));
-  if (windows.length === 0) {
-    const used = numberFrom(root.used_percent) ?? numberFrom(root.usage_percent);
-    if (typeof used === "number") windows.push({ name: "fiveHour", usedPercent: clampPercent(used) });
+  const rateLimitWindows = [primary, secondary]
+    .map((window) => window ? toRateLimitWindow(window) : undefined)
+    .filter((window): window is UsageWindow => window !== undefined);
+  for (const name of ["fiveHour", "weekly"] as const) {
+    const candidates = rateLimitWindows.filter((window) => window.name === name);
+    if (candidates.length > 0) {
+      windows.push(candidates.reduce((best, candidate) =>
+        windowCompleteness(candidate) > windowCompleteness(best) ? candidate : best));
+    }
   }
   if (credits && numberFrom(credits.balance) !== undefined) {
     windows.push({ name: "credits", label: "Credits", remainingPercent: undefined });
@@ -120,16 +124,25 @@ function buildHeaders(credentials: CodexCredentials): HeadersInit {
   return headers;
 }
 
-function toUsageWindow(window: Record<string, unknown>, name: UsageWindow["name"]): UsageWindow {
+function toRateLimitWindow(window: Record<string, unknown>): UsageWindow | undefined {
+  const seconds = numberFrom(window.limit_window_seconds) ?? numberFrom(window.windowSeconds);
+  const name = seconds === 18000 ? "fiveHour" : seconds === 604800 ? "weekly" : undefined;
+  if (!name) return undefined;
+
   const used = numberFrom(window.used_percent) ?? numberFrom(window.usage_percent) ?? percentFromUtilization(window.utilization);
   const reset = normalizeReset(window.reset_at ?? window.resetsAt);
-  const seconds = numberFrom(window.limit_window_seconds) ?? numberFrom(window.windowSeconds);
   return {
     name,
     ...(typeof used === "number" ? { usedPercent: clampPercent(used) } : {}),
     ...(reset ? { resetsAt: reset } : {}),
     ...(typeof seconds === "number" ? { windowSeconds: seconds } : {})
   };
+}
+
+function windowCompleteness(window: UsageWindow): number {
+  return (window.usedPercent !== undefined ? 4 : 0)
+    + (window.resetsAt !== undefined ? 2 : 0)
+    + (window.windowSeconds !== undefined ? 1 : 0);
 }
 
 function normalizeReset(value: unknown): string | undefined {
