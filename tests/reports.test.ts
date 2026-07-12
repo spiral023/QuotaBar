@@ -294,6 +294,26 @@ describe("source: backfill", () => {
     expect(report.totals.costUSD).toBeCloseTo(0.06, 6);
   });
 
+  it("keeps legacy stored backfill costs and bytes unchanged", async () => {
+    const logDir = path.join(tmpRoot, "backfill-stable");
+    await writeBackfill(logDir, [
+      { kind: "tokens.daySummary", provider: "claude", date: "2026-05-18",
+        input: 1000, output: 500, cacheCreation: 0, cacheRead: 0,
+        totalTokens: 1500, totalCostUSD: 0.05, sessionCount: 1,
+        models: ["claude-sonnet-4-6"],
+        perModel: { "claude-sonnet-4-6": { input: 1000, output: 500, cacheCreation: 0, cacheRead: 0, costUSD: 0.05 } } },
+    ]);
+    const filePath = path.join(logDir, "2026-05-18.backfill.jsonl");
+    const before = await fs.readFile(filePath, "utf8");
+
+    const report = await generateUsageReport({
+      provider: "claude", type: "daily", timezone: "UTC", source: "backfill",
+    }, { backfillLogDir: logDir });
+
+    expect(report.rows[0].costUSD).toBe(0.05);
+    expect(await fs.readFile(filePath, "utf8")).toBe(before);
+  });
+
   it("aggregiert mehrere Tage zu wöchentlichen Zeilen", async () => {
     const logDir = path.join(tmpRoot, "backfill-weekly");
     // 2026-05-18 = Montag (KW21), 2026-05-25 = Montag (KW22)

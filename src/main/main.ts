@@ -27,6 +27,7 @@ import { BonusResetTracker } from "../usage/bonusReset";
 import { loadBonusStateFile, saveBonusStateFile } from "../usage/bonusStateStore";
 import { seedFromDebugLogs } from "./windowRatioSeeder";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
+import { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
 import { loadCachedSnapshots, markSnapshotsFromCache, saveCachedSnapshots } from "../usage/snapshotCache";
 import { registerLifecycleEvents } from "./lifecycleEvents";
 
@@ -138,6 +139,7 @@ if (!app.requestSingleInstanceLock()) {
       const bonusTracker = new BonusResetTracker(await loadBonusStateFile(bonusStatePath));
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder, windowRatioTracker, bonusTracker);
       const backfillFetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
+      const backfillPricingResolver = new HistoricalPricingResolver(backfillFetcher);
       const tray = new TrayController(providers, refreshLoop, async () => {
         const currentSettings = await loadSettings();
         const runtime = mergeSettingsWithAgentRoots(currentSettings);
@@ -148,7 +150,7 @@ if (!app.requestSingleInstanceLock()) {
           claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
           codexSessionsDirs: getCodexSessionsDirs(pathContext),
           codexConfigPaths: getCodexConfigPaths(pathContext),
-          fetcher: backfillFetcher,
+          pricingResolver: backfillPricingResolver,
           force: true,
         }).catch((err: unknown) => {
           log.warn(`Backfill regenerate failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -274,7 +276,7 @@ if (!app.requestSingleInstanceLock()) {
             claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
             codexSessionsDirs: getCodexSessionsDirs(pathContext),
             codexConfigPaths: getCodexConfigPaths(pathContext),
-            fetcher: backfillFetcher,
+            pricingResolver: backfillPricingResolver,
             force: needsRepair,
           });
           // Marker nur setzen, wenn der Rebuild fehlerfrei durchlief – sonst beim
