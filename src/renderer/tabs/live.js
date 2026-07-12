@@ -388,7 +388,7 @@ function renderStandard(snap, name, delay, acctIdx) {
 
   const barGroups = [];
 
-  if (hasPct) {
+  if (fiveH) {
     barGroups.push(`<div class="bar-group">
       <div class="bar-meta">
         <span class="bar-tag">5-Hour</span>

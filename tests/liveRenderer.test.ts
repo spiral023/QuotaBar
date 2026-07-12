@@ -107,4 +107,28 @@ describe("live renderer helpers", () => {
     expect(html).toContain("5-Hour");
     expect(html).toContain("Weekly");
   });
+
+  it("preserves an incomplete five-hour row alongside the weekly row", () => {
+    const helpers = loadLiveHelpers();
+    const html = helpers.renderStandard(
+      {
+        provider: "codex",
+        status: "ok",
+        windows: [
+          {
+            name: "fiveHour",
+            resetsAt: "2026-07-12T22:00:00.000Z",
+            windowSeconds: 18_000,
+          },
+          { name: "weekly", usedPercent: 34 },
+        ],
+      },
+      "Codex",
+      "",
+      1,
+    );
+
+    expect(html).toContain("5-Hour");
+    expect(html).toContain("Weekly");
+  });
 });
