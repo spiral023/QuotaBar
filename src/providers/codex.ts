@@ -174,9 +174,8 @@ function stringFrom(value: unknown): string | undefined {
 function percentFromUtilization(value: unknown): number | undefined {
   const num = numberFrom(value);
   if (num === undefined) return undefined;
-  // `utilization` ist eine Prozentskala (0–100), kein 0–1-Bruch. Werte ≤ 1 NICHT
-  // mit 100 multiplizieren — sonst wird ein echtes 1-%-Reading zu 100 %. Wird in
-  // toUsageWindow via clampPercent auf [0, 100] geklemmt. Siehe claude.ts.
+  // `utilization` is a percentage (0–100), not a 0–1 fraction. Values at or below
+  // 1 must not be multiplied by 100; toRateLimitWindow clamps them to [0, 100].
   return num;
 }
 
