@@ -46,9 +46,17 @@ describe("buildIconState", () => {
     expect(state.bars).toEqual([{ provider: "codex", usedPercent: undefined, isStale: false }]);
   });
 
-  it("returns usedPercent=undefined when no fiveHour window present", () => {
+  it("falls back to the weekly window when no fiveHour window is present", () => {
     const state = buildIconState([snap("codex", "ok", [{ name: "weekly", usedPercent: 30 }])]);
-    expect(state.bars).toEqual([{ provider: "codex", usedPercent: undefined, isStale: false }]);
+    expect(state.bars).toEqual([{ provider: "codex", usedPercent: 30, isStale: false }]);
+  });
+
+  it("prefers the fiveHour window when both fiveHour and weekly are present", () => {
+    const state = buildIconState([snap("codex", "ok", [
+      { name: "fiveHour", usedPercent: 25 },
+      { name: "weekly", usedPercent: 80 },
+    ])]);
+    expect(state.bars).toEqual([{ provider: "codex", usedPercent: 25, isStale: false }]);
   });
 
   it("sets hasError=true when any snapshot is stale", () => {
