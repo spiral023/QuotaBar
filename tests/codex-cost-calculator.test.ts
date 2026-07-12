@@ -5,7 +5,7 @@ import path from "node:path";
 import { calculateCodexApiCost, calculateCodexApiCostBreakdown, readCodexSpeedTier, readCodexSpeedTierFromPaths } from "../src/pricing/codex-cost-calculator";
 import { sumBreakdown } from "../src/pricing/cost-calculator";
 import { LiteLLMFetcher } from "../src/pricing/litellm-fetcher";
-import { HistoricalPricingResolver } from "../src/pricing/historical-pricing-resolver";
+import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests } from "../src/pricing/historical-pricing-resolver";
 import type { CodexTokenEvent } from "../src/pricing/codex-log-reader";
 
 const tmpDir = path.join(os.tmpdir(), `quotabar-codex-calc-test-${process.pid}`);
@@ -13,6 +13,7 @@ let resolverIndex = 0;
 
 afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });
+  resetHistoricalPricingResolverCacheForTests();
 });
 
 function makeEvent(overrides: Partial<CodexTokenEvent> = {}): CodexTokenEvent {

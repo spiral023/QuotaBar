@@ -1,11 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { PricingEngine } from "../src/pricing/subscription-factor";
 import type { Settings } from "../src/config/settings";
 import type { ModelPricing } from "../src/pricing/cost-calculator";
-import { HistoricalPricingResolver } from "../src/pricing/historical-pricing-resolver";
+import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests } from "../src/pricing/historical-pricing-resolver";
 import type { UsageSnapshot } from "../src/providers/types";
 
 const settings: Settings = {
@@ -33,6 +33,10 @@ function daysInCurrentLocalMonth(): number {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 }
+
+afterEach(() => {
+  resetHistoricalPricingResolverCacheForTests();
+});
 
 describe("PricingEngine", () => {
   it("uses historical Claude price epochs for the Cost Factor", async () => {

@@ -4,13 +4,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultSettings } from "../src/config/settings";
 import type { ModelPricing } from "../src/pricing/cost-calculator";
-import { HistoricalPricingResolver } from "../src/pricing/historical-pricing-resolver";
+import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests } from "../src/pricing/historical-pricing-resolver";
 import { generateUsageReport } from "../src/reports/reportService";
 
 const tmpRoot = path.join(os.tmpdir(), `quotabar-reports-${process.pid}`);
 
 afterEach(async () => {
   await fs.rm(tmpRoot, { recursive: true, force: true });
+  resetHistoricalPricingResolverCacheForTests();
 });
 
 async function writeJsonl(filePath: string, entries: unknown[]): Promise<void> {
