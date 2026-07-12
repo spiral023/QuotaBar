@@ -18,7 +18,7 @@ import { dailySubCostUSD, periodSubCostUSD, planChangePoints, type PlanChangePoi
 import { makeFxLookup } from "../pricing/fx-fetcher";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
 import { buildWeeklyProfile, computeWeeklyForecast, type WeeklyForecastResult } from "./weeklyForecast";
-import { readWeeklySeriesForProviders, type WindowBudgetSeries } from "./windowBudgetSeries";
+import { readWeeklySeriesForProviders, withBudgetMarkers, type WindowBudgetSeries } from "./windowBudgetSeries";
 import { readWindowHistoryObservations } from "./windowHistoryReader";
 import { buildWindowHistory, buildFiveHourPressure, type WindowHistoryEntry, type PressureDist } from "../usage/windowHistory";
 import type { UsagePace } from "../usage/usagePace";
@@ -45,19 +45,21 @@ interface ModelsTaskInput {
   settings: Settings;
 }
 
+export interface WindowBudgetProviderInput {
+  provider: "claude" | "codex";
+  weeklyUsedPercent: number;
+  weeklyResetsAt: string | null;
+  windowsPerWeek: number | null;
+  burnRatePctPerHour: number | null;
+  pace: UsagePace | null;
+  planType: string | null;
+}
+
 interface WindowBudgetTaskInput {
   task: "windowBudget";
   logDir: string;
   nowMs: number;
-  providers: Array<{
-    provider: "claude" | "codex";
-    weeklyUsedPercent: number;
-    weeklyResetsAt: string | null;
-    windowsPerWeek: number;
-    burnRatePctPerHour: number | null;
-    pace: UsagePace | null;
-    planType: string | null;
-  }>;
+  providers: WindowBudgetProviderInput[];
 }
 
 export interface WindowBudgetProviderData {
@@ -311,7 +313,7 @@ async function buildWindowBudgetData(input: WindowBudgetTaskInput): Promise<Wind
   for (let i = 0; i < input.providers.length; i++) {
     const p = input.providers[i];
     const windowStartMs = windowStarts[i];
-    const series = seriesList[i];
+    const series = withBudgetMarkers(seriesList[i], p.windowsPerWeek);
     const profile = buildWeeklyProfile(records, p.provider, now);
     const windowStartKey = new Date(windowStartMs).toISOString().slice(0, 10);
     const tokensInCurrentWindow = records
