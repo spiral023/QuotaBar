@@ -37,6 +37,8 @@ const PRICING_FIELDS = [
   "cache_read_input_token_cost_above_200k_tokens",
 ] as const;
 
+const historyQueues = new Map<string, Promise<void>>();
+
 export class HistoricalPricingResolver implements ModelPricingLookup {
   private readonly historyPath: string;
   private readonly now: () => Date;
@@ -53,24 +55,24 @@ export class HistoricalPricingResolver implements ModelPricingLookup {
     const currentPricing = await this.pricingLookup.getModelPricing(modelName);
     if (!currentPricing) return null;
 
-    const history = await loadHistory(this.historyPath);
-    const pricing = normalizePricing(currentPricing);
-    const checksum = pricingChecksum(pricing);
-    const epochs = history.epochs[modelName] ?? [];
-    const latest = epochs.at(-1);
+    return withHistoryLock(this.historyPath, async () => {
+      const history = await loadHistory(this.historyPath);
+      const pricing = normalizePricing(currentPricing);
+      const checksum = pricingChecksum(pricing);
+      const epochs = history.epochs[modelName] ?? [];
+      const latest = epochs.at(-1);
 
-    if (!latest || latest.checksum !== checksum) {
-      epochs.push({ fetchedAt: this.now().toISOString(), checksum, pricing });
-      history.epochs[modelName] = epochs;
-      await persistHistory(this.historyPath, history);
-    }
+      if (!latest || latest.checksum !== checksum) {
+        epochs.push({ fetchedAt: this.now().toISOString(), checksum, pricing });
+        history.epochs[modelName] = epochs;
+        await persistHistory(this.historyPath, history);
+      }
 
-    const eventTime = toTimestamp(eventTimestamp);
-    if (eventTime == null) return pricing;
-    const historical = [...epochs]
-      .reverse()
-      .find((epoch) => toTimestamp(epoch.fetchedAt) != null && toTimestamp(epoch.fetchedAt)! <= eventTime);
-    return historical?.pricing ?? currentPricing;
+      const eventTime = toTimestamp(eventTimestamp);
+      if (eventTime == null) return pricing;
+      const historical = latestEpochAtOrBefore(epochs, eventTime);
+      return historical?.pricing ?? currentPricing;
+    });
   }
 }
 
@@ -95,7 +97,7 @@ async function loadHistory(historyPath: string): Promise<PricingHistory> {
   try {
     const parsed: unknown = JSON.parse(await fs.readFile(historyPath, "utf8"));
     if (!isPricingHistory(parsed)) return emptyHistory();
-    return parsed;
+    return normalizeHistory(parsed);
   } catch {
     return emptyHistory();
   }
@@ -123,8 +125,20 @@ function isPricingEpoch(value: unknown): value is PricingEpoch {
     && epoch.checksum === pricingChecksum(normalizePricing(epoch.pricing));
 }
 
+function normalizeHistory(history: PricingHistory): PricingHistory {
+  const epochs = Object.create(null) as Record<string, PricingEpoch[]>;
+  for (const [modelName, modelEpochs] of Object.entries(history.epochs)) {
+    epochs[modelName] = modelEpochs.map((epoch) => ({
+      fetchedAt: epoch.fetchedAt,
+      checksum: epoch.checksum,
+      pricing: normalizePricing(epoch.pricing),
+    }));
+  }
+  return { version: 1, source: LITELLM_PRICING_SOURCE, epochs };
+}
+
 function emptyHistory(): PricingHistory {
-  return { version: 1, source: LITELLM_PRICING_SOURCE, epochs: {} };
+  return { version: 1, source: LITELLM_PRICING_SOURCE, epochs: Object.create(null) as Record<string, PricingEpoch[]> };
 }
 
 async function persistHistory(historyPath: string, history: PricingHistory): Promise<void> {
@@ -146,4 +160,27 @@ function toTimestamp(value: Date | string | number | undefined): number | null {
     return Number.isNaN(timestamp) ? null : timestamp;
   }
   return null;
+}
+
+function latestEpochAtOrBefore(epochs: PricingEpoch[], eventTimestamp: number): PricingEpoch | undefined {
+  return epochs.reduce<PricingEpoch | undefined>((latest, epoch) => {
+    const epochTimestamp = toTimestamp(epoch.fetchedAt);
+    if (epochTimestamp == null || epochTimestamp > eventTimestamp) return latest;
+    if (!latest || epochTimestamp > toTimestamp(latest.fetchedAt)!) return epoch;
+    return latest;
+  }, undefined);
+}
+
+async function withHistoryLock<T>(historyPath: string, operation: () => Promise<T>): Promise<T> {
+  const previous = historyQueues.get(historyPath) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  historyQueues.set(historyPath, current);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (historyQueues.get(historyPath) === current) historyQueues.delete(historyPath);
+  }
 }
