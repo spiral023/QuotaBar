@@ -8,7 +8,7 @@ import { getLiteLLMModelPricesPath } from "../config/paths";
 
 export type { ModelPricing };
 
-const LITELLM_URL =
+export const LITELLM_PRICING_SOURCE =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 
 const FALLBACK_PRICES: Record<string, ModelPricing> = {
@@ -112,7 +112,7 @@ export class LiteLLMFetcher {
       return this.cache;
     }
     try {
-      const response = await httpFetch(LITELLM_URL, { signal: AbortSignal.timeout(10_000) });
+      const response = await httpFetch(LITELLM_PRICING_SOURCE, { signal: AbortSignal.timeout(10_000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const json = (await response.json()) as Record<string, unknown>;
       await persistLiteLLMPriceFile(json);
