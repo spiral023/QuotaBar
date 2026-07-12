@@ -7,10 +7,12 @@ import { calculateCostFromTokens } from "./cost-calculator";
 import { sharedFxFetcher } from "./fx-fetcher";
 import { aggregateClaudeEntries, readClaudeUsageEntriesForPeriod } from "./jsonl-reader";
 import { LiteLLMFetcher } from "./litellm-fetcher";
+import { HistoricalPricingResolver } from "./historical-pricing-resolver";
 import { periodSubCostUSD } from "./plan-cost";
 
 export class PricingEngine {
   private readonly fetcher: LiteLLMFetcher;
+  private readonly pricingResolver: HistoricalPricingResolver;
 
   constructor(
     private readonly settings: Settings,
@@ -22,8 +24,10 @@ export class PricingEngine {
     // Engine die im Konstruktor injizierten Settings, bleibt also eine reine Funktion
     // ihrer Eingaben.
     private readonly settingsProvider?: () => Promise<Settings>,
+    options?: { pricingResolver?: HistoricalPricingResolver },
   ) {
     this.fetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
+    this.pricingResolver = options?.pricingResolver ?? new HistoricalPricingResolver(this.fetcher);
   }
 
   private async resolveSettings(): Promise<Settings> {
@@ -61,34 +65,36 @@ export class PricingEngine {
       if (entry.costUSD === undefined) entriesWithoutCost.push(entry);
       else apiCostUSD += entry.costUSD ?? 0;
     }
-    // Haben alle Einträge keine vorberechneten Kosten (Claude-Normalfall), ist
-    // die Token-Aggregation identisch mit `tokens` — den zweiten Durchlauf sparen.
-    const tokensToCalculate = entriesWithoutCost.length === entries.length
-      ? tokens
-      : aggregateClaudeEntries(entriesWithoutCost);
-    for (const [modelName, modelTokens] of Object.entries(tokensToCalculate.perModel)) {
-      const pricing = await this.fetcher.getModelPricing(modelName);
-      if (!pricing) { missingPricingModels.add(modelName); continue; }
+    const entriesWithoutModel = [] as typeof entries;
+    for (const entry of entriesWithoutCost) {
+      if (!entry.model) {
+        entriesWithoutModel.push(entry);
+        continue;
+      }
+      const pricing = await this.pricingResolver.getModelPricing(entry.model, entry.timestamp);
+      if (!pricing) { missingPricingModels.add(entry.model); continue; }
       apiCostUSD += calculateCostFromTokens(
         {
-          input_tokens: modelTokens.inputTokens,
-          output_tokens: modelTokens.outputTokens,
-          cache_creation_input_tokens: modelTokens.cacheCreationTokens,
-          cache_read_input_tokens: modelTokens.cacheReadTokens,
+          input_tokens: entry.inputTokens,
+          output_tokens: entry.outputTokens,
+          cache_creation_input_tokens: entry.cacheCreationTokens,
+          cache_read_input_tokens: entry.cacheReadTokens,
         },
         pricing,
       );
     }
-    if (Object.keys(tokensToCalculate.perModel).length === 0 && tokensToCalculate.inputTokens + tokensToCalculate.outputTokens > 0) {
-      const fallbackModel = tokensToCalculate.modelNames[0] ?? snapshot.model ?? "claude-sonnet-4-5";
-      const pricing = await this.fetcher.getModelPricing(fallbackModel);
+    if (entriesWithoutModel.length > 0) {
+      const fallbackTokens = aggregateClaudeEntries(entriesWithoutModel);
+      const fallbackModel = snapshot.model ?? "claude-sonnet-4-5";
+      const fallbackTimestamp = entriesWithoutModel.map((entry) => entry.timestamp).sort()[0];
+      const pricing = await this.pricingResolver.getModelPricing(fallbackModel, fallbackTimestamp);
       if (pricing) {
         apiCostUSD += calculateCostFromTokens(
           {
-            input_tokens: tokensToCalculate.inputTokens,
-            output_tokens: tokensToCalculate.outputTokens,
-            cache_creation_input_tokens: tokensToCalculate.cacheCreationTokens,
-            cache_read_input_tokens: tokensToCalculate.cacheReadTokens,
+            input_tokens: fallbackTokens.inputTokens,
+            output_tokens: fallbackTokens.outputTokens,
+            cache_creation_input_tokens: fallbackTokens.cacheCreationTokens,
+            cache_read_input_tokens: fallbackTokens.cacheReadTokens,
           },
           pricing,
         );
@@ -151,8 +157,8 @@ export class PricingEngine {
     }
     const configPaths = this.codexConfigPath ?? getCodexConfigPaths({ codexHomes: currentSettings.codexHomes ?? [] });
     const speedTier = await readCodexSpeedTierFromPaths(Array.isArray(configPaths) ? configPaths : [configPaths]);
-    const apiCostUSD = await calculateCodexApiCost(events, this.fetcher, speedTier);
-    const missingPricingModels = await findUnpricedCodexModels(events, this.fetcher);
+    const apiCostUSD = await calculateCodexApiCost(events, this.pricingResolver, speedTier);
+    const missingPricingModels = await findUnpricedCodexModels(events, this.pricingResolver);
     const effectiveDays = windowDays > 0
       ? windowDays
       : computeActualDaysFromEntries(events.map(e => e.timestamp));

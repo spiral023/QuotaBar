@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultSettings } from "../src/config/settings";
+import type { ModelPricing } from "../src/pricing/cost-calculator";
+import { HistoricalPricingResolver } from "../src/pricing/historical-pricing-resolver";
 import { generateUsageReport } from "../src/reports/reportService";
 
 const tmpRoot = path.join(os.tmpdir(), `quotabar-reports-${process.pid}`);
@@ -16,7 +18,43 @@ async function writeJsonl(filePath: string, entries: unknown[]): Promise<void> {
   await fs.writeFile(filePath, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
 }
 
+async function createHistoricalResolver(
+  historyPath: string,
+  model: string,
+): Promise<HistoricalPricingResolver> {
+  let current: ModelPricing = { output_cost_per_token: 4e-6 };
+  let now = new Date("2026-05-01T00:00:00.000Z");
+  const resolver = new HistoricalPricingResolver({ getModelPricing: async () => current }, {
+    historyPath,
+    now: () => now,
+  });
+  await resolver.getModelPricing(model);
+  current = { output_cost_per_token: 2e-6 };
+  now = new Date("2026-06-01T00:00:00.000Z");
+  await resolver.getModelPricing(model);
+  return resolver;
+}
+
 describe("usage reports", () => {
+  it("uses the event-time Claude price while preserving source costs in auto mode", async () => {
+    const model = "historical-claude";
+    const resolver = await createHistoricalResolver(path.join(tmpRoot, "report-prices.json"), model);
+    const entries = [
+      { provider: "claude" as const, timestamp: "2026-05-02T12:00:00.000Z", model, project: "project", session: "may", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0 },
+      { provider: "claude" as const, timestamp: "2026-06-02T12:00:00.000Z", model, project: "project", session: "june", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0 },
+      { provider: "claude" as const, timestamp: "2026-06-02T13:00:00.000Z", model, project: "project", session: "source", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 7 },
+    ];
+
+    const report = await generateUsageReport({
+      provider: "claude", type: "daily", timezone: "UTC", order: "asc", costMode: "auto",
+    }, { claudeEntries: entries, pricingResolver: resolver });
+
+    expect(report.rows.map((row) => [row.bucket, row.costUSD])).toEqual([
+      ["2026-05-02", 4],
+      ["2026-06-02", 9],
+    ]);
+  });
+
   it("aggregates Claude daily rows with project instances and costUSD in auto mode", async () => {
     const claudeRoot = path.join(tmpRoot, "claude", "projects");
     await writeJsonl(path.join(claudeRoot, "proj-a", "session-a.jsonl"), [

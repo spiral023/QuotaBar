@@ -6,6 +6,7 @@ import { readCodexTokensForPeriod, type CodexTokenEvent } from "../pricing/codex
 import { calculateCostBreakdown, scaleBreakdownTo, sumBreakdown, ZERO_BREAKDOWN } from "../pricing/cost-calculator";
 import { readClaudeUsageEntriesForPeriod, type ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
+import { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
 import { readBackfillDayRecords } from "./backfill-reader";
 import type { BackfillDayRecord, BackfillPerModelEntry } from "./types";
 import type { CostMode, ModelBreakdown, ReportRequest, ReportResult, ReportRow, ReportTotals } from "./types";
@@ -21,6 +22,7 @@ export interface ReportDeps {
   codexEvents?: CodexTokenEvent[];
   backfillLogDir?: string;
   backfillRecords?: BackfillDayRecord[];
+  pricingResolver?: HistoricalPricingResolver;
 }
 
 const ZERO_TOTALS: ReportTotals = {
@@ -58,6 +60,7 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
 
   const settings = deps.settings ?? defaultSettings;
   const fetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
+  const pricingResolver = deps.pricingResolver ?? new HistoricalPricingResolver(fetcher);
   const rows: ReportRow[] = [];
   const start = new Date("1970-01-01T00:00:00.000Z");
   const pathContext = {
@@ -67,7 +70,7 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
 
   if (normalized.provider === "all" || normalized.provider === "claude") {
     const entries = deps.claudeEntries ?? await readClaudeUsageEntriesForPeriod(deps.claudeProjectsDirs ?? getClaudeProjectsDirs(pathContext), start);
-    rows.push(...(await buildClaudeRows(entries, normalized, fetcher)));
+    rows.push(...(await buildClaudeRows(entries, normalized, pricingResolver)));
   }
 
   if (normalized.provider === "all" || normalized.provider === "codex") {
@@ -75,7 +78,7 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
     const speed = normalized.codexSpeed === "auto"
       ? await readCodexSpeedTierFromPaths(deps.codexConfigPaths ?? getCodexConfigPaths(pathContext))
       : normalized.codexSpeed;
-    rows.push(...(await buildCodexRows(events, normalized, fetcher, speed)));
+    rows.push(...(await buildCodexRows(events, normalized, pricingResolver, speed)));
   }
 
   const sorted = rows
@@ -93,7 +96,7 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
 async function buildClaudeRows(
   entries: ClaudeUsageEntry[],
   request: ReturnType<typeof normalizeRequest>,
-  fetcher: LiteLLMFetcher,
+  pricingResolver: HistoricalPricingResolver,
 ): Promise<ReportRow[]> {
   const filtered = request.project
     ? entries.filter((entry) => entry.project === request.project)
@@ -115,7 +118,7 @@ async function buildClaudeRows(
   const rows: ReportRow[] = [];
   for (const [key, list] of buckets) {
     const [bucket, project] = key.split("\0");
-    const costed = await costClaudeEntries(list, request.costMode, fetcher);
+    const costed = await costClaudeEntries(list, request.costMode, pricingResolver);
     const lastActivity = list.map((entry) => entry.timestamp).sort().at(-1);
     rows.push({
       bucket: request.type === "session" ? localDate(lastActivity ?? list[0].timestamp, request.timezone) : bucket,
@@ -134,7 +137,7 @@ async function buildClaudeRows(
 async function buildCodexRows(
   events: CodexTokenEvent[],
   request: ReturnType<typeof normalizeRequest>,
-  fetcher: LiteLLMFetcher,
+  pricingResolver: HistoricalPricingResolver,
   speed: "standard" | "fast",
 ): Promise<ReportRow[]> {
   const filtered = request.project
@@ -157,7 +160,7 @@ async function buildCodexRows(
   const rows: ReportRow[] = [];
   for (const [key, list] of buckets) {
     const [bucket, directory] = key.split("\0");
-    const breakdowns = await costCodexBreakdowns(list, fetcher, speed);
+    const breakdowns = await costCodexBreakdowns(list, pricingResolver, speed);
     const totals = sumBreakdowns(breakdowns);
     const lastActivity = list.map((entry) => entry.timestamp).sort().at(-1);
     rows.push({
@@ -260,7 +263,7 @@ function buildRowsFromBackfill(
   return rows;
 }
 
-async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, fetcher: LiteLLMFetcher): Promise<{ totals: ReportTotals; breakdowns: ModelBreakdown[] }> {
+async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, pricingResolver: HistoricalPricingResolver): Promise<{ totals: ReportTotals; breakdowns: ModelBreakdown[] }> {
   const byModel = new Map<string, ClaudeUsageEntry[]>();
   for (const entry of entries) {
     const list = byModel.get(entry.model) ?? [];
@@ -271,36 +274,37 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, fe
   const breakdowns: ModelBreakdown[] = await Promise.all([...byModel].map(async ([model, list]) => {
     const totals = list.reduce((acc, entry) => addEntryTotals(acc, entry), { ...ZERO_TOTALS });
     let costUSD = 0;
-    const pricing = await fetcher.getModelPricing(model);
-    if (mode !== "calculate") {
-      costUSD += list.reduce((sum, entry) => sum + (entry.costUSD ?? 0), 0);
+    let components = { ...ZERO_BREAKDOWN };
+    for (const entry of list) {
+      const pricing = await pricingResolver.getModelPricing(model, entry.timestamp);
+      const rateBreakdown = pricing ? calculateCostBreakdown({
+        input_tokens: entry.inputTokens,
+        output_tokens: entry.outputTokens,
+        cache_creation_input_tokens: entry.cacheCreationTokens,
+        cache_read_input_tokens: entry.cacheReadTokens,
+      }, pricing) : ZERO_BREAKDOWN;
+      const sourceCost = entry.costUSD;
+      const useSourceCost = mode !== "calculate" && sourceCost !== undefined;
+      const entryCost = useSourceCost ? sourceCost : mode === "display" ? 0 : sumBreakdown(rateBreakdown);
+      const entryComponents = useSourceCost ? scaleBreakdownTo(rateBreakdown, sourceCost) : rateBreakdown;
+      costUSD += entryCost;
+      components = {
+        inputCostUSD: components.inputCostUSD + entryComponents.inputCostUSD,
+        outputCostUSD: components.outputCostUSD + entryComponents.outputCostUSD,
+        cacheCreationCostUSD: components.cacheCreationCostUSD + entryComponents.cacheCreationCostUSD,
+        cacheReadCostUSD: components.cacheReadCostUSD + entryComponents.cacheReadCostUSD,
+      };
     }
-    if (mode !== "display") {
-      const missing = mode === "calculate" ? list : list.filter((entry) => entry.costUSD === undefined);
-      const tokens = missing.reduce((acc, entry) => addEntryTotals(acc, entry), { ...ZERO_TOTALS });
-      if (pricing) {
-        costUSD += sumBreakdown(calculateCostBreakdown({
-          input_tokens: tokens.inputTokens,
-          output_tokens: tokens.outputTokens,
-          cache_creation_input_tokens: tokens.cacheCreationTokens,
-          cache_read_input_tokens: tokens.cacheReadTokens,
-        }, pricing));
-      }
-    }
-    // Per-Typ-Kosten: rate-basiert über alle Tokens des Modells, exakt auf costUSD skaliert.
-    const rateBreakdown = pricing ? calculateCostBreakdown({
-      input_tokens: totals.inputTokens,
-      output_tokens: totals.outputTokens,
-      cache_creation_input_tokens: totals.cacheCreationTokens,
-      cache_read_input_tokens: totals.cacheReadTokens,
-    }, pricing) : ZERO_BREAKDOWN;
-    const c = scaleBreakdownTo(rateBreakdown, costUSD);
-    return { model, ...totals, costUSD, ...c };
+    // A provider cost without usable model pricing still remains exact in auto/display mode.
+    // Attribute it to output so the breakdown total remains equal to the row total.
+    const componentTotal = sumBreakdown(components);
+    if (componentTotal !== costUSD) components.outputCostUSD += costUSD - componentTotal;
+    return { model, ...totals, costUSD, ...components };
   }));
   return { totals: sumBreakdowns(breakdowns), breakdowns };
 }
 
-async function costCodexBreakdowns(events: CodexTokenEvent[], fetcher: LiteLLMFetcher, speed: "standard" | "fast"): Promise<ModelBreakdown[]> {
+async function costCodexBreakdowns(events: CodexTokenEvent[], pricingResolver: HistoricalPricingResolver, speed: "standard" | "fast"): Promise<ModelBreakdown[]> {
   const byModel = new Map<string, CodexTokenEvent[]>();
   for (const event of events) {
     const list = byModel.get(event.model) ?? [];
@@ -318,7 +322,7 @@ async function costCodexBreakdowns(events: CodexTokenEvent[], fetcher: LiteLLMFe
       totalTokens: acc.totalTokens + event.totalTokens,
       costUSD: 0,
     }), { ...ZERO_TOTALS });
-    const c = await calculateCodexApiCostBreakdown(list, fetcher, speed);
+    const c = await calculateCodexApiCostBreakdown(list, pricingResolver, speed);
     return {
       model,
       ...totals,
