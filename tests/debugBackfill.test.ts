@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DebugRecorder } from "../src/main/debugRecorder";
 import { runBackfill } from "../src/main/debugBackfill";
 import { LiteLLMFetcher } from "../src/pricing/litellm-fetcher";
+import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests } from "../src/pricing/historical-pricing-resolver";
 
 let tmpDir: string;
 let claudeDir: string;
@@ -30,7 +31,14 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });
+  resetHistoricalPricingResolverCacheForTests();
 });
+
+function offlinePricingResolver(): HistoricalPricingResolver {
+  return new HistoricalPricingResolver(new LiteLLMFetcher(true), {
+    historyPath: path.join(tmpDir, "historical-prices.json"),
+  });
+}
 
 describe("runBackfill", () => {
   it("emits tokens.usage and tokens.daySummary into per-day backfill files", async () => {
@@ -116,7 +124,7 @@ describe("runBackfill", () => {
     expect(summary.totalTokens).toBe(1100); // must NOT be 1900
   });
 
-  it("berechnet totalCostUSD wenn fetcher übergeben wird", async () => {
+  it("calculates totalCostUSD when a pricing resolver is provided", async () => {
     // claude-sonnet-4-5 ist in den Fallback-Preisen: input=3e-6, output=15e-6, cacheRead=3e-7
     await writeClaudeJsonl(path.join(claudeDir, "proj", "session.jsonl"), [
       { type: "assistant", timestamp: "2026-05-20T14:00:00Z",
@@ -131,7 +139,7 @@ describe("runBackfill", () => {
       recorder, logDir,
       claudeProjectsDirs: [claudeDir],
       codexSessionsDirs: [codexDir],
-      fetcher: new LiteLLMFetcher(true), // offline mode — verwendet Fallback-Preise
+      pricingResolver: offlinePricingResolver(),
     });
     await recorder.flush();
 
@@ -142,6 +150,185 @@ describe("runBackfill", () => {
     // 1000 * 3e-6 + 500 * 15e-6 + 2000 * 3e-7 = 0.003 + 0.0075 + 0.0006 = 0.0111
     expect(summary.totalCostUSD).toBeCloseTo(0.0111, 6);
     expect(summary.perModel["claude-sonnet-4-5"].costUSD).toBeCloseTo(0.0111, 6);
+  });
+
+  it("attributes authoritative Claude source costs across token components without changing their total", async () => {
+    const model = "source-priced-model";
+    const resolver = new HistoricalPricingResolver({
+      getModelPricing: async () => ({
+        input_cost_per_token: 1,
+        output_cost_per_token: 2,
+        cache_creation_input_token_cost: 3,
+        cache_read_input_token_cost: 4,
+      }),
+    }, {
+      historyPath: path.join(tmpDir, "source-cost-prices.json"),
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+    });
+    await writeClaudeJsonl(path.join(claudeDir, "proj", "session.jsonl"), [
+      { type: "assistant", timestamp: "2026-05-20T14:00:00Z", costUSD: 20,
+        message: { id: "m1", model,
+          usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 1, cache_read_input_tokens: 1 } } },
+    ]);
+    const logDir = path.join(tmpDir, "debug");
+    const recorder = new DebugRecorder({ enabled: true, logDir });
+
+    await runBackfill({
+      recorder, logDir,
+      claudeProjectsDirs: [claudeDir],
+      codexSessionsDirs: [codexDir],
+      pricingResolver: resolver,
+    });
+    await recorder.flush();
+
+    const lines = (await fs.readFile(path.join(logDir, "2026-05-20.backfill.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    const summary = lines.find((entry) => entry.kind === "tokens.daySummary" && entry.provider === "claude");
+    const components = summary.perModel[model];
+    expect(summary.totalCostUSD).toBe(20);
+    expect(components.costUSD).toBe(20);
+    expect(components).toMatchObject({
+      inputCostUSD: 2,
+      outputCostUSD: 4,
+      cacheCreationCostUSD: 6,
+      cacheReadCostUSD: 8,
+    });
+    expect(components.inputCostUSD + components.outputCostUSD + components.cacheCreationCostUSD + components.cacheReadCostUSD).toBe(20);
+  });
+
+  it("uses the event-time pricing epoch to attribute authoritative Claude source costs", async () => {
+    const model = "historical-source-priced-model";
+    let currentPricing = {
+      input_cost_per_token: 1,
+      output_cost_per_token: 2,
+      cache_creation_input_token_cost: 3,
+      cache_read_input_token_cost: 4,
+    };
+    let now = new Date("2026-05-01T00:00:00.000Z");
+    const resolver = new HistoricalPricingResolver({
+      getModelPricing: async () => currentPricing,
+    }, {
+      historyPath: path.join(tmpDir, "historical-source-cost-prices.json"),
+      now: () => now,
+    });
+    await resolver.getModelPricing(model);
+    currentPricing = {
+      input_cost_per_token: 4,
+      output_cost_per_token: 3,
+      cache_creation_input_token_cost: 2,
+      cache_read_input_token_cost: 1,
+    };
+    now = new Date("2026-06-01T00:00:00.000Z");
+    await resolver.getModelPricing(model);
+
+    await writeClaudeJsonl(path.join(claudeDir, "proj", "session.jsonl"), [
+      { type: "assistant", timestamp: "2026-05-20T14:00:00Z", costUSD: 20,
+        message: { id: "m1", model,
+          usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 1, cache_read_input_tokens: 1 } } },
+    ]);
+    const logDir = path.join(tmpDir, "debug");
+    const recorder = new DebugRecorder({ enabled: true, logDir });
+
+    await runBackfill({
+      recorder, logDir,
+      claudeProjectsDirs: [claudeDir],
+      codexSessionsDirs: [codexDir],
+      pricingResolver: resolver,
+    });
+    await recorder.flush();
+
+    const lines = (await fs.readFile(path.join(logDir, "2026-05-20.backfill.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    const summary = lines.find((entry) => entry.kind === "tokens.daySummary" && entry.provider === "claude");
+    const components = summary.perModel[model];
+    expect(summary.totalCostUSD).toBe(20);
+    expect(components.costUSD).toBe(20);
+    expect(components).toMatchObject({
+      inputCostUSD: 2,
+      outputCostUSD: 4,
+      cacheCreationCostUSD: 6,
+      cacheReadCostUSD: 8,
+    });
+  });
+
+  it("keeps authoritative Claude source costs while leaving components zero without pricing", async () => {
+    const model = "unpriced-source-model";
+    const resolver = new HistoricalPricingResolver({ getModelPricing: async () => null }, {
+      historyPath: path.join(tmpDir, "unpriced-source-costs.json"),
+    });
+    await writeClaudeJsonl(path.join(claudeDir, "proj", "session.jsonl"), [
+      { type: "assistant", timestamp: "2026-05-20T14:00:00Z", costUSD: 20,
+        message: { id: "m1", model,
+          usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 1, cache_read_input_tokens: 1 } } },
+    ]);
+    const logDir = path.join(tmpDir, "debug");
+    const recorder = new DebugRecorder({ enabled: true, logDir });
+
+    await runBackfill({
+      recorder, logDir,
+      claudeProjectsDirs: [claudeDir],
+      codexSessionsDirs: [codexDir],
+      pricingResolver: resolver,
+    });
+    await recorder.flush();
+
+    const lines = (await fs.readFile(path.join(logDir, "2026-05-20.backfill.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    const summary = lines.find((entry) => entry.kind === "tokens.daySummary" && entry.provider === "claude");
+    const components = summary.perModel[model];
+    expect(summary.totalCostUSD).toBe(20);
+    expect(components).toMatchObject({
+      costUSD: 20,
+      inputCostUSD: 0,
+      outputCostUSD: 0,
+      cacheCreationCostUSD: 0,
+      cacheReadCostUSD: 0,
+    });
+  });
+
+  it("uses each Codex event's historical price when forced backfill rebuilds daily summaries", async () => {
+    const model = "historical-codex";
+    let currentOutputPrice = 2e-6;
+    let now = new Date("2026-05-01T00:00:00.000Z");
+    const resolver = new HistoricalPricingResolver({
+      getModelPricing: async () => ({ output_cost_per_token: currentOutputPrice }),
+    }, {
+      historyPath: path.join(tmpDir, "historical-prices.json"),
+      now: () => now,
+    });
+    await resolver.getModelPricing(model);
+    currentOutputPrice = 1e-6;
+    now = new Date("2026-06-01T00:00:00.000Z");
+    await resolver.getModelPricing(model);
+
+    await writeCodexJsonl(path.join(codexDir, "session-cx.jsonl"), [
+      { type: "turn_context", payload: { model } },
+      { type: "event_msg", timestamp: "2026-05-02T12:00:00Z", payload: { type: "token_count", info: {
+        last_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 1_000_000, reasoning_output_tokens: 0, total_tokens: 1_000_000 },
+      } } },
+      { type: "event_msg", timestamp: "2026-06-02T12:00:00Z", payload: { type: "token_count", info: {
+        last_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 1_000_000, reasoning_output_tokens: 0, total_tokens: 1_000_000 },
+      } } },
+    ]);
+    const logDir = path.join(tmpDir, "debug");
+    const recorder = new DebugRecorder({ enabled: true, logDir });
+
+    await runBackfill({
+      recorder,
+      logDir,
+      claudeProjectsDirs: [claudeDir],
+      codexSessionsDirs: [codexDir],
+      force: true,
+      pricingResolver: resolver,
+    });
+    await recorder.flush();
+
+    const costs = await Promise.all(["2026-05-02", "2026-06-02"].map(async (day) => {
+      const lines = (await fs.readFile(path.join(logDir, `${day}.backfill.jsonl`), "utf8"))
+        .trim().split("\n").map((line) => JSON.parse(line));
+      return lines.find((entry) => entry.kind === "tokens.daySummary" && entry.provider === "codex").totalCostUSD;
+    }));
+    expect(costs).toEqual([2, 1]);
   });
 
   it("preserves contributions from unchanged source files when only one file of a day changes", async () => {

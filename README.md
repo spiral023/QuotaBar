@@ -253,6 +253,8 @@ All fired notifications are stored in the **Notifications** tab history with tim
 
 QuotaBar reads local JSONL logs, fetches current model pricing from LiteLLM when online, and calculates API-equivalent costs in USD.
 
+For historical API cost pricing, QuotaBar keeps compact local price epochs per model. Each event uses the latest locally observed epoch at or before its timestamp. Claude events with source `costUSD`, and values already stored in the permanent backfill, remain authoritative. On older installations with no eligible local epoch, QuotaBar uses the current price for compatibility.
+
 ```text
 subscription factor = API cost (USD) / (subscription cost (USD) × window_days / 30)
 ```

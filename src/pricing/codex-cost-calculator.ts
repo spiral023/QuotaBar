@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import type { CodexTokenEvent } from "./codex-log-reader";
-import type { LiteLLMFetcher } from "./litellm-fetcher";
+import type { HistoricalPricingResolver } from "./historical-pricing-resolver";
 import { type CostBreakdown, sumBreakdown } from "./cost-calculator";
 
 const MODEL_ALIASES: Record<string, string> = {
@@ -13,30 +13,30 @@ const MODEL_ALIASES: Record<string, string> = {
  */
 export async function calculateCodexApiCostBreakdown(
   events: CodexTokenEvent[],
-  fetcher: LiteLLMFetcher,
+  pricing: HistoricalPricingResolver,
   speedTier: "standard" | "fast",
 ): Promise<CostBreakdown> {
   let inputCostUSD = 0, outputCostUSD = 0, cacheReadCostUSD = 0;
   for (const event of events) {
     const modelName = MODEL_ALIASES[event.model] ?? event.model;
-    const pricing = await fetcher.getModelPricing(modelName);
-    if (!pricing) continue;
+    const modelPricing = await pricing.getModelPricing(modelName, event.timestamp);
+    if (!modelPricing) continue;
 
-    const mult = speedTier === "fast" ? (pricing.provider_specific_entry?.fast ?? 2) : 1;
+    const mult = speedTier === "fast" ? (modelPricing.provider_specific_entry?.fast ?? 2) : 1;
     const nonCachedInput = Math.max(event.inputTokens - event.cachedInputTokens, 0);
-    inputCostUSD     += nonCachedInput * (pricing.input_cost_per_token ?? 0) * mult;
-    cacheReadCostUSD += event.cachedInputTokens * (pricing.cache_read_input_token_cost ?? pricing.input_cost_per_token ?? 0) * mult;
-    outputCostUSD    += event.outputTokens * (pricing.output_cost_per_token ?? 0) * mult;
+    inputCostUSD     += nonCachedInput * (modelPricing.input_cost_per_token ?? 0) * mult;
+    cacheReadCostUSD += event.cachedInputTokens * (modelPricing.cache_read_input_token_cost ?? modelPricing.input_cost_per_token ?? 0) * mult;
+    outputCostUSD    += event.outputTokens * (modelPricing.output_cost_per_token ?? 0) * mult;
   }
   return { inputCostUSD, outputCostUSD, cacheCreationCostUSD: 0, cacheReadCostUSD };
 }
 
 export async function calculateCodexApiCost(
   events: CodexTokenEvent[],
-  fetcher: LiteLLMFetcher,
+  pricing: HistoricalPricingResolver,
   speedTier: "standard" | "fast",
 ): Promise<number> {
-  return sumBreakdown(await calculateCodexApiCostBreakdown(events, fetcher, speedTier));
+  return sumBreakdown(await calculateCodexApiCostBreakdown(events, pricing, speedTier));
 }
 
 /**
@@ -47,12 +47,12 @@ export async function calculateCodexApiCost(
  */
 export async function findUnpricedCodexModels(
   events: CodexTokenEvent[],
-  fetcher: LiteLLMFetcher,
+  pricing: HistoricalPricingResolver,
 ): Promise<string[]> {
   const missing = new Set<string>();
   for (const event of events) {
     const modelName = MODEL_ALIASES[event.model] ?? event.model;
-    if (!(await fetcher.getModelPricing(modelName))) missing.add(modelName);
+    if (!(await pricing.getModelPricing(modelName, event.timestamp))) missing.add(modelName);
   }
   return [...missing];
 }

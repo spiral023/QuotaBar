@@ -3,12 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultSettings } from "../src/config/settings";
+import type { ModelPricing } from "../src/pricing/cost-calculator";
+import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests } from "../src/pricing/historical-pricing-resolver";
 import { generateUsageReport } from "../src/reports/reportService";
 
 const tmpRoot = path.join(os.tmpdir(), `quotabar-reports-${process.pid}`);
 
 afterEach(async () => {
   await fs.rm(tmpRoot, { recursive: true, force: true });
+  resetHistoricalPricingResolverCacheForTests();
 });
 
 async function writeJsonl(filePath: string, entries: unknown[]): Promise<void> {
@@ -16,7 +19,69 @@ async function writeJsonl(filePath: string, entries: unknown[]): Promise<void> {
   await fs.writeFile(filePath, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
 }
 
+async function createHistoricalResolver(
+  historyPath: string,
+  model: string,
+): Promise<HistoricalPricingResolver> {
+  let current: ModelPricing = { output_cost_per_token: 4e-6 };
+  let now = new Date("2026-05-01T00:00:00.000Z");
+  const resolver = new HistoricalPricingResolver({ getModelPricing: async () => current }, {
+    historyPath,
+    now: () => now,
+  });
+  await resolver.getModelPricing(model);
+  current = { output_cost_per_token: 2e-6 };
+  now = new Date("2026-06-01T00:00:00.000Z");
+  await resolver.getModelPricing(model);
+  return resolver;
+}
+
 describe("usage reports", () => {
+  it("uses the event-time Claude price while preserving source costs in auto mode", async () => {
+    const model = "historical-claude";
+    const resolver = await createHistoricalResolver(path.join(tmpRoot, "report-prices.json"), model);
+    const entries = [
+      { provider: "claude" as const, timestamp: "2026-05-02T12:00:00.000Z", model, project: "project", session: "may", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0 },
+      { provider: "claude" as const, timestamp: "2026-06-02T12:00:00.000Z", model, project: "project", session: "june", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0 },
+      { provider: "claude" as const, timestamp: "2026-06-02T13:00:00.000Z", model, project: "project", session: "source", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 7 },
+    ];
+
+    const report = await generateUsageReport({
+      provider: "claude", type: "daily", timezone: "UTC", order: "asc", costMode: "auto",
+    }, { claudeEntries: entries, pricingResolver: resolver });
+
+    expect(report.rows.map((row) => [row.bucket, row.costUSD])).toEqual([
+      ["2026-05-02", 4],
+      ["2026-06-02", 9],
+    ]);
+  });
+
+  it("does not resolve prices for provider costs and leaves display-only missing costs unallocated", async () => {
+    let lookupCalls = 0;
+    const historyPath = path.join(tmpRoot, "source-cost-prices.json");
+    const resolver = new HistoricalPricingResolver({
+      getModelPricing: async () => {
+        lookupCalls++;
+        return { output_cost_per_token: 4e-6 };
+      },
+    }, { historyPath });
+    const source = { provider: "claude" as const, timestamp: "2026-06-02T12:00:00.000Z", model: "provider-priced", project: "project", session: "source", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 7 };
+    const missing = { provider: "claude" as const, timestamp: "2026-06-02T13:00:00.000Z", model: "display-only", project: "project", session: "missing", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0 };
+
+    const auto = await generateUsageReport({ provider: "claude", type: "daily", timezone: "UTC", costMode: "auto" }, {
+      claudeEntries: [source], pricingResolver: resolver,
+    });
+    const display = await generateUsageReport({ provider: "claude", type: "daily", timezone: "UTC", costMode: "display", breakdown: true }, {
+      claudeEntries: [source, missing], pricingResolver: resolver,
+    });
+
+    expect(auto.totals.costUSD).toBe(7);
+    expect(lookupCalls).toBe(0);
+    expect(await fs.stat(historyPath).then(() => true).catch(() => false)).toBe(false);
+    const missingBreakdown = display.rows[0].modelBreakdowns!.find((item) => item.model === "display-only")!;
+    expect(missingBreakdown).toMatchObject({ costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 });
+  });
+
   it("aggregates Claude daily rows with project instances and costUSD in auto mode", async () => {
     const claudeRoot = path.join(tmpRoot, "claude", "projects");
     await writeJsonl(path.join(claudeRoot, "proj-a", "session-a.jsonl"), [
@@ -227,6 +292,26 @@ describe("source: backfill", () => {
     expect(report.rows[0]).toMatchObject({ bucket: "2026-05-18", provider: "claude", costUSD: 0.05, inputTokens: 1000 });
     expect(report.rows[1]).toMatchObject({ bucket: "2026-05-19", provider: "claude", costUSD: 0.01 });
     expect(report.totals.costUSD).toBeCloseTo(0.06, 6);
+  });
+
+  it("keeps legacy stored backfill costs and bytes unchanged", async () => {
+    const logDir = path.join(tmpRoot, "backfill-stable");
+    await writeBackfill(logDir, [
+      { kind: "tokens.daySummary", provider: "claude", date: "2026-05-18",
+        input: 1000, output: 500, cacheCreation: 0, cacheRead: 0,
+        totalTokens: 1500, totalCostUSD: 0.05, sessionCount: 1,
+        models: ["claude-sonnet-4-6"],
+        perModel: { "claude-sonnet-4-6": { input: 1000, output: 500, cacheCreation: 0, cacheRead: 0, costUSD: 0.05 } } },
+    ]);
+    const filePath = path.join(logDir, "2026-05-18.backfill.jsonl");
+    const before = await fs.readFile(filePath, "utf8");
+
+    const report = await generateUsageReport({
+      provider: "claude", type: "daily", timezone: "UTC", source: "backfill",
+    }, { backfillLogDir: logDir });
+
+    expect(report.rows[0].costUSD).toBe(0.05);
+    expect(await fs.readFile(filePath, "utf8")).toBe(before);
   });
 
   it("aggregiert mehrere Tage zu wöchentlichen Zeilen", async () => {

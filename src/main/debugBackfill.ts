@@ -3,8 +3,8 @@ import path from "node:path";
 import { listClaudeSourceFiles, readClaudeUsageEntriesFromFiles, type ClaudeUsageEntry, type SourceFileRef } from "../pricing/jsonl-reader";
 import { listCodexSourceFiles, readCodexTokensFromFiles, type CodexTokenEvent, type CodexSourceFileRef } from "../pricing/codex-log-reader";
 import { calculateCodexApiCostBreakdown, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
-import { calculateCostFromTokens, calculateCostBreakdown, scaleBreakdownTo, ZERO_BREAKDOWN } from "../pricing/cost-calculator";
-import type { LiteLLMFetcher } from "../pricing/litellm-fetcher";
+import { calculateCostBreakdown, scaleBreakdownTo, sumBreakdown } from "../pricing/cost-calculator";
+import type { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
 import type { DebugRecorder } from "./debugRecorder";
 import type { TokensDaySummaryEvent, TokensUsageEvent } from "./debugEvents";
 import { log } from "./logging";
@@ -31,7 +31,7 @@ export interface BackfillOptions {
   claudeProjectsDirs: string[];
   codexSessionsDirs: string[];
   force?: boolean;
-  fetcher?: LiteLLMFetcher;
+  pricingResolver?: HistoricalPricingResolver;
   codexConfigPaths?: string[];
 }
 
@@ -138,7 +138,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   let written = 0;
   const sortedDays = [...byDay.keys()].sort();
 
-  const speedTier = opts.fetcher && opts.codexConfigPaths?.length
+  const speedTier = opts.pricingResolver && opts.codexConfigPaths?.length
     ? await readCodexSpeedTierFromPaths(opts.codexConfigPaths)
     : "standard";
 
@@ -168,8 +168,8 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
       };
       opts.recorder.writeBackfill(day, event);
     }
-    if (bucket.claude.length > 0) opts.recorder.writeBackfill(day, await summarizeClaude(day, bucket.claude, opts.fetcher));
-    if (bucket.codex.length > 0) opts.recorder.writeBackfill(day, await summarizeCodex(day, bucket.codex, opts.fetcher, speedTier));
+    if (bucket.claude.length > 0) opts.recorder.writeBackfill(day, await summarizeClaude(day, bucket.claude, opts.pricingResolver));
+    if (bucket.codex.length > 0) opts.recorder.writeBackfill(day, await summarizeCodex(day, bucket.codex, opts.pricingResolver, speedTier));
     written++;
   }
 
@@ -186,54 +186,53 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   return { daysWritten: written, daysSkipped: 0, durationMs, errors };
 }
 
-async function summarizeClaude(date: string, entries: ClaudeUsageEntry[], fetcher?: LiteLLMFetcher): Promise<TokensDaySummaryEvent> {
+async function summarizeClaude(date: string, entries: ClaudeUsageEntry[], pricingResolver?: HistoricalPricingResolver): Promise<TokensDaySummaryEvent> {
   const perModel: TokensDaySummaryEvent["perModel"] = {};
-  const perModelNoSourceCost: Record<string, { input: number; output: number; cacheCreation: number; cacheRead: number }> = {};
   const sessions = new Set<string>();
   let input = 0, output = 0, cacheCreation = 0, cacheRead = 0, totalCostUSD = 0;
   for (const e of entries) {
     input += e.inputTokens; output += e.outputTokens;
     cacheCreation += e.cacheCreationTokens; cacheRead += e.cacheReadTokens;
-    totalCostUSD += e.costUSD ?? 0;
     sessions.add(e.session);
     const pm = perModel[e.model] ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, costUSD: 0 };
     pm.input += e.inputTokens; pm.output += e.outputTokens;
     pm.cacheCreation = (pm.cacheCreation ?? 0) + e.cacheCreationTokens;
     pm.cacheRead = (pm.cacheRead ?? 0) + e.cacheReadTokens;
-    pm.costUSD += e.costUSD ?? 0;
+    if (e.costUSD !== undefined) {
+      totalCostUSD += e.costUSD;
+      pm.costUSD += e.costUSD;
+      // Provider cost remains authoritative; pricing is used only to proportionally
+      // attribute that fixed total across token components.
+      const pricing = pricingResolver && await pricingResolver.getModelPricing(e.model, e.timestamp);
+      const breakdown = pricing ? scaleBreakdownTo(calculateCostBreakdown({
+        input_tokens: e.inputTokens,
+        output_tokens: e.outputTokens,
+        cache_creation_input_tokens: e.cacheCreationTokens,
+        cache_read_input_tokens: e.cacheReadTokens,
+      }, pricing), e.costUSD) : undefined;
+      pm.inputCostUSD = (pm.inputCostUSD ?? 0) + (breakdown?.inputCostUSD ?? 0);
+      pm.outputCostUSD = (pm.outputCostUSD ?? 0) + (breakdown?.outputCostUSD ?? 0);
+      pm.cacheCreationCostUSD = (pm.cacheCreationCostUSD ?? 0) + (breakdown?.cacheCreationCostUSD ?? 0);
+      pm.cacheReadCostUSD = (pm.cacheReadCostUSD ?? 0) + (breakdown?.cacheReadCostUSD ?? 0);
+    } else if (pricingResolver) {
+      const pricing = await pricingResolver.getModelPricing(e.model, e.timestamp);
+      if (pricing) {
+        const breakdown = calculateCostBreakdown({
+          input_tokens: e.inputTokens,
+          output_tokens: e.outputTokens,
+          cache_creation_input_tokens: e.cacheCreationTokens,
+          cache_read_input_tokens: e.cacheReadTokens,
+        }, pricing);
+        const cost = sumBreakdown(breakdown);
+        totalCostUSD += cost;
+        pm.costUSD += cost;
+        pm.inputCostUSD = (pm.inputCostUSD ?? 0) + breakdown.inputCostUSD;
+        pm.outputCostUSD = (pm.outputCostUSD ?? 0) + breakdown.outputCostUSD;
+        pm.cacheCreationCostUSD = (pm.cacheCreationCostUSD ?? 0) + breakdown.cacheCreationCostUSD;
+        pm.cacheReadCostUSD = (pm.cacheReadCostUSD ?? 0) + breakdown.cacheReadCostUSD;
+      }
+    }
     perModel[e.model] = pm;
-    if (fetcher && e.costUSD === undefined) {
-      const nc = perModelNoSourceCost[e.model] ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
-      nc.input += e.inputTokens; nc.output += e.outputTokens;
-      nc.cacheCreation += e.cacheCreationTokens; nc.cacheRead += e.cacheReadTokens;
-      perModelNoSourceCost[e.model] = nc;
-    }
-  }
-  if (fetcher) {
-    for (const [model, nc] of Object.entries(perModelNoSourceCost)) {
-      const pricing = await fetcher.getModelPricing(model);
-      if (!pricing) continue;
-      const cost = calculateCostFromTokens({
-        input_tokens: nc.input, output_tokens: nc.output,
-        cache_creation_input_tokens: nc.cacheCreation, cache_read_input_tokens: nc.cacheRead,
-      }, pricing);
-      totalCostUSD += cost;
-      perModel[model].costUSD += cost;
-    }
-    // Kosten je Token-Typ: rate-basiert je Modell, exakt auf den (ggf. aus Quell-
-    // kosten gemischten) costUSD skaliert → Komponenten summieren auf costUSD.
-    for (const [model, pm] of Object.entries(perModel)) {
-      const pricing = await fetcher.getModelPricing(model);
-      const breakdown = pricing ? calculateCostBreakdown({
-        input_tokens: pm.input, output_tokens: pm.output,
-        cache_creation_input_tokens: pm.cacheCreation ?? 0, cache_read_input_tokens: pm.cacheRead ?? 0,
-      }, pricing) : ZERO_BREAKDOWN;
-      const scaled = scaleBreakdownTo(breakdown, pm.costUSD);
-      pm.inputCostUSD = scaled.inputCostUSD;
-      pm.outputCostUSD = scaled.outputCostUSD;
-      pm.cacheCreationCostUSD = scaled.cacheCreationCostUSD;
-      pm.cacheReadCostUSD = scaled.cacheReadCostUSD;
-    }
   }
   return {
     kind: "tokens.daySummary", provider: "claude", date,
@@ -244,7 +243,7 @@ async function summarizeClaude(date: string, entries: ClaudeUsageEntry[], fetche
   };
 }
 
-async function summarizeCodex(date: string, events: CodexTokenEvent[], fetcher?: LiteLLMFetcher, speedTier: "standard" | "fast" = "standard"): Promise<TokensDaySummaryEvent> {
+async function summarizeCodex(date: string, events: CodexTokenEvent[], pricingResolver?: HistoricalPricingResolver, speedTier: "standard" | "fast" = "standard"): Promise<TokensDaySummaryEvent> {
   const perModel: TokensDaySummaryEvent["perModel"] = {};
   const byModel = new Map<string, CodexTokenEvent[]>();
   const sessions = new Set<string>();
@@ -258,16 +257,16 @@ async function summarizeCodex(date: string, events: CodexTokenEvent[], fetcher?:
     pm.cachedInput = (pm.cachedInput ?? 0) + e.cachedInputTokens;
     pm.reasoningOutput = (pm.reasoningOutput ?? 0) + e.reasoningOutputTokens;
     perModel[e.model] = pm;
-    if (fetcher) {
+    if (pricingResolver) {
       const list = byModel.get(e.model) ?? [];
       list.push(e);
       byModel.set(e.model, list);
     }
   }
   let totalCostUSD = 0;
-  if (fetcher) {
+  if (pricingResolver) {
     for (const [model, modelEvents] of byModel) {
-      const b = await calculateCodexApiCostBreakdown(modelEvents, fetcher, speedTier);
+      const b = await calculateCodexApiCostBreakdown(modelEvents, pricingResolver, speedTier);
       const pm = perModel[model];
       pm.inputCostUSD = b.inputCostUSD;
       pm.outputCostUSD = b.outputCostUSD;
