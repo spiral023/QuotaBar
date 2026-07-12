@@ -65,14 +65,12 @@ export class PricingEngine {
       if (entry.costUSD === undefined) entriesWithoutCost.push(entry);
       else apiCostUSD += entry.costUSD ?? 0;
     }
-    const entriesWithoutModel = [] as typeof entries;
     for (const entry of entriesWithoutCost) {
-      if (!entry.model) {
-        entriesWithoutModel.push(entry);
-        continue;
-      }
-      const pricing = await this.pricingResolver.getModelPricing(entry.model, entry.timestamp);
-      if (!pricing) { missingPricingModels.add(entry.model); continue; }
+      const modelName = entry.model && entry.model !== "unknown"
+        ? entry.model
+        : snapshot.model ?? "claude-sonnet-4-5";
+      const pricing = await this.pricingResolver.getModelPricing(modelName, entry.timestamp);
+      if (!pricing) { missingPricingModels.add(modelName); continue; }
       apiCostUSD += calculateCostFromTokens(
         {
           input_tokens: entry.inputTokens,
@@ -82,25 +80,6 @@ export class PricingEngine {
         },
         pricing,
       );
-    }
-    if (entriesWithoutModel.length > 0) {
-      const fallbackTokens = aggregateClaudeEntries(entriesWithoutModel);
-      const fallbackModel = snapshot.model ?? "claude-sonnet-4-5";
-      const fallbackTimestamp = entriesWithoutModel.map((entry) => entry.timestamp).sort()[0];
-      const pricing = await this.pricingResolver.getModelPricing(fallbackModel, fallbackTimestamp);
-      if (pricing) {
-        apiCostUSD += calculateCostFromTokens(
-          {
-            input_tokens: fallbackTokens.inputTokens,
-            output_tokens: fallbackTokens.outputTokens,
-            cache_creation_input_tokens: fallbackTokens.cacheCreationTokens,
-            cache_read_input_tokens: fallbackTokens.cacheReadTokens,
-          },
-          pricing,
-        );
-      } else {
-        missingPricingModels.add(fallbackModel);
-      }
     }
 
     const effectiveDays = windowDays > 0

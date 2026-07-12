@@ -4,13 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ModelPricing } from "../src/pricing/cost-calculator";
-import { HistoricalPricingResolver, type ModelPricingLookup } from "../src/pricing/historical-pricing-resolver";
+import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests, type ModelPricingLookup } from "../src/pricing/historical-pricing-resolver";
 import { LITELLM_PRICING_SOURCE } from "../src/pricing/litellm-fetcher";
 
 const tempDirs: string[] = [];
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  resetHistoricalPricingResolverCacheForTests();
 });
 
 function temporaryHistoryPath(): string {
@@ -75,6 +76,29 @@ describe("HistoricalPricingResolver", () => {
         pricing: currentPricing,
       }),
     ]);
+  });
+
+  it("loads history once and only persists when a changed price adds an epoch", async () => {
+    const historyPath = temporaryHistoryPath();
+    let reads = 0;
+    let writes = 0;
+    let stored: string | undefined;
+    let currentPricing: ModelPricing = { input_cost_per_token: 5e-6 };
+    const resolver = new HistoricalPricingResolver({ getModelPricing: async () => currentPricing }, {
+      historyPath,
+      storage: {
+        read: async () => { reads++; return stored; },
+        write: async (_path, content) => { writes++; stored = content; },
+      },
+    });
+
+    await resolver.getModelPricing("test-model", "2026-06-01T00:00:00.000Z");
+    await Promise.all(Array.from({ length: 10 }, () => resolver.getModelPricing("test-model", "2026-06-02T00:00:00.000Z")));
+    expect({ reads, writes }).toEqual({ reads: 1, writes: 1 });
+
+    currentPricing = { input_cost_per_token: 4e-6 };
+    await resolver.getModelPricing("test-model", "2026-06-03T00:00:00.000Z");
+    expect({ reads, writes }).toEqual({ reads: 1, writes: 2 });
   });
 
   it("treats malformed history files as an empty history", async () => {

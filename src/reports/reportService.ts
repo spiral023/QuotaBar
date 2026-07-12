@@ -3,7 +3,7 @@ import type { Settings } from "../config/settings";
 import { defaultSettings } from "../config/settings";
 import { calculateCodexApiCostBreakdown, readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
 import { readCodexTokensForPeriod, type CodexTokenEvent } from "../pricing/codex-log-reader";
-import { calculateCostBreakdown, scaleBreakdownTo, sumBreakdown, ZERO_BREAKDOWN } from "../pricing/cost-calculator";
+import { calculateCostBreakdown, sumBreakdown, ZERO_BREAKDOWN } from "../pricing/cost-calculator";
 import { readClaudeUsageEntriesForPeriod, type ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
@@ -276,18 +276,23 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, pr
     let costUSD = 0;
     let components = { ...ZERO_BREAKDOWN };
     for (const entry of list) {
+      const sourceCost = entry.costUSD;
+      const useSourceCost = mode !== "calculate" && sourceCost !== undefined;
+      if (useSourceCost) {
+        costUSD += sourceCost;
+        // Source costs are authoritative and must not cause a pricing lookup or epoch write.
+        components.outputCostUSD += sourceCost;
+        continue;
+      }
+      if (mode === "display") continue;
       const pricing = await pricingResolver.getModelPricing(model, entry.timestamp);
-      const rateBreakdown = pricing ? calculateCostBreakdown({
+      const entryComponents = pricing ? calculateCostBreakdown({
         input_tokens: entry.inputTokens,
         output_tokens: entry.outputTokens,
         cache_creation_input_tokens: entry.cacheCreationTokens,
         cache_read_input_tokens: entry.cacheReadTokens,
       }, pricing) : ZERO_BREAKDOWN;
-      const sourceCost = entry.costUSD;
-      const useSourceCost = mode !== "calculate" && sourceCost !== undefined;
-      const entryCost = useSourceCost ? sourceCost : mode === "display" ? 0 : sumBreakdown(rateBreakdown);
-      const entryComponents = useSourceCost ? scaleBreakdownTo(rateBreakdown, sourceCost) : rateBreakdown;
-      costUSD += entryCost;
+      costUSD += sumBreakdown(entryComponents);
       components = {
         inputCostUSD: components.inputCostUSD + entryComponents.inputCostUSD,
         outputCostUSD: components.outputCostUSD + entryComponents.outputCostUSD,
@@ -295,10 +300,6 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, pr
         cacheReadCostUSD: components.cacheReadCostUSD + entryComponents.cacheReadCostUSD,
       };
     }
-    // A provider cost without usable model pricing still remains exact in auto/display mode.
-    // Attribute it to output so the breakdown total remains equal to the row total.
-    const componentTotal = sumBreakdown(components);
-    if (componentTotal !== costUSD) components.outputCostUSD += costUSD - componentTotal;
     return { model, ...totals, costUSD, ...components };
   }));
   return { totals: sumBreakdowns(breakdowns), breakdowns };

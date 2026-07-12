@@ -55,6 +55,32 @@ describe("usage reports", () => {
     ]);
   });
 
+  it("does not resolve prices for provider costs and leaves display-only missing costs unallocated", async () => {
+    let lookupCalls = 0;
+    const historyPath = path.join(tmpRoot, "source-cost-prices.json");
+    const resolver = new HistoricalPricingResolver({
+      getModelPricing: async () => {
+        lookupCalls++;
+        return { output_cost_per_token: 4e-6 };
+      },
+    }, { historyPath });
+    const source = { provider: "claude" as const, timestamp: "2026-06-02T12:00:00.000Z", model: "provider-priced", project: "project", session: "source", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 7 };
+    const missing = { provider: "claude" as const, timestamp: "2026-06-02T13:00:00.000Z", model: "display-only", project: "project", session: "missing", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0 };
+
+    const auto = await generateUsageReport({ provider: "claude", type: "daily", timezone: "UTC", costMode: "auto" }, {
+      claudeEntries: [source], pricingResolver: resolver,
+    });
+    const display = await generateUsageReport({ provider: "claude", type: "daily", timezone: "UTC", costMode: "display", breakdown: true }, {
+      claudeEntries: [source, missing], pricingResolver: resolver,
+    });
+
+    expect(auto.totals.costUSD).toBe(7);
+    expect(lookupCalls).toBe(0);
+    expect(await fs.stat(historyPath).then(() => true).catch(() => false)).toBe(false);
+    const missingBreakdown = display.rows[0].modelBreakdowns!.find((item) => item.model === "display-only")!;
+    expect(missingBreakdown).toMatchObject({ costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 });
+  });
+
   it("aggregates Claude daily rows with project instances and costUSD in auto mode", async () => {
     const claudeRoot = path.join(tmpRoot, "claude", "projects");
     await writeJsonl(path.join(claudeRoot, "proj-a", "session-a.jsonl"), [

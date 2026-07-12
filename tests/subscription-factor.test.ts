@@ -65,6 +65,32 @@ describe("PricingEngine", () => {
     }
   });
 
+  it("prices model-less Claude fallback entries at each event timestamp", async () => {
+    const claudeDir = path.join(os.tmpdir(), `quotabar-sf-fallback-epochs-${Date.now()}`);
+    const historyPath = path.join(claudeDir, "pricing-history.json");
+    const model = "fallback-priced";
+    let current: ModelPricing = { output_cost_per_token: 4e-6 };
+    let now = new Date("2026-05-01T00:00:00.000Z");
+    const resolver = new HistoricalPricingResolver({ getModelPricing: async () => current }, { historyPath, now: () => now });
+    await resolver.getModelPricing(model);
+    current = { output_cost_per_token: 2e-6 };
+    now = new Date("2026-06-01T00:00:00.000Z");
+    await resolver.getModelPricing(model);
+    await fs.mkdir(path.join(claudeDir, "project"), { recursive: true });
+    await fs.writeFile(path.join(claudeDir, "project", "session.jsonl"), [
+      JSON.stringify({ timestamp: "2026-05-02T12:00:00.000Z", message: { id: "may", usage: { output_tokens: 1_000_000 } } }),
+      JSON.stringify({ timestamp: "2026-06-02T12:00:00.000Z", message: { id: "june", usage: { output_tokens: 1_000_000 } } }),
+    ].join("\n") + "\n", "utf8");
+
+    try {
+      const engine = new PricingEngine({ ...settings, costWindow: "all" }, claudeDir, undefined, undefined, undefined, { pricingResolver: resolver });
+      const result = await engine.calculateFactor(makeSnapshot("claude", { model }));
+      expect(result!.apiCostUSD).toBeCloseTo(6, 6);
+    } finally {
+      await fs.rm(claudeDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns undefined for error snapshots", async () => {
     const engine = new PricingEngine(settings, "/nonexistent/path");
     expect(await engine.calculateFactor(makeSnapshot("claude", { status: "error" }))).toBeUndefined();

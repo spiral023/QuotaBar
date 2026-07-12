@@ -12,6 +12,12 @@ export interface ModelPricingLookup {
 export interface HistoricalPricingResolverOptions {
   historyPath?: string;
   now?: () => Date;
+  storage?: HistoricalPricingStorage;
+}
+
+export interface HistoricalPricingStorage {
+  read(historyPath: string): Promise<string | undefined>;
+  write(historyPath: string, content: string): Promise<void>;
 }
 
 interface PricingEpoch {
@@ -38,10 +44,32 @@ const PRICING_FIELDS = [
 ] as const;
 
 const historyQueues = new Map<string, Promise<void>>();
+const historyCache = new Map<string, PricingHistory>();
+
+const fileStorage: HistoricalPricingStorage = {
+  async read(historyPath) {
+    try {
+      return await fs.readFile(historyPath, "utf8");
+    } catch {
+      return undefined;
+    }
+  },
+  async write(historyPath, content) {
+    try {
+      await fs.mkdir(path.dirname(historyPath), { recursive: true });
+      const tempPath = `${historyPath}.${process.pid}.${randomUUID()}.tmp`;
+      await fs.writeFile(tempPath, content, "utf8");
+      await fs.rename(tempPath, historyPath);
+    } catch {
+      // The current pricing still provides the legacy fallback when local persistence is unavailable.
+    }
+  },
+};
 
 export class HistoricalPricingResolver implements ModelPricingLookup {
   private readonly historyPath: string;
   private readonly now: () => Date;
+  private readonly storage: HistoricalPricingStorage;
 
   constructor(
     private readonly pricingLookup: ModelPricingLookup,
@@ -49,6 +77,7 @@ export class HistoricalPricingResolver implements ModelPricingLookup {
   ) {
     this.historyPath = options.historyPath ?? getHistoricalPricingPath();
     this.now = options.now ?? (() => new Date());
+    this.storage = options.storage ?? fileStorage;
   }
 
   async getModelPricing(modelName: string, eventTimestamp?: Date | string | number): Promise<ModelPricing | null> {
@@ -56,7 +85,11 @@ export class HistoricalPricingResolver implements ModelPricingLookup {
     if (!currentPricing) return null;
 
     return withHistoryLock(this.historyPath, async () => {
-      const history = await loadHistory(this.historyPath);
+      let history = historyCache.get(this.historyPath);
+      if (!history) {
+        history = await loadHistory(this.historyPath, this.storage);
+        historyCache.set(this.historyPath, history);
+      }
       const pricing = normalizePricing(currentPricing);
       const checksum = pricingChecksum(pricing);
       const epochs = history.epochs[modelName] ?? [];
@@ -65,7 +98,7 @@ export class HistoricalPricingResolver implements ModelPricingLookup {
       if (!latest || latest.checksum !== checksum) {
         epochs.push({ fetchedAt: this.now().toISOString(), checksum, pricing });
         history.epochs[modelName] = epochs;
-        await persistHistory(this.historyPath, history);
+        await this.storage.write(this.historyPath, JSON.stringify(history, null, 2));
       }
 
       const eventTime = toTimestamp(eventTimestamp);
@@ -74,6 +107,12 @@ export class HistoricalPricingResolver implements ModelPricingLookup {
       return historical?.pricing ?? currentPricing;
     });
   }
+}
+
+/** Clears path-keyed resolver state between isolated tests that remove or corrupt history files. */
+export function resetHistoricalPricingResolverCacheForTests(): void {
+  historyCache.clear();
+  historyQueues.clear();
 }
 
 function normalizePricing(pricing: ModelPricing): ModelPricing {
@@ -93,9 +132,11 @@ function pricingChecksum(pricing: ModelPricing): string {
   return createHash("sha256").update(JSON.stringify(pricing)).digest("hex");
 }
 
-async function loadHistory(historyPath: string): Promise<PricingHistory> {
+async function loadHistory(historyPath: string, storage: HistoricalPricingStorage): Promise<PricingHistory> {
   try {
-    const parsed: unknown = JSON.parse(await fs.readFile(historyPath, "utf8"));
+    const content = await storage.read(historyPath);
+    if (!content) return emptyHistory();
+    const parsed: unknown = JSON.parse(content);
     if (!isPricingHistory(parsed)) return emptyHistory();
     return normalizeHistory(parsed);
   } catch {
@@ -139,17 +180,6 @@ function normalizeHistory(history: PricingHistory): PricingHistory {
 
 function emptyHistory(): PricingHistory {
   return { version: 1, source: LITELLM_PRICING_SOURCE, epochs: Object.create(null) as Record<string, PricingEpoch[]> };
-}
-
-async function persistHistory(historyPath: string, history: PricingHistory): Promise<void> {
-  try {
-    await fs.mkdir(path.dirname(historyPath), { recursive: true });
-    const tempPath = `${historyPath}.${process.pid}.${randomUUID()}.tmp`;
-    await fs.writeFile(tempPath, JSON.stringify(history, null, 2), "utf8");
-    await fs.rename(tempPath, historyPath);
-  } catch {
-    // The current pricing still provides the legacy fallback when local persistence is unavailable.
-  }
 }
 
 function toTimestamp(value: Date | string | number | undefined): number | null {
