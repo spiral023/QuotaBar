@@ -40,6 +40,19 @@ describe("readClaudeTokensForPeriod", () => {
     expect(entry.projectName).toBe("legacy-project");
   });
 
+  it.each([
+    "C--Users-Alice-Documents-GitHub-QuotaBar",
+    "-home-alice-projects-QuotaBar",
+  ])("does not expose encoded provider directory labels (%s)", async (encodedProject) => {
+    await writeJsonl(path.join(tmpDir, encodedProject), "session.jsonl", [{
+      timestamp: "2026-05-10T10:00:00.000Z",
+      message: { model: "claude-sonnet-4-6", usage: { input_tokens: 1, output_tokens: 2 } },
+    }]);
+    const [entry] = await readClaudeUsageEntriesForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(entry.projectName).toBeUndefined();
+    expect(JSON.stringify({ projectName: entry.projectName })).not.toMatch(/Alice|alice|home|Documents/);
+  });
+
   it("returns zeros when directory does not exist", async () => {
     const result = await readClaudeTokensForPeriod("/nonexistent/path/xyz", new Date("2026-05-01"));
     expect(result).toEqual({

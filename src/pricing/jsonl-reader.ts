@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { FileParseCache } from "./file-parse-cache";
-import { basenameAnySeparator } from "../shared/projectName";
+import { basenameAnySeparator, plainClaudeProjectName } from "../shared/projectName";
 
 export interface ModelTokens {
   inputTokens: number;
@@ -204,7 +204,7 @@ function processEntry(
   const fileBase = path.basename(filePath, ".jsonl");
   const cost = positiveNumber(entry.costUSD);
   const project = parts[0] ?? "unknown";
-  const projectName = basenameAnySeparator(entry.cwd) ?? basenameAnySeparator(project) ?? "Unknown project";
+  const projectName = basenameAnySeparator(entry.cwd) ?? plainClaudeProjectName(project);
 
   return {
     provider: "claude",

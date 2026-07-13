@@ -82,7 +82,7 @@ describe("portable event adapters", () => {
 
   it("normalizes Codex usage and reconstructs fallback state", () => {
     const [event] = fromCodexEvents([codex({
-      inputTokens: 40,
+      inputTokens: 30,
       cachedInputTokens: 40,
       model: "gpt-5",
       isFallback: true,
@@ -103,7 +103,7 @@ describe("portable event adapters", () => {
       outputTokens: 23,
       reasoningOutputTokens: 7,
     });
-    expect(toCodexEvents([event])[0].isFallback).toBe(true);
+    expect(toCodexEvents([event])[0]).toMatchObject({ isFallback: true, inputTokens: 40, cachedInputTokens: 40 });
     const serialized = JSON.stringify(event);
     expect(serialized).not.toContain("raw-codex-session");
     expect(serialized).not.toContain("C:\\\\Users");
@@ -293,13 +293,28 @@ describe("portable event adapters", () => {
   });
 
   it.each([
+    ["raw-session", "a".repeat(64)],
+    ["A".repeat(64), "b".repeat(64)],
+    ["a".repeat(63), "b".repeat(64)],
+    ["a".repeat(64), undefined],
+    [undefined, "b".repeat(64)],
+  ])("rejects invalid portable provenance", (portableEventId, portableSessionKey) => {
+    expect(() => fromClaudeEntries([claude({ portableEventId, portableSessionKey })])).toThrow("Invalid portable event provenance");
+  });
+
+  it.each([
     { inputTokens: -1 },
     { inputTokens: Number.NaN },
     { outputTokens: Number.POSITIVE_INFINITY },
-    { cachedInputTokens: 102 },
     { totalTokens: -1 },
   ])("rejects malformed Codex token events (%o)", (overrides) => {
     expect(() => fromCodexEvents([codex(overrides)])).toThrow("Invalid Codex token counts");
+  });
+
+  it("allows cached Codex input to exceed total input at the adapter boundary", () => {
+    const [event] = fromCodexEvents([codex({ inputTokens: 30, cachedInputTokens: 40 })]);
+    expect(event).toMatchObject({ inputTokens: 0, cacheReadTokens: 40 });
+    expect(toCodexEvents([event])[0].inputTokens).toBe(40);
   });
 
   it("exposes an immutable exact key allowlist", () => {

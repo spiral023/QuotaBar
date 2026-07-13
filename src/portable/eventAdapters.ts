@@ -30,6 +30,7 @@ export const PORTABLE_USAGE_EVENT_KEYS = Object.freeze([
 export function fromClaudeEntries(entries: readonly ClaudeUsageEntry[]): PortableUsageEvent[] {
   const ordinals = new Map<string, number>();
   return entries.map((entry) => {
+    const provenance = validatePortableProvenance(entry.portableEventId, entry.portableSessionKey);
     const occurredAt = normalizeTimestamp(entry.timestamp, "Claude");
     const statisticalSession = canonicalStatisticalSession(entry.session, [
       entry.inputTokens,
@@ -47,12 +48,12 @@ export function fromClaudeEntries(entries: readonly ClaudeUsageEntry[]): Portabl
     const projectName = basenameAnySeparator(entry.projectName) ?? plainClaudeProjectName(entry.project) ?? "Unknown project";
     return {
       schemaVersion: PORTABLE_STORE_VERSION,
-      id: entry.portableEventId ?? eventId({ provider: "claude", occurredAt, model: entry.model, session: statisticalSession, ordinal }),
+      id: provenance?.id ?? eventId({ provider: "claude", occurredAt, model: entry.model, session: statisticalSession, ordinal }),
       provider: "claude",
       occurredAt,
       model: entry.model,
       projectName,
-      sessionKey: entry.portableSessionKey ?? sessionKey("claude", entry.session),
+      sessionKey: provenance?.sessionKey ?? sessionKey("claude", entry.session),
       source: "claude-log",
       synthetic: false,
       inputTokens: entry.inputTokens,
@@ -74,6 +75,7 @@ export function fromCodexEvents(events: readonly CodexTokenEvent[]): PortableUsa
   const ordinals = new Map<string, number>();
   return events.map((entry) => {
     requireValidCodexTokens(entry);
+    const provenance = validatePortableProvenance(entry.portableEventId, entry.portableSessionKey);
     const occurredAt = normalizeTimestamp(entry.timestamp, "Codex");
     const statisticalSession = canonicalStatisticalSession(entry.session, [
       entry.inputTokens,
@@ -93,12 +95,12 @@ export function fromCodexEvents(events: readonly CodexTokenEvent[]): PortableUsa
     const projectName = basenameAnySeparator(entry.projectName);
     return {
       schemaVersion: PORTABLE_STORE_VERSION,
-      id: entry.portableEventId ?? eventId({ provider: "codex", occurredAt, model: entry.model, session: statisticalSession, ordinal }),
+      id: provenance?.id ?? eventId({ provider: "codex", occurredAt, model: entry.model, session: statisticalSession, ordinal }),
       provider: "codex",
       occurredAt,
       model: entry.model,
       ...(projectName ? { projectName } : {}),
-      sessionKey: entry.portableSessionKey ?? sessionKey("codex", entry.session),
+      sessionKey: provenance?.sessionKey ?? sessionKey("codex", entry.session),
       source: "codex-log",
       synthetic: false,
       inputTokens: Math.max(entry.inputTokens - entry.cachedInputTokens, 0),
@@ -215,9 +217,21 @@ function canonicalStatisticalSession(rawSession: string, statistics: readonly un
 
 function requireValidCodexTokens(entry: CodexTokenEvent): void {
   const values = [entry.inputTokens, entry.cachedInputTokens, entry.outputTokens, entry.reasoningOutputTokens, entry.totalTokens];
-  if (values.some((value) => !Number.isFinite(value) || value < 0) || entry.cachedInputTokens > entry.inputTokens) {
+  if (values.some((value) => !Number.isFinite(value) || value < 0)) {
     throw new Error("Invalid Codex token counts");
   }
+}
+
+function validatePortableProvenance(
+  id: string | undefined,
+  key: string | undefined,
+): { id: string; sessionKey: string } | undefined {
+  if (id === undefined && key === undefined) return undefined;
+  const sha256 = /^[0-9a-f]{64}$/;
+  if (id === undefined || key === undefined || !sha256.test(id) || !sha256.test(key)) {
+    throw new Error("Invalid portable event provenance");
+  }
+  return { id, sessionKey: key };
 }
 
 function sumFiniteCosts(costs: readonly (number | undefined)[]): number | undefined {
