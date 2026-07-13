@@ -1,4 +1,7 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, unlink, utimes, writeFile } from "node:fs/promises";
+import type { PathLike } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
+import * as nodeFs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -99,6 +102,68 @@ describe("PortableUsageStore", () => {
     expect(await readdir(path.join(rootDir, "events"))).toEqual(["2026-07.jsonl"]);
   });
 
+  it("serializes concurrent upserts across store instances without losing events", async () => {
+    const first = new PortableUsageStore(rootDir);
+    const second = new PortableUsageStore(path.join(rootDir, "."));
+
+    const results = await Promise.all([
+      first.upsert([event("first", "2026-07-01T00:00:00.000Z")]),
+      second.upsert([event("second", "2026-07-02T00:00:00.000Z")]),
+    ]);
+
+    expect(results).toEqual([
+      { inserted: 1, existing: 0 },
+      { inserted: 1, existing: 0 },
+    ]);
+    expect((await store.read()).map((item) => item.id)).toEqual(["first", "second"]);
+  });
+
+  it("reports truthful counts for concurrent duplicate upserts", async () => {
+    const results = await Promise.all([
+      new PortableUsageStore(rootDir).upsert([event("shared", "2026-07-01T00:00:00.000Z")]),
+      new PortableUsageStore(rootDir).upsert([event("shared", "2026-08-01T00:00:00.000Z")]),
+    ]);
+
+    expect(results).toEqual([
+      { inserted: 1, existing: 0 },
+      { inserted: 0, existing: 1 },
+    ]);
+    expect((await store.read()).map((item) => item.id)).toEqual(["shared"]);
+  });
+
+  it("does not let reads observe an in-process half-commit", async () => {
+    let releaseRename!: () => void;
+    let signalPaused!: () => void;
+    const paused = new Promise<void>((resolve) => { signalPaused = resolve; });
+    const release = new Promise<void>((resolve) => { releaseRename = resolve; });
+    const pausingFs = {
+      ...nodeFs,
+      async rename(from: PathLike, to: PathLike) {
+        if (String(to).endsWith(path.join("events", "2026-08.jsonl"))) {
+          signalPaused();
+          await release;
+        }
+        return nodeFs.rename(from, to);
+      },
+    };
+    const writer = new PortableUsageStore(rootDir, pausingFs).upsert([
+      event("july", "2026-07-01T00:00:00.000Z"),
+      event("august", "2026-08-01T00:00:00.000Z"),
+    ]);
+    await paused;
+    let readSettled = false;
+    const reader = new PortableUsageStore(rootDir).read().then((result) => {
+      readSettled = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(readSettled).toBe(false);
+
+    releaseRename();
+    await writer;
+    expect((await reader).map((item) => item.id)).toEqual(["july", "august"]);
+  });
+
   it("reads inclusive bounded ranges and unbounded events", async () => {
     await store.upsert([
       event("august", "2026-08-01T12:00:00.000Z"),
@@ -141,6 +206,78 @@ describe("PortableUsageStore", () => {
     );
 
     expect((await store.read()).map((item) => item.id)).toEqual(["valid"]);
+  });
+
+  it("persists and returns only allowlisted portable fields", async () => {
+    const sensitive = {
+      ...event("sanitized", "2026-07-03T00:00:00.000Z"),
+      prompt: "private prompt",
+      path: "C:\\private\\conversation.jsonl",
+      token: "secret-token",
+      credential: "secret-credential",
+    } as PortableUsageEvent;
+
+    await store.upsert([sensitive]);
+
+    const disk = JSON.parse(
+      (await readFile(path.join(rootDir, "events", "2026-07.jsonl"), "utf8")).trim(),
+    ) as Record<string, unknown>;
+    expect(disk).not.toHaveProperty("prompt");
+    expect(disk).not.toHaveProperty("path");
+    expect(disk).not.toHaveProperty("token");
+    expect(disk).not.toHaveProperty("credential");
+    expect(await store.read()).toEqual([{ ...event("sanitized", "2026-07-03T00:00:00.000Z") }]);
+  });
+
+  it("sanitizes valid disk records before returning them", async () => {
+    const eventsDir = path.join(rootDir, "events");
+    await mkdir(eventsDir, { recursive: true });
+    await writeFile(
+      path.join(eventsDir, "2026-07.jsonl"),
+      `${JSON.stringify({ ...event("disk", "2026-07-03T00:00:00.000Z"), prompt: "private", token: "secret" })}\n`,
+      "utf8",
+    );
+
+    const [stored] = await store.read();
+    expect(stored).toEqual(event("disk", "2026-07-03T00:00:00.000Z"));
+    expect(stored).not.toHaveProperty("prompt");
+    expect(stored).not.toHaveProperty("token");
+  });
+
+  it("ignores non-files, misplaced records, and globally deduplicates query results", async () => {
+    const eventsDir = path.join(rootDir, "events");
+    await mkdir(path.join(eventsDir, "2026-09.jsonl"), { recursive: true });
+    await writeFile(
+      path.join(eventsDir, "2026-07.jsonl"),
+      [
+        JSON.stringify(event("duplicate", "2026-07-02T00:00:00.000Z")),
+        JSON.stringify(event("misplaced", "2026-08-02T00:00:00.000Z")),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(eventsDir, "2026-08.jsonl"),
+      `${JSON.stringify(event("duplicate", "2026-08-03T00:00:00.000Z"))}\n`,
+      "utf8",
+    );
+
+    expect((await store.read()).map((item) => item.id)).toEqual(["duplicate"]);
+  });
+
+  it("accepts a correctly located incoming ID when the stored copy is misplaced", async () => {
+    const eventsDir = path.join(rootDir, "events");
+    await mkdir(eventsDir, { recursive: true });
+    await writeFile(
+      path.join(eventsDir, "2026-07.jsonl"),
+      `${JSON.stringify(event("same", "2026-08-01T00:00:00.000Z"))}\n`,
+      "utf8",
+    );
+
+    expect(await store.upsert([event("same", "2026-07-01T00:00:00.000Z")])).toEqual({
+      inserted: 1,
+      existing: 0,
+    });
+    expect((await store.read()).map((item) => item.occurredAt)).toEqual(["2026-07-01T00:00:00.000Z"]);
   });
 
   it.each([
@@ -196,6 +333,161 @@ describe("PortableUsageStore", () => {
       },
     });
     expect(JSON.parse(await readFile(path.join(rootDir, "store-metadata.json"), "utf8"))).toEqual(metadata);
+  });
+
+  it("repairs misplaced records and cross-file duplicates while rebuilding metadata", async () => {
+    const eventsDir = path.join(rootDir, "events");
+    await mkdir(eventsDir, { recursive: true });
+    await writeFile(
+      path.join(eventsDir, "2026-07.jsonl"),
+      [
+        JSON.stringify(event("duplicate", "2026-07-10T00:00:00.000Z")),
+        JSON.stringify(event("moved", "2026-08-02T00:00:00.000Z")),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(eventsDir, "2026-08.jsonl"),
+      [
+        JSON.stringify(event("duplicate", "2026-08-01T00:00:00.000Z")),
+        JSON.stringify(event("august", "2026-08-03T00:00:00.000Z")),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    await writeFile(path.join(eventsDir, "2026-09.jsonl"), "not-json\n", "utf8");
+
+    const metadata = await store.rebuildMetadata();
+
+    expect((await store.read()).map((item) => item.id)).toEqual(["duplicate", "moved", "august"]);
+    expect(await readdir(eventsDir)).toEqual(["2026-07.jsonl", "2026-08.jsonl"]);
+    expect(metadata.partitions).toEqual({
+      "2026-07": {
+        eventCount: 1,
+        firstAt: "2026-07-10T00:00:00.000Z",
+        lastAt: "2026-07-10T00:00:00.000Z",
+      },
+      "2026-08": {
+        eventCount: 2,
+        firstAt: "2026-08-02T00:00:00.000Z",
+        lastAt: "2026-08-03T00:00:00.000Z",
+      },
+    });
+  });
+
+  it("recovers a transaction interrupted after its first partition commit", async () => {
+    let failed = false;
+    const failingFs = {
+      ...nodeFs,
+      async rename(from: PathLike, to: PathLike) {
+        if (!failed && String(to).endsWith(path.join("events", "2026-08.jsonl"))) {
+          failed = true;
+          throw Object.assign(new Error("injected rename failure"), { code: "EIO" });
+        }
+        return nodeFs.rename(from, to);
+      },
+    };
+    const interrupted = new PortableUsageStore(rootDir, failingFs);
+
+    await expect(interrupted.upsert([
+      event("july", "2026-07-01T00:00:00.000Z"),
+      event("august", "2026-08-01T00:00:00.000Z"),
+    ])).rejects.toThrow("injected rename failure");
+
+    const recovered = new PortableUsageStore(rootDir);
+    expect((await recovered.read()).map((item) => item.id)).toEqual(["july", "august"]);
+    const metadata = JSON.parse(await readFile(path.join(rootDir, "store-metadata.json"), "utf8"));
+    expect(metadata.partitions["2026-07"].eventCount).toBe(1);
+    expect(metadata.partitions["2026-08"].eventCount).toBe(1);
+    expect(await readdir(rootDir)).not.toContain("pending-store-transaction.json");
+  });
+
+  it("does not change partitions when metadata staging fails", async () => {
+    await store.upsert([event("original", "2026-07-01T00:00:00.000Z")]);
+    const originalPartition = await readFile(path.join(rootDir, "events", "2026-07.jsonl"), "utf8");
+    const failingFs = {
+      ...nodeFs,
+      async writeFile(file: PathLike | FileHandle, data: string | Uint8Array, options?: unknown) {
+        if (String(file).includes("store-metadata.json.") && String(file).endsWith(".tmp")) {
+          await nodeFs.writeFile(file, "partial", "utf8");
+          throw Object.assign(new Error("injected metadata stage failure"), { code: "EIO" });
+        }
+        return nodeFs.writeFile(file, data, options as Parameters<typeof nodeFs.writeFile>[2]);
+      },
+    };
+
+    await expect(
+      new PortableUsageStore(rootDir, failingFs).upsert([event("new", "2026-07-02T00:00:00.000Z")]),
+    ).rejects.toThrow("injected metadata stage failure");
+
+    expect(await readFile(path.join(rootDir, "events", "2026-07.jsonl"), "utf8")).toBe(originalPartition);
+    expect((await store.read()).map((item) => item.id)).toEqual(["original"]);
+    expect((await readdir(rootDir)).filter((name) => name.includes("pending-store-transaction"))).toEqual([]);
+    expect((await readdir(rootDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    expect((await readdir(path.join(rootDir, "events"))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("retries bounded Windows rename access errors", async () => {
+    let attempts = 0;
+    const retryingFs = {
+      ...nodeFs,
+      async rename(from: PathLike, to: PathLike) {
+        if (String(to).endsWith(path.join("events", "2026-07.jsonl")) && attempts++ < 2) {
+          throw Object.assign(new Error("injected access error"), { code: "EPERM" });
+        }
+        return nodeFs.rename(from, to);
+      },
+    };
+
+    await new PortableUsageStore(rootDir, retryingFs).upsert([
+      event("retry", "2026-07-01T00:00:00.000Z"),
+    ]);
+
+    expect(attempts).toBe(3);
+    expect((await store.read()).map((item) => item.id)).toEqual(["retry"]);
+  });
+
+  it("removes only recognized stale store temp files during rebuild", async () => {
+    const eventsDir = path.join(rootDir, "events");
+    await mkdir(eventsDir, { recursive: true });
+    const recognized = path.join(
+      eventsDir,
+      "2026-07.jsonl.123.1000000000000.00000000-0000-4000-8000-000000000000.tmp",
+    );
+    const unrelated = path.join(eventsDir, "unrelated.tmp");
+    await writeFile(recognized, "stale", "utf8");
+    await writeFile(unrelated, "keep", "utf8");
+    const old = new Date("2000-01-01T00:00:00.000Z");
+    await utimes(recognized, old, old);
+    await utimes(unrelated, old, old);
+
+    await store.rebuildMetadata();
+
+    await expect(readFile(recognized, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(unrelated, "utf8")).resolves.toBe("keep");
+  });
+
+  it("reads each historical partition once during upsert", async () => {
+    await store.upsert([
+      event("july", "2026-07-01T00:00:00.000Z"),
+      event("august", "2026-08-01T00:00:00.000Z"),
+    ]);
+    const partitionReads = new Map<string, number>();
+    const countingFs = {
+      ...nodeFs,
+      async readFile(file: PathLike | FileHandle, options?: unknown) {
+        const name = path.basename(String(file));
+        if (name === "2026-07.jsonl" || name === "2026-08.jsonl") {
+          partitionReads.set(name, (partitionReads.get(name) ?? 0) + 1);
+        }
+        return nodeFs.readFile(file, options as Parameters<typeof nodeFs.readFile>[1]);
+      },
+    };
+
+    await new PortableUsageStore(rootDir, countingFs).upsert([
+      event("september", "2026-09-01T00:00:00.000Z"),
+    ]);
+
+    expect(Object.fromEntries(partitionReads)).toEqual({ "2026-07.jsonl": 1, "2026-08.jsonl": 1 });
   });
 
   it("does not leave temporary files after successful writes", async () => {
