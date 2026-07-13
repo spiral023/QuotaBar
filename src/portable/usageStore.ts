@@ -9,6 +9,7 @@ import {
   type PortableStoreMetadata,
   type PortableUsageEvent,
 } from "./types";
+import { sanitizePortableIngestState } from "./ingestState";
 import { withPortableRootLock } from "./rootLock";
 
 const PARTITION_FILE = /^(\d{4}-\d{2})\.jsonl$/;
@@ -95,6 +96,10 @@ export class PortableUsageStore {
     return this.ingestStatePath();
   }
 
+  recoverPending(): Promise<void> {
+    return this.exclusive(() => this.prepareStore());
+  }
+
   read(range: Range = {}): Promise<PortableUsageEvent[]> {
     return this.exclusive(async () => {
       await this.prepareStore();
@@ -158,9 +163,15 @@ export class PortableUsageStore {
 
   async reconcileWithIngestState(
     events: readonly PortableUsageEvent[],
-    state: PortableIngestState,
+    state: unknown,
   ): Promise<{ inserted: number; updated: number; existing: number }> {
-    return this.exclusive(() => this.reconcileUnlocked(events, `${JSON.stringify(state, null, 2)}\n`));
+    let sanitized: PortableIngestState;
+    try {
+      sanitized = sanitizePortableIngestState(state);
+    } catch {
+      throw new Error("Invalid portable ingest state");
+    }
+    return this.exclusive(() => this.reconcileUnlocked(events, `${JSON.stringify(sanitized, null, 2)}\n`));
   }
 
   private async reconcileUnlocked(
@@ -175,6 +186,8 @@ export class PortableUsageStore {
       incomingById.set(sanitized.id, sanitized);
     }
 
+    // Metadata/stat identities plus the in-memory partition cache avoid unchanged file reads. Reconciliation still
+    // builds a transient ID map; a persistent archive-wide ID index is intentionally deferred to avoid a new sidecar.
     const snapshots = await this.scanPartitions({ acceptMisplaced: false });
     const storedByMonth = snapshotsToMaps(snapshots);
     const storedById = new Map<string, PortableUsageEvent>();

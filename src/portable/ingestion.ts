@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   getClaudeProjectsDirs,
   getCodexSessionsDirs,
+  getPortableUsageDir,
 } from "../config/paths";
 import {
   listCodexSourceFilesStrict,
@@ -17,6 +18,12 @@ import {
   type SourceFileRef,
 } from "../pricing/jsonl-reader";
 import { fromClaudeEntries, fromCodexEvents } from "./eventAdapters";
+import {
+  isCurrentIngestSourceState,
+  parsePortableIngestStateForLoad,
+  portableIngestSourceKey,
+  type CurrentIngestSourceState,
+} from "./ingestState";
 import { withNamedPortableRootLock } from "./rootLock";
 import { PORTABLE_STORE_VERSION, type PortableIngestState, type PortableProvider, type PortableUsageEvent } from "./types";
 import { PortableUsageStore } from "./usageStore";
@@ -27,6 +34,7 @@ type IngestError = { provider: PortableProvider; path: string; message: SourceEr
 type IngestDiagnostic = { code: "state_recovered"; path: string };
 type IngestionStore = {
   getIngestStatePath(): string;
+  recoverPending(): Promise<void>;
   reconcileWithIngestState(events: readonly PortableUsageEvent[], state: PortableIngestState): Promise<ReconcileResult>;
 };
 
@@ -74,33 +82,21 @@ interface SourceDiscovery {
   failedRoots: FailedSourceRoot[];
 }
 
-interface CurrentSourceState {
-  provider: PortableProvider;
-  path: string;
-  size: string;
-  mtimeNs: string;
-  ctimeNs: string;
-  processedAt: string;
-  eventIds: string[];
-  active: boolean;
-}
-
 interface LoadedState {
   state: PortableIngestState;
   diagnostics: IngestDiagnostic[];
   rewriteRequired: boolean;
 }
 
-interface ParsedState {
-  state: PortableIngestState;
-  migrated: boolean;
-}
-
 const stateQueues = new Map<string, Promise<void>>();
+// Normal production has one canonical root; retaining its store also retains verified partition snapshots.
+const defaultStores = new Map<string, PortableUsageStore>();
 const INGEST_OPERATION_ERROR = Symbol("ingest-operation-error");
+const CORRUPT_STATE_FILE = /^ingest-state\.corrupt\.(\d{13})\.json$/;
+const MAX_CORRUPT_STATE_FILES = 3;
 
 export function ingestPortableUsage(options: IngestPortableUsageOptions = {}): Promise<IngestPortableUsageResult> {
-  const store = options.store ?? new PortableUsageStore();
+  const store = options.store ?? getDefaultStore();
   let storeStatePath: string;
   try {
     storeStatePath = path.resolve(store.getIngestStatePath());
@@ -151,6 +147,11 @@ async function ingestExclusive(
   const readCodex = options.readCodex ?? readCodexTokensFromFilesStrict;
   const statSource = options.statSource ?? statSourceStrict;
   const errors: IngestError[] = [];
+  try {
+    await store.recoverPending();
+  } catch {
+    throw new Error("Portable usage store recovery failed");
+  }
   const loaded = await readStateRecovering(statePath);
   const previousState = loaded.state;
   const nextSources = cloneSources(previousState.sources);
@@ -162,7 +163,7 @@ async function ingestExclusive(
 
   let activityChanged = loaded.rewriteRequired;
   for (const [key, source] of Object.entries(nextSources)) {
-    if (!isCurrentSourceState(source) || currentKeys.has(sourceKey(source.provider, source.path))) continue;
+    if (!isCurrentIngestSourceState(source) || currentKeys.has(sourceKey(source.provider, source.path))) continue;
     if (source.active !== false && isUnderFailedRoot(source, discovery.failedRoots)) {
       unavailableKeys.add(key);
     } else if (source.active !== false) {
@@ -172,7 +173,7 @@ async function ingestExclusive(
   }
 
   const fingerprints = new Map<string, Omit<PortableSourceFingerprint, "isFile">>();
-  const previousByKey = new Map<string, CurrentSourceState>();
+  const previousByKey = new Map<string, CurrentIngestSourceState>();
   const changedKeys: string[] = [];
   let changed = 0;
   for (const source of knownSources) {
@@ -185,8 +186,7 @@ async function ingestExclusive(
         || !isDecimal(fingerprint.mtimeNs) || !isDecimal(fingerprint.ctimeNs)) throw new Error("invalid stat");
     } catch {
       if (previous && previous.active !== false) {
-        nextSources[source.key] = { ...previous, active: false };
-        activityChanged = true;
+        unavailableKeys.add(source.key);
       }
       errors.push({ provider: source.provider, path: source.path, message: "stat_failed" });
       continue;
@@ -206,9 +206,9 @@ async function ingestExclusive(
   }
 
   const collisionOwners = new Set<string>();
-  const activeOwners = new Map<string, CurrentSourceState>();
+  const activeOwners = new Map<string, CurrentIngestSourceState>();
   for (const [key, source] of Object.entries(nextSources)) {
-    if (isCurrentSourceState(source) && source.active) activeOwners.set(key, source);
+    if (isCurrentIngestSourceState(source) && source.active) activeOwners.set(key, source);
   }
   for (const [changedKey, events] of batches) {
     const ids = new Set([
@@ -256,7 +256,7 @@ async function ingestExclusive(
           path: source.path,
           ...fingerprint,
           processedAt: new Date().toISOString(),
-          eventIds: events.map(({ id }) => id),
+          eventIds: [...new Set(events.map(({ id }) => id))].sort(),
           active: true,
         };
       }
@@ -406,13 +406,14 @@ async function readStateRecovering(statePath: string): Promise<LoadedState> {
     throw new Error("Portable ingest state read failed");
   }
   try {
-    const parsed = parseState(JSON.parse(text));
+    const parsed = parsePortableIngestStateForLoad(JSON.parse(text));
     const canonical = `${JSON.stringify(parsed.state, null, 2)}\n`;
     return { state: parsed.state, diagnostics: [], rewriteRequired: parsed.migrated || text !== canonical };
   } catch {
     const quarantine = path.join(path.dirname(statePath), `ingest-state.corrupt.${Date.now()}.json`);
     try {
       await renameWithRetry(statePath, quarantine);
+      await cleanupCorruptStateFiles(path.dirname(statePath));
     } catch {
       throw new Error("Portable ingest state recovery failed");
     }
@@ -422,85 +423,6 @@ async function readStateRecovering(statePath: string): Promise<LoadedState> {
       rewriteRequired: true,
     };
   }
-}
-
-function parseState(value: unknown): ParsedState {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid state");
-  const fields = value as Record<string, unknown>;
-  if (!hasExactKeys(fields, ["schemaVersion", "sources"])
-    || fields.schemaVersion !== PORTABLE_STORE_VERSION
-    || !fields.sources || typeof fields.sources !== "object" || Array.isArray(fields.sources)) throw new Error("invalid state");
-  const sources: PortableIngestState["sources"] = {};
-  let migrated = false;
-  for (const [key, valueSource] of Object.entries(fields.sources as Record<string, unknown>)) {
-    if (!valueSource || typeof valueSource !== "object" || Array.isArray(valueSource)) throw new Error("invalid source");
-    const source = valueSource as Record<string, unknown>;
-    if (isLegacySource(source)) {
-      migrated = true;
-      sources[key] = { size: source.size, mtimeMs: source.mtimeMs, processedAt: source.processedAt };
-      continue;
-    }
-    if (isOwnedLegacySource(source)) {
-      migrated = true;
-      sources[key] = {
-        provider: source.provider,
-        path: source.path,
-        size: source.size,
-        mtimeMs: source.mtimeMs,
-        processedAt: source.processedAt,
-        eventIds: [...source.eventIds],
-        active: source.active,
-      };
-      continue;
-    }
-    if (!isCurrentSourceRecord(source)) throw new Error("invalid source");
-    const current = source as unknown as CurrentSourceState;
-    if (key !== sourceKey(current.provider, current.path)) throw new Error("invalid source key");
-    sources[key] = {
-      provider: current.provider,
-      path: current.path,
-      size: current.size,
-      mtimeNs: current.mtimeNs,
-      ctimeNs: current.ctimeNs,
-      processedAt: current.processedAt,
-      eventIds: [...current.eventIds],
-      active: current.active,
-    };
-  }
-  return { state: { schemaVersion: PORTABLE_STORE_VERSION, sources }, migrated };
-}
-
-function isLegacySource(source: Record<string, unknown>): source is {
-  size: number; mtimeMs: number; processedAt: string;
-} {
-  return Object.keys(source).every((key) => ["size", "mtimeMs", "processedAt"].includes(key))
-    && isNonNegativeFinite(source.size) && isNonNegativeFinite(source.mtimeMs)
-    && typeof source.processedAt === "string" && Number.isFinite(Date.parse(source.processedAt));
-}
-
-function isOwnedLegacySource(source: Record<string, unknown>): source is {
-  provider: PortableProvider; path: string; size: number; mtimeMs: number;
-  processedAt: string; eventIds: string[]; active: boolean;
-} {
-  const allowed = ["provider", "path", "size", "mtimeMs", "processedAt", "eventIds", "active"];
-  return Object.keys(source).every((key) => allowed.includes(key))
-    && (source.provider === "claude" || source.provider === "codex")
-    && typeof source.path === "string" && path.isAbsolute(source.path)
-    && isNonNegativeFinite(source.size) && isNonNegativeFinite(source.mtimeMs)
-    && typeof source.processedAt === "string" && Number.isFinite(Date.parse(source.processedAt))
-    && Array.isArray(source.eventIds) && source.eventIds.every((id) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id))
-    && typeof source.active === "boolean";
-}
-
-function isCurrentSourceRecord(source: Record<string, unknown>): boolean {
-  const allowed = ["provider", "path", "size", "mtimeNs", "ctimeNs", "processedAt", "eventIds", "active"];
-  return Object.keys(source).every((key) => allowed.includes(key))
-    && (source.provider === "claude" || source.provider === "codex")
-    && typeof source.path === "string" && path.isAbsolute(source.path) && isDecimal(source.size)
-    && isDecimal(source.mtimeNs) && isDecimal(source.ctimeNs)
-    && typeof source.processedAt === "string" && Number.isFinite(Date.parse(source.processedAt))
-    && Array.isArray(source.eventIds) && source.eventIds.every((id) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id))
-    && typeof source.active === "boolean";
 }
 
 async function renameWithRetry(from: string, to: string): Promise<void> {
@@ -516,33 +438,45 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
   }
 }
 
+async function cleanupCorruptStateFiles(rootDir: string): Promise<void> {
+  const entries = await nodeFs.readdir(rootDir, { withFileTypes: true });
+  const candidates = entries
+    .filter((entry) => entry.isFile())
+    .flatMap((entry) => {
+      const match = CORRUPT_STATE_FILE.exec(entry.name);
+      return match ? [{ name: entry.name, timestamp: Number(match[1]) }] : [];
+    })
+    .sort((left, right) => right.timestamp - left.timestamp || compareText(right.name, left.name));
+  for (const candidate of candidates.slice(MAX_CORRUPT_STATE_FILES)) {
+    try {
+      await nodeFs.unlink(path.join(rootDir, candidate.name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+    }
+  }
+}
+
 function findPreviousSource(
   sources: PortableIngestState["sources"],
   source: KnownSource,
-): CurrentSourceState | undefined {
+): CurrentIngestSourceState | undefined {
   const direct = sources[source.key];
-  if (isCurrentSourceState(direct)) return direct;
-  return Object.values(sources).find((candidate): candidate is CurrentSourceState => isCurrentSourceState(candidate)
+  if (isCurrentIngestSourceState(direct)) return direct;
+  return Object.values(sources).find((candidate): candidate is CurrentIngestSourceState => isCurrentIngestSourceState(candidate)
     && candidate.provider === source.provider && canonicalPath(candidate.path) === canonicalPath(source.path));
 }
 
 function removeLegacySource(sources: PortableIngestState["sources"], source: KnownSource): void {
   for (const [key, candidate] of Object.entries(sources)) {
-    if (isCurrentSourceState(candidate)) continue;
+    if (isCurrentIngestSourceState(candidate)) continue;
     const sameOwnedPath = candidate.provider === source.provider && typeof candidate.path === "string"
       && canonicalPath(candidate.path) === canonicalPath(source.path);
     if (sameOwnedPath || canonicalPath(key) === canonicalPath(source.path)) delete sources[key];
   }
 }
 
-function isCurrentSourceState(
-  value: PortableIngestState["sources"][string] | undefined,
-): value is CurrentSourceState {
-  return Boolean(value && isCurrentSourceRecord(value as unknown as Record<string, unknown>));
-}
-
 function sameFingerprint(
-  state: CurrentSourceState,
+  state: CurrentIngestSourceState,
   fingerprint: { size: string; mtimeNs: string; ctimeNs: string },
 ): boolean {
   return state.size === fingerprint.size && state.mtimeNs === fingerprint.mtimeNs && state.ctimeNs === fingerprint.ctimeNs;
@@ -569,7 +503,7 @@ function emptyResult(
 }
 
 function sourceKey(provider: PortableProvider, sourcePath: string): string {
-  return `${provider}:${canonicalPath(sourcePath)}`;
+  return portableIngestSourceKey(provider, sourcePath);
 }
 
 function canonicalPath(filePath: string): string {
@@ -581,12 +515,12 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function compareSourceStates(left: CurrentSourceState, right: CurrentSourceState): number {
+function compareSourceStates(left: CurrentIngestSourceState, right: CurrentIngestSourceState): number {
   return compareText(left.provider, right.provider)
     || compareText(canonicalPath(left.path), canonicalPath(right.path));
 }
 
-function isUnderFailedRoot(source: CurrentSourceState, failedRoots: readonly FailedSourceRoot[]): boolean {
+function isUnderFailedRoot(source: CurrentIngestSourceState, failedRoots: readonly FailedSourceRoot[]): boolean {
   return failedRoots.some((root) => root.provider === source.provider && isPathContained(root.path, source.path));
 }
 
@@ -603,17 +537,18 @@ function isDecimal(value: unknown): value is string {
   return typeof value === "string" && /^\d+$/.test(value);
 }
 
-function isNonNegativeFinite(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
-}
-
-function hasExactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  const keys = Object.keys(value);
-  return keys.length === allowed.length && keys.every((key) => allowed.includes(key));
-}
-
 function isOperationError(value: unknown): value is { marker: symbol; error: unknown } {
   return Boolean(value && typeof value === "object"
     && (value as { marker?: unknown }).marker === INGEST_OPERATION_ERROR
     && Object.prototype.hasOwnProperty.call(value, "error"));
+}
+
+function getDefaultStore(): PortableUsageStore {
+  const rootDir = path.resolve(getPortableUsageDir());
+  const key = canonicalPath(rootDir);
+  const existing = defaultStores.get(key);
+  if (existing) return existing;
+  const store = new PortableUsageStore(rootDir);
+  defaultStores.set(key, store);
+  return store;
 }

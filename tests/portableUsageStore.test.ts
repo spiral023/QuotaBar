@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PortableUsageStore } from "../src/portable/usageStore";
-import type { PortableUsageEvent } from "../src/portable/types";
+import type { PortableIngestState, PortableUsageEvent } from "../src/portable/types";
 
 function event(
   id: string,
@@ -55,6 +55,12 @@ describe("PortableUsageStore", () => {
 
   it("exposes the canonical ingestion state path inside its root", () => {
     expect(store.getIngestStatePath()).toBe(path.join(rootDir, "ingest-state.json"));
+  });
+
+  it("exposes lock-safe pending transaction recovery without reading events", async () => {
+    await store.recoverPending();
+
+    expect(await readdir(rootDir)).toEqual([]);
   });
 
   it("writes events to their UTC monthly partitions", async () => {
@@ -164,6 +170,48 @@ describe("PortableUsageStore", () => {
 
     expect(JSON.parse(await readFile(path.join(rootDir, "ingest-state.json"), "utf8"))).toEqual(state);
     expect((await store.read()).map(({ id }) => id)).toEqual(["combined"]);
+  });
+
+  it("rejects extra runtime ingest-state fields before staging events or sensitive state", async () => {
+    const unsafeState: PortableIngestState & { authorization: string; rawToken: string } = {
+      schemaVersion: 1,
+      sources: {},
+      authorization: "credential-marker",
+      rawToken: "token-marker",
+    };
+
+    await expect(store.reconcileWithIngestState([
+      event("must-not-stage", "2026-07-02T00:00:00.000Z"),
+    ], unsafeState)).rejects.toThrow("Invalid portable ingest state");
+
+    expect(await readdir(rootDir)).toEqual([]);
+  });
+
+  it("persists unique sorted event ownership IDs through the combined store boundary", async () => {
+    const sourcePath = path.join(rootDir, "source.jsonl");
+    const firstId = "a".repeat(64);
+    const secondId = "b".repeat(64);
+    const canonicalPath = process.platform === "win32" ? sourcePath.toLowerCase() : sourcePath;
+    const state: PortableIngestState = {
+      schemaVersion: 1,
+      sources: {
+        [`claude:${canonicalPath}`]: {
+          provider: "claude",
+          path: sourcePath,
+          size: "1",
+          mtimeNs: "2",
+          ctimeNs: "3",
+          processedAt: "2026-07-01T00:00:00.000Z",
+          eventIds: [secondId, firstId, secondId],
+          active: true,
+        },
+      },
+    };
+
+    await store.reconcileWithIngestState([], state);
+
+    const stored = JSON.parse(await readFile(path.join(rootDir, "ingest-state.json"), "utf8")) as PortableIngestState;
+    expect(Object.values(stored.sources)[0].eventIds).toEqual([firstId, secondId]);
   });
 
   it("recovers ingest state with partitions after interruption before the state rename", async () => {

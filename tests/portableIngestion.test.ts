@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:f
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import type { PathLike } from "node:fs";
+import * as nodeFs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CodexTokenEvent, CodexSourceFileRef } from "../src/pricing/codex-log-reader";
 import type { ClaudeUsageEntry, SourceFileRef } from "../src/pricing/jsonl-reader";
@@ -198,6 +200,7 @@ describe("portable usage ingestion", () => {
     await writeFile(ref.file, "changed", "utf8");
     const failingStore = {
       getIngestStatePath: () => statePath,
+      recoverPending: async () => undefined,
       async reconcileWithIngestState(): Promise<never> {
         throw new Error("database failure secret-payload token=abc auth=def cookie=ghi JWT=Bearer.value");
       },
@@ -274,6 +277,31 @@ describe("portable usage ingestion", () => {
     expect(Object.keys(source).sort()).toEqual(["active", "ctimeNs", "eventIds", "mtimeNs", "path", "processedAt", "provider", "size"]);
     expect(stateText).not.toMatch(/provider-event-body-secret|session-secret|project-secret|123456|inputTokens/);
     expect((await readdir(rootDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("deduplicates source event ownership IDs before handing state to the store", async () => {
+    const ref = await claudeRef(rootDir, "duplicate-ownership.jsonl", "fixture");
+    let capturedState: { sources: Record<string, { eventIds?: string[] }> } | undefined;
+    const capturingStore = {
+      getIngestStatePath: () => statePath,
+      recoverPending: async () => undefined,
+      async reconcileWithIngestState(_events: unknown, state: unknown) {
+        capturedState = state as typeof capturedState;
+        return { inserted: 0, updated: 0, existing: 0 };
+      },
+    };
+
+    await ingestPortableUsage({
+      store: capturingStore,
+      statePath,
+      claudeRefs: [ref],
+      codexRefs: [],
+      readClaude: async () => [claude(), claude()],
+    });
+
+    expect(Object.values(capturedState?.sources ?? {})[0].eventIds).toEqual([
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+    ]);
   });
 
   it("uses lossless stat fingerprints and detects a same-size high-resolution rewrite", async () => {
@@ -380,6 +408,34 @@ describe("portable usage ingestion", () => {
     expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({ schemaVersion: 1, sources: {} });
   });
 
+  it("retains only the newest three exact corrupt-state files and preserves unrelated entries", async () => {
+    const oldNames = [
+      "ingest-state.corrupt.1000000000001.json",
+      "ingest-state.corrupt.1000000000002.json",
+      "ingest-state.corrupt.1000000000003.json",
+      "ingest-state.corrupt.1000000000004.json",
+    ];
+    for (const name of oldNames) await writeFile(path.join(rootDir, name), "old", "utf8");
+    const matchingDirectory = "ingest-state.corrupt.9999999999999.json";
+    const unrelated = "ingest-state.corrupt.1000000000000.json.backup";
+    await mkdir(path.join(rootDir, matchingDirectory));
+    await writeFile(path.join(rootDir, unrelated), "keep", "utf8");
+    await writeFile(statePath, "{malformed", "utf8");
+
+    await ingestPortableUsage({ store, statePath, claudeRefs: [], codexRefs: [] });
+
+    const entries = await readdir(rootDir, { withFileTypes: true });
+    const quarantines = entries
+      .filter((entry) => entry.isFile() && /^ingest-state\.corrupt\.\d{13}\.json$/.test(entry.name))
+      .map(({ name }) => name)
+      .sort();
+    expect(quarantines).toHaveLength(3);
+    expect(quarantines).not.toContain(oldNames[0]);
+    expect(quarantines).not.toContain(oldNames[1]);
+    expect(entries.find(({ name }) => name === matchingDirectory)?.isDirectory()).toBe(true);
+    expect(await readFile(path.join(rootDir, unrelated), "utf8")).toBe("keep");
+  });
+
   it("continues strict listing across known directories and reports a safe category", async () => {
     const missing = path.join(rootDir, "missing-projects");
     const projects = path.join(rootDir, "available-projects");
@@ -429,6 +485,102 @@ describe("portable usage ingestion", () => {
     expect(unavailable.errors).toEqual([{ provider: "claude", path: winnerDir, message: "listing_failed" }]);
     expect(recovered.errors).toEqual([]);
     expect([winnerDuringFailure, winnerAfterRecovery]).toEqual([9, 9]);
+  });
+
+  it("preserves a winning source through stat failure while a lower-precedence owner changes", async () => {
+    const contender = await claudeRef(rootDir, "a-stat-contender.jsonl", "contender");
+    const winner = await claudeRef(rootDir, "z-stat-winner.jsonl", "winner");
+    const fingerprints = new Map([
+      [contender.file, { isFile: true, size: "10", mtimeNs: "10", ctimeNs: "10" }],
+      [winner.file, { isFile: true, size: "20", mtimeNs: "20", ctimeNs: "20" }],
+    ]);
+    let failWinnerStat = false;
+    let contenderTokens = 1;
+    const statSource = vi.fn(async (sourcePath: string) => {
+      if (failWinnerStat && sourcePath === winner.file) throw new Error("unavailable");
+      return fingerprints.get(sourcePath) as { isFile: boolean; size: string; mtimeNs: string; ctimeNs: string };
+    });
+    const readClaude = vi.fn(async ([ref]: SourceFileRef[]) => [claude({
+      sourceEventId: "shared-stat-owner",
+      inputTokens: ref.file === winner.file ? 9 : contenderTokens,
+    })]);
+    const options = { store, statePath, claudeRefs: [contender, winner], codexRefs: [], statSource, readClaude };
+
+    await ingestPortableUsage(options);
+    failWinnerStat = true;
+    contenderTokens = 2;
+    fingerprints.set(contender.file, { isFile: true, size: "10", mtimeNs: "10", ctimeNs: "11" });
+    const unavailable = await ingestPortableUsage(options);
+    const winnerDuringFailure = (await store.read())[0].inputTokens;
+
+    failWinnerStat = false;
+    const recovered = await ingestPortableUsage(options);
+    const winnerAfterRecovery = (await store.read())[0].inputTokens;
+
+    expect(unavailable.errors).toEqual([{ provider: "claude", path: winner.file, message: "stat_failed" }]);
+    expect(recovered.errors).toEqual([]);
+    expect([winnerDuringFailure, winnerAfterRecovery]).toEqual([9, 9]);
+  });
+
+  it("recovers pending combined state before deriving ownership from source discovery", async () => {
+    const contenderDir = path.join(rootDir, "a-recovery-contender");
+    const unavailableWinnerDir = path.join(rootDir, "z-recovery-winner");
+    const contender = await claudeRef(contenderDir, "session.jsonl", "contender");
+    const readClaude = vi.fn(async () => [claude({ sourceEventId: "shared-recovery-owner", inputTokens: 1 })]);
+    await ingestPortableUsage({ store, statePath, claudeRefs: [contender], codexRefs: [], readClaude });
+    const originalState = JSON.parse(await readFile(statePath, "utf8")) as {
+      schemaVersion: 1;
+      sources: Record<string, Record<string, unknown>>;
+    };
+    const storedWinner = (await store.read())[0];
+    const contenderState = Object.values(originalState.sources)[0];
+    const winnerPath = path.join(unavailableWinnerDir, "session.jsonl");
+    const canonicalWinnerPath = process.platform === "win32" ? winnerPath.toLowerCase() : winnerPath;
+    const winnerKey = `claude:${canonicalWinnerPath}`;
+    const pendingState = {
+      schemaVersion: 1 as const,
+      sources: {
+        ...originalState.sources,
+        [winnerKey]: {
+          ...contenderState,
+          path: winnerPath,
+          eventIds: [storedWinner.id],
+          active: true,
+        },
+      },
+    };
+    let failStateRename = true;
+    const failingFs = {
+      ...nodeFs,
+      async rename(from: PathLike, to: PathLike) {
+        if (failStateRename && String(to).endsWith("ingest-state.json")) {
+          failStateRename = false;
+          throw Object.assign(new Error("injected state rename failure"), { code: "EIO" });
+        }
+        return nodeFs.rename(from, to);
+      },
+    };
+    await expect(new PortableUsageStore(rootDir, failingFs).reconcileWithIngestState([
+      { ...storedWinner, inputTokens: 9 },
+    ], pendingState)).rejects.toThrow("injected state rename failure");
+
+    await writeFile(contender.file, "contender-changed", "utf8");
+    readClaude.mockResolvedValue([claude({ sourceEventId: "shared-recovery-owner", inputTokens: 2 })]);
+    const result = await ingestPortableUsage({
+      store: new PortableUsageStore(rootDir),
+      statePath,
+      claudeProjectsDirs: [contenderDir, unavailableWinnerDir],
+      codexRefs: [],
+      readClaude,
+    });
+
+    expect(result.errors).toEqual([{
+      provider: "claude", path: unavailableWinnerDir, message: "listing_failed",
+    }]);
+    expect((await store.read())[0].inputTokens).toBe(9);
+    const recoveredState = JSON.parse(await readFile(statePath, "utf8")) as { sources: Record<string, unknown> };
+    expect(recoveredState.sources).toHaveProperty(winnerKey);
+    expect(await readdir(rootDir)).not.toContain("pending-store-transaction.json");
   });
 
   it("rereads a truly missing source when it reappears with the same fingerprint", async () => {
