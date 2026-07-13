@@ -53,6 +53,10 @@ describe("PortableUsageStore", () => {
     await rm(rootDir, { recursive: true, force: true });
   });
 
+  it("exposes the canonical ingestion state path inside its root", () => {
+    expect(store.getIngestStatePath()).toBe(path.join(rootDir, "ingest-state.json"));
+  });
+
   it("writes events to their UTC monthly partitions", async () => {
     await store.upsert([
       event("july-2", "2026-07-31T23:59:59.000Z"),

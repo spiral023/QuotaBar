@@ -91,6 +91,10 @@ export class PortableUsageStore {
     this.rootKey = canonicalPath(this.rootDir);
   }
 
+  getIngestStatePath(): string {
+    return this.ingestStatePath();
+  }
+
   read(range: Range = {}): Promise<PortableUsageEvent[]> {
     return this.exclusive(async () => {
       await this.prepareStore();

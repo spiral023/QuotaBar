@@ -3,7 +3,6 @@ import path from "node:path";
 import {
   getClaudeProjectsDirs,
   getCodexSessionsDirs,
-  getPortableIngestStatePath,
 } from "../config/paths";
 import {
   listCodexSourceFilesStrict,
@@ -27,6 +26,7 @@ type SourceErrorCode = "listing_failed" | "stat_failed" | "read_failed" | "adapt
 type IngestError = { provider: PortableProvider; path: string; message: SourceErrorCode };
 type IngestDiagnostic = { code: "state_recovered"; path: string };
 type IngestionStore = {
+  getIngestStatePath(): string;
   reconcileWithIngestState(events: readonly PortableUsageEvent[], state: PortableIngestState): Promise<ReconcileResult>;
 };
 
@@ -39,6 +39,7 @@ export interface PortableSourceFingerprint {
 
 export interface IngestPortableUsageOptions {
   store?: IngestionStore;
+  /** Must resolve exactly to the supplied store's canonical ingest-state.json path. */
   statePath?: string;
   claudeProjectsDirs?: string | string[];
   codexSessionsDirs?: string | string[];
@@ -63,6 +64,16 @@ interface KnownSource {
   ref: SourceFileRef | CodexSourceFileRef;
 }
 
+interface FailedSourceRoot {
+  provider: PortableProvider;
+  path: string;
+}
+
+interface SourceDiscovery {
+  sources: KnownSource[];
+  failedRoots: FailedSourceRoot[];
+}
+
 interface CurrentSourceState {
   provider: PortableProvider;
   path: string;
@@ -77,16 +88,32 @@ interface CurrentSourceState {
 interface LoadedState {
   state: PortableIngestState;
   diagnostics: IngestDiagnostic[];
+  rewriteRequired: boolean;
+}
+
+interface ParsedState {
+  state: PortableIngestState;
+  migrated: boolean;
 }
 
 const stateQueues = new Map<string, Promise<void>>();
 const INGEST_OPERATION_ERROR = Symbol("ingest-operation-error");
 
 export function ingestPortableUsage(options: IngestPortableUsageOptions = {}): Promise<IngestPortableUsageResult> {
-  const statePath = path.resolve(options.statePath ?? getPortableIngestStatePath());
+  const store = options.store ?? new PortableUsageStore();
+  let storeStatePath: string;
+  try {
+    storeStatePath = path.resolve(store.getIngestStatePath());
+  } catch {
+    return Promise.reject(new Error("Portable usage store configuration is invalid"));
+  }
+  const statePath = path.resolve(options.statePath ?? storeStatePath);
+  if (canonicalPath(statePath) !== canonicalPath(storeStatePath)) {
+    return Promise.reject(new Error("Portable ingest state path must match the store root"));
+  }
   const stateKey = canonicalPath(statePath);
   const previous = stateQueues.get(stateKey) ?? Promise.resolve();
-  const result = previous.catch(() => undefined).then(() => runWithIngestionLock(options, statePath));
+  const result = previous.catch(() => undefined).then(() => runWithIngestionLock(options, store, statePath));
   const tail = result.then(() => undefined, () => undefined);
   stateQueues.set(stateKey, tail);
   return result.finally(() => {
@@ -96,12 +123,13 @@ export function ingestPortableUsage(options: IngestPortableUsageOptions = {}): P
 
 async function runWithIngestionLock(
   options: IngestPortableUsageOptions,
+  store: IngestionStore,
   statePath: string,
 ): Promise<IngestPortableUsageResult> {
   try {
     return await withNamedPortableRootLock(path.dirname(statePath), ".portable-ingestion.lock", async () => {
       try {
-        return await ingestExclusive(options, statePath);
+        return await ingestExclusive(options, store, statePath);
       } catch (error) {
         throw { marker: INGEST_OPERATION_ERROR, error };
       }
@@ -116,9 +144,9 @@ async function runWithIngestionLock(
 
 async function ingestExclusive(
   options: IngestPortableUsageOptions,
+  store: IngestionStore,
   statePath: string,
 ): Promise<IngestPortableUsageResult> {
-  const store = options.store ?? new PortableUsageStore();
   const readClaude = options.readClaude ?? readClaudeUsageEntriesFromFilesStrict;
   const readCodex = options.readCodex ?? readCodexTokensFromFilesStrict;
   const statSource = options.statSource ?? statSourceStrict;
@@ -126,13 +154,18 @@ async function ingestExclusive(
   const loaded = await readStateRecovering(statePath);
   const previousState = loaded.state;
   const nextSources = cloneSources(previousState.sources);
-  const knownSources = await collectKnownSources(options, errors);
+  const discovery = await collectKnownSources(options, errors);
+  const knownSources = discovery.sources;
   const sourceByKey = new Map(knownSources.map((source) => [source.key, source]));
   const currentKeys = new Set(sourceByKey.keys());
+  const unavailableKeys = new Set<string>();
 
-  let activityChanged = loaded.diagnostics.length > 0;
+  let activityChanged = loaded.rewriteRequired;
   for (const [key, source] of Object.entries(nextSources)) {
-    if (isCurrentSourceState(source) && !currentKeys.has(sourceKey(source.provider, source.path)) && source.active !== false) {
+    if (!isCurrentSourceState(source) || currentKeys.has(sourceKey(source.provider, source.path))) continue;
+    if (source.active !== false && isUnderFailedRoot(source, discovery.failedRoots)) {
+      unavailableKeys.add(key);
+    } else if (source.active !== false) {
       nextSources[key] = { ...source, active: false };
       activityChanged = true;
     }
@@ -160,12 +193,9 @@ async function ingestExclusive(
     }
     const value = { size: fingerprint.size, mtimeNs: fingerprint.mtimeNs, ctimeNs: fingerprint.ctimeNs };
     fingerprints.set(source.key, value);
-    if (!previous || !sameFingerprint(previous, value)) {
+    if (!previous || !previous.active || !sameFingerprint(previous, value)) {
       changed += 1;
       changedKeys.push(source.key);
-    } else if (!previous.active) {
-      nextSources[source.key] = { ...previous, active: true };
-      activityChanged = true;
     }
   }
 
@@ -176,13 +206,17 @@ async function ingestExclusive(
   }
 
   const collisionOwners = new Set<string>();
+  const activeOwners = new Map<string, CurrentSourceState>();
+  for (const [key, source] of Object.entries(nextSources)) {
+    if (isCurrentSourceState(source) && source.active) activeOwners.set(key, source);
+  }
   for (const [changedKey, events] of batches) {
     const ids = new Set([
       ...events.map(({ id }) => id),
       ...(previousByKey.get(changedKey)?.eventIds ?? []),
     ]);
-    for (const [ownerKey, owner] of previousByKey) {
-      if (owner.active && owner.eventIds.some((id) => ids.has(id))) collisionOwners.add(ownerKey);
+    for (const [ownerKey, owner] of activeOwners) {
+      if (owner.eventIds.some((id) => ids.has(id))) collisionOwners.add(ownerKey);
     }
   }
   for (const ownerKey of [...collisionOwners].sort(compareText)) {
@@ -194,6 +228,13 @@ async function ingestExclusive(
   const protectedIds = new Set<string>();
   for (const key of failedKeys) {
     for (const id of previousByKey.get(key)?.eventIds ?? []) protectedIds.add(id);
+  }
+  const winningOwnerById = new Map<string, string>();
+  for (const [ownerKey, owner] of [...activeOwners].sort(([, left], [, right]) => compareSourceStates(left, right))) {
+    for (const id of owner.eventIds) winningOwnerById.set(id, ownerKey);
+  }
+  for (const [id, ownerKey] of winningOwnerById) {
+    if (unavailableKeys.has(ownerKey)) protectedIds.add(id);
   }
   const incoming: PortableUsageEvent[] = [];
   let successfulChanged = 0;
@@ -276,43 +317,57 @@ async function readSource(
 async function collectKnownSources(
   options: IngestPortableUsageOptions,
   errors: IngestError[],
-): Promise<KnownSource[]> {
+): Promise<SourceDiscovery> {
+  const failedRoots: FailedSourceRoot[] = [];
   const claudeRefs = options.claudeRefs === undefined
     ? await listClaudeDirectories(options.claudeProjectsDirs === undefined
       ? getClaudeProjectsDirs()
-      : asList(options.claudeProjectsDirs), errors)
+      : asList(options.claudeProjectsDirs), errors, failedRoots)
     : [...options.claudeRefs];
   const codexRefs = options.codexRefs === undefined
     ? await listCodexDirectories(options.codexSessionsDirs === undefined
       ? getCodexSessionsDirs()
-      : asList(options.codexSessionsDirs), errors)
+      : asList(options.codexSessionsDirs), errors, failedRoots)
     : [...options.codexRefs];
   const unique = new Map<string, KnownSource>();
   for (const ref of claudeRefs) addKnownSource(unique, "claude", ref);
   for (const ref of codexRefs) addKnownSource(unique, "codex", ref);
-  return [...unique.values()].sort((left, right) => compareText(left.provider, right.provider)
-    || compareText(canonicalPath(left.path), canonicalPath(right.path)));
+  return {
+    sources: [...unique.values()].sort((left, right) => compareText(left.provider, right.provider)
+      || compareText(canonicalPath(left.path), canonicalPath(right.path))),
+    failedRoots,
+  };
 }
 
-async function listClaudeDirectories(directories: string[], errors: IngestError[]): Promise<SourceFileRef[]> {
+async function listClaudeDirectories(
+  directories: string[],
+  errors: IngestError[],
+  failedRoots: FailedSourceRoot[],
+): Promise<SourceFileRef[]> {
   const refs: SourceFileRef[] = [];
   for (const directory of directories) {
     try {
       refs.push(...await listClaudeSourceFilesStrict(directory));
     } catch {
       errors.push({ provider: "claude", path: directory, message: "listing_failed" });
+      failedRoots.push({ provider: "claude", path: path.resolve(directory) });
     }
   }
   return refs;
 }
 
-async function listCodexDirectories(directories: string[], errors: IngestError[]): Promise<CodexSourceFileRef[]> {
+async function listCodexDirectories(
+  directories: string[],
+  errors: IngestError[],
+  failedRoots: FailedSourceRoot[],
+): Promise<CodexSourceFileRef[]> {
   const refs: CodexSourceFileRef[] = [];
   for (const directory of directories) {
     try {
       refs.push(...await listCodexSourceFilesStrict(directory));
     } catch {
       errors.push({ provider: "codex", path: directory, message: "listing_failed" });
+      failedRoots.push({ provider: "codex", path: path.resolve(directory) });
     }
   }
   return refs;
@@ -344,14 +399,16 @@ async function readStateRecovering(statePath: string): Promise<LoadedState> {
     text = await nodeFs.readFile(statePath, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return { state: emptyState(), diagnostics: [] };
+      return { state: emptyState(), diagnostics: [], rewriteRequired: false };
     }
     // The filesystem message may contain arbitrary host details; this boundary intentionally has no cause.
     // eslint-disable-next-line preserve-caught-error
     throw new Error("Portable ingest state read failed");
   }
   try {
-    return { state: parseState(JSON.parse(text)), diagnostics: [] };
+    const parsed = parseState(JSON.parse(text));
+    const canonical = `${JSON.stringify(parsed.state, null, 2)}\n`;
+    return { state: parsed.state, diagnostics: [], rewriteRequired: parsed.migrated || text !== canonical };
   } catch {
     const quarantine = path.join(path.dirname(statePath), `ingest-state.corrupt.${Date.now()}.json`);
     try {
@@ -359,24 +416,32 @@ async function readStateRecovering(statePath: string): Promise<LoadedState> {
     } catch {
       throw new Error("Portable ingest state recovery failed");
     }
-    return { state: emptyState(), diagnostics: [{ code: "state_recovered", path: statePath }] };
+    return {
+      state: emptyState(),
+      diagnostics: [{ code: "state_recovered", path: statePath }],
+      rewriteRequired: true,
+    };
   }
 }
 
-function parseState(value: unknown): PortableIngestState {
+function parseState(value: unknown): ParsedState {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid state");
   const fields = value as Record<string, unknown>;
-  if (fields.schemaVersion !== PORTABLE_STORE_VERSION
+  if (!hasExactKeys(fields, ["schemaVersion", "sources"])
+    || fields.schemaVersion !== PORTABLE_STORE_VERSION
     || !fields.sources || typeof fields.sources !== "object" || Array.isArray(fields.sources)) throw new Error("invalid state");
   const sources: PortableIngestState["sources"] = {};
+  let migrated = false;
   for (const [key, valueSource] of Object.entries(fields.sources as Record<string, unknown>)) {
     if (!valueSource || typeof valueSource !== "object" || Array.isArray(valueSource)) throw new Error("invalid source");
     const source = valueSource as Record<string, unknown>;
     if (isLegacySource(source)) {
+      migrated = true;
       sources[key] = { size: source.size, mtimeMs: source.mtimeMs, processedAt: source.processedAt };
       continue;
     }
     if (isOwnedLegacySource(source)) {
+      migrated = true;
       sources[key] = {
         provider: source.provider,
         path: source.path,
@@ -402,7 +467,7 @@ function parseState(value: unknown): PortableIngestState {
       active: current.active,
     };
   }
-  return { schemaVersion: PORTABLE_STORE_VERSION, sources };
+  return { state: { schemaVersion: PORTABLE_STORE_VERSION, sources }, migrated };
 }
 
 function isLegacySource(source: Record<string, unknown>): source is {
@@ -516,6 +581,20 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function compareSourceStates(left: CurrentSourceState, right: CurrentSourceState): number {
+  return compareText(left.provider, right.provider)
+    || compareText(canonicalPath(left.path), canonicalPath(right.path));
+}
+
+function isUnderFailedRoot(source: CurrentSourceState, failedRoots: readonly FailedSourceRoot[]): boolean {
+  return failedRoots.some((root) => root.provider === source.provider && isPathContained(root.path, source.path));
+}
+
+function isPathContained(rootPath: string, candidatePath: string): boolean {
+  const relative = path.relative(canonicalPath(rootPath), canonicalPath(candidatePath));
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
 function asList(value: string | string[]): string[] {
   return Array.isArray(value) ? value : [value];
 }
@@ -526,6 +605,11 @@ function isDecimal(value: unknown): value is string {
 
 function isNonNegativeFinite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function hasExactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === allowed.length && keys.every((key) => allowed.includes(key));
 }
 
 function isOperationError(value: unknown): value is { marker: symbol; error: unknown } {

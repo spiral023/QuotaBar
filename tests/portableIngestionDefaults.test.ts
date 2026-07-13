@@ -48,13 +48,15 @@ describe("portable ingestion production defaults", () => {
 
   it("uses only canonical known directories when refs and overrides are absent", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "quotabar-default-ingestion-"));
+    const statePath = path.join(rootDir, "ingest-state.json");
     const store = {
+      getIngestStatePath: () => statePath,
       reconcileWithIngestState: vi.fn(async () => ({ inserted: 0, updated: 0, existing: 0 })),
     };
     try {
       await ingestPortableUsage({
         store,
-        statePath: path.join(rootDir, "ingest-state.json"),
+        statePath,
         statSource: async () => ({ isFile: true, size: "1", mtimeNs: "2", ctimeNs: "3" }),
       });
     } finally {
