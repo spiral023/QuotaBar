@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { getPortableUsageDir } from "../config/paths";
 import {
@@ -59,27 +60,41 @@ export class PortableUsageStore {
       if (problem) throw new Error(`Invalid portable usage event: ${problem}`);
     }
 
-    const byMonth = new Map<string, PortableUsageEvent[]>();
+    const storedByMonth = new Map<string, Map<string, PortableUsageEvent>>();
+    const knownIds = new Set<string>();
+    for (const { month, filePath } of await this.listPartitions()) {
+      const stored = await readValidEvents(filePath);
+      storedByMonth.set(month, stored);
+      for (const id of stored.keys()) knownIds.add(id);
+    }
+
+    let inserted = 0;
+    let existing = 0;
+    const uniqueIncoming: PortableUsageEvent[] = [];
     for (const item of events) {
+      if (knownIds.has(item.id)) {
+        existing += 1;
+        continue;
+      }
+      knownIds.add(item.id);
+      uniqueIncoming.push(item);
+      inserted += 1;
+    }
+
+    const byMonth = new Map<string, PortableUsageEvent[]>();
+    for (const item of uniqueIncoming) {
       const month = monthKey(new Date(item.occurredAt));
       const monthEvents = byMonth.get(month) ?? [];
       monthEvents.push(item);
       byMonth.set(month, monthEvents);
     }
 
-    let inserted = 0;
-    let existing = 0;
     const eventsDir = path.join(this.rootDir, "events");
     for (const month of [...byMonth.keys()].sort()) {
       const target = path.join(eventsDir, `${month}.jsonl`);
-      const stored = await readValidEvents(target);
+      const stored = storedByMonth.get(month) ?? new Map<string, PortableUsageEvent>();
       for (const item of byMonth.get(month) ?? []) {
-        if (stored.has(item.id)) {
-          existing += 1;
-        } else {
-          stored.set(item.id, item);
-          inserted += 1;
-        }
+        stored.set(item.id, item);
       }
       const output = [...stored.values()]
         .sort(compareEvents)
@@ -158,7 +173,7 @@ async function readValidEvents(filePath: string): Promise<Map<string, PortableUs
 
 async function atomicWrite(target: string, contents: string): Promise<void> {
   await mkdir(path.dirname(target), { recursive: true });
-  const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
+  const temporary = `${target}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, contents, { encoding: "utf8", flag: "wx" });
     await rename(temporary, target);

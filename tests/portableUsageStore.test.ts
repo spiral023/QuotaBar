@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PortableUsageStore } from "../src/portable/usageStore";
 import type { PortableUsageEvent } from "../src/portable/types";
 
@@ -45,6 +45,7 @@ describe("PortableUsageStore", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(rootDir, { recursive: true, force: true });
   });
 
@@ -73,6 +74,29 @@ describe("PortableUsageStore", () => {
       existing: 1,
     });
     expect((await store.read()).map((item) => item.id)).toEqual(["same-id", "other-id"]);
+  });
+
+  it("keeps the first incoming occurrence when an ID spans monthly partitions", async () => {
+    expect(await store.upsert([
+      event("global-id", "2026-07-31T23:00:00.000Z"),
+      event("global-id", "2026-08-01T01:00:00.000Z"),
+    ])).toEqual({ inserted: 1, existing: 1 });
+
+    const stored = await store.read();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].occurredAt).toBe("2026-07-31T23:00:00.000Z");
+    expect(await readdir(path.join(rootDir, "events"))).toEqual(["2026-07.jsonl"]);
+  });
+
+  it("deduplicates an ID already stored in a different monthly partition", async () => {
+    await store.upsert([event("global-id", "2026-07-31T23:00:00.000Z")]);
+
+    expect(await store.upsert([event("global-id", "2026-08-01T01:00:00.000Z")])).toEqual({
+      inserted: 0,
+      existing: 1,
+    });
+    expect((await store.read()).map((item) => item.occurredAt)).toEqual(["2026-07-31T23:00:00.000Z"]);
+    expect(await readdir(path.join(rootDir, "events"))).toEqual(["2026-07.jsonl"]);
   });
 
   it("reads inclusive bounded ranges and unbounded events", async () => {
@@ -179,5 +203,22 @@ describe("PortableUsageStore", () => {
 
     expect((await readdir(path.join(rootDir, "events"))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     expect((await readdir(rootDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("uses a unique temporary name when the PID and clock path already exists", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    const legacyTemporary = path.join(
+      rootDir,
+      `store-metadata.json.${process.pid}.1700000000000.tmp`,
+    );
+    await writeFile(legacyTemporary, "reserved", "utf8");
+
+    await store.rebuildMetadata();
+
+    expect(await readFile(legacyTemporary, "utf8")).toBe("reserved");
+    expect(JSON.parse(await readFile(path.join(rootDir, "store-metadata.json"), "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      partitions: {},
+    });
   });
 });
