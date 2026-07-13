@@ -2,7 +2,13 @@ import { describe, expect, it, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readClaudeTokensForPeriod, readClaudeUsageEntriesForPeriod } from "../src/pricing/jsonl-reader";
+import { Readable } from "node:stream";
+import {
+  listClaudeSourceFilesStrict,
+  readClaudeTokensForPeriod,
+  readClaudeUsageEntriesForPeriod,
+  readClaudeUsageEntriesFromFilesStrict,
+} from "../src/pricing/jsonl-reader";
 
 const tmpDir = path.join(os.tmpdir(), `quotabar-test-${process.pid}`);
 
@@ -16,6 +22,46 @@ async function writeJsonl(dir: string, filename: string, entries: unknown[]): Pr
 }
 
 describe("readClaudeTokensForPeriod", () => {
+  it("strict listing and reading propagate outer I/O failures", async () => {
+    const missing = path.join(tmpDir, "missing");
+    await expect(listClaudeSourceFilesStrict(missing)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readClaudeUsageEntriesFromFilesStrict([{ file: path.join(missing, "gone.jsonl"), baseDir: missing }]))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("strict reading still skips malformed individual lines", async () => {
+    const projectDir = path.join(tmpDir, "strict-project");
+    await fs.mkdir(projectDir, { recursive: true });
+    const file = path.join(projectDir, "strict.jsonl");
+    await fs.writeFile(file, `not-json\n${JSON.stringify({
+      timestamp: "2026-05-10T10:00:00.000Z",
+      message: { id: "strict-id", model: "claude-sonnet-4-6", usage: { input_tokens: 7, output_tokens: 3 } },
+    })}\n`, "utf8");
+
+    await expect(readClaudeUsageEntriesFromFilesStrict([{ file, baseDir: tmpDir }]))
+      .resolves.toEqual([expect.objectContaining({ sourceEventId: "strict-id", inputTokens: 7 })]);
+  });
+
+  it("strict reading rejects an interrupted stream without caching its partial entries", async () => {
+    const file = path.join(tmpDir, "interrupted.jsonl");
+    const valid = JSON.stringify({
+      timestamp: "2026-05-10T10:00:00.000Z",
+      message: { id: "after-retry", model: "claude-sonnet-4-6", usage: { input_tokens: 7, output_tokens: 3 } },
+    });
+    await fs.mkdir(tmpDir, { recursive: true });
+    await fs.writeFile(file, `${valid}\n`, "utf8");
+    const interrupted = () => Readable.from((async function* () {
+      yield `${valid}\n`;
+      throw Object.assign(new Error("secret stream failure"), { code: "EIO" });
+    })());
+
+    await expect(readClaudeUsageEntriesFromFilesStrict([{ file, baseDir: tmpDir }], undefined, {
+      createReadStream: interrupted,
+    })).rejects.toMatchObject({ code: "EIO" });
+    await expect(readClaudeUsageEntriesFromFilesStrict([{ file, baseDir: tmpDir }]))
+      .resolves.toEqual([expect.objectContaining({ sourceEventId: "after-retry" })]);
+  });
+
   it.each([
     ["C:\\Users\\person\\src\\QuotaBar", "QuotaBar"],
     ["/home/person/src/quota-bar", "quota-bar"],

@@ -59,11 +59,48 @@ export async function listCodexSourceFiles(sessionsDir: string | string[]): Prom
   return refs;
 }
 
+export interface StrictCodexReaderDependencies {
+  createReadStream?: (filePath: string, options: { encoding: BufferEncoding }) => NodeJS.ReadableStream;
+}
+
+/** Strict ingestion listing: configured directory I/O errors propagate. */
+export async function listCodexSourceFilesStrict(sessionsDir: string | string[]): Promise<CodexSourceFileRef[]> {
+  const dirs = Array.isArray(sessionsDir) ? sessionsDir : [sessionsDir];
+  const refs: CodexSourceFileRef[] = [];
+  for (const dir of dirs) {
+    const entries = (await fs.readdir(dir, { recursive: true })) as string[];
+    for (const entry of entries) {
+      if (entry.endsWith(".jsonl")) refs.push({ file: path.join(dir, entry), baseDir: dir });
+    }
+  }
+  return refs;
+}
+
 /** Parses the given Codex source files. If billingStart is passed, older events are filtered out. */
 export async function readCodexTokensFromFiles(refs: CodexSourceFileRef[], billingStart?: Date): Promise<CodexTokenEvent[]> {
+  return readCodexEvents(refs, billingStart, false);
+}
+
+/** Strict ingestion reader: outer stream errors propagate and failed parses are not cached. */
+export async function readCodexTokensFromFilesStrict(
+  refs: CodexSourceFileRef[],
+  billingStart?: Date,
+  dependencies: StrictCodexReaderDependencies = {},
+): Promise<CodexTokenEvent[]> {
+  return readCodexEvents(refs, billingStart, true, dependencies);
+}
+
+async function readCodexEvents(
+  refs: CodexSourceFileRef[],
+  billingStart: Date | undefined,
+  strict: boolean,
+  dependencies: StrictCodexReaderDependencies = {},
+): Promise<CodexTokenEvent[]> {
   const events: CodexTokenEvent[] = [];
   for (const ref of refs) {
-    const parsed = await codexFileCache.get(ref.file, () => parseCodexJsonlFile(ref.file, ref.baseDir));
+    const parsed = strict
+      ? await parseCodexJsonlFile(ref.file, ref.baseDir, true, dependencies)
+      : await codexFileCache.get(ref.file, () => parseCodexJsonlFile(ref.file, ref.baseDir));
     events.push(...(billingStart ? parsed.filter((event) => new Date(event.timestamp) >= billingStart) : parsed));
   }
   return events;
@@ -80,6 +117,8 @@ export async function readCodexTokensForPeriod(
 async function parseCodexJsonlFile(
   filePath: string,
   sessionsDir: string,
+  strict = false,
+  dependencies: StrictCodexReaderDependencies = {},
 ): Promise<CodexTokenEvent[]> {
   const events: CodexTokenEvent[] = [];
   let currentModel: string | null = null;
@@ -88,7 +127,7 @@ async function parseCodexJsonlFile(
 
   try {
     const rl = createInterface({
-      input: createReadStream(filePath, { encoding: "utf8" }),
+      input: (dependencies.createReadStream ?? createReadStream)(filePath, { encoding: "utf8" }),
       crlfDelay: Infinity,
     });
     for await (const line of rl) {
@@ -162,7 +201,8 @@ async function parseCodexJsonlFile(
         ...(typeof entry.id === "string" && entry.id ? { sourceEventId: entry.id } : {}),
       });
     }
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     // file not found or read error — return what was collected so far
   }
 

@@ -2,7 +2,12 @@ import { describe, expect, it, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readCodexTokensForPeriod } from "../src/pricing/codex-log-reader";
+import { Readable } from "node:stream";
+import {
+  listCodexSourceFilesStrict,
+  readCodexTokensForPeriod,
+  readCodexTokensFromFilesStrict,
+} from "../src/pricing/codex-log-reader";
 
 const tmpDir = path.join(os.tmpdir(), `quotabar-codex-test-${process.pid}`);
 
@@ -63,6 +68,44 @@ function makeTokenCountTotalOnly(
 }
 
 describe("readCodexTokensForPeriod", () => {
+  it("strict listing and reading propagate outer I/O failures", async () => {
+    const missing = path.join(tmpDir, "missing");
+    await expect(listCodexSourceFilesStrict(missing)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readCodexTokensFromFilesStrict([{ file: path.join(missing, "gone.jsonl"), baseDir: missing }]))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("strict reading still skips malformed individual lines", async () => {
+    const dir = path.join(tmpDir, "strict");
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, "strict.jsonl");
+    await fs.writeFile(file, `not-json\n${JSON.stringify(makeTokenCountWithLast("2026-05-18T10:00:01.000Z", {
+      input_tokens: 7, cached_input_tokens: 0, output_tokens: 3, reasoning_output_tokens: 0, total_tokens: 10,
+    }))}\n`, "utf8");
+
+    await expect(readCodexTokensFromFilesStrict([{ file, baseDir: tmpDir }]))
+      .resolves.toEqual([expect.objectContaining({ inputTokens: 7, outputTokens: 3 })]);
+  });
+
+  it("strict reading rejects an interrupted stream without caching partial token events", async () => {
+    const file = path.join(tmpDir, "interrupted.jsonl");
+    const valid = JSON.stringify(makeTokenCountWithLast("2026-05-18T10:00:01.000Z", {
+      input_tokens: 7, cached_input_tokens: 0, output_tokens: 3, reasoning_output_tokens: 0, total_tokens: 10,
+    }));
+    await fs.mkdir(tmpDir, { recursive: true });
+    await fs.writeFile(file, `${valid}\n`, "utf8");
+    const interrupted = () => Readable.from((async function* () {
+      yield `${valid}\n`;
+      throw Object.assign(new Error("secret stream failure"), { code: "EIO" });
+    })());
+
+    await expect(readCodexTokensFromFilesStrict([{ file, baseDir: tmpDir }], undefined, {
+      createReadStream: interrupted,
+    })).rejects.toMatchObject({ code: "EIO" });
+    await expect(readCodexTokensFromFilesStrict([{ file, baseDir: tmpDir }]))
+      .resolves.toEqual([expect.objectContaining({ inputTokens: 7 })]);
+  });
+
   it("reuses basename-only project names from session and turn metadata", async () => {
     await writeJsonl(path.join(tmpDir, "2026/05/18"), "session.jsonl", [
       { timestamp: "2026-05-18T09:59:00.000Z", type: "session_meta", payload: { cwd: "C:\\Users\\person\\src\\FirstProject" } },

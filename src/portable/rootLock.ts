@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import path from "node:path";
 
 const LOCK_DIRECTORY = ".portable-store.lock";
+const INGESTION_LOCK_DIRECTORY = ".portable-ingestion.lock";
 const OWNER_FILE = "owner.json";
 const HEARTBEAT_INTERVAL_MS = 1_000;
 const STALE_HEARTBEAT_MS = 2 * 60 * 1_000;
@@ -54,7 +55,19 @@ export async function withPortableRootLock<T>(
   operation: () => Promise<T>,
   dependencies: PortableRootLockDependencies = {},
 ): Promise<T> {
-  const held = await acquire(rootDir, createRuntime(dependencies));
+  return withNamedPortableRootLock(rootDir, LOCK_DIRECTORY, operation, dependencies);
+}
+
+export async function withNamedPortableRootLock<T>(
+  rootDir: string,
+  lockDirectory: ".portable-store.lock" | ".portable-ingestion.lock",
+  operation: () => Promise<T>,
+  dependencies: PortableRootLockDependencies = {},
+): Promise<T> {
+  if (lockDirectory !== LOCK_DIRECTORY && lockDirectory !== INGESTION_LOCK_DIRECTORY) {
+    throw new Error("Unsupported portable lock name");
+  }
+  const held = await acquire(rootDir, lockDirectory, createRuntime(dependencies));
   let result!: T;
   let operationFailed = false;
   let operationError: unknown;
@@ -77,9 +90,9 @@ export async function withPortableRootLock<T>(
   return result;
 }
 
-async function acquire(rootDir: string, runtime: RootLockRuntime): Promise<HeldLock> {
+async function acquire(rootDir: string, lockDirectory: string, runtime: RootLockRuntime): Promise<HeldLock> {
   await runtime.fileSystem.mkdir(rootDir, { recursive: true });
-  const directory = path.join(rootDir, LOCK_DIRECTORY);
+  const directory = path.join(rootDir, lockDirectory);
   const deadline = runtime.now() + LOCK_WAIT_MS;
   while (true) {
     const owner = newOwner(runtime);

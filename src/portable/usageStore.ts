@@ -5,6 +5,7 @@ import path from "node:path";
 import { getPortableUsageDir } from "../config/paths";
 import {
   PORTABLE_STORE_VERSION,
+  type PortableIngestState,
   type PortableStoreMetadata,
   type PortableUsageEvent,
 } from "./types";
@@ -14,7 +15,7 @@ const PARTITION_FILE = /^(\d{4}-\d{2})\.jsonl$/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 const TRANSACTION_FILE = "pending-store-transaction.json";
-const TEMP_FILE = /^(?:store-metadata\.json|pending-store-transaction\.json|\d{4}-\d{2}\.jsonl)\.\d+\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/i;
+const TEMP_FILE = /^(?:store-metadata\.json|ingest-state\.json|pending-store-transaction\.json|\d{4}-\d{2}\.jsonl)\.\d+\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/i;
 const STALE_TEMP_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const TOKEN_FIELDS = [
   "inputTokens",
@@ -46,6 +47,11 @@ interface PartitionSnapshot extends PartitionFile {
   events: PortableUsageEvent[];
 }
 
+interface PartitionCacheEntry {
+  identity: string;
+  events: PortableUsageEvent[];
+}
+
 interface TransactionEntry {
   target: string;
   temporary: string;
@@ -74,6 +80,8 @@ const rootQueues = new Map<string, Promise<void>>();
 export class PortableUsageStore {
   private readonly rootDir: string;
   private readonly rootKey: string;
+  private readonly partitionCache = new Map<string, PartitionCacheEntry>();
+  private metadataIdentity?: string;
 
   constructor(
     rootDir = getPortableUsageDir(),
@@ -141,64 +149,77 @@ export class PortableUsageStore {
   }
 
   async reconcile(events: readonly PortableUsageEvent[]): Promise<{ inserted: number; updated: number; existing: number }> {
-    return this.exclusive(async () => {
-      await this.prepareStore();
-      // Readers may emit the same immutable source ID more than once; the last source occurrence is authoritative.
-      const incomingById = new Map<string, PortableUsageEvent>();
-      for (const item of events) {
-        const sanitized = requirePortableEvent(item);
-        incomingById.set(sanitized.id, sanitized);
-      }
+    return this.exclusive(() => this.reconcileUnlocked(events));
+  }
 
-      const snapshots = await this.scanPartitions({ acceptMisplaced: false });
-      const storedByMonth = snapshotsToMaps(snapshots);
-      const storedById = new Map<string, PortableUsageEvent>();
-      for (const snapshot of snapshots) {
-        for (const item of snapshot.events) {
-          if (!storedById.has(item.id)) storedById.set(item.id, item);
+  async reconcileWithIngestState(
+    events: readonly PortableUsageEvent[],
+    state: PortableIngestState,
+  ): Promise<{ inserted: number; updated: number; existing: number }> {
+    return this.exclusive(() => this.reconcileUnlocked(events, `${JSON.stringify(state, null, 2)}\n`));
+  }
+
+  private async reconcileUnlocked(
+    events: readonly PortableUsageEvent[],
+    ingestStateContents?: string,
+  ): Promise<{ inserted: number; updated: number; existing: number }> {
+    await this.prepareStore();
+    // Readers may emit the same immutable source ID more than once; the last source occurrence is authoritative.
+    const incomingById = new Map<string, PortableUsageEvent>();
+    for (const item of events) {
+      const sanitized = requirePortableEvent(item);
+      incomingById.set(sanitized.id, sanitized);
+    }
+
+    const snapshots = await this.scanPartitions({ acceptMisplaced: false });
+    const storedByMonth = snapshotsToMaps(snapshots);
+    const storedById = new Map<string, PortableUsageEvent>();
+    for (const snapshot of snapshots) {
+      for (const item of snapshot.events) {
+        if (!storedById.has(item.id)) storedById.set(item.id, item);
+      }
+    }
+
+    const affected = new Set<string>();
+    let inserted = 0;
+    let updated = 0;
+    let existing = 0;
+    for (const item of incomingById.values()) {
+      const stored = storedById.get(item.id);
+      if (!stored) {
+        inserted += 1;
+      } else if (canonicalSerialize(stored) === canonicalSerialize(item)) {
+        existing += 1;
+        continue;
+      } else {
+        updated += 1;
+        for (const [month, partition] of storedByMonth) {
+          if (partition.delete(item.id)) affected.add(month);
         }
       }
 
-      const affected = new Set<string>();
-      let inserted = 0;
-      let updated = 0;
-      let existing = 0;
-      for (const item of incomingById.values()) {
-        const stored = storedById.get(item.id);
-        if (!stored) {
-          inserted += 1;
-        } else if (canonicalSerialize(stored) === canonicalSerialize(item)) {
-          existing += 1;
-          continue;
-        } else {
-          updated += 1;
-          for (const [month, partition] of storedByMonth) {
-            if (partition.delete(item.id)) affected.add(month);
-          }
-        }
+      const month = monthKey(new Date(item.occurredAt));
+      const partition = storedByMonth.get(month) ?? new Map<string, PortableUsageEvent>();
+      partition.set(item.id, item);
+      storedByMonth.set(month, partition);
+      affected.add(month);
+    }
 
-        const month = monthKey(new Date(item.occurredAt));
-        const partition = storedByMonth.get(month) ?? new Map<string, PortableUsageEvent>();
-        partition.set(item.id, item);
-        storedByMonth.set(month, partition);
-        affected.add(month);
+    const writes = new Map<string, string>();
+    const removals: string[] = [];
+    for (const month of [...affected].sort()) {
+      const partition = storedByMonth.get(month);
+      if (!partition || partition.size === 0) {
+        removals.push(this.partitionPath(month));
+        storedByMonth.delete(month);
+      } else {
+        writes.set(this.partitionPath(month), serializeEvents(partition.values()));
       }
-
-      const writes = new Map<string, string>();
-      const removals: string[] = [];
-      for (const month of [...affected].sort()) {
-        const partition = storedByMonth.get(month);
-        if (!partition || partition.size === 0) {
-          removals.push(this.partitionPath(month));
-          storedByMonth.delete(month);
-        } else {
-          writes.set(this.partitionPath(month), serializeEvents(partition.values()));
-        }
-      }
-      writes.set(this.metadataPath(), `${JSON.stringify(buildMetadata(storedByMonth), null, 2)}\n`);
-      await this.commitTransaction(writes, removals);
-      return { inserted, updated, existing };
-    });
+    }
+    writes.set(this.metadataPath(), `${JSON.stringify(buildMetadata(storedByMonth), null, 2)}\n`);
+    if (ingestStateContents !== undefined) writes.set(this.ingestStatePath(), ingestStateContents);
+    await this.commitTransaction(writes, removals);
+    return { inserted, updated, existing };
   }
 
   rebuildMetadata(): Promise<PortableStoreMetadata> {
@@ -254,6 +275,9 @@ export class PortableUsageStore {
     include?: (month: string) => boolean;
     acceptMisplaced: boolean;
   }): Promise<PartitionSnapshot[]> {
+    const metadataIdentity = await this.readMetadataIdentity();
+    if (this.metadataIdentity !== undefined && this.metadataIdentity !== metadataIdentity) this.partitionCache.clear();
+    this.metadataIdentity = metadataIdentity;
     const files = (await this.listPartitions()).filter(({ month }) => options.include?.(month) ?? true);
     const snapshots: PartitionSnapshot[] = [];
     for (const file of files) {
@@ -287,11 +311,29 @@ export class PortableUsageStore {
   }
 
   private async readValidEvents(filePath: string): Promise<PortableUsageEvent[]> {
+    let identity: string;
+    try {
+      const info = await this.fileSystem.lstat(filePath, { bigint: true });
+      if (!info.isFile()) return [];
+      identity = `${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+    } catch (error) {
+      if (isMissingFile(error)) {
+        this.partitionCache.delete(canonicalPath(filePath));
+        return [];
+      }
+      throw error;
+    }
+    const cacheKey = canonicalPath(filePath);
+    const cached = this.partitionCache.get(cacheKey);
+    if (cached?.identity === identity) return cached.events.map(clonePortableEvent);
     let contents: string;
     try {
       contents = await this.fileSystem.readFile(filePath, "utf8");
     } catch (error) {
-      if (isMissingFile(error)) return [];
+      if (isMissingFile(error)) {
+        this.partitionCache.delete(cacheKey);
+        return [];
+      }
       throw error;
     }
     const events: PortableUsageEvent[] = [];
@@ -304,6 +346,7 @@ export class PortableUsageStore {
         // A damaged line must not hide valid records in the same partition.
       }
     }
+    this.partitionCache.set(cacheKey, { identity, events: events.map(clonePortableEvent) });
     return events;
   }
 
@@ -335,6 +378,17 @@ export class PortableUsageStore {
       throw error;
     }
     await this.rollForward(transaction);
+    this.metadataIdentity = await this.readMetadataIdentity();
+  }
+
+  private async readMetadataIdentity(): Promise<string> {
+    try {
+      const info = await this.fileSystem.lstat(this.metadataPath(), { bigint: true });
+      return info.isFile() ? `${info.size}:${info.mtimeNs}:${info.ctimeNs}` : "non-file";
+    } catch (error) {
+      if (isMissingFile(error)) return "missing";
+      throw error;
+    }
   }
 
   private async recoverPendingTransaction(): Promise<void> {
@@ -410,6 +464,7 @@ export class PortableUsageStore {
 
   private isAllowedTransactionTarget(target: string): boolean {
     if (canonicalPath(target) === canonicalPath(this.metadataPath())) return true;
+    if (canonicalPath(target) === canonicalPath(this.ingestStatePath())) return true;
     const match = PARTITION_FILE.exec(path.basename(target));
     return Boolean(match && isValidMonth(match[1])
       && canonicalPath(path.dirname(target)) === canonicalPath(this.eventsDir()));
@@ -539,6 +594,10 @@ export class PortableUsageStore {
     return path.join(this.rootDir, "store-metadata.json");
   }
 
+  private ingestStatePath(): string {
+    return path.join(this.rootDir, "ingest-state.json");
+  }
+
   private transactionPath(): string {
     return path.join(this.rootDir, TRANSACTION_FILE);
   }
@@ -660,6 +719,10 @@ function serializeEvents(events: Iterable<PortableUsageEvent>): string {
 
 function canonicalSerialize(event: PortableUsageEvent): string {
   return JSON.stringify(event);
+}
+
+function clonePortableEvent(event: PortableUsageEvent): PortableUsageEvent {
+  return { ...event };
 }
 
 function compareCanonicalEvents(left: PortableUsageEvent, right: PortableUsageEvent): number {

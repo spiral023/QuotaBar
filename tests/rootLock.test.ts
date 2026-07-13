@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promise
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { withPortableRootLock } from "../src/portable/rootLock";
+import { withNamedPortableRootLock, withPortableRootLock } from "../src/portable/rootLock";
 
 const OWNER_TOKEN = "00000000-0000-4000-8000-000000000001";
 const OWNER_PID = 4242;
@@ -18,6 +18,13 @@ describe("portable root lock", () => {
 
   afterEach(async () => {
     await rm(rootDir, { recursive: true, force: true });
+  });
+
+  it("supports an independent allowlisted ingestion lock", async () => {
+    let ran = false;
+    await withNamedPortableRootLock(rootDir, ".portable-ingestion.lock", async () => { ran = true; });
+    expect(ran).toBe(true);
+    await expect(nodeFs.access(path.join(rootDir, ".portable-ingestion.lock"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("never reclaims a stale lock whose owner PID is alive", async () => {

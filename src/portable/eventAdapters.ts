@@ -189,8 +189,8 @@ function daysForMonth(year: number, month: number): number {
 }
 
 function providerIdentitySession(rawSession: string, sourceEventId: string | undefined): string {
-  // Prefer immutable provider source IDs. Coarse encounter ordinals are the fallback when providers omit them.
-  // Task 5 changed-source reconciliation owns replacement if source-less colliding records are edited or reordered.
+  // Prefer immutable provider source IDs. Coarse encounter ordinals are a retention-first fallback when IDs are absent:
+  // shifted/reordered records can gain new IDs, and ingestion deliberately retains the older events rather than deleting history.
   return sourceEventId
     ? JSON.stringify(["provider-session", rawSession, "source-event", sourceEventId])
     : rawSession;

@@ -1,6 +1,7 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CodexTokenEvent, CodexSourceFileRef } from "../src/pricing/codex-log-reader";
 import type { ClaudeUsageEntry, SourceFileRef } from "../src/pricing/jsonl-reader";
@@ -51,7 +52,7 @@ describe("portable usage ingestion", () => {
   beforeEach(async () => {
     rootDir = await mkdtemp(path.join(os.tmpdir(), "quotabar-portable-ingest-"));
     statePath = path.join(rootDir, "ingest-state.json");
-    store = new PortableUsageStore(path.join(rootDir, "store"));
+    store = new PortableUsageStore(rootDir);
   });
 
   afterEach(async () => {
@@ -154,7 +155,7 @@ describe("portable usage ingestion", () => {
     const serialized = JSON.stringify([first, second]);
     const stateText = await readFile(statePath, "utf8");
     expect(first).toMatchObject({ scanned: 2, changed: 2, inserted: 1, updated: 0, existing: 0 });
-    expect(first.errors).toEqual([{ provider: "claude", path: corrupt.file, message: "Source could not be read." }]);
+    expect(first.errors).toEqual([{ provider: "claude", path: corrupt.file, message: "read_failed" }]);
     expect(second).toMatchObject({ scanned: 2, changed: 1, inserted: 0, updated: 0, existing: 0 });
     expect(readClaude).toHaveBeenCalledTimes(2);
     expect(readCodex).toHaveBeenCalledTimes(1);
@@ -171,7 +172,7 @@ describe("portable usage ingestion", () => {
     const oldState = await readFile(statePath);
     await writeFile(ref.file, "changed", "utf8");
     const failingStore = {
-      async reconcile(): Promise<never> {
+      async reconcileWithIngestState(): Promise<never> {
         throw new Error("database failure secret-payload token=abc auth=def cookie=ghi JWT=Bearer.value");
       },
     };
@@ -240,22 +241,277 @@ describe("portable usage ingestion", () => {
     };
     const source = Object.values(state.sources)[0];
     expect(state.schemaVersion).toBe(1);
-    expect(source).toMatchObject({ provider: "claude", path: ref.file, active: true, size: 26 });
+    expect(source).toMatchObject({ provider: "claude", path: ref.file, active: true, size: "26" });
     expect(source.eventIds).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/)]);
-    expect(Object.keys(source).sort()).toEqual(["active", "eventIds", "mtimeMs", "path", "processedAt", "provider", "size"]);
+    expect(source.mtimeNs).toMatch(/^\d+$/);
+    expect(source.ctimeNs).toMatch(/^\d+$/);
+    expect(Object.keys(source).sort()).toEqual(["active", "ctimeNs", "eventIds", "mtimeNs", "path", "processedAt", "provider", "size"]);
     expect(stateText).not.toMatch(/provider-event-body-secret|session-secret|project-secret|123456|inputTokens/);
     expect((await readdir(rootDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
+
+  it("uses lossless stat fingerprints and detects a same-size high-resolution rewrite", async () => {
+    const ref = await claudeRef(rootDir, "precise.jsonl", "same");
+    let ctimeNs = "1000000001";
+    const statSource = vi.fn(async () => ({ isFile: true, size: "4", mtimeNs: "1000000000", ctimeNs }));
+    const readClaude = vi.fn(async () => [claude()]);
+    const options = { store, statePath, claudeRefs: [ref], codexRefs: [], readClaude, statSource };
+
+    await ingestPortableUsage(options);
+    await ingestPortableUsage(options);
+    ctimeNs = "1000000002";
+    const changed = await ingestPortableUsage(options);
+
+    expect(readClaude).toHaveBeenCalledTimes(2);
+    expect(changed.changed).toBe(1);
+    expect(changed.existing).toBe(1);
+  });
+
+  it("quarantines malformed state and reingests with a safe recovery diagnostic", async () => {
+    const ref = await claudeRef(rootDir, "recovered.jsonl", "fixture");
+    await writeFile(statePath, "{secret-token malformed", "utf8");
+
+    const result = await ingestPortableUsage({
+      store,
+      statePath,
+      claudeRefs: [ref],
+      codexRefs: [],
+      readClaude: async () => [claude()],
+    });
+
+    expect(result.diagnostics).toEqual([{ code: "state_recovered", path: statePath }]);
+    const quarantined = (await readdir(rootDir)).filter((name) => /^ingest-state\.corrupt\.\d+\.json$/.test(name));
+    expect(quarantined).toHaveLength(1);
+    expect(await readFile(path.join(rootDir, quarantined[0]), "utf8")).toBe("{secret-token malformed");
+    expect(await store.read()).toHaveLength(1);
+  });
+
+  it("quarantines a version 1 state record with invalid current field types", async () => {
+    const ref = await claudeRef(rootDir, "invalid-state.jsonl", "fixture");
+    await writeFile(statePath, `${JSON.stringify({
+      schemaVersion: 1,
+      sources: {
+        bad: {
+          provider: "claude",
+          path: ref.file,
+          size: 7,
+          mtimeNs: "1",
+          ctimeNs: "2",
+          processedAt: "2026-07-01T00:00:00.000Z",
+          eventIds: [],
+          active: true,
+        },
+      },
+    })}\n`, "utf8");
+
+    const result = await ingestPortableUsage({
+      store, statePath, claudeRefs: [ref], codexRefs: [], readClaude: async () => [claude()],
+    });
+
+    expect(result.diagnostics).toEqual([{ code: "state_recovered", path: statePath }]);
+    expect((await readdir(rootDir)).some((name) => /^ingest-state\.corrupt\.\d+\.json$/.test(name))).toBe(true);
+  });
+
+  it("continues strict listing across known directories and reports a safe category", async () => {
+    const missing = path.join(rootDir, "missing-projects");
+    const projects = path.join(rootDir, "available-projects");
+    await claudeRef(projects, "session.jsonl", JSON.stringify({
+      timestamp: "2026-07-13T10:00:00.000Z",
+      message: { id: "listed-event", model: "claude-sonnet-4-6", usage: { input_tokens: 7, output_tokens: 3 } },
+    }));
+
+    const result = await ingestPortableUsage({
+      store, statePath, claudeProjectsDirs: [missing, projects], codexRefs: [],
+    });
+
+    expect(result.inserted).toBe(1);
+    expect(result.errors).toEqual([{ provider: "claude", path: missing, message: "listing_failed" }]);
+  });
+
+  it("migrates legacy version 1 fingerprints by safely reprocessing the known source", async () => {
+    const ref = await claudeRef(rootDir, "legacy.jsonl", "fixture");
+    await writeFile(statePath, `${JSON.stringify({
+      schemaVersion: 1,
+      sources: {
+        [ref.file]: { size: 7, mtimeMs: 1, processedAt: "2026-07-01T00:00:00.000Z" },
+      },
+    })}\n`, "utf8");
+    const readClaude = vi.fn(async () => [claude()]);
+
+    await ingestPortableUsage({ store, statePath, claudeRefs: [ref], codexRefs: [], readClaude });
+
+    const state = JSON.parse(await readFile(statePath, "utf8")) as { sources: Record<string, Record<string, unknown>> };
+    expect(readClaude).toHaveBeenCalledTimes(1);
+    expect(Object.values(state.sources)).toEqual([expect.objectContaining({
+      provider: "claude", path: ref.file, size: "7", active: true,
+    })]);
+  });
+
+  it("migrates the prior owned version 1 record without treating it as corruption", async () => {
+    const ref = await claudeRef(rootDir, "owned-legacy.jsonl", "fixture");
+    const canonical = process.platform === "win32" ? path.resolve(ref.file).toLowerCase() : path.resolve(ref.file);
+    await writeFile(statePath, `${JSON.stringify({
+      schemaVersion: 1,
+      sources: {
+        [`claude:${canonical}`]: {
+          provider: "claude",
+          path: ref.file,
+          size: 7,
+          mtimeMs: 1,
+          processedAt: "2026-07-01T00:00:00.000Z",
+          eventIds: [],
+          active: true,
+        },
+      },
+    })}\n`, "utf8");
+
+    const result = await ingestPortableUsage({
+      store, statePath, claudeRefs: [ref], codexRefs: [], readClaude: async () => [claude()],
+    });
+
+    expect(result.diagnostics).toEqual([]);
+    expect((await readdir(rootDir)).some((name) => name.includes(".corrupt."))).toBe(false);
+    const state = JSON.parse(await readFile(statePath, "utf8")) as { sources: Record<string, Record<string, unknown>> };
+    expect(Object.values(state.sources)).toEqual([expect.objectContaining({ size: "7", mtimeNs: expect.any(String) })]);
+  });
+
+  it("does not advance state when a source disappears between stat and strict open, then retries", async () => {
+    const ref = await claudeRef(rootDir, "racy.jsonl", "fixture");
+    let first = true;
+    const statSource = async () => {
+      const info = { isFile: true, size: "7", mtimeNs: "10", ctimeNs: "11" };
+      if (first) {
+        first = false;
+        await rm(ref.file);
+      }
+      return info;
+    };
+
+    const failed = await ingestPortableUsage({ store, statePath, claudeRefs: [ref], codexRefs: [], statSource });
+    expect(failed.errors).toEqual([{ provider: "claude", path: ref.file, message: "read_failed" }]);
+    await expect(readFile(statePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    await writeFile(ref.file, "fixture", "utf8");
+    const retried = await ingestPortableUsage({
+      store,
+      statePath,
+      claudeRefs: [ref],
+      codexRefs: [],
+      statSource,
+      readClaude: async () => [claude()],
+    });
+    expect(retried.inserted).toBe(1);
+  });
+
+  it("keeps later normalized source precedence stable regardless of which colliding source changes", async () => {
+    const a = await claudeRef(rootDir, "a.jsonl", "a");
+    const b = await claudeRef(rootDir, "b.jsonl", "b");
+    let aTokens = 1;
+    let bTokens = 2;
+    const readClaude = vi.fn(async ([ref]: SourceFileRef[]) => [claude({
+      sourceEventId: "shared-source-id",
+      inputTokens: ref.file === a.file ? aTokens : bTokens,
+    })]);
+    const options = { store, statePath, claudeRefs: [b, a], codexRefs: [], readClaude };
+
+    await ingestPortableUsage(options);
+    expect((await store.read())[0].inputTokens).toBe(2);
+
+    aTokens = 3;
+    await writeFile(a.file, "a-changed", "utf8");
+    await ingestPortableUsage(options);
+    expect((await store.read())[0].inputTokens).toBe(2);
+
+    bTokens = 4;
+    await writeFile(b.file, "b-changed", "utf8");
+    await ingestPortableUsage(options);
+    expect((await store.read())[0].inputTokens).toBe(4);
+
+    aTokens = 5;
+    await writeFile(a.file, "a-changed-again", "utf8");
+    await ingestPortableUsage({ ...options, claudeRefs: [a] });
+    expect((await store.read())[0].inputTokens).toBe(5);
+  });
+
+  it("serializes two real ingestion processes before either reads the shared source", async () => {
+    const sourceDir = path.join(rootDir, "provider-source");
+    const ref = await claudeRef(sourceDir, "session.jsonl", JSON.stringify({
+      timestamp: "2026-07-13T10:00:00.000Z",
+      sessionId: "cross-process-session",
+      message: { id: "cross-process-event", model: "claude-sonnet-4-6", usage: { input_tokens: 7, output_tokens: 3 } },
+    }));
+    const childFile = path.join(process.cwd(), "tests", "fixtures", "portableIngestionChild.test.ts");
+    const vitestCli = path.join(process.cwd(), "node_modules", "vitest", "vitest.mjs");
+    const first = runIngestionChild(vitestCli, childFile, rootDir, ref, "a");
+    const second = runIngestionChild(vitestCli, childFile, rootDir, ref, "b");
+    await waitForPaths([path.join(rootDir, "ingest-ready-a"), path.join(rootDir, "ingest-ready-b")]);
+    await writeFile(path.join(rootDir, "ingest-go"), String(Date.now() + 300), "utf8");
+
+    await Promise.all([first, second]);
+
+    const reads = (await readFile(path.join(rootDir, "provider-read.log"), "utf8")).trim().split(/\r?\n/);
+    expect(reads).toHaveLength(1);
+    expect((await store.read()).map(({ id }) => id)).toHaveLength(1);
+  }, 30_000);
 });
 
 async function claudeRef(rootDir: string, name: string, contents: string): Promise<SourceFileRef> {
+  await mkdir(rootDir, { recursive: true });
   const file = path.join(rootDir, name);
   await writeFile(file, contents, "utf8");
   return { file, baseDir: rootDir };
 }
 
 async function codexRef(rootDir: string, name: string, contents: string): Promise<CodexSourceFileRef> {
+  await mkdir(rootDir, { recursive: true });
   const file = path.join(rootDir, name);
   await writeFile(file, contents, "utf8");
   return { file, baseDir: rootDir };
+}
+
+function runIngestionChild(
+  vitestCli: string,
+  childFile: string,
+  childRoot: string,
+  ref: SourceFileRef,
+  childId: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [vitestCli, "run", childFile, "--pool=forks", "--maxWorkers=1"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        QUOTABAR_INGEST_CHILD_ROOT: childRoot,
+        QUOTABAR_INGEST_CHILD_SOURCE: ref.file,
+        QUOTABAR_INGEST_CHILD_BASE: ref.baseDir,
+        QUOTABAR_INGEST_CHILD_ID: childId,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += String(chunk); });
+    child.stderr.on("data", (chunk) => { output += String(chunk); });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Portable ingestion child exited with code ${code}: ${output}`));
+    });
+  });
+}
+
+async function waitForPaths(paths: readonly string[]): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const present = await Promise.all(paths.map(async (filePath) => {
+      try {
+        await readFile(filePath);
+        return true;
+      } catch {
+        return false;
+      }
+    }));
+    if (present.every(Boolean)) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("Timed out waiting for portable ingestion child processes");
 }

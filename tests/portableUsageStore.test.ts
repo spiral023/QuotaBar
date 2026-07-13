@@ -148,6 +148,42 @@ describe("PortableUsageStore", () => {
     expect((await store.read())[0]).toEqual(last);
   });
 
+  it("commits reconciled events and ingest state in one recoverable transaction", async () => {
+    const state = {
+      schemaVersion: 1 as const,
+      sources: {},
+    };
+
+    expect(await store.reconcileWithIngestState([
+      event("combined", "2026-07-02T00:00:00.000Z"),
+    ], state)).toEqual({ inserted: 1, updated: 0, existing: 0 });
+
+    expect(JSON.parse(await readFile(path.join(rootDir, "ingest-state.json"), "utf8"))).toEqual(state);
+    expect((await store.read()).map(({ id }) => id)).toEqual(["combined"]);
+  });
+
+  it("recovers ingest state with partitions after interruption before the state rename", async () => {
+    let failStateRename = true;
+    const failingFs = {
+      ...nodeFs,
+      async rename(from: PathLike, to: PathLike) {
+        if (failStateRename && String(to).endsWith("ingest-state.json")) {
+          failStateRename = false;
+          throw Object.assign(new Error("injected state rename failure"), { code: "EIO" });
+        }
+        return nodeFs.rename(from, to);
+      },
+    };
+    const state = { schemaVersion: 1 as const, sources: {} };
+
+    await expect(new PortableUsageStore(rootDir, failingFs).reconcileWithIngestState([
+      event("recover-combined", "2026-07-02T00:00:00.000Z"),
+    ], state)).rejects.toThrow("injected state rename failure");
+
+    expect((await new PortableUsageStore(rootDir).read()).map(({ id }) => id)).toEqual(["recover-combined"]);
+    expect(JSON.parse(await readFile(path.join(rootDir, "ingest-state.json"), "utf8"))).toEqual(state);
+  });
+
   it("serializes concurrent upserts across store instances without losing events", async () => {
     const first = new PortableUsageStore(rootDir);
     const second = new PortableUsageStore(path.join(rootDir, "."));
@@ -661,6 +697,44 @@ describe("PortableUsageStore", () => {
     ]);
 
     expect(Object.fromEntries(partitionReads)).toEqual({ "2026-07.jsonl": 1, "2026-08.jsonl": 1 });
+  });
+
+  it("caches unchanged historical partitions across sequential reconciliations and invalidates external changes", async () => {
+    await store.upsert([
+      event("july", "2026-07-01T00:00:00.000Z"),
+      event("august", "2026-08-01T00:00:00.000Z"),
+    ]);
+    const partitionReads = new Map<string, number>();
+    const countingFs = {
+      ...nodeFs,
+      async readFile(file: PathLike | FileHandle, options?: unknown) {
+        const name = path.basename(String(file));
+        if (/^2026-\d{2}\.jsonl$/.test(name)) partitionReads.set(name, (partitionReads.get(name) ?? 0) + 1);
+        return nodeFs.readFile(file, options as Parameters<typeof nodeFs.readFile>[1]);
+      },
+    };
+    const cachedStore = new PortableUsageStore(rootDir, countingFs);
+
+    await cachedStore.reconcile([event("september", "2026-09-01T00:00:00.000Z")]);
+    await cachedStore.reconcile([event("october", "2026-10-01T00:00:00.000Z")]);
+    expect(partitionReads.get("2026-07.jsonl")).toBe(1);
+    expect(partitionReads.get("2026-08.jsonl")).toBe(1);
+
+    await new PortableUsageStore(rootDir).reconcile([
+      event("external-july", "2026-07-02T00:00:00.000Z"),
+    ]);
+    await cachedStore.reconcile([event("november", "2026-11-01T00:00:00.000Z")]);
+    expect(partitionReads.get("2026-07.jsonl")).toBe(2);
+    expect((await cachedStore.read()).map(({ id }) => id)).toContain("external-july");
+  });
+
+  it("does not expose mutable references from the partition snapshot cache", async () => {
+    await store.upsert([event("cached", "2026-07-01T00:00:00.000Z", { inputTokens: 7 })]);
+
+    const first = await store.read();
+    first[0].inputTokens = 999;
+
+    expect((await store.read())[0].inputTokens).toBe(7);
   });
 
   it("does not leave temporary files after successful writes", async () => {
