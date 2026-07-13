@@ -7,6 +7,9 @@ import { inflateRawSync } from "node:zlib";
 import {
   createArchiveManifest,
   isPortableArchivePath,
+  MAX_ARCHIVE_ENTRIES,
+  MAX_ARCHIVE_FILE_SIZE,
+  MAX_ARCHIVE_TOTAL_SIZE,
   metadataFromZipEntry,
   normalizeArchivePath,
   parseArchiveManifest,
@@ -26,6 +29,7 @@ const TRANSIENT_LOCK_DIRS = new Set([ARCHIVE_LOCK_DIR, ".portable-ingestion.lock
 const PENDING_FILE = ".portable-import.pending.json";
 const PENDING_FORMAT = "QuotaBar/pending-import";
 const PENDING_VERSION = 1;
+const MAX_PENDING_SIZE = 64 * 1024;
 
 export interface ArchiveOperationResult {
   path: string;
@@ -46,6 +50,10 @@ export interface AppliedImportResult {
 
 export interface ArchiveApplyDependencies {
   rename?: typeof fs.rename;
+}
+
+export interface ArchiveImportDependencies {
+  openZip?: (zipPath: string) => Pick<AdmZip, "getEntries">;
 }
 
 interface SafeFile {
@@ -96,13 +104,14 @@ export async function stagePortableImport(
   zipPath: string,
   appDir: string,
   targetHome: string,
+  dependencies: ArchiveImportDependencies = {},
 ): Promise<StagedImportResult> {
   return genericFailure("Portable data import failed", () => withArchiveLocks(appDir, async () => {
     let stagingDir: string | undefined;
     try {
       await assertTargetHome(appDir, targetHome);
       await assertPendingMissing(appDir);
-      const imported = await validatePortableZip(zipPath);
+      const imported = await validatePortableZip(zipPath, dependencies.openZip);
       const stagedFiles = imported.map((file) => ({ ...file }));
       const settings = stagedFiles.find((file) => file.path === "settings.json");
       if (settings) {
@@ -169,7 +178,11 @@ export async function applyPendingImport(
     const pendingPath = path.join(appDir, PENDING_FILE);
     let raw: Buffer;
     try {
-      raw = await readStableFile(pendingPath, (await fs.lstat(pendingPath)).size);
+      const pendingInfo = await fs.lstat(pendingPath);
+      if (!pendingInfo.isFile() || pendingInfo.isSymbolicLink() || pendingInfo.size > MAX_PENDING_SIZE) {
+        throw new Error("Invalid pending import metadata");
+      }
+      raw = await readStableFile(pendingPath, pendingInfo.size);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { applied: false, fileCount: 0, totalBytes: 0 };
       // Pending metadata is local but can be tampered with; never attach parser or path details.
@@ -180,6 +193,7 @@ export async function applyPendingImport(
     try {
       pending = parsePending(raw);
       const parent = path.dirname(appDir);
+      await verifyReferencedBackup(appDir, pending);
       const stagingDir = safeSibling(parent, pending.stagingDirectory, `.${path.basename(appDir)}.portable-import-`);
       const rollbackDir = safeSibling(parent, pending.rollbackDirectory, `.${path.basename(appDir)}.portable-import-`);
       const staged = await validateStaging(stagingDir, appDir, pending.manifest);
@@ -212,10 +226,41 @@ export async function applyPendingImport(
   }));
 }
 
+async function verifyReferencedBackup(appDir: string, pending: PendingImport): Promise<void> {
+  const backupPath = path.join(path.dirname(appDir), "QuotaBar Backups", pending.backupFileName);
+  await assertSafeBackupDestination(appDir, backupPath);
+  const info = await fs.lstat(backupPath);
+  if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_ARCHIVE_TOTAL_SIZE) {
+    throw new Error("Invalid referenced backup");
+  }
+  const zip = new AdmZip(backupPath);
+  const entries = zip.getEntries();
+  if (entries.length > MAX_ARCHIVE_ENTRIES) throw new Error("Invalid referenced backup");
+  const paths = new Set<string>();
+  let totalSize = 0;
+  for (const entry of entries) {
+    const metadata = metadataFromZipEntry(entry);
+    if (entry.isDirectory || metadata.size > MAX_ARCHIVE_FILE_SIZE || metadata.compressedSize > MAX_ARCHIVE_FILE_SIZE) {
+      throw new Error("Invalid referenced backup");
+    }
+    const archivePath = normalizeArchivePath(entry.entryName);
+    const canonical = archivePath.toLowerCase();
+    if (paths.has(canonical)) throw new Error("Invalid referenced backup");
+    paths.add(canonical);
+    if (totalSize > MAX_ARCHIVE_TOTAL_SIZE - metadata.size) throw new Error("Invalid referenced backup");
+    totalSize += metadata.size;
+    const data = entry.getData();
+    if (data.byteLength !== metadata.size) throw new Error("Invalid referenced backup");
+  }
+}
+
 async function createFullBackupUnlocked(appDir: string, backupZip: string): Promise<ArchiveOperationResult> {
   const partialPath = `${backupZip}.partial`;
-  await removeFileIfPresent(partialPath);
+  let destinationApproved = false;
   try {
+    await assertSafeBackupDestination(appDir, backupZip);
+    destinationApproved = true;
+    await removeFileIfPresent(partialPath);
     await assertDestinationAvailable(backupZip);
     const files = await readAppFiles(appDir);
     const zip = new AdmZip();
@@ -226,13 +271,51 @@ async function createFullBackupUnlocked(appDir: string, backupZip: string): Prom
     await fs.rename(partialPath, backupZip);
     return summarize(backupZip, files);
   } catch {
-    await removeFileIfPresent(partialPath);
+    if (destinationApproved) await removeFileIfPresent(partialPath);
     throw new Error("QuotaBar backup failed");
   }
 }
 
-async function validatePortableZip(zipPath: string): Promise<SafeFile[]> {
-  const zip = new AdmZip(zipPath);
+async function assertSafeBackupDestination(appDir: string, backupZip: string): Promise<void> {
+  const appPath = canonicalFsPath(path.resolve(appDir));
+  const destination = canonicalFsPath(path.resolve(backupZip));
+  if (destination === appPath || destination.startsWith(`${appPath}${path.sep}`)) {
+    throw new Error("Backup destination must be outside application data");
+  }
+  await assertNoReparseAncestors(path.dirname(path.resolve(backupZip)));
+  try {
+    const target = await fs.lstat(backupZip);
+    if (target.isSymbolicLink()) throw new Error("Unsafe backup destination");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+async function assertNoReparseAncestors(directory: string): Promise<void> {
+  let current = path.resolve(directory);
+  while (true) {
+    try {
+      const info = await fs.lstat(current);
+      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Unsafe backup directory");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+}
+
+function canonicalFsPath(filePath: string): string {
+  const normalized = path.normalize(filePath);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+async function validatePortableZip(
+  zipPath: string,
+  openZip: ArchiveImportDependencies["openZip"] = (archivePath) => new AdmZip(archivePath),
+): Promise<SafeFile[]> {
+  const zip = openZip(zipPath);
   const entries = zip.getEntries();
   const metadata = entries.map(metadataFromZipEntry);
   validateZipEntryMetadata(metadata);
@@ -302,7 +385,8 @@ function parsePending(input: Uint8Array): PendingImport {
     throw new Error("Invalid pending import");
   }
   if (!/^[A-Za-z0-9._-]+\.zip$/.test(parsed.backupFileName)
-    || path.basename(parsed.backupFileName) !== parsed.backupFileName) {
+    || path.basename(parsed.backupFileName) !== parsed.backupFileName
+    || normalizeArchivePath(parsed.backupFileName) !== parsed.backupFileName) {
     throw new Error("Invalid pending import");
   }
   return {
@@ -653,17 +737,10 @@ async function removeFileIfPresent(filePath: string): Promise<void> {
 
 async function withArchiveLocks<T>(appDir: string, operation: () => Promise<T>): Promise<T> {
   await assertDirectory(appDir);
-  return withPortableRootLock(appDir, async () => {
-    const usageDir = path.join(appDir, "usage");
-    try {
-      const info = await fs.lstat(usageDir);
-      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Invalid portable usage directory");
-      return withPortableRootLock(usageDir, operation);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      return operation();
-    }
-  });
+  // Global order: app -> usage -> quota. Store writers acquire only their own leaf lock.
+  return withPortableRootLock(appDir, () =>
+    withPortableRootLock(path.join(appDir, "usage"), () =>
+      withPortableRootLock(path.join(appDir, "quota"), operation)));
 }
 
 async function genericFailure<T>(message: string, operation: () => Promise<T>): Promise<T> {
