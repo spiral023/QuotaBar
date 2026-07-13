@@ -83,6 +83,38 @@ describe("analytics summary worker request", () => {
 });
 
 describe("portable analytics readiness", () => {
+  it("gates every portable endpoint before worker or store reads", async () => {
+    const runWorker = vi.fn(async () => { throw new Error("portable store read must not run"); });
+    new DetailsWindowController(() => null, undefined, undefined, {
+      portableDataIsReady: vi.fn(async () => false),
+      runAnalyticsWorker: runWorker,
+    });
+    const calls = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const findHandler = (channel: string) => [...calls].reverse().find((call: unknown[]) => call[0] === channel)?.[1] as
+      ((event: unknown, request?: unknown) => Promise<unknown>);
+    for (const channel of ["analytics:summary", "analytics:get", "models:get", "windowBudget:get", "windowHistory:get"]) {
+      await expect(findHandler(channel)({}, undefined)).resolves.toEqual({ portableDataPreparing: true });
+    }
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+
+  it("prewarms explicit bounded usage and quota ranges only when ready", async () => {
+    const runWorker = vi.fn(async () => ({}));
+    const controller = new DetailsWindowController(() => null, undefined, undefined, {
+      portableDataIsReady: vi.fn(async () => true),
+      runAnalyticsWorker: runWorker,
+      loadRuntimeSettings: vi.fn(async () => defaultSettings),
+      now: () => Date.parse("2026-07-13T12:00:00.000Z"),
+    });
+    controller.prewarmAnalytics();
+    await vi.waitFor(() => expect(runWorker).toHaveBeenCalled());
+    expect(runWorker).toHaveBeenCalledWith(expect.objectContaining({
+      task: "prewarm",
+      usageRange: { since: "2026-06-13T12:00:00.000Z", until: "2026-07-13T12:00:00.000Z" },
+      quotaRange: { since: "2026-06-13T12:00:00.000Z", until: "2026-07-13T12:00:00.000Z" },
+    }));
+  });
+
   it("treats missing, pending and malformed migration state as preparing", async () => {
     const statePath = path.join(tmpDir, "migration-state.json");
     await expect(portableDataIsReady(statePath)).resolves.toBe(false);

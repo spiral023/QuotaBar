@@ -162,7 +162,7 @@ export function toCodexEvents(events: readonly PortableUsageEvent[]): CodexToken
     });
 }
 
-function isNeutralInternalMarker(event: PortableUsageEvent): boolean {
+export function isNeutralInternalMarker(event: PortableUsageEvent): boolean {
   return event.source === "legacy-reconciliation"
     && event.legacyTarget !== undefined
     && event.inputTokens === 0

@@ -122,6 +122,10 @@ window.QB = window.QB || {};
     }
     try {
       _data = await loadData();
+      if (QB.isPortableDataPreparing(_data)) {
+        container.innerHTML = '<div class="empty"><span>Preparing data…</span></div>';
+        return;
+      }
       renderUI();
     } catch (e) {
       console.error('models:get failed', e);
@@ -149,7 +153,14 @@ window.QB = window.QB || {};
     if (_data && !_stale) return Promise.resolve(_data);
     if (!_dataPromise) {
       _dataPromise = QB.ipc.invoke('models:get')
-        .then((d) => { _data = d; _stale = false; return d; })
+        .then((d) => {
+          if (QB.isPortableDataPreparing(d)) {
+            _dataPromise = null;
+            _stale = true;
+            return d;
+          }
+          _data = d; _stale = false; return d;
+        })
         .catch((err) => { _dataPromise = null; throw err; });
     }
     return _dataPromise;

@@ -314,6 +314,14 @@ async function hydrateWindowBudgets(snapshots, gen) {
   try {
     if (!_wbDataPromise) _wbDataPromise = QB.ipc.invoke('windowBudget:get');
     const data = await _wbDataPromise;
+    if (QB.isPortableDataPreparing(data)) {
+      _wbDataPromise = null;
+      for (const snap of wanted) {
+        const forecast = document.getElementById(`wb-forecast-${snap.provider}`);
+        if (forecast) forecast.textContent = 'Preparing data…';
+      }
+      return;
+    }
     if (gen !== _wbGeneration) return; // ein neuerer Render-Zyklus hat das DOM bereits ersetzt
     for (const snap of wanted) {
       const d = data.perProvider?.[snap.provider];

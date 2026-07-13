@@ -62,6 +62,8 @@ export function createAnalyticsSummaryRequest(
     periodEndMs,
     settings: { ...settings, costWindow },
     cacheHitRate,
+    usageRange: { since: new Date(workerWindow.periodStartMs).toISOString(), until: new Date(periodEndMs).toISOString() },
+    quotaRange: { since: new Date(workerWindow.periodStartMs).toISOString(), until: new Date(periodEndMs).toISOString() },
   };
 }
 
@@ -85,6 +87,8 @@ export function createAnalyticsGetRequest(
     eurUsdRates,
     fxEstimated,
     nowMs,
+    usageRange: { since: new Date(periodStartMs).toISOString(), until: new Date(nowMs).toISOString() },
+    quotaRange: { since: new Date(periodStartMs).toISOString(), until: new Date(nowMs).toISOString() },
   };
 }
 
@@ -101,6 +105,13 @@ export async function portableDataIsReady(statePath = getPortableMigrationPath()
   } catch {
     return false;
   }
+}
+
+export interface DetailsWindowDependencies {
+  portableDataIsReady: () => Promise<boolean>;
+  runAnalyticsWorker: (data: Record<string, unknown>) => Promise<unknown>;
+  loadRuntimeSettings: () => Promise<Settings>;
+  now: () => number;
 }
 
 async function loadRuntimeSettings(): Promise<Settings> {
@@ -132,8 +143,25 @@ export class DetailsWindowController {
     private readonly getTray: () => Tray | null,
     private readonly recorder?: DebugRecorder,
     private readonly onSettingsSaved?: (settings: Settings, changedKeys: string[]) => void,
+    private readonly dependencies: Partial<DetailsWindowDependencies> = {},
   ) {
     this.registerIpcHandlers();
+  }
+
+  private isPortableDataReady(): Promise<boolean> {
+    return (this.dependencies.portableDataIsReady ?? portableDataIsReady)();
+  }
+
+  private requestAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
+    return (this.dependencies.runAnalyticsWorker ?? runAnalyticsWorker)(data);
+  }
+
+  private runtimeSettings(): Promise<Settings> {
+    return (this.dependencies.loadRuntimeSettings ?? loadRuntimeSettings)();
+  }
+
+  private nowMs(): number {
+    return (this.dependencies.now ?? Date.now)();
   }
 
   setNotificationService(svc: NotificationService): void {
@@ -225,7 +253,7 @@ export class DetailsWindowController {
 
     return this.analyticsSummaryCache.get(cacheKey, async () => {
       const startedAtMs = Date.now();
-      const summary = await runAnalyticsWorker(
+      const summary = await this.requestAnalyticsWorker(
         createAnalyticsSummaryRequest(runtimeSettings, costWindow, cacheHitRate, startedAtMs),
       ) as AnalyticsSummary;
       const durationMs = Math.max(0, Date.now() - startedAtMs);
@@ -238,9 +266,16 @@ export class DetailsWindowController {
 
   /** Warms the worker and portable summary store before the dashboard opens. */
   prewarmAnalytics(): void {
-    void Promise.all([loadRuntimeSettings(), portableDataIsReady()])
-      .then(([settings, ready]) => ready ? this.computeSummary(settings, settings.costWindow) : undefined)
-      .catch(err => log.warn(`Analytics prewarm failed: ${err instanceof Error ? err.message : String(err)}`));
+    void this.isPortableDataReady().then((ready) => {
+      if (!ready) return;
+      const until = this.nowMs();
+      const since = until - 30 * 24 * 3600 * 1000;
+      return this.requestAnalyticsWorker({
+        task: "prewarm",
+        usageRange: { since: new Date(since).toISOString(), until: new Date(until).toISOString() },
+        quotaRange: { since: new Date(since).toISOString(), until: new Date(until).toISOString() },
+      });
+    }).catch(() => log.warn("Analytics prewarm failed"));
   }
 
   private pushUpdate(): void {
@@ -411,15 +446,15 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("analytics:summary", async (_, request?: { costWindow?: string }) => {
-      if (!await portableDataIsReady()) return PORTABLE_DATA_PREPARING;
-      const settings = await loadRuntimeSettings();
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
+      const settings = await this.runtimeSettings();
       const costWindow = normalizeCostWindow(request?.costWindow) ?? settings.costWindow;
       return this.computeSummary(settings, costWindow);
     });
 
     ipcMain.handle("analytics:get", async (_, request?: { since?: string; until?: string }) => {
-      if (!await portableDataIsReady()) return PORTABLE_DATA_PREPARING;
-      const settings     = await loadRuntimeSettings();
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
+      const settings     = await this.runtimeSettings();
       const { since, until } = resolveAnalyticsGetWindow(request);
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
@@ -429,7 +464,7 @@ export class DetailsWindowController {
       const fxEstimated = sharedFxFetcher.estimated;
       const planSig = JSON.stringify(settings.plans);
 
-      return this.analyticsDataCache.get(`get:${since}:${until}:${planSig}`, () => runAnalyticsWorker(
+      return this.analyticsDataCache.get(`get:${since}:${until}:${planSig}`, () => this.requestAnalyticsWorker(
         createAnalyticsGetRequest(settings, request, cacheHitRate, Date.now(), eurUsdRates, fxEstimated),
       ) as Promise<AnalyticsData>);
     });
@@ -455,16 +490,17 @@ export class DetailsWindowController {
     }));
 
     ipcMain.handle("models:get", async () => {
-      if (!await portableDataIsReady()) return PORTABLE_DATA_PREPARING;
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadSettings();
-      return this.modelsDataCache.get("models", () => runAnalyticsWorker({
+      return this.modelsDataCache.get("models", () => this.requestAnalyticsWorker({
         task: "models",
         settings,
         usageRange: { since: "1970-01-01T00:00:00.000Z", until: new Date().toISOString() },
       }) as Promise<ModelsData>);
     });
 
-    ipcMain.handle("windowBudget:get", async (): Promise<WindowBudgetData> => {
+    ipcMain.handle("windowBudget:get", async () => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const snapshots = this.lastSnapshots ?? [];
       const providers = snapshots
         .filter((s) => s.status === "ok" || s.status === "stale")
@@ -486,21 +522,25 @@ export class DetailsWindowController {
         });
       if (providers.length === 0) return { perProvider: {} };
       return this.windowBudgetCache.get("windowBudget", () =>
-        runAnalyticsWorker({
+        this.requestAnalyticsWorker({
           task: "windowBudget",
-          nowMs: Date.now(),
+          nowMs: this.nowMs(),
+          usageRange: { since: new Date(this.nowMs() - 28 * 24 * 3600 * 1000).toISOString(), until: new Date(this.nowMs()).toISOString() },
+          quotaRange: { since: new Date(this.nowMs() - 28 * 24 * 3600 * 1000).toISOString(), until: new Date(this.nowMs()).toISOString() },
           providers,
         }) as Promise<WindowBudgetData>
       );
     });
 
     ipcMain.handle("windowHistory:get", async () => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadSettings();
       // Aus den Logs berechnete, abgeschlossene 7d-Fenster (gecached).
       const computed = await this.windowHistoryCache.get("windowHistory", () =>
-        runAnalyticsWorker({
+        this.requestAnalyticsWorker({
           task: "windowHistory",
-          nowMs: Date.now(),
+          nowMs: this.nowMs(),
+          quotaRange: { since: new Date(this.nowMs() - 365 * 24 * 3600 * 1000).toISOString(), until: new Date(this.nowMs()).toISOString() },
         }) as Promise<WindowHistoryData>
       );
       // Mit dem persistenten Store vereinen (überlebt gelöschte Logs) und speichern.

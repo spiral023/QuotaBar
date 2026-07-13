@@ -7,3 +7,7 @@ if (window.__QB_IPC_BRIDGE__) {
 } else if (!QB.ipc) {
   console.error('QuotaBar IPC bridge is unavailable');
 }
+
+QB.isPortableDataPreparing = function isPortableDataPreparing(value) {
+  return Boolean(value && value.portableDataPreparing === true);
+};

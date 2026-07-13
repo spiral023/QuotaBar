@@ -39,6 +39,8 @@ interface AnalyticsBaseInput {
   eurUsdRates?: Record<string, number>;
   fxEstimated?: boolean;
   nowMs: number;
+  usageRange?: PortableRange;
+  quotaRange?: PortableRange;
 }
 
 interface AnalyticsGetTaskInput extends AnalyticsBaseInput {
@@ -58,12 +60,15 @@ export interface AnalyticsWorkerDependencies {
   usageStore?: PortableUsageStore;
   readClaudeEntries?: (...args: never[]) => Promise<unknown[]>;
   readCodexEvents?: (...args: never[]) => Promise<unknown[]>;
+  readQuotaSnapshots?: typeof readQuotaSnapshots;
 }
+
+interface PortableRange { since: string; until: string }
 
 interface ModelsTaskInput {
   task: "models";
   settings: Settings;
-  usageRange: { since: string; until: string };
+  usageRange?: PortableRange;
 }
 
 export interface WindowBudgetProviderInput {
@@ -80,6 +85,8 @@ interface WindowBudgetTaskInput {
   task: "windowBudget";
   nowMs: number;
   providers: WindowBudgetProviderInput[];
+  usageRange?: PortableRange;
+  quotaRange?: PortableRange;
 }
 
 export interface WindowBudgetProviderData {
@@ -96,13 +103,16 @@ export interface WindowBudgetData {
 interface WindowHistoryTaskInput {
   task: "windowHistory";
   nowMs: number;
+  quotaRange?: PortableRange;
 }
+
+interface PrewarmTaskInput { task: "prewarm"; usageRange: PortableRange; quotaRange: PortableRange }
 
 export interface WindowHistoryData {
   entries: WindowHistoryEntry[];
 }
 
-type WorkerInput = AnalyticsTaskInput | ModelsTaskInput | WindowBudgetTaskInput | WindowHistoryTaskInput;
+type WorkerInput = AnalyticsTaskInput | ModelsTaskInput | WindowBudgetTaskInput | WindowHistoryTaskInput | PrewarmTaskInput;
 
 // Kombiniert die 5h-Druckverteilung beider Anbieter für die "all"-Sicht: die
 // Fenster sind anbieterspezifisch (eigene Resets), daher werden die Bucket-
@@ -126,6 +136,13 @@ export async function runAnalyticsTask(
   input: WorkerInput,
   deps: AnalyticsWorkerDependencies = {},
 ): Promise<AnalyticsSummary | AnalyticsData | ModelsData | WindowBudgetData | WindowHistoryData> {
+  if (input.task === "prewarm") {
+    await Promise.all([
+      (deps.usageStore ?? new PortableUsageStore()).read(input.usageRange),
+      (deps.readQuotaSnapshots ?? readQuotaSnapshots)(getPortableQuotaDir(), input.quotaRange),
+    ]);
+    return { prewarmed: true } as unknown as AnalyticsSummary;
+  }
   if (input.task === "models") {
     return buildModelsData({ settings: input.settings, usageStore: deps.usageStore, usageEvents: deps.usageEvents, usageRange: input.usageRange });
   }
@@ -133,7 +150,8 @@ export async function runAnalyticsTask(
     return buildWindowBudgetData(input, deps);
   }
   if (input.task === "windowHistory") {
-    const snapshots = await readQuotaSnapshots(getPortableQuotaDir(), {
+    const snapshots = await (deps.readQuotaSnapshots ?? readQuotaSnapshots)(getPortableQuotaDir(), input.quotaRange ?? {
+      since: new Date(input.nowMs - 365 * 24 * 3600 * 1000).toISOString(),
       until: new Date(input.nowMs).toISOString(),
     });
     const observations = quotaSnapshotsToHistoryObservations(snapshots);
@@ -147,7 +165,7 @@ export async function runAnalyticsTask(
   const usageUntilMs = input.until
     ? Date.parse(`${input.until}T23:59:59.999Z`)
     : input.nowMs;
-  const rawUsageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read({
+  const rawUsageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(input.usageRange ?? {
     since: new Date(input.periodStartMs).toISOString(),
     until: new Date(usageUntilMs).toISOString(),
   });
@@ -279,7 +297,7 @@ export async function runAnalyticsTask(
   const untilMs = input.until
     ? new Date(`${input.until}T00:00:00`).getTime() + 24 * 3600 * 1000
     : input.nowMs;
-  const quotaSnapshots = await readQuotaSnapshots(getPortableQuotaDir(), {
+  const quotaSnapshots = await (deps.readQuotaSnapshots ?? readQuotaSnapshots)(getPortableQuotaDir(), input.quotaRange ?? {
     since: new Date(input.periodStartMs).toISOString(),
     until: new Date(untilMs).toISOString(),
   });
@@ -321,7 +339,7 @@ async function buildPortableSummary(
   input: AnalyticsSummaryTaskInput,
   deps: AnalyticsWorkerDependencies,
 ): Promise<AnalyticsSummary> {
-  const rawUsageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read({
+  const rawUsageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(input.usageRange ?? {
     since: new Date(input.periodStartMs).toISOString(),
     until: new Date(input.periodEndMs).toISOString(),
   });
@@ -386,7 +404,7 @@ const WEEK_MS = 7 * DAY_MS;
 
 async function buildWindowBudgetData(input: WindowBudgetTaskInput, deps: AnalyticsWorkerDependencies): Promise<WindowBudgetData> {
   const now = new Date(input.nowMs);
-  const usageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read({
+  const usageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(input.usageRange ?? {
     since: new Date(input.nowMs - 28 * DAY_MS).toISOString(),
     until: now.toISOString(),
   });
@@ -396,7 +414,7 @@ async function buildWindowBudgetData(input: WindowBudgetTaskInput, deps: Analyti
     const resetMs = p.weeklyResetsAt ? new Date(p.weeklyResetsAt).getTime() : null;
     return resetMs !== null && !Number.isNaN(resetMs) ? resetMs - WEEK_MS : input.nowMs - WEEK_MS;
   });
-  const quotaSnapshots = await readQuotaSnapshots(getPortableQuotaDir(), {
+  const quotaSnapshots = await (deps.readQuotaSnapshots ?? readQuotaSnapshots)(getPortableQuotaDir(), input.quotaRange ?? {
     since: new Date(Math.min(...windowStarts)).toISOString(),
     until: new Date(input.nowMs).toISOString(),
   });

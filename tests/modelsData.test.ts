@@ -40,13 +40,31 @@ describe("buildModelsData portable aggregation", () => {
     expect(data.days[0]).toMatchObject({ costUSD: 7, inputCostUSD: 1, outputCostUSD: 6 });
   });
 
-  it("exposes benchmark indexes and offline model pricing metadata", async () => {
-    const usageEvents = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "claude-haiku-4-5", project: "p", session: "s", inputTokens: 1, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0 }]);
+  it("keeps cost-only reconciliation deltas and hides only truly neutral markers", async () => {
+    const base = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "claude-haiku-4-5", project: "p", session: "s", inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 }])[0];
+    const target = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, reasoningOutputTokens: 0, costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 };
+    const data = await buildModelsData({ settings, benchmarksFile, usageEvents: [
+      { ...base, id: "cost-delta", source: "legacy-reconciliation", synthetic: true, costUSD: 2.5, legacyTarget: target },
+      { ...base, id: "neutral", source: "legacy-reconciliation", synthetic: true, costUSD: 0, legacyTarget: target },
+    ] });
+    expect(data.days).toHaveLength(1);
+    expect(data.days[0]).toMatchObject({ date: "2026-01-01", model: "claude-haiku-4-5", costUSD: 2.5 });
+  });
+
+  it("derives available model pricing metadata from stored components without LiteLLM I/O", async () => {
+    const usageEvents = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "claude-haiku-4-5", project: "p", session: "s", inputTokens: 1_000_000, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 500_000, inputCostUSD: .8, cacheReadCostUSD: .04, costUSD: .84 }]);
     const data = await buildModelsData({ settings, usageEvents, benchmarksFile });
     const scores = (JSON.parse(fs.readFileSync(benchmarksFile, "utf8")) as { indexes: { intelligence: { scores: Record<string, number> } } }).indexes.intelligence.scores;
     expect(data.benchmarks["claude-opus-4-8"]).toBe(scores["claude-opus-4-8"]);
     expect(data.pricing["claude-haiku-4-5"].inputPerMTok).toBeCloseTo(.8);
     expect(data.pricing["claude-haiku-4-5"].cacheReadPerMTok).toBeCloseTo(.08);
+    expect(fs.readFileSync(path.join(__dirname, "..", "src", "main", "modelsData.ts"), "utf8")).not.toContain("LiteLLMFetcher");
+  });
+
+  it("leaves unit pricing unavailable when portable components are absent", async () => {
+    const usageEvents = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "componentless", project: "p", session: "s", inputTokens: 100, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 1 }]);
+    const data = await buildModelsData({ settings, usageEvents, benchmarksFile });
+    expect(data.pricing.componentless).toBeUndefined();
   });
 
   it("returns empty benchmarks for a missing file", async () => {

@@ -310,6 +310,12 @@
     }
 
     function renderSummary(s) {
+      if (QB.isPortableDataPreparing(s)) {
+        for (const el of document.querySelectorAll('#qs-grid .qs-tile-val')) el.textContent = 'Preparing data…';
+        const tbody = document.getElementById('top-models-body');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="text-align:center">Preparing data…</td></tr>';
+        return;
+      }
       updateQuickStats(s);
       updateTopModels(s);
       updateInsights(s);
@@ -322,6 +328,9 @@
           QB.ipc.invoke('analytics:summary', { costWindow }).catch(error => {
             analyticsSummaryCache.delete(costWindow);
             throw error;
+          }).then(summary => {
+            if (QB.isPortableDataPreparing(summary)) analyticsSummaryCache.delete(costWindow);
+            return summary;
           })
         );
       }

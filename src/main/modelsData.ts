@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Settings } from "../config/settings";
 import { defaultSettings } from "../config/settings";
-import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { normalizeModelName, isIgnoredModel } from "../shared/modelNames";
 import { PortableUsageStore } from "../portable/usageStore";
 import type { PortableUsageEvent } from "../portable/types";
+import { isNeutralInternalMarker } from "../portable/eventAdapters";
 
 export interface ModelDay {
   date: string; // YYYY-MM-DD (UTC)
@@ -71,7 +71,7 @@ export async function buildModelsData(deps: ModelsDataDeps = {}): Promise<Models
 
   const dayMap = new Map<string, ModelDay>();
   for (const event of events) {
-    if (isNeutralLegacyMarker(event)) continue;
+    if (isNeutralInternalMarker(event)) continue;
     addDay(dayMap, event.occurredAt.slice(0, 10), event.provider, event.model, {
       inputTokens: event.inputTokens,
       outputTokens: event.outputTokens,
@@ -90,7 +90,7 @@ export async function buildModelsData(deps: ModelsDataDeps = {}): Promise<Models
     .sort((a, b) => a.date.localeCompare(b.date) || a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
 
   const { benchmarks, benchmarksAsOf, benchmarkIndexes } = await readBenchmarks(deps.benchmarksFile ?? DEFAULT_BENCHMARKS_FILE);
-  const pricing = await collectPricing(days, settings);
+  const pricing = collectPricing(events);
 
   return {
     days, benchmarks, benchmarksAsOf, benchmarkIndexes, pricing,
@@ -131,13 +131,6 @@ function addDay(
 function storedCost(event: PortableUsageEvent): number {
   return event.costUSD ?? (event.inputCostUSD ?? 0) + (event.outputCostUSD ?? 0)
     + (event.cacheCreationCostUSD ?? 0) + (event.cacheReadCostUSD ?? 0);
-}
-
-function isNeutralLegacyMarker(event: PortableUsageEvent): boolean {
-  return event.source === "legacy-reconciliation" && event.legacyTarget !== undefined
-    && event.inputTokens === 0 && event.outputTokens === 0
-    && event.cacheCreationTokens === 0 && event.cacheReadTokens === 0
-    && event.reasoningOutputTokens === 0;
 }
 
 async function readBenchmarks(file: string): Promise<{
@@ -191,18 +184,24 @@ async function readBenchmarks(file: string): Promise<{
   }
 }
 
-async function collectPricing(days: ModelDay[], settings: Settings): Promise<Record<string, ModelPricingRate>> {
-  const fetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
+function collectPricing(events: readonly PortableUsageEvent[]): Record<string, ModelPricingRate> {
   const result: Record<string, ModelPricingRate> = {};
-  const models = [...new Set(days.map(d => d.model))];
-  const pricings = await Promise.all(models.map(m => fetcher.getModelPricing(m)));
-  models.forEach((model, i) => {
-    const p = pricings[i];
-    if (!p || typeof p.input_cost_per_token !== "number") return;
+  const models = [...new Set(events
+    .filter((event) => !isNeutralInternalMarker(event) && !isIgnoredModel(event.model))
+    .map((event) => normalizeModelName(event.model)))];
+  for (const model of models) {
+    const rows = events.filter((event) => normalizeModelName(event.model) === model);
+    const inputRows = rows.filter((event) => event.inputCostUSD !== undefined);
+    const cacheRows = rows.filter((event) => event.cacheReadCostUSD !== undefined);
+    const inputTokens = inputRows.reduce((sum, event) => sum + event.inputTokens, 0);
+    const cacheReadTokens = cacheRows.reduce((sum, event) => sum + event.cacheReadTokens, 0);
+    if (inputTokens === 0) continue;
     result[model] = {
-      inputPerMTok: p.input_cost_per_token * 1e6,
-      cacheReadPerMTok: (p.cache_read_input_token_cost ?? 0) * 1e6,
+      inputPerMTok: inputRows.reduce((sum, event) => sum + (event.inputCostUSD ?? 0), 0) / inputTokens * 1e6,
+      cacheReadPerMTok: cacheReadTokens > 0
+        ? cacheRows.reduce((sum, event) => sum + (event.cacheReadCostUSD ?? 0), 0) / cacheReadTokens * 1e6
+        : 0,
     };
-  });
+  }
   return result;
 }

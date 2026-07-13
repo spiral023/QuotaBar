@@ -11,6 +11,17 @@ vi.mock("../src/portable/quotaStore", () => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe("analytics summary portable isolation", () => {
+  it("prewarms exactly the explicit bounded usage and quota ranges", async () => {
+    const store = new PortableUsageStore("unused");
+    const read = vi.spyOn(store, "read").mockResolvedValue([]);
+    const readQuota = vi.fn(async () => []);
+    const usageRange = { since: "2026-07-01T00:00:00.000Z", until: "2026-07-31T23:59:59.999Z" };
+    const quotaRange = { since: "2026-07-07T00:00:00.000Z", until: "2026-07-14T00:00:00.000Z" };
+    await runAnalyticsTask({ task: "prewarm", usageRange, quotaRange }, { usageStore: store, readQuotaSnapshots: readQuota });
+    expect(read).toHaveBeenCalledWith(usageRange);
+    expect(readQuota).toHaveBeenCalledWith(expect.any(String), quotaRange);
+  });
+
   it("builds summary before invoking provider history readers", async () => {
     const usageEvents = [
       ...fromClaudeEntries([{
