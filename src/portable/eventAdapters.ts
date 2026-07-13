@@ -82,13 +82,13 @@ export function toClaudeEntries(events: readonly PortableUsageEvent[]): ClaudeUs
   return events
     .filter((event) => event.provider === "claude")
     .map((event) => {
-      const projectName = basenameAnySeparator(event.projectName) ?? "Unknown project";
+      const projectName = basenameAnySeparator(event.projectName);
       return {
         provider: "claude",
         timestamp: event.occurredAt,
         model: event.model,
-        project: projectName,
-        projectName,
+        project: projectName ?? "Unknown project",
+        ...(projectName ? { projectName } : {}),
         session: event.sessionKey,
         inputTokens: event.inputTokens,
         outputTokens: event.outputTokens,

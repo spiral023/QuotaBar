@@ -144,7 +144,9 @@ describe("portable event adapters", () => {
   it("uses safe reverse-adapter project fallbacks", () => {
     const claudeEvent = { ...fromClaudeEntries([claude()])[0], projectName: undefined };
     const codexEvent = { ...fromCodexEvents([codex()])[0], projectName: undefined };
-    expect(toClaudeEntries([claudeEvent])[0].project).toBe("Unknown project");
+    const [claudeEntry] = toClaudeEntries([claudeEvent]);
+    expect(claudeEntry.project).toBe("Unknown project");
+    expect(claudeEntry).not.toHaveProperty("projectName");
     expect(toCodexEvents([codexEvent])[0].directory).toBe(".");
   });
 
