@@ -19,7 +19,7 @@ import { collectSystemData, formatSystemPathDiagnostics, formatWslDiscoveryDiagn
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { DebugRecorder } from "./debugRecorder";
 import { snapshotEvent } from "./debugEvents";
-import { createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, readLegacyQuotaSnapshots, type PortableIngestionLifecycle } from "./debugBackfill";
+import { createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, readLegacyQuotaSnapshots, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
 import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
 import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
@@ -31,7 +31,7 @@ import { registerLifecycleEvents } from "./lifecycleEvents";
 import { appendQuotaSnapshots } from "../portable/quotaStore";
 import { PortableUsageStore } from "../portable/usageStore";
 import { ingestPortableUsage } from "../portable/ingestion";
-import { markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData } from "../portable/migration";
+import { beginMigrationRefresh, markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData, readCompleteMigrationRevision } from "../portable/migration";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
 
 interface CliOptions {
@@ -189,7 +189,7 @@ if (!app.requestSingleInstanceLock()) {
         readLegacyQuota: () => readLegacyQuotaSnapshots(getDebugLogDir()),
         migrateQuota: (snapshots) => appendQuotaSnapshots(getPortableQuotaDir(), snapshots),
         completeMigration: (revision) => markMigrationComplete(getPortableMigrationPath(), revision, portableUsageStore),
-        failMigration: (code) => markMigrationFailed(getPortableMigrationPath(), code),
+        failMigration: (code, expectation) => markMigrationFailed(getPortableMigrationPath(), code, expectation),
         prewarmConsumers: () => detailsWindow.prewarmAnalytics(),
         onStageComplete: (stage, durationMs, count) => {
           log.info(`Portable data stage=${stage} count=${count} durationMs=${durationMs}`);
@@ -201,9 +201,35 @@ if (!app.requestSingleInstanceLock()) {
       });
       if (portableReady) {
         portableIngestionLifecycle = createPortableIngestionLifecycle(createPortableIngestionRunner(async () => {
-          const startedAt = Date.now();
-          const result = await ingestPortableSources();
-          log.info(`Portable data stage=ongoing_ingestion count=${result.inserted + result.updated} durationMs=${Date.now() - startedAt}`);
+          await refreshPortableData({
+            readCompleteRevision: () => readCompleteMigrationRevision(getPortableMigrationPath()),
+            readStoreRevision: () => portableUsageStore.getRevision(),
+            ingestProviderEvents: ingestPortableSources,
+            beginRefresh: (revision) => beginMigrationRefresh(getPortableMigrationPath(), revision),
+            readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
+            reconcileLegacy: (records, owner) => migrateLegacyData({
+              store: portableUsageStore,
+              records,
+              statePath: getPortableMigrationPath(),
+              finalizeState: false,
+              expectedOwner: owner,
+            }),
+            completeMigration: (revision, owner) => markMigrationComplete(
+              getPortableMigrationPath(),
+              revision,
+              portableUsageStore,
+              owner,
+            ),
+            failMigration: (code, expectation) => markMigrationFailed(
+              getPortableMigrationPath(),
+              code,
+              expectation,
+            ),
+            refreshConsumers: () => detailsWindow.prewarmAnalytics(),
+            onStageComplete: (stage, durationMs, count) => {
+              log.info(`Portable data refresh stage=${stage} count=${count} durationMs=${durationMs}`);
+            },
+          });
         }, (diagnostic) => log.warn(diagnostic)));
         await portableIngestionLifecycle.start();
       }

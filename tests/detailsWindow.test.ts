@@ -166,12 +166,45 @@ describe("portable analytics readiness", () => {
       readLegacyQuota: async () => [],
       migrateQuota: async () => undefined,
       completeMigration: (revision) => markMigrationComplete(statePath, revision, store),
-      failMigration: (code) => markMigrationFailed(statePath, code),
+      failMigration: (code, expectation) => markMigrationFailed(statePath, code, expectation),
       prewarmConsumers: () => controller.prewarmAnalytics(),
     })).rejects.toThrow("Portable data preparation failed at consumer_prewarm");
     expect(JSON.parse(await fs.readFile(statePath, "utf8"))).toMatchObject({
       status: "failed", lastError: "consumer_prewarm_failed",
     });
+  });
+
+  it("does not let an older prewarm failure overwrite a newer running migration", async () => {
+    const statePath = path.join(tmpDir, "migration-state.json");
+    const store = new PortableUsageStore(tmpDir);
+    const revision = await store.getRevision();
+    const controller = new DetailsWindowController(() => null, undefined, undefined, {
+      portableDataIsReady: vi.fn(async () => true),
+      runAnalyticsWorker: vi.fn(async () => {
+        await markMigrationRunning(statePath, () => new Date("2026-07-13T12:00:01.000Z"));
+        throw new Error("raw worker detail");
+      }),
+      now: () => Date.parse("2026-07-13T12:00:00.000Z"),
+    });
+
+    const result = await preparePortableData({
+      beginMigration: () => markMigrationRunning(statePath),
+      ingestProviderEvents: async () => ({ inserted: 0, updated: 0 }),
+      readLegacyRecords: async () => [],
+      reconcileLegacy: async () => ({ storeRevision: revision, syntheticInserted: 0, syntheticUpdated: 0 }),
+      readLegacyQuota: async () => [],
+      migrateQuota: async () => undefined,
+      completeMigration: (current) => markMigrationComplete(statePath, current, store),
+      failMigration: (code, expectation) => markMigrationFailed(statePath, code, expectation),
+      prewarmConsumers: () => controller.prewarmAnalytics(),
+    });
+
+    expect(result).toEqual({ status: "superseded" });
+    expect(JSON.parse(await fs.readFile(statePath, "utf8"))).toMatchObject({
+      status: "running",
+      updatedAt: "2026-07-13T12:00:01.000Z",
+    });
+    await expect(markMigrationComplete(statePath, revision, store)).resolves.toEqual({ status: "applied" });
   });
 
   it("treats missing, pending and malformed migration state as preparing", async () => {

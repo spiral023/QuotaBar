@@ -98,6 +98,8 @@ export interface MigrateLegacyDataOptions {
   failAfterState?: "running" | "events";
   /** Startup orchestration owns the final state so quota snapshots can commit first. */
   finalizeState?: boolean;
+  /** Ongoing refresh already owns this exact running state and must not replace it. */
+  expectedOwner?: MigrationRefreshOwner;
 }
 
 export interface MigrateLegacyDataResult {
@@ -131,6 +133,15 @@ export type MigrationStateTransitionResult =
   | { status: "not_running" }
   | { status: "future_state" }
   | { status: "stale_revision"; revision: string };
+
+export type MigrationStateExpectation =
+  | { status: "complete"; storeRevision: string }
+  | { status: "running"; updatedAt: string };
+
+export type MigrationRefreshOwner = Extract<MigrationStateExpectation, { status: "running" }>;
+export type MigrationRefreshTransitionResult =
+  | { status: "applied"; owner: MigrationRefreshOwner }
+  | Exclude<MigrationStateTransitionResult, { status: "applied" }>;
 
 /**
  * Reconciles immutable legacy day aggregates against provider events already stored in the portable archive.
@@ -186,7 +197,13 @@ async function migrateLegacyDataExclusive(
     await writeStateSafely(statePath, loadedState.state);
   }
 
-  await writeStateSafely(statePath, state("running", now));
+  if (options.expectedOwner) {
+    if (!migrationStateMatches(loadedState.state, options.expectedOwner)) {
+      throw new Error("Portable usage migration ownership changed");
+    }
+  } else {
+    await writeStateSafely(statePath, state("running", now));
+  }
   if (options.failAfterState === "running") throw new Error("Portable usage migration interrupted");
 
   let records: Map<string, { date: string; provider: PortableProvider; model: string; target: LegacyTarget }>;
@@ -288,23 +305,58 @@ export async function markMigrationRunning(
   });
 }
 
-export async function markMigrationComplete(
+export async function readCompleteMigrationRevision(statePath: string): Promise<string | undefined> {
+  const resolvedStatePath = path.resolve(statePath);
+  return await withMigrationStateLock(resolvedStatePath, async () => {
+    const loaded = await readCurrentForTransition(resolvedStatePath);
+    return loaded !== "future_state" && loaded.state?.status === "complete"
+      ? loaded.state.storeRevision
+      : undefined;
+  });
+}
+
+export async function beginMigrationRefresh(
   statePath: string,
-  storeRevision: string,
-  store: Pick<PortableUsageStore, "commitIfRevision">,
+  expectedCompleteRevision: string,
   now: () => Date = () => new Date(),
-): Promise<MigrationStateTransitionResult> {
-  if (!/^[a-f0-9]{64}$/.test(storeRevision)) throw new Error("Portable migration revision is invalid");
+): Promise<MigrationRefreshTransitionResult> {
+  if (!/^[a-f0-9]{64}$/.test(expectedCompleteRevision)) {
+    throw new Error("Portable migration revision is invalid");
+  }
   const resolvedStatePath = path.resolve(statePath);
   return await withMigrationStateLock(resolvedStatePath, async () => {
     const loaded = await readCurrentForTransition(resolvedStatePath);
     if (loaded === "future_state") return { status: "future_state" };
+    if (loaded.state?.status !== "complete" || loaded.state.storeRevision !== expectedCompleteRevision) {
+      return { status: "not_running" };
+    }
+    const running = state("running", now);
+    await writeStateSafely(resolvedStatePath, running);
+    return { status: "applied", owner: { status: "running", updatedAt: running.updatedAt } };
+  });
+}
+
+export async function markMigrationComplete(
+  statePath: string,
+  storeRevision: string,
+  store: Pick<PortableUsageStore, "commitIfRevision">,
+  expectationOrNow?: MigrationStateExpectation | (() => Date),
+  now: () => Date = () => new Date(),
+): Promise<MigrationStateTransitionResult> {
+  if (!/^[a-f0-9]{64}$/.test(storeRevision)) throw new Error("Portable migration revision is invalid");
+  const expectation = typeof expectationOrNow === "function" ? undefined : expectationOrNow;
+  const transitionNow = typeof expectationOrNow === "function" ? expectationOrNow : now;
+  const resolvedStatePath = path.resolve(statePath);
+  return await withMigrationStateLock(resolvedStatePath, async () => {
+    const loaded = await readCurrentForTransition(resolvedStatePath);
+    if (loaded === "future_state") return { status: "future_state" };
+    if (expectation && !migrationStateMatches(loaded.state, expectation)) return { status: "not_running" };
     const alreadyComplete = loaded.state?.status === "complete" && loaded.state.storeRevision === storeRevision;
     if (!alreadyComplete && loaded.state?.status !== "running") return { status: "not_running" };
     // Global lock order: migration state lock -> usage-store writer/root lock. Store operations never acquire
     // an outer migration/ingestion lock, so this order cannot form a cycle.
     const finalized = await store.commitIfRevision(storeRevision, async () => {
-      if (!alreadyComplete) await writeStateSafely(resolvedStatePath, state("complete", now, storeRevision));
+      if (!alreadyComplete) await writeStateSafely(resolvedStatePath, state("complete", transitionNow, storeRevision));
     });
     if (finalized.status === "stale") return { status: "stale_revision", revision: finalized.revision };
     return alreadyComplete ? { status: "already_complete" } : { status: "applied" };
@@ -314,9 +366,12 @@ export async function markMigrationComplete(
 export async function markMigrationFailed(
   statePath: string,
   lastError: PortableMigrationFailureCode,
+  expectationOrNow?: MigrationStateExpectation | (() => Date),
   now: () => Date = () => new Date(),
 ): Promise<MigrationStateTransitionResult> {
   if (!STATE_ERROR_CODES.has(lastError)) throw new Error("Portable migration failure code is invalid");
+  const expectation = typeof expectationOrNow === "function" ? undefined : expectationOrNow;
+  const transitionNow = typeof expectationOrNow === "function" ? expectationOrNow : now;
   const resolvedStatePath = path.resolve(statePath);
   return await withMigrationStateLock(resolvedStatePath, async () => {
     const loaded = await readCurrentForTransition(resolvedStatePath);
@@ -327,13 +382,23 @@ export async function markMigrationFailed(
       }
       return { status: "already_failed", lastError: loaded.state.lastError };
     }
+    if (expectation && !migrationStateMatches(loaded.state, expectation)) return { status: "not_running" };
     if (loaded.state?.status !== "running"
       && !(loaded.state?.status === "complete" && lastError === "consumer_prewarm_failed")) {
       return { status: "not_running" };
     }
-    await writeFailedState(resolvedStatePath, lastError, now);
+    await writeFailedState(resolvedStatePath, lastError, transitionNow);
     return { status: "applied" };
   });
+}
+
+function migrationStateMatches(
+  current: PortableMigrationState | undefined,
+  expectation: MigrationStateExpectation,
+): boolean {
+  return expectation.status === "complete"
+    ? current?.status === "complete" && current.storeRevision === expectation.storeRevision
+    : current?.status === "running" && current.updatedAt === expectation.updatedAt;
 }
 
 function isPortableMigrationFailureCode(value: unknown): value is PortableMigrationFailureCode {

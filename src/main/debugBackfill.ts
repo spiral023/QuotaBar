@@ -12,7 +12,12 @@ import { log } from "./logging";
 import { loadManifest, saveManifest, fileSignature, diffSources, type BackfillManifest } from "./backfillManifest";
 import type { BackfillDayRecord } from "../reports/types";
 import { sanitizeQuotaSnapshot } from "../portable/quotaStore";
-import type { MigrationStateTransitionResult } from "../portable/migration";
+import type {
+  MigrationRefreshOwner,
+  MigrationRefreshTransitionResult,
+  MigrationStateExpectation,
+  MigrationStateTransitionResult,
+} from "../portable/migration";
 
 /**
  * Wird bei jedem Fix erhöht, der ein einmaliges Neuberechnen aller bereits
@@ -55,7 +60,10 @@ export interface PreparePortableDataDependencies {
   readLegacyQuota(): Promise<readonly SnapshotEvent[]>;
   migrateQuota(snapshots: readonly SnapshotEvent[]): Promise<void>;
   completeMigration(storeRevision: string): Promise<MigrationStateTransitionResult | void>;
-  failMigration(code: `${PortablePreparationFailureStage}_failed`): Promise<MigrationStateTransitionResult | void>;
+  failMigration(
+    code: `${PortablePreparationFailureStage}_failed`,
+    expectation?: MigrationStateExpectation,
+  ): Promise<MigrationStateTransitionResult | void>;
   prewarmConsumers(): void | Promise<void>;
   onStageComplete?(stage: PortablePreparationFailureStage, durationMs: number, count: number): void;
 }
@@ -66,6 +74,33 @@ export type PreparePortableDataResult = {
   legacyInserted: number;
   quotaSnapshots: number;
 } | { status: "superseded" };
+
+export interface RefreshPortableDataDependencies {
+  readCompleteRevision(): Promise<string | undefined>;
+  readStoreRevision(): Promise<string>;
+  ingestProviderEvents(): Promise<PortableIngestionCounts>;
+  beginRefresh(expectedCompleteRevision: string): Promise<MigrationRefreshTransitionResult>;
+  readLegacyRecords(): Promise<readonly BackfillDayRecord[]>;
+  reconcileLegacy(
+    records: readonly BackfillDayRecord[],
+    owner: MigrationRefreshOwner,
+  ): Promise<PortableLegacyMigrationCounts>;
+  completeMigration(
+    storeRevision: string,
+    owner: MigrationRefreshOwner,
+  ): Promise<MigrationStateTransitionResult | void>;
+  failMigration(
+    code: `${PortablePreparationFailureStage}_failed`,
+    expectation: MigrationStateExpectation,
+  ): Promise<MigrationStateTransitionResult | void>;
+  refreshConsumers(): void | Promise<void>;
+  onStageComplete?(stage: PortablePreparationFailureStage, durationMs: number, count: number): void;
+}
+
+export type RefreshPortableDataResult =
+  | { status: "unchanged" }
+  | { status: "superseded" }
+  | { status: "complete"; ingested: number; legacyUpdated: number };
 
 /**
  * Activates portable consumers only after every persistent migration stage has committed.
@@ -79,6 +114,7 @@ export async function preparePortableData(
     return { status: "superseded" };
   }
   let stage: PortablePreparationFailureStage = "ingestion";
+  let completedRevision: string | undefined;
   try {
     let startedAt = Date.now();
     const ingestion = await dependencies.ingestProviderEvents();
@@ -107,6 +143,7 @@ export async function preparePortableData(
     if (transitionWasSuperseded(completionResult)) {
       return { status: "superseded" };
     }
+    completedRevision = legacy.storeRevision;
     dependencies.onStageComplete?.(stage, Date.now() - startedAt, 1);
 
     stage = "consumer_prewarm";
@@ -123,7 +160,12 @@ export async function preparePortableData(
   } catch {
     let failureResult: MigrationStateTransitionResult | void;
     try {
-      failureResult = await dependencies.failMigration(`${stage}_failed`);
+      failureResult = stage === "consumer_prewarm" && completedRevision
+        ? await dependencies.failMigration(`${stage}_failed`, {
+          status: "complete",
+          storeRevision: completedRevision,
+        })
+        : await dependencies.failMigration(`${stage}_failed`);
     } catch {
       throw new Error("Portable data preparation failed while recording failure state");
     }
@@ -135,6 +177,73 @@ export async function preparePortableData(
     }
     // The original failure may contain provider data; expose only the fixed stage category.
     throw new Error(`Portable data preparation failed at ${stage}`);
+  }
+}
+
+/** Reconciles changed ongoing ingestion before publishing the exact new portable store revision. */
+export async function refreshPortableData(
+  dependencies: RefreshPortableDataDependencies,
+): Promise<RefreshPortableDataResult> {
+  const previousRevision = await dependencies.readCompleteRevision();
+  if (!previousRevision) return { status: "superseded" };
+
+  let stage: PortablePreparationFailureStage = "ingestion";
+  let expectation: MigrationStateExpectation | undefined;
+  try {
+    let startedAt = Date.now();
+    const ingestion = await dependencies.ingestProviderEvents();
+    const ingested = ingestion.inserted + ingestion.updated;
+    dependencies.onStageComplete?.(stage, Date.now() - startedAt, ingested);
+    if (ingested === 0 && await dependencies.readStoreRevision() === previousRevision) {
+      return { status: "unchanged" };
+    }
+
+    const begun = await dependencies.beginRefresh(previousRevision);
+    if (begun.status !== "applied") return { status: "superseded" };
+    const owner = begun.owner;
+    expectation = owner;
+
+    const records = await dependencies.readLegacyRecords();
+    let legacyUpdated = 0;
+    let completedRevision: string | undefined;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      stage = "legacy_reconciliation";
+      startedAt = Date.now();
+      const legacy = await dependencies.reconcileLegacy(records, owner);
+      const changed = legacy.syntheticInserted + legacy.syntheticUpdated;
+      legacyUpdated += changed;
+      dependencies.onStageComplete?.(stage, Date.now() - startedAt, changed);
+
+      stage = "migration_completion";
+      startedAt = Date.now();
+      const completion = await dependencies.completeMigration(legacy.storeRevision, owner);
+      if (completion?.status === "stale_revision") continue;
+      if (transitionWasSuperseded(completion)) return { status: "superseded" };
+      completedRevision = legacy.storeRevision;
+      dependencies.onStageComplete?.(stage, Date.now() - startedAt, 1);
+      break;
+    }
+    if (!completedRevision) return { status: "superseded" };
+    expectation = { status: "complete", storeRevision: completedRevision };
+
+    stage = "consumer_prewarm";
+    startedAt = Date.now();
+    await dependencies.refreshConsumers();
+    dependencies.onStageComplete?.(stage, Date.now() - startedAt, 1);
+    return { status: "complete", ingested, legacyUpdated };
+  } catch {
+    if (!expectation) throw new Error(`Portable data refresh failed at ${stage}`);
+    let failure: MigrationStateTransitionResult | void;
+    try {
+      failure = await dependencies.failMigration(`${stage}_failed`, expectation);
+    } catch {
+      throw new Error("Portable data refresh failed while recording failure state");
+    }
+    if (transitionWasSuperseded(failure)) return { status: "superseded" };
+    if (failure?.status === "already_failed") {
+      throw new Error(`Portable data refresh failed: ${failure.lastError}`);
+    }
+    throw new Error(`Portable data refresh failed at ${stage}`);
   }
 }
 
