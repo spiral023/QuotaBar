@@ -67,6 +67,18 @@ describe("buildModelsData portable aggregation", () => {
     expect(data.pricing.componentless).toBeUndefined();
   });
 
+  it("suppresses model pricing when cache-read tokens lack a stored cache cost", async () => {
+    const usageEvents = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "partial", project: "p", session: "s", inputTokens: 1_000_000, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 500_000, inputCostUSD: 1, costUSD: 1 }]);
+    const data = await buildModelsData({ settings, usageEvents, benchmarksFile });
+    expect(data.pricing.partial).toBeUndefined();
+  });
+
+  it("preserves an explicitly stored free cache-read rate", async () => {
+    const usageEvents = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "free-cache", project: "p", session: "s", inputTokens: 1_000_000, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 500_000, inputCostUSD: 1, cacheReadCostUSD: 0, costUSD: 1 }]);
+    const data = await buildModelsData({ settings, usageEvents, benchmarksFile });
+    expect(data.pricing["free-cache"]).toEqual({ inputPerMTok: 1, cacheReadPerMTok: 0 });
+  });
+
   it("returns empty benchmarks for a missing file", async () => {
     const data = await buildModelsData({ settings, usageEvents: [], benchmarksFile: path.join(__dirname, "missing.json") });
     expect(data.benchmarks).toEqual({});

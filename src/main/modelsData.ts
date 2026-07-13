@@ -191,8 +191,12 @@ function collectPricing(events: readonly PortableUsageEvent[]): Record<string, M
     .map((event) => normalizeModelName(event.model)))];
   for (const model of models) {
     const rows = events.filter((event) => normalizeModelName(event.model) === model);
-    const inputRows = rows.filter((event) => event.inputCostUSD !== undefined);
-    const cacheRows = rows.filter((event) => event.cacheReadCostUSD !== undefined);
+    const inputTokenRows = rows.filter((event) => event.inputTokens > 0);
+    const cacheTokenRows = rows.filter((event) => event.cacheReadTokens > 0);
+    if (inputTokenRows.some((event) => event.inputCostUSD === undefined)
+      || cacheTokenRows.some((event) => event.cacheReadCostUSD === undefined)) continue;
+    const inputRows = inputTokenRows.filter((event) => event.inputCostUSD !== undefined);
+    const cacheRows = cacheTokenRows.filter((event) => event.cacheReadCostUSD !== undefined);
     const inputTokens = inputRows.reduce((sum, event) => sum + event.inputTokens, 0);
     const cacheReadTokens = cacheRows.reduce((sum, event) => sum + event.cacheReadTokens, 0);
     if (inputTokens === 0) continue;
