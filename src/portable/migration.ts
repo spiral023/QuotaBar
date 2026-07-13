@@ -127,7 +127,7 @@ export type PortableMigrationFailureCode =
 export type MigrationStateTransitionResult =
   | { status: "applied" }
   | { status: "already_complete" }
-  | { status: "already_failed" }
+  | { status: "already_failed"; lastError: PortableMigrationFailureCode }
   | { status: "not_running" }
   | { status: "future_state" };
 
@@ -312,8 +312,11 @@ export async function markMigrationFailed(
   return await withMigrationStateLock(resolvedStatePath, async () => {
     const loaded = await readCurrentForTransition(resolvedStatePath);
     if (loaded === "future_state") return { status: "future_state" };
-    if (loaded.state?.status === "failed" && loaded.state.lastError === lastError) {
-      return { status: "already_failed" };
+    if (loaded.state?.status === "failed") {
+      if (!isPortableMigrationFailureCode(loaded.state.lastError)) {
+        throw new Error("Portable migration state read failed");
+      }
+      return { status: "already_failed", lastError: loaded.state.lastError };
     }
     if (loaded.state?.status !== "running"
       && !(loaded.state?.status === "complete" && lastError === "consumer_prewarm_failed")) {
@@ -322,6 +325,10 @@ export async function markMigrationFailed(
     await writeFailedState(resolvedStatePath, lastError, now);
     return { status: "applied" };
   });
+}
+
+function isPortableMigrationFailureCode(value: unknown): value is PortableMigrationFailureCode {
+  return typeof value === "string" && STATE_ERROR_CODES.has(value);
 }
 
 async function withMigrationStateLock<T>(statePath: string, operation: () => Promise<T>): Promise<T> {

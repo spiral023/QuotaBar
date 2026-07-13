@@ -207,6 +207,44 @@ describe("portable startup preparation", () => {
     expect(result).toEqual({ status: "superseded" });
     expect(await readFile(statePath, "utf8")).toBe(future);
   });
+
+  it("reports an inner supported migration failure instead of misclassifying it as superseded", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-prepare-inner-failed-"));
+    const usageRoot = path.join(root, "usage");
+    const statePath = path.join(usageRoot, "migration-state.json");
+    const store = new PortableUsageStore(usageRoot);
+    const prewarm = vi.fn();
+    let beforeOuter = "";
+    let afterOuter = "";
+    let outerResult: Awaited<ReturnType<typeof markMigrationFailed>> | undefined;
+
+    await expect(preparePortableData({
+      beginMigration: () => markMigrationRunning(statePath),
+      ingestProviderEvents: async () => ({ inserted: 0, updated: 0 }),
+      readLegacyRecords: async () => [{ date: "invalid" }] as never,
+      reconcileLegacy: (records) => migrateLegacyData({
+        store,
+        records,
+        statePath,
+        finalizeState: false,
+      }),
+      readLegacyQuota: async () => [],
+      migrateQuota: async () => undefined,
+      completeMigration: (revision) => markMigrationComplete(statePath, revision),
+      failMigration: async (code) => {
+        beforeOuter = await readFile(statePath, "utf8");
+        outerResult = await markMigrationFailed(statePath, code);
+        afterOuter = await readFile(statePath, "utf8");
+        return outerResult;
+      },
+      prewarmConsumers: prewarm,
+    })).rejects.toThrow("Portable data preparation failed: legacy_records_invalid");
+
+    expect(outerResult).toEqual({ status: "already_failed", lastError: "legacy_records_invalid" });
+    expect(afterOuter).toBe(beforeOuter);
+    expect(JSON.parse(afterOuter)).toMatchObject({ status: "failed", lastError: "legacy_records_invalid" });
+    expect(prewarm).not.toHaveBeenCalled();
+  });
 });
 
 describe("portable ingestion lifecycle", () => {

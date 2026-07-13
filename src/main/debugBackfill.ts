@@ -129,6 +129,9 @@ export async function preparePortableData(
     if (transitionWasSuperseded(failureResult)) {
       return { status: "superseded" };
     }
+    if (failureResult?.status === "already_failed") {
+      throw new Error(`Portable data preparation failed: ${failureResult.lastError}`);
+    }
     // The original failure may contain provider data; expose only the fixed stage category.
     throw new Error(`Portable data preparation failed at ${stage}`);
   }
