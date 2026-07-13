@@ -27,6 +27,20 @@ const COMPONENT_COST_FIELDS = [
   "cacheReadCostUSD",
 ] as const;
 const STATE_STATUSES = new Set(["pending", "running", "complete", "failed"]);
+const STATE_KEYS = new Set([
+  "schemaVersion",
+  "status",
+  "usageMigrationVersion",
+  "lastError",
+  "updatedAt",
+]);
+const STATE_ERROR_CODES = new Set([
+  "legacy_records_invalid",
+  "store_read_failed",
+  "store_events_invalid",
+  "store_reconciliation_failed",
+]);
+const LEGACY_RECONCILIATION_IDENTITY_NAMESPACE = "quotabar-legacy-reconciliation-event-v1";
 
 type TokenField = typeof TOKEN_FIELDS[number];
 type ComponentCostField = typeof COMPONENT_COST_FIELDS[number];
@@ -49,6 +63,11 @@ interface Aggregate {
 interface LegacyTarget extends Aggregate {
   authoritativeTotalCost: boolean;
   presentCostComponents: Set<ComponentCostField>;
+}
+
+interface LoadedMigrationState {
+  state?: PortableMigrationState;
+  rewriteRequired: boolean;
 }
 
 export interface MigrateLegacyDataOptions {
@@ -85,9 +104,10 @@ export async function migrateLegacyData(options: MigrateLegacyDataOptions): Prom
     throw new Error("Portable usage store recovery failed");
   }
 
-  const previousState = await readMigrationState(statePath);
-  if (previousState?.status === "complete"
-    && previousState.usageMigrationVersion === PORTABLE_USAGE_MIGRATION_VERSION) {
+  const loadedState = await readMigrationState(statePath);
+  if (loadedState.state?.status === "complete"
+    && loadedState.state.usageMigrationVersion === PORTABLE_USAGE_MIGRATION_VERSION) {
+    if (loadedState.rewriteRequired) await writeStateSafely(statePath, loadedState.state);
     return completeResult();
   }
 
@@ -110,7 +130,13 @@ export async function migrateLegacyData(options: MigrateLegacyDataOptions): Prom
     throw new Error("Portable usage migration could not read the store");
   }
 
-  const baseline = aggregateProviderEvents(current);
+  let baseline: Map<string, Aggregate>;
+  try {
+    baseline = aggregateProviderEvents(current);
+  } catch {
+    await writeFailedState(statePath, "store_events_invalid", now);
+    throw new Error("Portable usage store events are invalid");
+  }
   const existingSynthetic = new Map(
     current
       .filter((event) => event.source === "legacy-reconciliation")
@@ -230,6 +256,8 @@ function legacyTarget(entry: BackfillPerModelEntry): LegacyTarget {
     }
   }
   const componentTotal = sumComponents(target);
+  // Historical Backfill records use zero when totalCostUSD was absent. Positive totals remain authoritative;
+  // otherwise component costs provide the only meaningful effective total.
   target.authoritativeTotalCost = entry.costUSD > 0 || componentTotal === 0;
   target.effectiveCostUSD = target.authoritativeTotalCost ? entry.costUSD : componentTotal;
   return target;
@@ -238,8 +266,9 @@ function legacyTarget(entry: BackfillPerModelEntry): LegacyTarget {
 function aggregateProviderEvents(events: readonly PortableUsageEvent[]): Map<string, Aggregate> {
   const result = new Map<string, Aggregate>();
   for (const event of events) {
+    const date = utcDay(event.occurredAt);
+    validateBaselineEventNumbers(event);
     if (event.source === "legacy-reconciliation") continue;
-    const date = event.occurredAt.slice(0, 10);
     const key = aggregateKey(date, event.provider, event.model);
     const aggregate = result.get(key) ?? zeroAggregate();
     for (const field of TOKEN_FIELDS) aggregate[field] += event[field];
@@ -266,14 +295,12 @@ function reconciliationEvent(
     componentDeltas[field] = positiveDecimalDelta(item.target[field], current[field]);
   }
   const totalCostDelta = positiveDecimalDelta(item.target.effectiveCostUSD, current.effectiveCostUSD);
-  const componentDeltaTotal = sumComponents(componentDeltas);
   const hasTokens = TOKEN_FIELDS.some((field) => tokenDeltas[field] > 0);
   const hasComponents = [...item.target.presentCostComponents].some((field) => componentDeltas[field] > 0);
   if (!hasTokens && totalCostDelta === 0 && !hasComponents) return undefined;
 
   const identitySession = JSON.stringify([
-    "legacy-reconciliation",
-    PORTABLE_USAGE_MIGRATION_VERSION,
+    LEGACY_RECONCILIATION_IDENTITY_NAMESPACE,
     item.date,
     item.provider,
     item.model,
@@ -298,7 +325,9 @@ function reconciliationEvent(
     ...tokenDeltas,
   };
   for (const field of item.target.presentCostComponents) event[field] = componentDeltas[field];
-  if (item.target.authoritativeTotalCost || componentDeltaTotal > totalCostDelta) {
+  // Explicit total cost is authoritative downstream. A zero suppresses component fallback when
+  // the provider already covers the effective total but the legacy component breakdown has gaps.
+  if (totalCostDelta > 0 || hasComponents) {
     event.costUSD = totalCostDelta;
   }
   return event;
@@ -348,34 +377,43 @@ function state(status: PortableMigrationState["status"], now: () => Date): Porta
   };
 }
 
-async function readMigrationState(statePath: string): Promise<PortableMigrationState | undefined> {
+async function readMigrationState(statePath: string): Promise<LoadedMigrationState> {
   try {
     const parsed: unknown = JSON.parse(await fs.readFile(statePath, "utf8"));
     return parseMigrationState(parsed);
   } catch (error) {
-    if (isMissing(error) || error instanceof SyntaxError) return undefined;
-    if ((error as NodeJS.ErrnoException)?.code === "EISDIR") return undefined;
+    if (isMissing(error)) return { rewriteRequired: false };
+    if (error instanceof SyntaxError || (error as NodeJS.ErrnoException)?.code === "EISDIR") {
+      return { rewriteRequired: true };
+    }
     // State read diagnostics may contain host paths or file contents; expose only the boundary category.
     // eslint-disable-next-line preserve-caught-error
     throw new Error("Portable migration state read failed");
   }
 }
 
-function parseMigrationState(value: unknown): PortableMigrationState | undefined {
-  if (!isPlainObject(value)) return undefined;
+function parseMigrationState(value: unknown): LoadedMigrationState {
+  if (!isPlainObject(value)) return { rewriteRequired: true };
   const item = value as Record<string, unknown>;
   if (item.schemaVersion !== PORTABLE_STORE_VERSION
     || typeof item.status !== "string" || !STATE_STATUSES.has(item.status)
     || !Number.isSafeInteger(item.usageMigrationVersion) || (item.usageMigrationVersion as number) < 0
-    || typeof item.updatedAt !== "string" || !Number.isFinite(Date.parse(item.updatedAt))) return undefined;
-  if (item.lastError !== undefined && typeof item.lastError !== "string") return undefined;
-  return {
+    || typeof item.updatedAt !== "string" || !Number.isFinite(Date.parse(item.updatedAt))) {
+    return { rewriteRequired: true };
+  }
+  const validLastError = item.status === "failed"
+    && typeof item.lastError === "string"
+    && STATE_ERROR_CODES.has(item.lastError);
+  const rewriteRequired = Object.keys(item).some((key) => !STATE_KEYS.has(key))
+    || (item.lastError !== undefined && !validLastError);
+  const state: PortableMigrationState = {
     schemaVersion: PORTABLE_STORE_VERSION,
     status: item.status as PortableMigrationState["status"],
     usageMigrationVersion: item.usageMigrationVersion as number,
-    ...(typeof item.lastError === "string" ? { lastError: item.lastError } : {}),
+    ...(validLastError ? { lastError: item.lastError as string } : {}),
     updatedAt: item.updatedAt,
   };
+  return { state, rewriteRequired };
 }
 
 async function writeFailedState(statePath: string, lastError: string, now: () => Date): Promise<void> {
@@ -417,6 +455,47 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
 
 function sumEventComponents(event: PortableUsageEvent): number {
   return COMPONENT_COST_FIELDS.reduce((sum, field) => sum + (event[field] ?? 0), 0);
+}
+
+function validateBaselineEventNumbers(event: PortableUsageEvent): void {
+  for (const field of TOKEN_FIELDS) {
+    if (!isNonNegativeFinite(event[field])) throw new Error("invalid stored token value");
+  }
+  if (event.costUSD !== undefined && !isNonNegativeFinite(event.costUSD)) {
+    throw new Error("invalid stored total cost");
+  }
+  for (const field of COMPONENT_COST_FIELDS) {
+    if (event[field] !== undefined && !isNonNegativeFinite(event[field])) {
+      throw new Error("invalid stored component cost");
+    }
+  }
+}
+
+function utcDay(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid stored timestamp");
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
+  if (!match) throw new Error("invalid stored timestamp");
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[9] === undefined ? 0 : Number(match[9]);
+  const offsetMinute = match[10] === undefined ? 0 : Number(match[10]);
+  if (month < 1 || month > 12 || day < 1 || day > daysForMonth(year, month)
+    || hour > 23 || minute > 59 || second > 59
+    || offsetHour > 14 || offsetMinute > 59 || (offsetHour === 14 && offsetMinute !== 0)) {
+    throw new Error("invalid stored timestamp");
+  }
+  const instant = new Date(value);
+  if (!Number.isFinite(instant.getTime())) throw new Error("invalid stored timestamp");
+  return instant.toISOString().slice(0, 10);
+}
+
+function daysForMonth(year: number, month: number): number {
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
 
 function sumComponents(value: Pick<Aggregate, ComponentCostField> | Record<ComponentCostField, number>): number {

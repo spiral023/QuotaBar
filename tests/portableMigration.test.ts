@@ -6,6 +6,7 @@ import {
   migrateLegacyData,
   PORTABLE_USAGE_MIGRATION_VERSION,
 } from "../src/portable/migration";
+import { eventId, sessionKey } from "../src/portable/eventIdentity";
 import type { PortableUsageEvent } from "../src/portable/types";
 import { PortableUsageStore } from "../src/portable/usageStore";
 import type { BackfillDayRecord, BackfillPerModelEntry } from "../src/reports/types";
@@ -123,6 +124,63 @@ describe("migrateLegacyData", () => {
     expect(event.id).toMatch(/^[0-9a-f]{64}$/);
     expect(event.sessionKey).toMatch(/^[0-9a-f]{64}$/);
     expect(event.id).not.toBe(event.sessionKey);
+    const permanentIdentity = JSON.stringify([
+      "quotabar-legacy-reconciliation-event-v1",
+      "2026-05-20",
+      "claude",
+      "claude-sonnet-4-6",
+    ]);
+    expect(event.id).toBe(eventId({
+      provider: "claude",
+      occurredAt: "2026-05-20T12:00:00.000Z",
+      model: "claude-sonnet-4-6",
+      session: permanentIdentity,
+      ordinal: 0,
+    }));
+    expect(event.sessionKey).toBe(sessionKey("claude", permanentIdentity));
+  });
+
+  it("aggregates provider events by their parsed UTC instant rather than timestamp text", async () => {
+    await store.upsert([providerEvent(
+      "offset-current",
+      "2026-05-20T23:30:00-02:00",
+      "claude",
+      "model",
+      { inputTokens: 10 },
+    )]);
+    const may20 = record("2026-05-20", "claude", "model", { inputTokens: 10, totalTokens: 10 });
+    const may21 = record("2026-05-21", "claude", "model", { inputTokens: 10, totalTokens: 10 });
+
+    await migrateLegacyData({ store, records: [may20, may21], statePath });
+
+    const synthetic = (await store.read()).filter(({ source }) => source === "legacy-reconciliation");
+    expect(synthetic).toHaveLength(1);
+    expect(synthetic[0]).toMatchObject({
+      occurredAt: "2026-05-20T12:00:00.000Z",
+      inputTokens: 10,
+    });
+  });
+
+  it("rejects an invalid stored timestamp with a fixed safe error", async () => {
+    const unsafeTimestamp = "private-invalid-timestamp-value";
+    const invalid = providerEvent("invalid", unsafeTimestamp, "claude", "model");
+    store.read = async () => [invalid];
+
+    let message = "";
+    try {
+      await migrateLegacyData({
+        store,
+        records: [record("2026-05-20", "claude", "model")],
+        statePath,
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toBe("Portable usage store events are invalid");
+    expect(message).not.toContain(unsafeTimestamp);
+    const failed = await readFile(statePath, "utf8");
+    expect(JSON.parse(failed)).toMatchObject({ status: "failed", lastError: "store_events_invalid" });
+    expect(failed).not.toContain(unsafeTimestamp);
   });
 
   it("creates no synthetic event when provider totals already equal backfill", async () => {
@@ -275,10 +333,62 @@ describe("migrateLegacyData", () => {
     };
     await migrateLegacyData({ store, records: [combined], statePath });
     const byModel = new Map((await store.read()).map((event) => [event.model, event]));
-    expect(byModel.get("components")).toMatchObject({ inputCostUSD: 0.25, outputCostUSD: 0.75 });
-    expect(byModel.get("components")).not.toHaveProperty("costUSD");
+    expect(byModel.get("components")).toMatchObject({
+      costUSD: 1,
+      inputCostUSD: 0.25,
+      outputCostUSD: 0.75,
+    });
     expect(byModel.get("total")).toMatchObject({ costUSD: 2 });
     expect(byModel.get("total")).not.toHaveProperty("inputCostUSD");
+  });
+
+  it("uses explicit total costs as authoritative despite inconsistent component sums", async () => {
+    await store.upsert([
+      providerEvent("current-low-components", "2026-05-20T08:00:00.000Z", "claude", "low-components", {
+        costUSD: 0.4,
+        inputCostUSD: 4,
+        outputCostUSD: 6,
+      }),
+      providerEvent("current-high-components", "2026-05-20T09:00:00.000Z", "claude", "high-components", {
+        costUSD: 0.8,
+        inputCostUSD: 0.04,
+        outputCostUSD: 0.06,
+      }),
+    ]);
+    const lowComponents = record("2026-05-20", "claude", "low-components", {
+      costUSD: 1,
+      inputCostUSD: 0.1,
+      outputCostUSD: 0.1,
+    });
+    const highComponents = record("2026-05-20", "claude", "high-components", {
+      costUSD: 1,
+      inputCostUSD: 4,
+      outputCostUSD: 6,
+    });
+    const combined: BackfillDayRecord = {
+      ...lowComponents,
+      costUSD: 2,
+      models: ["low-components", "high-components"],
+      perModel: { ...lowComponents.perModel, ...highComponents.perModel },
+    };
+
+    await migrateLegacyData({ store, records: [combined], statePath });
+
+    const synthetic = new Map(
+      (await store.read())
+        .filter(({ source }) => source === "legacy-reconciliation")
+        .map((event) => [event.model, event]),
+    );
+    expect(synthetic.get("low-components")).toMatchObject({
+      costUSD: 0.6,
+      inputCostUSD: 0,
+      outputCostUSD: 0,
+    });
+    expect(synthetic.get("high-components")).toMatchObject({
+      costUSD: 0.2,
+      inputCostUSD: 3.96,
+      outputCostUSD: 5.94,
+    });
   });
 
   it("rejects duplicate or malformed records deterministically without serializing their contents", async () => {
@@ -331,11 +441,20 @@ describe("migrateLegacyData", () => {
       status: "complete",
       usageMigrationVersion: PORTABLE_USAGE_MIGRATION_VERSION,
       updatedAt: "2026-01-01T00:00:00.000Z",
+      authorization: "private-sensitive-state-value",
     })}\n`, "utf8");
     expect(await migrateLegacyData({ store, records: [legacy], statePath, now })).toEqual({
       status: "complete", syntheticInserted: 0, syntheticUpdated: 0,
     });
     expect(await store.read()).toEqual([]);
+    const sanitizedComplete = await readFile(statePath, "utf8");
+    expect(JSON.parse(sanitizedComplete)).toEqual({
+      schemaVersion: 1,
+      status: "complete",
+      usageMigrationVersion: PORTABLE_USAGE_MIGRATION_VERSION,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(sanitizedComplete).not.toContain("private-sensitive-state-value");
 
     await writeFile(statePath, "private malformed state contents", "utf8");
     expect(await migrateLegacyData({ store, records: [legacy], statePath, now })).toMatchObject({ syntheticInserted: 1 });
@@ -344,6 +463,29 @@ describe("migrateLegacyData", () => {
       status: "complete",
       updatedAt: "2026-07-13T10:00:00.000Z",
     });
+  });
+
+  it("safely resets migration states with invalid field types", async () => {
+    const unsafeValue = "private-invalid-version-value";
+    await writeFile(statePath, `${JSON.stringify({
+      schemaVersion: 1,
+      status: "complete",
+      usageMigrationVersion: unsafeValue,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    })}\n`, "utf8");
+
+    expect(await migrateLegacyData({
+      store,
+      records: [record("2026-05-20", "claude", "model", { inputTokens: 1, totalTokens: 1 })],
+      statePath,
+    })).toMatchObject({ syntheticInserted: 1 });
+    const rewritten = await readFile(statePath, "utf8");
+    expect(JSON.parse(rewritten)).toMatchObject({
+      schemaVersion: 1,
+      status: "complete",
+      usageMigrationVersion: PORTABLE_USAGE_MIGRATION_VERSION,
+    });
+    expect(rewritten).not.toContain(unsafeValue);
   });
 
   it("rejects a migration state path outside or elsewhere inside the store root", async () => {
