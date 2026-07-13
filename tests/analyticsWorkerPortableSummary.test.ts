@@ -89,46 +89,38 @@ describe("analytics summary portable isolation", () => {
   });
 });
 
-describe("analytics get legacy isolation", () => {
-  it("builds reports from injected legacy entries without reading the portable usage store", async () => {
-    const read = vi.spyOn(PortableUsageStore.prototype, "read").mockRejectedValue(
-      new Error("portable usage store must not be read"),
-    );
-    const readClaudeEntries = vi.fn(async () => [{
-      provider: "claude" as const,
-      timestamp: "2026-07-10T10:00:00.000Z",
-      model: "claude-test",
-      project: "project",
-      session: "session",
-      inputTokens: 10,
-      outputTokens: 5,
-      cacheCreationTokens: 0,
-      cacheReadTokens: 0,
-      costUSD: 1,
-    }]);
-    const readCodexEvents = vi.fn(async () => []);
+describe("analytics get portable isolation", () => {
+  it("builds analytics from a bounded portable read without invoking provider readers", async () => {
+    const readClaudeEntries = vi.fn(async () => { throw new Error("provider reader must not run"); });
+    const readCodexEvents = vi.fn(async () => { throw new Error("provider reader must not run"); });
+    const store = new PortableUsageStore("unused");
+    const read = vi.spyOn(store, "read").mockResolvedValue(fromClaudeEntries([{
+      provider: "claude", timestamp: "2026-07-10T10:00:00.000Z", model: "claude-test",
+      project: "project", session: "session", inputTokens: 10, outputTokens: 5,
+      cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 1,
+    }]));
 
     const result = await runAnalyticsTask({
       task: "get",
-      claudeProjectsDirs: ["injected-claude"],
-      codexSessionsDirs: ["injected-codex"],
       periodStartMs: Date.parse("2026-07-01T00:00:00.000Z"),
       windowDays: 30,
       since: "2026-07-01",
       until: "2026-07-31",
       settings: { ...defaultSettings, pricingOfflineMode: true },
       cacheHitRate: { claude: 0, codex: 0 },
-      logDir: "unused",
       nowMs: Date.parse("2026-07-31T23:59:59.999Z"),
     }, {
-      usageStore: new PortableUsageStore("unused"),
+      usageStore: store,
       readClaudeEntries,
       readCodexEvents,
     });
 
     expect(result.apiCostUSD).toEqual({ claude: 1, codex: 0, total: 1 });
-    expect(readClaudeEntries).toHaveBeenCalledOnce();
-    expect(readCodexEvents).toHaveBeenCalledOnce();
-    expect(read).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledWith({
+      since: "2026-07-01T00:00:00.000Z",
+      until: "2026-07-31T23:59:59.999Z",
+    });
+    expect(readClaudeEntries).not.toHaveBeenCalled();
+    expect(readCodexEvents).not.toHaveBeenCalled();
   });
 });

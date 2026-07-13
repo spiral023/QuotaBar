@@ -371,6 +371,17 @@ describe("buildSessionStats", () => {
     expect(stats.avgMinutes).toBe(60);
     expect(stats.totalHours).toBe(1);
   });
+
+  it("treats portable pseudonymous session keys as opaque and keeps projects distinct", () => {
+    const entries = [
+      makeSessionEntry("2026-05-01T10:00:00.000Z", "psk_same", "alpha"),
+      makeSessionEntry("2026-05-01T10:15:00.000Z", "psk_same", "alpha"),
+      makeSessionEntry("2026-05-01T11:00:00.000Z", "psk_same", "beta"),
+      makeSessionEntry("2026-05-01T11:30:00.000Z", "psk_same", "beta"),
+    ];
+
+    expect(buildSessionStats(entries, 1)).toMatchObject({ count: 2, avgMinutes: 23 });
+  });
 });
 
 function makeActivityEntry(isoTimestamp: string, provider: "claude" | "codex", session: string, project = "p1") {

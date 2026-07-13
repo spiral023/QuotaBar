@@ -8,7 +8,7 @@ import { log } from "./logging";
 import { generateUsageReport } from "../reports/reportService";
 import type { ReportRequest } from "../reports/types";
 import {
-  getClaudeProjectsDirs, getCodexSessionsDirs, getDebugLogDir, getWindowHistoryPath,
+  getWindowHistoryPath, getPortableMigrationPath,
   getAppConfigDir, getLogPath, getNotificationLogPath, getUsageSnapshotCachePath,
   getFxCachePath, getLiteLLMModelPricesPath, getWindowRatioPath, getBonusStatePath, getNotificationStatePath,
 } from "../config/paths";
@@ -63,6 +63,44 @@ export function createAnalyticsSummaryRequest(
     settings: { ...settings, costWindow },
     cacheHitRate,
   };
+}
+
+export function createAnalyticsGetRequest(
+  settings: Settings,
+  request: { since?: string; until?: string } | undefined,
+  cacheHitRate: AnalyticsSummary["cacheHitRate"],
+  nowMs: number,
+  eurUsdRates: Record<string, number>,
+  fxEstimated: boolean,
+): Record<string, unknown> {
+  const { periodStartMs, windowDays, since, until } = resolveAnalyticsGetWindow(request);
+  return {
+    task: "get",
+    periodStartMs,
+    windowDays,
+    since,
+    until,
+    settings,
+    cacheHitRate,
+    eurUsdRates,
+    fxEstimated,
+    nowMs,
+  };
+}
+
+export interface PortableDataPreparing {
+  portableDataPreparing: true;
+}
+
+const PORTABLE_DATA_PREPARING: PortableDataPreparing = Object.freeze({ portableDataPreparing: true });
+
+export async function portableDataIsReady(statePath = getPortableMigrationPath()): Promise<boolean> {
+  try {
+    const value = JSON.parse(await fs.readFile(statePath, "utf8")) as { status?: unknown };
+    return value.status === "complete";
+  } catch {
+    return false;
+  }
 }
 
 async function loadRuntimeSettings(): Promise<Settings> {
@@ -200,8 +238,8 @@ export class DetailsWindowController {
 
   /** Warms the worker and portable summary store before the dashboard opens. */
   prewarmAnalytics(): void {
-    void loadRuntimeSettings()
-      .then(settings => this.computeSummary(settings, settings.costWindow))
+    void Promise.all([loadRuntimeSettings(), portableDataIsReady()])
+      .then(([settings, ready]) => ready ? this.computeSummary(settings, settings.costWindow) : undefined)
       .catch(err => log.warn(`Analytics prewarm failed: ${err instanceof Error ? err.message : String(err)}`));
   }
 
@@ -373,14 +411,16 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("analytics:summary", async (_, request?: { costWindow?: string }) => {
+      if (!await portableDataIsReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadRuntimeSettings();
       const costWindow = normalizeCostWindow(request?.costWindow) ?? settings.costWindow;
       return this.computeSummary(settings, costWindow);
     });
 
     ipcMain.handle("analytics:get", async (_, request?: { since?: string; until?: string }) => {
+      if (!await portableDataIsReady()) return PORTABLE_DATA_PREPARING;
       const settings     = await loadRuntimeSettings();
-      const { periodStartMs, windowDays, since, until } = resolveAnalyticsGetWindow(request);
+      const { since, until } = resolveAnalyticsGetWindow(request);
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
       const needsFx = settings.plans.some((p) => p.currency === "EUR");
@@ -389,15 +429,9 @@ export class DetailsWindowController {
       const fxEstimated = sharedFxFetcher.estimated;
       const planSig = JSON.stringify(settings.plans);
 
-      return this.analyticsDataCache.get(`get:${since}:${until}:${planSig}`, () => runAnalyticsWorker({
-        task: "get",
-        claudeProjectsDirs: getClaudeProjectsDirs({ claudeRoots: settings.claudeRoots ?? [] }),
-        codexSessionsDirs:  getCodexSessionsDirs({ codexHomes: settings.codexHomes ?? [] }),
-        periodStartMs, windowDays, since, until, settings, cacheHitRate,
-        eurUsdRates, fxEstimated,
-        logDir: getDebugLogDir(),
-        nowMs: Date.now(),
-      }) as Promise<AnalyticsData>);
+      return this.analyticsDataCache.get(`get:${since}:${until}:${planSig}`, () => runAnalyticsWorker(
+        createAnalyticsGetRequest(settings, request, cacheHitRate, Date.now(), eurUsdRates, fxEstimated),
+      ) as Promise<AnalyticsData>);
     });
 
     ipcMain.handle("plans:get", async () => {
@@ -421,10 +455,12 @@ export class DetailsWindowController {
     }));
 
     ipcMain.handle("models:get", async () => {
+      if (!await portableDataIsReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadSettings();
       return this.modelsDataCache.get("models", () => runAnalyticsWorker({
         task: "models",
         settings,
+        usageRange: { since: "1970-01-01T00:00:00.000Z", until: new Date().toISOString() },
       }) as Promise<ModelsData>);
     });
 
@@ -452,7 +488,6 @@ export class DetailsWindowController {
       return this.windowBudgetCache.get("windowBudget", () =>
         runAnalyticsWorker({
           task: "windowBudget",
-          logDir: getDebugLogDir(),
           nowMs: Date.now(),
           providers,
         }) as Promise<WindowBudgetData>
@@ -465,7 +500,6 @@ export class DetailsWindowController {
       const computed = await this.windowHistoryCache.get("windowHistory", () =>
         runAnalyticsWorker({
           task: "windowHistory",
-          logDir: getDebugLogDir(),
           nowMs: Date.now(),
         }) as Promise<WindowHistoryData>
       );

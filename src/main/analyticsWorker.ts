@@ -1,8 +1,7 @@
 import { parentPort } from "node:worker_threads";
 import type { Settings } from "../config/settings";
 import { generateUsageReport } from "../reports/reportService";
-import { readClaudeUsageEntriesForPeriod } from "../pricing/jsonl-reader";
-import { readCodexTokensForPeriod } from "../pricing/codex-log-reader";
+import type { BackfillDayRecord } from "../reports/types";
 import {
   computeActiveDays, buildSparkline7d, buildTopModels,
   computeAvgSessionMinutes,
@@ -16,7 +15,6 @@ import {
 import { buildModelsData, type ModelsData } from "./modelsData";
 import { dailySubCostUSD, periodSubCostUSD, planChangePoints, type PlanChangePoint } from "../pricing/plan-cost";
 import { makeFxLookup } from "../pricing/fx-fetcher";
-import { readBackfillDayRecords } from "../reports/backfill-reader";
 import { buildWeeklyProfile, computeWeeklyForecast, type WeeklyForecastResult } from "./weeklyForecast";
 import { insertBreaks, withBudgetMarkers, type WeeklySeriesRequest, type WindowBudgetSeries } from "./windowBudgetSeries";
 import { buildWindowHistory, buildFiveHourPressure, type HistoryObservation, type WindowHistoryEntry, type PressureDist } from "../usage/windowHistory";
@@ -26,14 +24,12 @@ import { resetsAtChanged } from "../usage/windowRatio";
 import { getPortableQuotaDir } from "../config/paths";
 import { readQuotaSnapshots } from "../portable/quotaStore";
 import type { SnapshotEvent } from "./debugEvents";
-import { toClaudeEntries } from "../portable/eventAdapters";
+import { toClaudeEntries, toCodexEvents } from "../portable/eventAdapters";
 import type { PortableUsageEvent } from "../portable/types";
 import { PortableUsageStore } from "../portable/usageStore";
-import type { ClaudeUsageEntry } from "../pricing/jsonl-reader";
+import { isIgnoredModel, normalizeModelName } from "../shared/modelNames";
 
 interface AnalyticsBaseInput {
-  claudeProjectsDirs: string[];
-  codexSessionsDirs: string[];
   periodStartMs: number;
   windowDays: number;
   since: string;
@@ -42,15 +38,14 @@ interface AnalyticsBaseInput {
   cacheHitRate: { claude: number; codex: number };
   eurUsdRates?: Record<string, number>;
   fxEstimated?: boolean;
-  logDir: string;   // NEW: snapshot debug logs for fivePct
-  nowMs: number;    // NEW: upper bound when `until` is absent
+  nowMs: number;
 }
 
 interface AnalyticsGetTaskInput extends AnalyticsBaseInput {
   task: "get";
 }
 
-export interface AnalyticsSummaryTaskInput extends Omit<AnalyticsBaseInput, "claudeProjectsDirs" | "codexSessionsDirs" | "logDir" | "nowMs"> {
+export interface AnalyticsSummaryTaskInput extends Omit<AnalyticsBaseInput, "nowMs"> {
   task: "summary";
   periodEndMs: number;
   nowMs?: number;
@@ -61,13 +56,14 @@ type AnalyticsTaskInput = AnalyticsGetTaskInput | AnalyticsSummaryTaskInput;
 export interface AnalyticsWorkerDependencies {
   usageEvents?: PortableUsageEvent[];
   usageStore?: PortableUsageStore;
-  readClaudeEntries?: typeof readClaudeUsageEntriesForPeriod;
-  readCodexEvents?: typeof readCodexTokensForPeriod;
+  readClaudeEntries?: (...args: never[]) => Promise<unknown[]>;
+  readCodexEvents?: (...args: never[]) => Promise<unknown[]>;
 }
 
 interface ModelsTaskInput {
   task: "models";
   settings: Settings;
+  usageRange: { since: string; until: string };
 }
 
 export interface WindowBudgetProviderInput {
@@ -82,7 +78,6 @@ export interface WindowBudgetProviderInput {
 
 interface WindowBudgetTaskInput {
   task: "windowBudget";
-  logDir: string;
   nowMs: number;
   providers: WindowBudgetProviderInput[];
 }
@@ -100,7 +95,6 @@ export interface WindowBudgetData {
 
 interface WindowHistoryTaskInput {
   task: "windowHistory";
-  logDir: string;
   nowMs: number;
 }
 
@@ -133,10 +127,10 @@ export async function runAnalyticsTask(
   deps: AnalyticsWorkerDependencies = {},
 ): Promise<AnalyticsSummary | AnalyticsData | ModelsData | WindowBudgetData | WindowHistoryData> {
   if (input.task === "models") {
-    return buildModelsData({ settings: input.settings });
+    return buildModelsData({ settings: input.settings, usageStore: deps.usageStore, usageEvents: deps.usageEvents, usageRange: input.usageRange });
   }
   if (input.task === "windowBudget") {
-    return buildWindowBudgetData(input);
+    return buildWindowBudgetData(input, deps);
   }
   if (input.task === "windowHistory") {
     const snapshots = await readQuotaSnapshots(getPortableQuotaDir(), {
@@ -150,12 +144,22 @@ export async function runAnalyticsTask(
     return buildPortableSummary(input, deps);
   }
 
-  const periodStart = new Date(input.periodStartMs);
-
-  const [claudeEntriesAll, codexEventsAll] = await Promise.all([
-    (deps.readClaudeEntries ?? readClaudeUsageEntriesForPeriod)(input.claudeProjectsDirs, periodStart),
-    (deps.readCodexEvents ?? readCodexTokensForPeriod)(input.codexSessionsDirs, periodStart),
-  ]);
+  const usageUntilMs = input.until
+    ? Date.parse(`${input.until}T23:59:59.999Z`)
+    : input.nowMs;
+  const rawUsageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read({
+    since: new Date(input.periodStartMs).toISOString(),
+    until: new Date(usageUntilMs).toISOString(),
+  });
+  const rangedUsageEvents = rawUsageEvents.filter((event) => {
+    const occurredAt = Date.parse(event.occurredAt);
+    if (occurredAt < input.periodStartMs || occurredAt > usageUntilMs) return false;
+    const day = localDayKey(event.occurredAt);
+    return day >= input.since && (!input.until || day <= input.until);
+  }).filter((event) => !isIgnoredModel(event.model))
+    .map((event) => ({ ...event, model: normalizeModelName(event.model) }));
+  const claudeEntriesAll = toClaudeEntries(rangedUsageEvents);
+  const codexEventsAll = toCodexEvents(rangedUsageEvents);
 
   // Die Reader begrenzen nur nach unten (periodStart). Bei einem Enddatum in der
   // Vergangenheit (eigene Auswahl) müssen die entry-basierten Statistiken
@@ -171,12 +175,12 @@ export async function runAnalyticsTask(
 
   const [claudeReport, codexReport] = await Promise.all([
     generateUsageReport(
-      { type: "daily", provider: "claude", since: input.since, until: input.until, order: "asc", breakdown: true, source: "legacy" },
-      { settings: input.settings, claudeEntries },
+      { type: "daily", provider: "claude", since: input.since, until: input.until, order: "asc", breakdown: true },
+      { settings: input.settings, usageEvents: rangedUsageEvents },
     ),
     generateUsageReport(
-      { type: "daily", provider: "codex", since: input.since, until: input.until, order: "asc", breakdown: true, source: "legacy" },
-      { settings: input.settings, codexEvents },
+      { type: "daily", provider: "codex", since: input.since, until: input.until, order: "asc", breakdown: true },
+      { settings: input.settings, usageEvents: rangedUsageEvents },
     ),
   ]);
 
@@ -372,7 +376,7 @@ async function buildPortableSummary(
   };
 }
 
-function entryWithinSummaryRange(entry: ClaudeUsageEntry, input: AnalyticsSummaryTaskInput): boolean {
+function entryWithinSummaryRange(entry: { timestamp: string }, input: AnalyticsSummaryTaskInput): boolean {
   const day = localDayKey(entry.timestamp);
   return day >= input.since && (!input.until || day <= input.until);
 }
@@ -380,9 +384,13 @@ function entryWithinSummaryRange(entry: ClaudeUsageEntry, input: AnalyticsSummar
 const DAY_MS = 24 * 3600 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 
-async function buildWindowBudgetData(input: WindowBudgetTaskInput): Promise<WindowBudgetData> {
+async function buildWindowBudgetData(input: WindowBudgetTaskInput, deps: AnalyticsWorkerDependencies): Promise<WindowBudgetData> {
   const now = new Date(input.nowMs);
-  const records = await readBackfillDayRecords(input.logDir, new Date(input.nowMs - 28 * DAY_MS));
+  const usageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read({
+    since: new Date(input.nowMs - 28 * DAY_MS).toISOString(),
+    until: now.toISOString(),
+  });
+  const records = portableDailyRecords(usageEvents);
   const perProvider: Record<string, WindowBudgetProviderData> = {};
   const windowStarts = input.providers.map((p) => {
     const resetMs = p.weeklyResetsAt ? new Date(p.weeklyResetsAt).getTime() : null;
@@ -430,6 +438,34 @@ async function buildWindowBudgetData(input: WindowBudgetTaskInput): Promise<Wind
     };
   }
   return { perProvider };
+}
+
+function portableDailyRecords(events: readonly PortableUsageEvent[]): BackfillDayRecord[] {
+  const grouped = new Map<string, BackfillDayRecord>();
+  for (const event of events) {
+    const date = event.occurredAt.slice(0, 10);
+    const key = `${date}\0${event.provider}`;
+    const record = grouped.get(key) ?? {
+      date,
+      provider: event.provider,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      totalTokens: 0,
+      costUSD: 0,
+      sessionCount: 0,
+      models: [],
+      perModel: {},
+    };
+    record.inputTokens += event.inputTokens;
+    record.outputTokens += event.outputTokens;
+    record.cacheCreationTokens += event.cacheCreationTokens;
+    record.cacheReadTokens += event.cacheReadTokens;
+    record.totalTokens += event.inputTokens + event.outputTokens + event.cacheCreationTokens + event.cacheReadTokens;
+    grouped.set(key, record);
+  }
+  return [...grouped.values()];
 }
 
 const FIVE_HOUR_RESET_DROP_PCT = 15;

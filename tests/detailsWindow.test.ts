@@ -28,7 +28,12 @@ vi.mock("electron", () => {
 });
 
 import { DebugRecorder } from "../src/main/debugRecorder";
-import { createAnalyticsSummaryRequest, DetailsWindowController } from "../src/main/detailsWindow";
+import {
+  createAnalyticsGetRequest,
+  createAnalyticsSummaryRequest,
+  DetailsWindowController,
+  portableDataIsReady,
+} from "../src/main/detailsWindow";
 import { ipcMain, shell } from "electron";
 
 let tmpDir: string;
@@ -74,6 +79,38 @@ describe("analytics summary worker request", () => {
 
     expect(request.periodEndMs).toBe(nowMs);
     expect(request.periodStartMs).toBeLessThan(nowMs);
+  });
+});
+
+describe("portable analytics readiness", () => {
+  it("treats missing, pending and malformed migration state as preparing", async () => {
+    const statePath = path.join(tmpDir, "migration-state.json");
+    await expect(portableDataIsReady(statePath)).resolves.toBe(false);
+    await fs.writeFile(statePath, JSON.stringify({ status: "pending" }));
+    await expect(portableDataIsReady(statePath)).resolves.toBe(false);
+    await fs.writeFile(statePath, "not-json");
+    await expect(portableDataIsReady(statePath)).resolves.toBe(false);
+  });
+
+  it("accepts only a complete migration state", async () => {
+    const statePath = path.join(tmpDir, "migration-state.json");
+    await fs.writeFile(statePath, JSON.stringify({ status: "complete" }));
+    await expect(portableDataIsReady(statePath)).resolves.toBe(true);
+  });
+
+  it("creates analytics worker requests without provider directories or debug logs", () => {
+    const request = createAnalyticsGetRequest(
+      defaultSettings,
+      { since: "2026-07-01", until: "2026-07-13" },
+      { claude: 10, codex: 20 },
+      Date.parse("2026-07-13T12:00:00.000Z"),
+      {},
+      false,
+    );
+    expect(request).not.toHaveProperty("claudeProjectsDirs");
+    expect(request).not.toHaveProperty("codexSessionsDirs");
+    expect(request).not.toHaveProperty("logDir");
+    expect(request).toMatchObject({ task: "get", since: "2026-07-01", until: "2026-07-13" });
   });
 });
 
