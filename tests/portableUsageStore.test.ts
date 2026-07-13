@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, readdir, rm, unlink, utimes, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import type { PathLike } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import * as nodeFs from "node:fs/promises";
@@ -130,6 +131,22 @@ describe("PortableUsageStore", () => {
     ]);
     expect((await store.read()).map((item) => item.id)).toEqual(["shared"]);
   });
+
+  it("serializes distinct upserts across real Node processes", async () => {
+    const childFile = path.join(process.cwd(), "tests", "fixtures", "portableUsageStoreChild.test.ts");
+    const vitestCli = path.join(process.cwd(), "node_modules", "vitest", "vitest.mjs");
+    const first = runStoreChild(vitestCli, childFile, rootDir, "process-a");
+    const second = runStoreChild(vitestCli, childFile, rootDir, "process-b");
+    await waitForPaths([
+      path.join(rootDir, "ready-process-a"),
+      path.join(rootDir, "ready-process-b"),
+    ]);
+    await writeFile(path.join(rootDir, "child-go"), String(Date.now() + 500), "utf8");
+
+    await Promise.all([first, second]);
+
+    expect((await store.read()).map((item) => item.id)).toEqual(["process-a", "process-b"]);
+  }, 30_000);
 
   it("does not let reads observe an in-process half-commit", async () => {
     let releaseRename!: () => void;
@@ -374,6 +391,117 @@ describe("PortableUsageStore", () => {
     });
   });
 
+  it("prefers a canonical repair record over a conflicting misplaced copy", async () => {
+    const eventsDir = path.join(rootDir, "events");
+    await mkdir(eventsDir, { recursive: true });
+    const canonical = event("collision", "2026-07-10T00:00:00.000Z", {
+      inputTokens: 999,
+      costUSD: 9.99,
+    });
+    const stale = event("collision", "2026-07-10T00:00:00.000Z", {
+      inputTokens: 10,
+      costUSD: 0.1,
+    });
+    await writeFile(path.join(eventsDir, "2026-07.jsonl"), `${JSON.stringify(canonical)}\n`, "utf8");
+    await writeFile(path.join(eventsDir, "2026-08.jsonl"), `${JSON.stringify(stale)}\n`, "utf8");
+
+    await store.rebuildMetadata();
+
+    expect(await store.read()).toEqual([canonical]);
+    expect(await readdir(eventsDir)).toEqual(["2026-07.jsonl"]);
+  });
+
+  it("does not delete a newer transaction marker", async () => {
+    const newerTransactionId = "00000000-0000-4000-8000-000000000002";
+    let replaceMarker = true;
+    const replacingFs = {
+      ...nodeFs,
+      async readFile(file: PathLike | FileHandle, options?: unknown) {
+        if (replaceMarker && String(file).endsWith("pending-store-transaction.json")) {
+          replaceMarker = false;
+          await nodeFs.writeFile(file, `${JSON.stringify({
+            schemaVersion: 1,
+            transactionId: newerTransactionId,
+            entries: [],
+            remove: [],
+          })}\n`, "utf8");
+        }
+        return nodeFs.readFile(file, options as Parameters<typeof nodeFs.readFile>[1]);
+      },
+    };
+
+    await new PortableUsageStore(rootDir, replacingFs).upsert([
+      event("marker", "2026-07-01T00:00:00.000Z"),
+    ]);
+
+    const marker = JSON.parse(await readFile(path.join(rootDir, "pending-store-transaction.json"), "utf8"));
+    expect(marker.transactionId).toBe(newerTransactionId);
+  });
+
+  it.each([
+    ["escaping target", {
+      entries: [{ target: "../escape.jsonl", temporary: "../escape.tmp", sha256: "0".repeat(64) }],
+      remove: [],
+    }],
+    ["non-sibling temp", {
+      entries: [{
+        target: "store-metadata.json",
+        temporary: path.join("events", "2026-07.jsonl.1.1.00000000-0000-4000-8000-000000000001.tmp"),
+        sha256: "0".repeat(64),
+      }],
+      remove: [],
+    }],
+    ["duplicate targets", {
+      entries: [
+        {
+          target: path.join("events", "2026-07.jsonl"),
+          temporary: path.join("events", "2026-07.jsonl.1.1.00000000-0000-4000-8000-000000000001.tmp"),
+          sha256: "0".repeat(64),
+        },
+        {
+          target: path.join("events", "2026-07.jsonl"),
+          temporary: path.join("events", "2026-07.jsonl.1.1.00000000-0000-4000-8000-000000000002.tmp"),
+          sha256: "0".repeat(64),
+        },
+      ],
+      remove: [],
+    }],
+    ["overlapping write and removal", {
+      entries: [{
+        target: path.join("events", "2026-07.jsonl"),
+        temporary: path.join("events", "2026-07.jsonl.1.1.00000000-0000-4000-8000-000000000001.tmp"),
+        sha256: "0".repeat(64),
+      }],
+      remove: [path.join("events", "2026-07.jsonl")],
+    }],
+    ["non-canonical target spelling", {
+      entries: [{
+        target: `events${path.sep}..${path.sep}store-metadata.json`,
+        temporary: `events${path.sep}..${path.sep}store-metadata.json.1.1.00000000-0000-4000-8000-000000000001.tmp`,
+        sha256: "0".repeat(64),
+      }],
+      remove: [],
+    }],
+    ["duplicate removals", {
+      entries: [],
+      remove: [path.join("events", "2026-07.jsonl"), path.join("events", "2026-07.jsonl")],
+    }],
+  ])("rejects a corrupt pending marker with %s without mutating data", async (_case, marker) => {
+    const eventsDir = path.join(rootDir, "events");
+    await mkdir(eventsDir, { recursive: true });
+    const target = path.join(eventsDir, "2026-07.jsonl");
+    const original = `${JSON.stringify(event("safe", "2026-07-01T00:00:00.000Z"))}\n`;
+    await writeFile(target, original, "utf8");
+    await writeFile(path.join(rootDir, "pending-store-transaction.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      transactionId: "00000000-0000-4000-8000-000000000001",
+      ...marker,
+    })}\n`, "utf8");
+
+    await expect(store.read()).rejects.toThrow("Invalid pending portable store transaction");
+    await expect(readFile(target, "utf8")).resolves.toBe(original);
+  });
+
   it("recovers a transaction interrupted after its first partition commit", async () => {
     let failed = false;
     const failingFs = {
@@ -514,3 +642,47 @@ describe("PortableUsageStore", () => {
     });
   });
 });
+
+function runStoreChild(
+  vitestCli: string,
+  childFile: string,
+  childRoot: string,
+  childId: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [vitestCli, "run", childFile, "--maxWorkers=1"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        QUOTABAR_PORTABLE_CHILD_ROOT: childRoot,
+        QUOTABAR_PORTABLE_CHILD_ID: childId,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += String(chunk); });
+    child.stderr.on("data", (chunk) => { output += String(chunk); });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Portable store child exited with code ${code}: ${output}`));
+    });
+  });
+}
+
+async function waitForPaths(paths: readonly string[]): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const present = await Promise.all(paths.map(async (filePath) => {
+      try {
+        await nodeFs.access(filePath);
+        return true;
+      } catch {
+        return false;
+      }
+    }));
+    if (present.every(Boolean)) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("Timed out waiting for portable store child processes");
+}

@@ -8,6 +8,7 @@ import {
   type PortableStoreMetadata,
   type PortableUsageEvent,
 } from "./types";
+import { withPortableRootLock } from "./rootLock";
 
 const PARTITION_FILE = /^(\d{4}-\d{2})\.jsonl$/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -53,6 +54,7 @@ interface TransactionEntry {
 
 interface PendingTransaction {
   schemaVersion: 1;
+  transactionId: string;
   entries: TransactionEntry[];
   remove: string[];
 }
@@ -60,6 +62,11 @@ interface PendingTransaction {
 interface SanitizedResult {
   event?: PortableUsageEvent;
   problem?: string;
+}
+
+interface RepairCandidate {
+  event: PortableUsageEvent;
+  canonical: boolean;
 }
 
 const rootQueues = new Map<string, Promise<void>>();
@@ -137,7 +144,11 @@ export class PortableUsageStore {
     return this.exclusive(async () => {
       await this.prepareStore();
       const snapshots = await this.scanPartitions({ acceptMisplaced: true });
-      const repaired = deduplicateGlobally(snapshots.flatMap(({ events }) => events));
+      const repaired = deduplicateRepairCandidates(snapshots.flatMap(({ month, events }) =>
+        events.map((event) => ({
+          event,
+          canonical: monthKey(new Date(event.occurredAt)) === month,
+        }))));
       const repairedByMonth = new Map<string, Map<string, PortableUsageEvent>>();
       for (const item of repaired) {
         const month = monthKey(new Date(item.occurredAt));
@@ -165,7 +176,7 @@ export class PortableUsageStore {
   private exclusive<T>(operation: () => Promise<T>): Promise<T> {
     // Electron's single-instance lock covers normal cross-process use; this queue coordinates in-process stores.
     const previous = rootQueues.get(this.rootKey) ?? Promise.resolve();
-    const result = previous.catch(() => undefined).then(operation);
+    const result = previous.catch(() => undefined).then(() => withPortableRootLock(this.rootDir, operation));
     const tail = result.then(() => undefined, () => undefined);
     rootQueues.set(this.rootKey, tail);
     return result.finally(() => {
@@ -238,6 +249,13 @@ export class PortableUsageStore {
   private async commitTransaction(writes: ReadonlyMap<string, string>, removals: readonly string[] = []): Promise<void> {
     const entries: TransactionEntry[] = [];
     const stagedTemporaryPaths: string[] = [];
+    const transactionId = randomUUID();
+    const transaction: PendingTransaction = {
+      schemaVersion: 1,
+      transactionId,
+      entries,
+      remove: removals.map((filePath) => this.relativePath(filePath)),
+    };
     try {
       for (const [target, contents] of writes) {
         await this.fileSystem.mkdir(path.dirname(target), { recursive: true });
@@ -250,22 +268,11 @@ export class PortableUsageStore {
           sha256: sha256(contents),
         });
       }
-      const transaction: PendingTransaction = {
-        schemaVersion: 1,
-        entries,
-        remove: removals.map((filePath) => this.relativePath(filePath)),
-      };
       await this.writeStandaloneAtomic(this.transactionPath(), `${JSON.stringify(transaction, null, 2)}\n`);
     } catch (error) {
       await this.cleanupIgnoringErrors(stagedTemporaryPaths);
       throw error;
     }
-
-    const transaction: PendingTransaction = {
-      schemaVersion: 1,
-      entries,
-      remove: removals.map((filePath) => this.relativePath(filePath)),
-    };
     await this.rollForward(transaction);
   }
 
@@ -283,11 +290,7 @@ export class PortableUsageStore {
     let transaction: PendingTransaction;
     try {
       transaction = parseTransaction(JSON.parse(contents));
-      for (const entry of transaction.entries) {
-        this.resolveRelative(entry.target);
-        this.resolveRelative(entry.temporary);
-      }
-      for (const removal of transaction.remove) this.resolveRemoval(removal);
+      this.validateTransactionPaths(transaction);
     } catch {
       throw new Error("Invalid pending portable store transaction");
     }
@@ -314,7 +317,50 @@ export class PortableUsageStore {
       }
     }
     for (const removal of transaction.remove) await this.removeObsoletePartition(removal);
-    await this.fileSystem.unlink(this.transactionPath());
+    await this.removeMarkerIfOwned(transaction.transactionId);
+  }
+
+  private validateTransactionPaths(transaction: PendingTransaction): void {
+    const targets = new Set<string>();
+    const temporaries = new Set<string>();
+    for (const entry of transaction.entries) {
+      const target = this.resolveRelative(entry.target);
+      const temporary = this.resolveRelative(entry.temporary);
+      if (entry.target !== path.relative(this.rootDir, target)
+        || entry.temporary !== path.relative(this.rootDir, temporary)
+        || !this.isAllowedTransactionTarget(target)
+        || canonicalPath(path.dirname(temporary)) !== canonicalPath(path.dirname(target))
+        || !isRecognizedSiblingTemp(target, temporary)) throw new Error("invalid transaction path");
+      const targetKey = canonicalPath(target);
+      const temporaryKey = canonicalPath(temporary);
+      if (targets.has(targetKey) || temporaries.has(temporaryKey)) throw new Error("duplicate transaction path");
+      targets.add(targetKey);
+      temporaries.add(temporaryKey);
+    }
+    const removalKeys = new Set<string>();
+    for (const removal of transaction.remove) {
+      const resolved = this.resolveRemoval(removal);
+      const removalKey = canonicalPath(resolved);
+      if (removal !== path.relative(this.rootDir, resolved)
+        || targets.has(removalKey) || removalKeys.has(removalKey)) throw new Error("overlapping transaction paths");
+      removalKeys.add(removalKey);
+    }
+  }
+
+  private isAllowedTransactionTarget(target: string): boolean {
+    if (canonicalPath(target) === canonicalPath(this.metadataPath())) return true;
+    const match = PARTITION_FILE.exec(path.basename(target));
+    return Boolean(match && isValidMonth(match[1])
+      && canonicalPath(path.dirname(target)) === canonicalPath(this.eventsDir()));
+  }
+
+  private async removeMarkerIfOwned(transactionId: string): Promise<void> {
+    try {
+      const marker = parseTransaction(JSON.parse(await this.fileSystem.readFile(this.transactionPath(), "utf8")));
+      if (marker.transactionId === transactionId) await this.fileSystem.unlink(this.transactionPath());
+    } catch (error) {
+      if (!isMissingFile(error) && !(error instanceof SyntaxError)) return;
+    }
   }
 
   private async writeStandaloneAtomic(target: string, contents: string): Promise<void> {
@@ -514,6 +560,20 @@ function deduplicateGlobally(events: readonly PortableUsageEvent[]): PortableUsa
   return [...unique.values()].sort(compareCanonicalEvents);
 }
 
+function deduplicateRepairCandidates(candidates: readonly RepairCandidate[]): PortableUsageEvent[] {
+  const chosen = new Map<string, RepairCandidate>();
+  for (const candidate of candidates) {
+    const current = chosen.get(candidate.event.id);
+    if (!current || compareRepairCandidates(candidate, current) < 0) chosen.set(candidate.event.id, candidate);
+  }
+  return [...chosen.values()].map(({ event }) => event).sort(compareCanonicalEvents);
+}
+
+function compareRepairCandidates(left: RepairCandidate, right: RepairCandidate): number {
+  if (left.canonical !== right.canonical) return left.canonical ? -1 : 1;
+  return compareCanonicalEvents(left.event, right.event);
+}
+
 function buildMetadata(partitions: ReadonlyMap<string, ReadonlyMap<string, PortableUsageEvent>>): PortableStoreMetadata {
   const metadata: PortableStoreMetadata = {
     schemaVersion: PORTABLE_STORE_VERSION,
@@ -554,7 +614,8 @@ function compareText(left: string, right: string): number {
 function parseTransaction(value: unknown): PendingTransaction {
   if (!value || typeof value !== "object") throw new Error("invalid transaction");
   const item = value as Record<string, unknown>;
-  if (item.schemaVersion !== 1 || !Array.isArray(item.entries) || !Array.isArray(item.remove)) {
+  if (item.schemaVersion !== 1 || !isUuid(item.transactionId)
+    || !Array.isArray(item.entries) || !Array.isArray(item.remove)) {
     throw new Error("invalid transaction");
   }
   const entries = item.entries.map((entry): TransactionEntry => {
@@ -569,7 +630,17 @@ function parseTransaction(value: unknown): PendingTransaction {
   if (!item.remove.every((entry): entry is string => isNonEmptyString(entry))) {
     throw new Error("invalid transaction removal");
   }
-  return { schemaVersion: 1, entries, remove: [...item.remove] };
+  return { schemaVersion: 1, transactionId: item.transactionId, entries, remove: [...item.remove] };
+}
+
+function isRecognizedSiblingTemp(target: string, temporary: string): boolean {
+  const prefix = `${path.basename(target)}.`;
+  return path.basename(temporary).startsWith(prefix) && TEMP_FILE.test(path.basename(temporary));
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function parseRange(range: Range): { since?: number; until?: number } {
