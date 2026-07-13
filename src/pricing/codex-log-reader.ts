@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { FileParseCache } from "./file-parse-cache";
+import { basenameAnySeparator } from "../shared/projectName";
 
 export interface CodexTokenEvent {
   timestamp: string;
@@ -156,12 +157,6 @@ async function parseCodexJsonlFile(
   }
 
   return events;
-}
-
-function basenameAnySeparator(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const parts = value.split(/[\\/]+/).filter(Boolean);
-  return parts.at(-1) ?? null;
 }
 
 function resolveModel(info: Record<string, unknown>, currentModel: string | null): string {

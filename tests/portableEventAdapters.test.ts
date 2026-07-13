@@ -148,11 +148,41 @@ describe("portable event adapters", () => {
     expect(toCodexEvents([codexEvent])[0].directory).toBe(".");
   });
 
+  it.each([
+    ["C:\\Users\\Alice\\Secret\\QuotaBar", "QuotaBar"],
+    ["/home/alice/Secret/QuotaBar", "QuotaBar"],
+  ])("derives a safe Claude project name from legacy project labels (%s)", (project, expected) => {
+    const [event] = fromClaudeEntries([claude({ projectName: undefined, project })]);
+    expect(event.projectName).toBe(expected);
+    expect(JSON.stringify(event)).not.toContain("Secret");
+  });
+
+  it("uses Unknown project when Claude project metadata has no basename", () => {
+    const [event] = fromClaudeEntries([claude({ projectName: "", project: "" })]);
+    expect(event.projectName).toBe("Unknown project");
+  });
+
+  it.each([
+    ["C:\\Users\\Alice\\Secret\\QuotaBar", "QuotaBar"],
+    ["/home/alice/Secret/QuotaBar", "QuotaBar"],
+  ])("sanitizes reverse-adapter project names (%s)", (projectName, expected) => {
+    const claudeEvent = { ...fromClaudeEntries([claude()])[0], projectName };
+    const codexEvent = { ...fromCodexEvents([codex()])[0], projectName };
+
+    const [claudeEntry] = toClaudeEntries([claudeEvent]);
+    const [codexEntry] = toCodexEvents([codexEvent]);
+    expect(claudeEntry.project).toBe(expected);
+    expect(claudeEntry.projectName).toBe(expected);
+    expect(codexEntry.directory).toBe(expected);
+    expect(codexEntry.projectName).toBe(expected);
+    expect(JSON.stringify([claudeEntry.project, codexEntry.directory])).not.toContain("Secret");
+  });
+
   it("emits only the exact portable allowlist and omits undefined optionals", () => {
     expect(PORTABLE_USAGE_EVENT_KEYS).toEqual(portableKeys);
     const [event] = fromClaudeEntries([claude({ projectName: undefined, costUSD: undefined })]);
     expect(Object.keys(event).every((key) => PORTABLE_USAGE_EVENT_KEYS.includes(key))).toBe(true);
-    expect(event).not.toHaveProperty("projectName");
+    expect(event.projectName).toBe("legacy-project");
     expect(event).not.toHaveProperty("costUSD");
     expect(event).not.toHaveProperty("project");
     expect(event).not.toHaveProperty("session");
