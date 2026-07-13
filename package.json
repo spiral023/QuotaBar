@@ -24,12 +24,14 @@
   "author": "Philipp Asanger",
   "license": "MIT",
   "dependencies": {
+    "adm-zip": "^0.6.0",
     "electron-log": "^5.2.4",
     "electron-updater": "^6.8.9",
     "pngjs": "^7.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^22.15.3",
     "@types/pngjs": "^6.0.5",
     "chart.js": "^4.5.1",

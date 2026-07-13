@@ -17,6 +17,38 @@ export function getAppConfigDir(): string {
   return path.join(getHomeDir(), ".quotabar-win");
 }
 
+export function getPortableUsageDir(): string {
+  return path.join(getAppConfigDir(), "usage");
+}
+
+export function getPortableEventsDir(): string {
+  return path.join(getPortableUsageDir(), "events");
+}
+
+export function getPortableQuotaDir(): string {
+  return path.join(getAppConfigDir(), "quota");
+}
+
+export function getPortableMetadataPath(): string {
+  return path.join(getPortableUsageDir(), "store-metadata.json");
+}
+
+export function getPortableIngestStatePath(): string {
+  return path.join(getPortableUsageDir(), "ingest-state.json");
+}
+
+export function getPortableMigrationPath(): string {
+  return path.join(getPortableUsageDir(), "migration-state.json");
+}
+
+export function getImportStagingDir(): string {
+  return path.join(getAppConfigDir(), "import-staging");
+}
+
+export function getPendingImportPath(): string {
+  return path.join(getAppConfigDir(), "pending-import.json");
+}
+
 export function getLogPath(): string {
   return path.join(getAppConfigDir(), "quotabar.log");
 }
