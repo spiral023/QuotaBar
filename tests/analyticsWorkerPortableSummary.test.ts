@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { defaultSettings } from "../src/config/settings";
 import { fromClaudeEntries, fromCodexEvents } from "../src/portable/eventAdapters";
+import { PortableUsageStore } from "../src/portable/usageStore";
 import { runAnalyticsTask } from "../src/main/analyticsWorker";
+
+vi.mock("../src/portable/quotaStore", () => ({
+  readQuotaSnapshots: vi.fn(async () => []),
+}));
 
 describe("analytics summary portable isolation", () => {
   it("builds summary before invoking provider history readers", async () => {
@@ -35,5 +40,49 @@ describe("analytics summary portable isolation", () => {
     expect(summary.apiCostUSD).toEqual({ claude: 1, codex: 2, total: 3 });
     expect(readClaudeEntries).not.toHaveBeenCalled();
     expect(readCodexEvents).not.toHaveBeenCalled();
+  });
+});
+
+describe("analytics get legacy isolation", () => {
+  it("builds reports from injected legacy entries without reading the portable usage store", async () => {
+    const read = vi.spyOn(PortableUsageStore.prototype, "read").mockRejectedValue(
+      new Error("portable usage store must not be read"),
+    );
+    const readClaudeEntries = vi.fn(async () => [{
+      provider: "claude" as const,
+      timestamp: "2026-07-10T10:00:00.000Z",
+      model: "claude-test",
+      project: "project",
+      session: "session",
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      costUSD: 1,
+    }]);
+    const readCodexEvents = vi.fn(async () => []);
+
+    const result = await runAnalyticsTask({
+      task: "get",
+      claudeProjectsDirs: ["injected-claude"],
+      codexSessionsDirs: ["injected-codex"],
+      periodStartMs: Date.parse("2026-07-01T00:00:00.000Z"),
+      windowDays: 30,
+      since: "2026-07-01",
+      until: "2026-07-31",
+      settings: { ...defaultSettings, pricingOfflineMode: true },
+      cacheHitRate: { claude: 0, codex: 0 },
+      logDir: "unused",
+      nowMs: Date.parse("2026-07-31T23:59:59.999Z"),
+    }, {
+      usageStore: new PortableUsageStore("unused"),
+      readClaudeEntries,
+      readCodexEvents,
+    });
+
+    expect(result.apiCostUSD).toEqual({ claude: 1, codex: 0, total: 1 });
+    expect(readClaudeEntries).toHaveBeenCalledOnce();
+    expect(readCodexEvents).toHaveBeenCalledOnce();
+    expect(read).not.toHaveBeenCalled();
   });
 });

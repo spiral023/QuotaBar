@@ -170,11 +170,11 @@ export async function runAnalyticsTask(
 
   const [claudeReport, codexReport] = await Promise.all([
     generateUsageReport(
-      { type: "daily", provider: "claude", since: input.since, until: input.until, order: "asc", breakdown: true },
+      { type: "daily", provider: "claude", since: input.since, until: input.until, order: "asc", breakdown: true, source: "legacy" },
       { settings: input.settings, claudeEntries },
     ),
     generateUsageReport(
-      { type: "daily", provider: "codex", since: input.since, until: input.until, order: "asc", breakdown: true },
+      { type: "daily", provider: "codex", since: input.since, until: input.until, order: "asc", breakdown: true, source: "legacy" },
       { settings: input.settings, codexEvents },
     ),
   ]);
