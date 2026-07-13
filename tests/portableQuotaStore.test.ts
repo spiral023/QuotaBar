@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DebugRecorder } from "../src/main/debugRecorder";
 import type { SnapshotEvent } from "../src/main/debugEvents";
 import { appendQuotaSnapshots, readQuotaSnapshots } from "../src/portable/quotaStore";
+import { buildWindowHistory } from "../src/usage/windowHistory";
 
 function snapshot(
   provider: "claude" | "codex",
@@ -154,6 +155,42 @@ describe("portable quota store", () => {
       "2026-07-31T23:00:00.000Z",
     ]);
     expect(await readdir(path.join(root, "snapshots"))).toEqual(["2026-07.jsonl"]);
+  });
+
+  it("canonicalizes window reset timestamps for observations and completed history", async () => {
+    await appendQuotaSnapshots(root, [
+      snapshot("claude", "2026-07-02T00:00:00.000Z", {
+        windows: [
+          { name: "fiveHour", usedPercent: 20, resetsAt: "2026-07-02T07:00:00+02:00" },
+          { name: "weekly", usedPercent: 30, resetsAt: "2026-07-08T00:00:00.000Z" },
+        ],
+      }),
+      snapshot("claude", "2026-07-01T02:00:00+02:00", {
+        windows: [
+          { name: "fiveHour", usedPercent: 10, resetsAt: "2026-07-01T07:00:00+02:00" },
+          { name: "weekly", usedPercent: 20, resetsAt: "2026-07-08T02:00:00+02:00" },
+        ],
+      }),
+    ]);
+    const stored = await readQuotaSnapshots(root);
+    const worker = await import("../src/main/analyticsWorker");
+    const observations = worker.quotaSnapshotsToHistoryObservations(stored);
+
+    expect(observations.map(({ ts, fiveResetsAt, weeklyResetsAt }) => ({ ts, fiveResetsAt, weeklyResetsAt })))
+      .toEqual([
+        {
+          ts: "2026-07-01T00:00:00.000Z",
+          fiveResetsAt: "2026-07-01T05:00:00.000Z",
+          weeklyResetsAt: "2026-07-08T00:00:00.000Z",
+        },
+        {
+          ts: "2026-07-02T00:00:00.000Z",
+          fiveResetsAt: "2026-07-02T05:00:00.000Z",
+          weeklyResetsAt: "2026-07-08T00:00:00.000Z",
+        },
+      ]);
+    expect(buildWindowHistory(observations, Date.parse("2026-07-09T00:00:00.000Z"))[0].weekEnd)
+      .toBe("2026-07-08T00:00:00.000Z");
   });
 
   it("reads inclusive ranges without touching unrelated monthly partitions", async () => {
@@ -342,6 +379,30 @@ describe("portable quota store", () => {
     expect((await readQuotaSnapshots(root)).map(({ provider }) => provider)).toEqual(["codex"]);
   });
 
+  it("rejects a non-file recovery target before mutating an earlier staged target", async () => {
+    const snapshotsDir = path.join(root, "snapshots");
+    await mkdir(snapshotsDir, { recursive: true });
+    const original = serialized(snapshot("claude", "2026-06-01T00:00:00.000Z"));
+    const replacement = serialized(snapshot("codex", "2026-06-01T00:00:00.000Z"));
+    const july = serialized(snapshot("codex", "2026-07-01T00:00:00.000Z"));
+    const firstTarget = path.join(snapshotsDir, "2026-06.jsonl");
+    const secondTarget = path.join(snapshotsDir, "2026-07.jsonl");
+    const firstTemp = `${firstTarget}.1.1.00000000-0000-4000-8000-000000000008.tmp`;
+    const secondTemp = `${secondTarget}.1.1.00000000-0000-4000-8000-000000000009.tmp`;
+    await writeFile(firstTarget, original, "utf8");
+    await writeFile(firstTemp, replacement, "utf8");
+    await mkdir(secondTarget);
+    await writeFile(secondTemp, july, "utf8");
+    await writeManifest(root, [
+      manifestEntry(root, firstTarget, firstTemp, replacement),
+      manifestEntry(root, secondTarget, secondTemp, july),
+    ]);
+
+    await expect(readQuotaSnapshots(root)).rejects.toThrow("non-file target");
+    expect(await readFile(firstTarget, "utf8")).toBe(original);
+    expect(await readFile(firstTemp, "utf8")).toBe(replacement);
+  });
+
   it("skips malformed and invalid disk records while returning sanitized valid records", async () => {
     const snapshotsDir = path.join(root, "snapshots");
     await mkdir(snapshotsDir, { recursive: true });
@@ -374,6 +435,32 @@ describe("portable quota store", () => {
       ...second,
       windows: [...first.windows, ...second.windows],
     }]);
+  });
+
+  it("rejects duplicate window names in an incoming snapshot before writing", async () => {
+    const invalid = snapshot("claude", "2026-07-03T00:00:00.000Z", {
+      windows: [
+        { name: "weekly", usedPercent: 10 },
+        { name: "weekly", usedPercent: 20 },
+      ],
+    });
+
+    await expect(appendQuotaSnapshots(root, [invalid])).rejects.toThrow("Invalid portable quota snapshot");
+    await expect(readdir(root)).resolves.toEqual([]);
+  });
+
+  it("skips disk records with duplicate windows without changing valid distinct windows", async () => {
+    const snapshotsDir = path.join(root, "snapshots");
+    await mkdir(snapshotsDir, { recursive: true });
+    const duplicate = snapshot("claude", "2026-07-02T00:00:00.000Z", {
+      windows: [{ name: "weekly", usedPercent: 10 }, { name: "weekly", usedPercent: 20 }],
+    });
+    const valid = snapshot("codex", "2026-07-03T00:00:00.000Z", {
+      windows: [{ name: "fiveHour", usedPercent: 5 }, { name: "weekly", usedPercent: 10 }],
+    });
+    await writeFile(path.join(snapshotsDir, "2026-07.jsonl"), `${JSON.stringify(duplicate)}\n${JSON.stringify(valid)}\n`, "utf8");
+
+    expect(await readQuotaSnapshots(root)).toEqual([valid]);
   });
 
   it("persists only allowlisted quota metrics and omits errors, tokens, and extra fields", async () => {

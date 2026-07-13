@@ -228,6 +228,12 @@ async function rollForward(root: string, transaction: PendingTransaction): Promi
     const target = path.resolve(root, entry.target);
     const temporary = path.resolve(root, entry.temporary);
     try {
+      const targetInfo = await fs.lstat(target);
+      if (!targetInfo.isFile()) throw new Error("Portable quota transaction has a non-file target");
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+    try {
       const staged = await fs.readFile(temporary);
       if (hash(staged) !== entry.sha256) throw new Error("Portable quota transaction checksum mismatch");
       prepared.push({ entry, target, temporary, staged: true });
@@ -240,6 +246,8 @@ async function rollForward(root: string, transaction: PendingTransaction): Promi
       prepared.push({ entry, target, temporary, staged: false });
     }
   }
+  // The root lock excludes QuotaBar writers. An external filesystem change after
+  // this preflight can still make a later rename fail, and is reported as such.
   for (const item of prepared) {
     if (item.staged) await renameWithRetry(item.temporary, item.target);
     const committed = await fs.readFile(item.target);
@@ -286,6 +294,8 @@ function sanitizeQuotaSnapshot(value: unknown): SnapshotEvent | undefined {
     || !isIsoTimestamp(item.fetchedAt) || !Array.isArray(item.windows)) return undefined;
   const windows = item.windows.map(sanitizeWindow);
   if (windows.some((window) => window === undefined)) return undefined;
+  const windowNames = new Set(windows.map((window) => window!.name));
+  if (windowNames.size !== windows.length) return undefined;
   const result: SnapshotEvent = {
     kind: "snapshot",
     provider: item.provider,
@@ -330,7 +340,7 @@ function sanitizeWindow(value: unknown): UsageWindow | undefined {
   }
   if (item.resetsAt !== undefined) {
     if (!isIsoTimestamp(item.resetsAt)) return undefined;
-    result.resetsAt = item.resetsAt;
+    result.resetsAt = new Date(item.resetsAt).toISOString();
   }
   if (item.label !== undefined) {
     if (!isNonEmptyString(item.label)) return undefined;
