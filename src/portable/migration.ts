@@ -43,6 +43,11 @@ const STATE_ERROR_CODES = new Set([
   "store_read_failed",
   "store_events_invalid",
   "store_reconciliation_failed",
+  "ingestion_failed",
+  "legacy_reconciliation_failed",
+  "quota_migration_failed",
+  "migration_completion_failed",
+  "consumer_prewarm_failed",
 ]);
 const LEGACY_RECONCILIATION_IDENTITY_NAMESPACE = "quotabar-legacy-reconciliation-event-v1";
 const MIGRATION_OPERATION_ERROR = Symbol("migration-operation-error");
@@ -91,6 +96,8 @@ export interface MigrateLegacyDataOptions {
   statePath: string;
   now?: () => Date;
   failAfterState?: "running" | "events";
+  /** Startup orchestration owns the final state so quota snapshots can commit first. */
+  finalizeState?: boolean;
 }
 
 export interface MigrateLegacyDataResult {
@@ -99,11 +106,35 @@ export interface MigrateLegacyDataResult {
   syntheticUpdated: number;
 }
 
+export interface DeferredMigrateLegacyDataResult {
+  status: "running";
+  storeRevision: string;
+  syntheticInserted: number;
+  syntheticUpdated: number;
+}
+
+export type PortableMigrationFailureCode =
+  | "legacy_records_invalid"
+  | "store_read_failed"
+  | "store_events_invalid"
+  | "store_reconciliation_failed"
+  | "ingestion_failed"
+  | "legacy_reconciliation_failed"
+  | "quota_migration_failed"
+  | "migration_completion_failed"
+  | "consumer_prewarm_failed";
+
 /**
  * Reconciles immutable legacy day aggregates against provider events already stored in the portable archive.
  * Duplicate provider/day records are rejected because treating aggregate snapshots as additive can double count.
  */
-export async function migrateLegacyData(options: MigrateLegacyDataOptions): Promise<MigrateLegacyDataResult> {
+export function migrateLegacyData(
+  options: MigrateLegacyDataOptions & { finalizeState: false },
+): Promise<DeferredMigrateLegacyDataResult>;
+export function migrateLegacyData(options: MigrateLegacyDataOptions): Promise<MigrateLegacyDataResult>;
+export async function migrateLegacyData(
+  options: MigrateLegacyDataOptions,
+): Promise<MigrateLegacyDataResult | DeferredMigrateLegacyDataResult> {
   const store: MigrationStore = options.store;
   const expectedStatePath = expectedMigrationStatePath(store);
   const statePath = path.resolve(options.statePath);
@@ -132,7 +163,7 @@ async function migrateLegacyDataExclusive(
   options: MigrateLegacyDataOptions,
   store: MigrationStore,
   statePath: string,
-): Promise<MigrateLegacyDataResult> {
+): Promise<MigrateLegacyDataResult | DeferredMigrateLegacyDataResult> {
   const now = options.now ?? (() => new Date());
 
   const loadedState = await readMigrationState(statePath);
@@ -216,12 +247,47 @@ async function migrateLegacyDataExclusive(
   }
   if (options.failAfterState === "events") throw new Error("Portable usage migration interrupted");
 
+  if (options.finalizeState === false) {
+    return {
+      status: "running",
+      storeRevision: reconciled.revision,
+      syntheticInserted: reconciled.inserted,
+      syntheticUpdated: reconciled.updated,
+    };
+  }
   await writeStateSafely(statePath, state("complete", now, reconciled.revision));
   return {
     status: "complete",
     syntheticInserted: reconciled.inserted,
     syntheticUpdated: reconciled.updated,
   };
+}
+
+export async function markMigrationRunning(
+  statePath: string,
+  now: () => Date = () => new Date(),
+): Promise<void> {
+  const resolvedStatePath = path.resolve(statePath);
+  await readMigrationState(resolvedStatePath);
+  await writeStateSafely(resolvedStatePath, state("running", now));
+}
+
+export async function markMigrationComplete(
+  statePath: string,
+  storeRevision: string,
+  now: () => Date = () => new Date(),
+): Promise<void> {
+  if (!/^[a-f0-9]{64}$/.test(storeRevision)) throw new Error("Portable migration revision is invalid");
+  await writeStateSafely(path.resolve(statePath), state("complete", now, storeRevision));
+}
+
+export async function markMigrationFailed(
+  statePath: string,
+  lastError: PortableMigrationFailureCode,
+  now: () => Date = () => new Date(),
+): Promise<void> {
+  if (!STATE_ERROR_CODES.has(lastError)) throw new Error("Portable migration failure code is invalid");
+  await writeFailedState(path.resolve(statePath), lastError, now);
 }
 
 function compareReconciliationItems(

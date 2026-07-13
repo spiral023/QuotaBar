@@ -6,9 +6,11 @@ import { calculateCodexApiCostBreakdown, readCodexSpeedTierFromPaths } from "../
 import { calculateCostBreakdown, scaleBreakdownTo, sumBreakdown } from "../pricing/cost-calculator";
 import type { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
 import type { DebugRecorder } from "./debugRecorder";
-import type { TokensDaySummaryEvent, TokensUsageEvent } from "./debugEvents";
+import type { SnapshotEvent, TokensDaySummaryEvent, TokensUsageEvent } from "./debugEvents";
 import { log } from "./logging";
 import { loadManifest, saveManifest, fileSignature, diffSources, type BackfillManifest } from "./backfillManifest";
+import type { BackfillDayRecord } from "../reports/types";
+import { sanitizeQuotaSnapshot } from "../portable/quotaStore";
 
 /**
  * Wird bei jedem Fix erhöht, der ein einmaliges Neuberechnen aller bereits
@@ -24,6 +26,169 @@ import { loadManifest, saveManifest, fileSignature, diffSources, type BackfillMa
  *     are removed, so ghost entries from rotated logs disappear.
  */
 export const BACKFILL_REPAIR_VERSION = 3;
+
+export type PortablePreparationFailureStage =
+  | "ingestion"
+  | "legacy_reconciliation"
+  | "quota_migration"
+  | "migration_completion"
+  | "consumer_prewarm";
+
+interface PortableIngestionCounts {
+  inserted: number;
+  updated: number;
+}
+
+interface PortableLegacyMigrationCounts {
+  storeRevision: string;
+  syntheticInserted: number;
+  syntheticUpdated: number;
+}
+
+export interface PreparePortableDataDependencies {
+  beginMigration(): Promise<void>;
+  ingestProviderEvents(): Promise<PortableIngestionCounts>;
+  readLegacyRecords(): Promise<readonly BackfillDayRecord[]>;
+  reconcileLegacy(records: readonly BackfillDayRecord[]): Promise<PortableLegacyMigrationCounts>;
+  readLegacyQuota(): Promise<readonly SnapshotEvent[]>;
+  migrateQuota(snapshots: readonly SnapshotEvent[]): Promise<void>;
+  completeMigration(storeRevision: string): Promise<void>;
+  failMigration(code: `${PortablePreparationFailureStage}_failed`): Promise<void>;
+  prewarmConsumers(): void | Promise<void>;
+  onStageComplete?(stage: PortablePreparationFailureStage, durationMs: number, count: number): void;
+}
+
+export interface PreparePortableDataResult {
+  status: "complete";
+  ingested: number;
+  legacyInserted: number;
+  quotaSnapshots: number;
+}
+
+/**
+ * Activates portable consumers only after every persistent migration stage has committed.
+ * Dependencies keep startup ordering testable and ensure thrown provider diagnostics never cross this boundary.
+ */
+export async function preparePortableData(
+  dependencies: PreparePortableDataDependencies,
+): Promise<PreparePortableDataResult> {
+  await dependencies.beginMigration();
+  let stage: PortablePreparationFailureStage = "ingestion";
+  try {
+    let startedAt = Date.now();
+    const ingestion = await dependencies.ingestProviderEvents();
+    const ingested = ingestion.inserted + ingestion.updated;
+    dependencies.onStageComplete?.(stage, Date.now() - startedAt, ingested);
+
+    stage = "legacy_reconciliation";
+    startedAt = Date.now();
+    const records = await dependencies.readLegacyRecords();
+    const legacy = await dependencies.reconcileLegacy(records);
+    dependencies.onStageComplete?.(
+      stage,
+      Date.now() - startedAt,
+      legacy.syntheticInserted + legacy.syntheticUpdated,
+    );
+
+    stage = "quota_migration";
+    startedAt = Date.now();
+    const quotaSnapshots = await dependencies.readLegacyQuota();
+    await dependencies.migrateQuota(quotaSnapshots);
+    dependencies.onStageComplete?.(stage, Date.now() - startedAt, quotaSnapshots.length);
+
+    stage = "migration_completion";
+    startedAt = Date.now();
+    await dependencies.completeMigration(legacy.storeRevision);
+    dependencies.onStageComplete?.(stage, Date.now() - startedAt, 1);
+
+    stage = "consumer_prewarm";
+    startedAt = Date.now();
+    await dependencies.prewarmConsumers();
+    dependencies.onStageComplete?.(stage, Date.now() - startedAt, 1);
+
+    return {
+      status: "complete",
+      ingested,
+      legacyInserted: legacy.syntheticInserted + legacy.syntheticUpdated,
+      quotaSnapshots: quotaSnapshots.length,
+    };
+  } catch {
+    try {
+      await dependencies.failMigration(`${stage}_failed`);
+    } catch {
+      throw new Error("Portable data preparation failed while recording failure state");
+    }
+    throw new Error(`Portable data preparation failed at ${stage}`);
+  }
+}
+
+export type PortableIngestionTrigger = "startup" | "source-change" | "manual-recompute";
+
+/** Runs at most one ingestion at a time and folds any burst of triggers into one follow-up pass. */
+export function createPortableIngestionRunner(
+  run: () => Promise<void>,
+  onDiagnostic: (diagnostic: "Portable ingestion failed") => void = () => undefined,
+): { trigger(reason: PortableIngestionTrigger): Promise<void> } {
+  let requested = false;
+  let active: Promise<void> | undefined;
+
+  const drain = async (): Promise<void> => {
+    while (requested) {
+      requested = false;
+      try {
+        await run();
+      } catch {
+        onDiagnostic("Portable ingestion failed");
+      }
+    }
+  };
+
+  return {
+    trigger(reason): Promise<void> {
+      void reason;
+      requested = true;
+      if (!active) {
+        active = drain().finally(() => {
+          active = undefined;
+        });
+      }
+      return active;
+    },
+  };
+}
+
+const LEGACY_DEBUG_FILE = /^\d{4}-\d{2}-\d{2}\.jsonl$/;
+
+/** Reads the allowlisted legacy debug directory without following nested paths or links. */
+export async function readLegacyQuotaSnapshots(logDir: string): Promise<SnapshotEvent[]> {
+  let entries;
+  try {
+    entries = await fs.readdir(logDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const result: SnapshotEvent[] = [];
+  for (const entry of entries
+    .filter((candidate) => candidate.isFile() && LEGACY_DEBUG_FILE.test(candidate.name))
+    .sort((left, right) => left.name.localeCompare(right.name))) {
+    let contents: string;
+    try {
+      contents = await fs.readFile(path.join(logDir, entry.name), "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of contents.split(/\r?\n/)) {
+      if (!line.trim() || !line.includes('"kind":"snapshot"')) continue;
+      try {
+        const snapshot = sanitizeQuotaSnapshot(JSON.parse(line));
+        if (snapshot) result.push(snapshot);
+      } catch {
+        // Malformed legacy diagnostics are ignored; valid records and the source file remain untouched.
+      }
+    }
+  }
+  return result;
+}
 
 export interface BackfillOptions {
   recorder: DebugRecorder;

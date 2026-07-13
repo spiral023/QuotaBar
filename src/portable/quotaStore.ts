@@ -286,7 +286,7 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
   }
 }
 
-function sanitizeQuotaSnapshot(value: unknown): SnapshotEvent | undefined {
+export function sanitizeQuotaSnapshot(value: unknown): SnapshotEvent | undefined {
   if (!value || typeof value !== "object") return undefined;
   const item = value as Record<string, unknown>;
   if (item.kind !== "snapshot" || typeof item.provider !== "string" || !PROVIDERS.has(item.provider)

@@ -19,19 +19,20 @@ import { collectSystemData, formatSystemPathDiagnostics, formatWslDiscoveryDiagn
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { DebugRecorder } from "./debugRecorder";
 import { snapshotEvent } from "./debugEvents";
-import { runBackfill, BACKFILL_REPAIR_VERSION } from "./debugBackfill";
-import { getRepairedVersion, setRepairedVersion } from "./backfillManifest";
-import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir } from "../config/paths";
+import { createPortableIngestionRunner, preparePortableData, readLegacyQuotaSnapshots } from "./debugBackfill";
+import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
 import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
 import { BonusResetTracker } from "../usage/bonusReset";
 import { loadBonusStateFile, saveBonusStateFile } from "../usage/bonusStateStore";
 import { seedFromDebugLogs } from "./windowRatioSeeder";
-import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
-import { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
 import { loadCachedSnapshots, markSnapshotsFromCache, saveCachedSnapshots } from "../usage/snapshotCache";
 import { registerLifecycleEvents } from "./lifecycleEvents";
 import { appendQuotaSnapshots } from "../portable/quotaStore";
+import { PortableUsageStore } from "../portable/usageStore";
+import { ingestPortableUsage } from "../portable/ingestion";
+import { markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData } from "../portable/migration";
+import { readBackfillDayRecords } from "../reports/backfill-reader";
 
 interface CliOptions {
   debug: boolean;
@@ -140,23 +141,23 @@ if (!app.requestSingleInstanceLock()) {
       const bonusStatePath = getBonusStatePath();
       const bonusTracker = new BonusResetTracker(await loadBonusStateFile(bonusStatePath));
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder, windowRatioTracker, bonusTracker);
-      const backfillFetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
-      const backfillPricingResolver = new HistoricalPricingResolver(backfillFetcher);
-      const tray = new TrayController(providers, refreshLoop, async () => {
-        const currentSettings = await loadSettings();
-        const runtime = mergeSettingsWithAgentRoots(currentSettings);
-        const pathContext = { claudeRoots: runtime.claudeRoots ?? [], codexHomes: runtime.codexHomes ?? [] };
-        await runBackfill({
-          recorder,
-          logDir: getDebugLogDir(),
+      const portableUsageStore = new PortableUsageStore(getPortableUsageDir());
+      const ingestPortableSources = async () => {
+        const currentSettings = mergeSettingsWithAgentRoots(await loadSettings());
+        const pathContext = {
+          claudeRoots: currentSettings.claudeRoots ?? [],
+          codexHomes: currentSettings.codexHomes ?? [],
+        };
+        return await ingestPortableUsage({
+          store: portableUsageStore,
+          statePath: getPortableIngestStatePath(),
           claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
           codexSessionsDirs: getCodexSessionsDirs(pathContext),
-          codexConfigPaths: getCodexConfigPaths(pathContext),
-          pricingResolver: backfillPricingResolver,
-          force: true,
-        }).catch((err: unknown) => {
-          log.warn(`Backfill regenerate failed: ${err instanceof Error ? err.message : String(err)}`);
         });
+      };
+      let ingestionRunner: ReturnType<typeof createPortableIngestionRunner> | undefined;
+      const tray = new TrayController(providers, refreshLoop, async () => {
+        await ingestionRunner?.trigger("manual-recompute");
       }, settings.providerOrder);
       const detailsWindow = new DetailsWindowController(
         () => tray.getTray(),
@@ -172,14 +173,50 @@ if (!app.requestSingleInstanceLock()) {
         tray.setSnapshots(cachedSnapshots);
         detailsWindow.notifyUpdate(cachedSnapshots);
       }
-      // Analytics-Worker früh hochfahren und die JSONL-Historie parsen, damit die
-      // Quick Stats beim ersten Dashboard-Öffnen nicht auf einen Kaltstart warten.
-      detailsWindow.prewarmAnalytics();
+      let portableReady = false;
+      await preparePortableData({
+        beginMigration: () => markMigrationRunning(getPortableMigrationPath()),
+        ingestProviderEvents: ingestPortableSources,
+        readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
+        reconcileLegacy: (records) => migrateLegacyData({
+          store: portableUsageStore,
+          records,
+          statePath: getPortableMigrationPath(),
+          finalizeState: false,
+        }),
+        readLegacyQuota: () => readLegacyQuotaSnapshots(getDebugLogDir()),
+        migrateQuota: (snapshots) => appendQuotaSnapshots(getPortableQuotaDir(), snapshots),
+        completeMigration: (revision) => markMigrationComplete(getPortableMigrationPath(), revision),
+        failMigration: (code) => markMigrationFailed(getPortableMigrationPath(), code),
+        prewarmConsumers: () => detailsWindow.prewarmAnalytics(),
+        onStageComplete: (stage, durationMs, count) => {
+          log.info(`Portable data stage=${stage} count=${count} durationMs=${durationMs}`);
+        },
+      }).then(() => {
+        portableReady = true;
+      }).catch(() => {
+        log.warn("Portable data preparation failed");
+      });
+      if (portableReady) {
+        ingestionRunner = createPortableIngestionRunner(async () => {
+          const startedAt = Date.now();
+          const result = await ingestPortableSources();
+          log.info(`Portable data stage=ongoing_ingestion count=${result.inserted + result.updated} durationMs=${Date.now() - startedAt}`);
+        }, (diagnostic) => log.warn(diagnostic));
+        await ingestionRunner.trigger("startup");
+        const ingestionTimer = setInterval(() => {
+          void ingestionRunner?.trigger("source-change");
+        }, 15_000);
+        ingestionTimer.unref();
+      }
+      const recomputeCostsAndIngest = (): void => {
+        void refreshLoop.recomputeCost().finally(() => ingestionRunner?.trigger("manual-recompute"));
+      };
       await tray.rebuildMenu();
       if (cli.openWindow) {
         setTimeout(() => detailsWindow.open(
           () => void refreshLoop.refreshNow("dashboard"),
-          () => void refreshLoop.recomputeCost(),
+          recomputeCostsAndIngest,
         ), 1500);
       }
       const notificationService = new NotificationService(settings.notifications);
@@ -187,7 +224,7 @@ if (!app.requestSingleInstanceLock()) {
       notificationService.setActionHandlers({
         openDashboard: (tab = "live") => detailsWindow.open(
           () => void refreshLoop.refreshNow("dashboard"),
-          () => void refreshLoop.recomputeCost(),
+          recomputeCostsAndIngest,
           { tab },
         ),
         muteRule: async (ruleId: string) => {
@@ -262,38 +299,6 @@ if (!app.requestSingleInstanceLock()) {
           }
         },
       });
-      const backfillTimer = setTimeout(() => {
-        void (async () => {
-          const logDir = getDebugLogDir();
-          // Erster Start nach einem datenverändernden Fix → einmaliger Force-Rebuild,
-          // der alle bereits beschädigten Tagessätze neu berechnet. Danach läuft der
-          // Backfill wieder inkrementell.
-          const needsRepair = (await getRepairedVersion(logDir)) < BACKFILL_REPAIR_VERSION;
-          if (needsRepair) {
-            log.info(`Backfill repair: forcing one-time rebuild to version ${BACKFILL_REPAIR_VERSION}`);
-          }
-          const currentSettings = await loadSettings();
-          const runtime = mergeSettingsWithAgentRoots(currentSettings);
-          const pathContext = { claudeRoots: runtime.claudeRoots ?? [], codexHomes: runtime.codexHomes ?? [] };
-          const result = await runBackfill({
-            recorder,
-            logDir,
-            claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
-            codexSessionsDirs: getCodexSessionsDirs(pathContext),
-            codexConfigPaths: getCodexConfigPaths(pathContext),
-            pricingResolver: backfillPricingResolver,
-            force: needsRepair,
-          });
-          // Marker nur setzen, wenn der Rebuild fehlerfrei durchlief – sonst beim
-          // nächsten Start erneut versuchen.
-          if (needsRepair && result.errors.length === 0) {
-            await setRepairedVersion(logDir, BACKFILL_REPAIR_VERSION);
-          }
-        })().catch((err: unknown) => {
-          log.warn(`Backfill failed: ${err instanceof Error ? err.message : String(err)}`);
-        });
-      }, 15_000);
-      backfillTimer.unref();
       let flushed = false;
       app.on("before-quit", (event) => {
         if (flushed) return;
