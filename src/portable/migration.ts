@@ -172,7 +172,23 @@ async function migrateLegacyDataExclusive(
       const existingLegacyById = new Map(
         current.filter(({ source }) => source === "legacy-reconciliation").map((event) => [event.id, event]),
       );
-      for (const item of records.values()) {
+      const reconciliationItems = new Map(records);
+      for (const event of existingLegacyById.values()) {
+        if (!event.legacyTarget) continue;
+        const item = {
+          date: utcDay(event.occurredAt),
+          provider: event.provider,
+          model: normalizeModelName(event.model),
+          target: legacyTargetFromPortable(event.legacyTarget),
+        };
+        if (reconciliationIdentity(item).id !== event.id) continue;
+        const key = aggregateKey(item.date, item.provider, item.model);
+        const incoming = reconciliationItems.get(key);
+        reconciliationItems.set(key, incoming
+          ? { ...incoming, target: maximumLegacyTarget(item.target, incoming.target) }
+          : item);
+      }
+      for (const item of [...reconciliationItems.values()].sort(compareReconciliationItems)) {
         const identity = reconciliationIdentity(item);
         const existing = existingLegacyById.get(identity.id);
         const currentProvider = baseline.get(aggregateKey(item.date, item.provider, item.model)) ?? zeroAggregate();
@@ -206,6 +222,16 @@ async function migrateLegacyDataExclusive(
     syntheticInserted: reconciled.inserted,
     syntheticUpdated: reconciled.updated,
   };
+}
+
+function compareReconciliationItems(
+  left: { date: string; provider: PortableProvider; model: string },
+  right: { date: string; provider: PortableProvider; model: string },
+): number {
+  return compareText(
+    aggregateKey(left.date, left.provider, left.model),
+    aggregateKey(right.date, right.provider, right.model),
+  );
 }
 
 function expectedMigrationStatePath(store: MigrationStore): string {
@@ -544,7 +570,7 @@ async function readMigrationState(statePath: string): Promise<LoadedMigrationSta
   }
 }
 
-function parseMigrationState(value: unknown): LoadedMigrationState {
+export function parseMigrationState(value: unknown): LoadedMigrationState {
   if (!isPlainObject(value)) return { rewriteRequired: true };
   const item = value as Record<string, unknown>;
   if ((typeof item.schemaVersion === "number" && item.schemaVersion > PORTABLE_STORE_VERSION)
@@ -559,19 +585,23 @@ function parseMigrationState(value: unknown): LoadedMigrationState {
     || typeof item.updatedAt !== "string" || !Number.isFinite(Date.parse(item.updatedAt))) {
     return { rewriteRequired: true };
   }
-  const validLastError = item.status === "failed"
-    && typeof item.lastError === "string"
+  const validLastError = typeof item.lastError === "string"
+    && item.lastError.length > 0
     && STATE_ERROR_CODES.has(item.lastError);
-  const validStoreRevision = item.storeRevision === undefined
-    || (typeof item.storeRevision === "string" && /^[a-f0-9]{64}$/.test(item.storeRevision));
-  if (!validStoreRevision) return { rewriteRequired: true };
-  const rewriteRequired = Object.keys(item).some((key) => !STATE_KEYS.has(key))
-    || (item.lastError !== undefined && !validLastError);
+  const validStoreRevision = typeof item.storeRevision === "string"
+    && /^[a-f0-9]{64}$/.test(item.storeRevision);
+  const validStatusShape = item.status === "failed"
+    ? validLastError && item.storeRevision === undefined
+    : item.status === "complete"
+      ? validStoreRevision && item.lastError === undefined
+      : item.storeRevision === undefined && item.lastError === undefined;
+  if (!validStatusShape) return { rewriteRequired: true };
+  const rewriteRequired = Object.keys(item).some((key) => !STATE_KEYS.has(key));
   const state: PortableMigrationState = {
     schemaVersion: PORTABLE_STORE_VERSION,
     status: item.status as PortableMigrationState["status"],
     usageMigrationVersion: item.usageMigrationVersion as number,
-    ...(typeof item.storeRevision === "string" ? { storeRevision: item.storeRevision } : {}),
+    ...(validStoreRevision ? { storeRevision: item.storeRevision as string } : {}),
     ...(validLastError ? { lastError: item.lastError as string } : {}),
     updatedAt: item.updatedAt,
   };

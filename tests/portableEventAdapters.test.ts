@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ClaudeUsageEntry } from "../src/pricing/jsonl-reader";
 import type { CodexTokenEvent } from "../src/pricing/codex-log-reader";
 import { sessionKey } from "../src/portable/eventIdentity";
+import type { PortableUsageEvent } from "../src/portable/types";
 import {
   PORTABLE_USAGE_EVENT_KEYS,
   fromClaudeEntries,
@@ -140,6 +141,45 @@ describe("portable event adapters", () => {
       reasoningOutputTokens: 7,
       totalTokens: 124,
     }]);
+  });
+
+  it("omits only statistically neutral internal reconciliation markers from provider consumers", () => {
+    const [claudeZero] = fromClaudeEntries([claude({
+      inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 0,
+    })]);
+    const [codexZero] = fromCodexEvents([codex({
+      inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0,
+      costUSD: 0,
+    })]);
+    const marker = (event: PortableUsageEvent): PortableUsageEvent => ({
+      ...event,
+      id: `marker-${event.provider}`,
+      source: "legacy-reconciliation",
+      synthetic: true,
+      inputCostUSD: 0,
+      outputCostUSD: 0,
+      cacheCreationCostUSD: 0,
+      cacheReadCostUSD: 0,
+      legacyTarget: {
+        inputTokens: 10,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        reasoningOutputTokens: 0,
+        costUSD: 0,
+        inputCostUSD: 0,
+        outputCostUSD: 0,
+        cacheCreationCostUSD: 0,
+        cacheReadCostUSD: 0,
+      },
+    });
+
+    const claudeEntries = toClaudeEntries([marker(claudeZero), claudeZero]);
+    const codexEvents = toCodexEvents([marker(codexZero), codexZero]);
+    expect(claudeEntries).toHaveLength(1);
+    expect(codexEvents).toHaveLength(1);
+    expect(fromClaudeEntries(claudeEntries)[0].id).toBe(claudeZero.id);
+    expect(fromCodexEvents(codexEvents)[0].id).toBe(codexZero.id);
   });
 
   it("uses safe reverse-adapter project fallbacks", () => {

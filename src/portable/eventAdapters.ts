@@ -99,7 +99,7 @@ export function fromCodexEvents(events: readonly CodexTokenEvent[]): PortableUsa
 
 export function toClaudeEntries(events: readonly PortableUsageEvent[]): ClaudeUsageEntry[] {
   return events
-    .filter((event) => event.provider === "claude")
+    .filter((event) => event.provider === "claude" && !isNeutralInternalMarker(event))
     .map((event) => {
       const projectName = basenameAnySeparator(event.projectName);
       const componentCost = sumFiniteCosts([
@@ -134,7 +134,7 @@ export function toClaudeEntries(events: readonly PortableUsageEvent[]): ClaudeUs
 
 export function toCodexEvents(events: readonly PortableUsageEvent[]): CodexTokenEvent[] {
   return events
-    .filter((event) => event.provider === "codex")
+    .filter((event) => event.provider === "codex" && !isNeutralInternalMarker(event))
     .map((event) => {
       const inputTokens = event.inputTokens + event.cacheReadTokens;
       const projectName = basenameAnySeparator(event.projectName);
@@ -160,6 +160,23 @@ export function toCodexEvents(events: readonly PortableUsageEvent[]): CodexToken
       reverseProvenance.set(entry, { id: event.id, sessionKey: event.sessionKey });
       return entry;
     });
+}
+
+function isNeutralInternalMarker(event: PortableUsageEvent): boolean {
+  return event.source === "legacy-reconciliation"
+    && event.legacyTarget !== undefined
+    && event.inputTokens === 0
+    && event.outputTokens === 0
+    && event.cacheCreationTokens === 0
+    && event.cacheReadTokens === 0
+    && event.reasoningOutputTokens === 0
+    && [
+      event.costUSD,
+      event.inputCostUSD,
+      event.outputCostUSD,
+      event.cacheCreationCostUSD,
+      event.cacheReadCostUSD,
+    ].every((cost) => cost === undefined || cost === 0);
 }
 
 function normalizeTimestamp(value: string, provider: "Claude" | "Codex"): string {

@@ -43,12 +43,20 @@ describe("portable root lock", () => {
       heartbeatAt: "2026-07-01T00:00:00.000Z",
     });
     const clock = fastClock(now);
+    let waits = 0;
 
     await expect(withPortableRootLock(rootDir, async () => undefined, {
-      ...clock,
+      now: clock.now,
+      wait: async (milliseconds) => {
+        waits += 1;
+        await clock.wait(milliseconds);
+      },
       isPidAlive: () => true,
+      lockWaitMs: 50,
+      retryMs: 25,
     })).rejects.toThrow("Timed out waiting for portable store lock");
 
+    expect(waits).toBe(2);
     expect(JSON.parse(await readFile(ownerPath(rootDir), "utf8"))).toMatchObject({ token: OWNER_TOKEN });
   });
 
@@ -157,10 +165,17 @@ function ownerPath(rootDir: string): string {
   return path.join(lockDir(rootDir), "owner.json");
 }
 
-function fastClock(start: number): { now: () => number; wait: (milliseconds: number) => Promise<void> } {
+function fastClock(start: number): {
+  lockWaitMs: number;
+  now: () => number;
+  retryMs: number;
+  wait: (milliseconds: number) => Promise<void>;
+} {
   let current = start;
   return {
+    lockWaitMs: 50,
     now: () => current,
+    retryMs: 25,
     wait: async (milliseconds) => { current += milliseconds; },
   };
 }

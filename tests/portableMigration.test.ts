@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   migrateLegacyData,
+  parseMigrationState,
   PORTABLE_USAGE_MIGRATION_VERSION,
 } from "../src/portable/migration";
 import { eventId, sessionKey } from "../src/portable/eventIdentity";
@@ -351,6 +352,27 @@ describe("migrateLegacyData", () => {
     expect(marker).toMatchObject({ inputTokens: 10, legacyTarget: { inputTokens: 10 } });
   });
 
+  it("reconciles a stored historical target when the current legacy snapshot omits it", async () => {
+    const target10 = record("2026-05-20", "claude", "model", { inputTokens: 10, totalTokens: 10 });
+    await migrateLegacyData({ store, records: [target10], statePath });
+    await store.upsert([providerEvent(
+      "provider-growth",
+      "2026-05-20T09:00:00.000Z",
+      "claude",
+      "model",
+      { inputTokens: 4 },
+    )]);
+
+    await migrateLegacyData({ store, records: [], statePath });
+
+    const events = await store.read();
+    expect(events.find(({ source }) => source === "legacy-reconciliation")).toMatchObject({
+      inputTokens: 6,
+      legacyTarget: { inputTokens: 10 },
+    });
+    expect(events.reduce((sum, event) => sum + event.inputTokens, 0)).toBe(10);
+  });
+
   it("retains targets across revision mismatches while provider growth still shrinks the derived delta", async () => {
     const target10 = record("2026-05-20", "claude", "model", {
       inputTokens: 10,
@@ -694,6 +716,42 @@ describe("migrateLegacyData", () => {
       usageMigrationVersion: PORTABLE_USAGE_MIGRATION_VERSION,
     });
     expect(rewritten).not.toContain(unsafeValue);
+  });
+
+  it.each([
+    ["failed without lastError", { status: "failed" }],
+    ["failed with a complete-only revision", {
+      status: "failed", lastError: "store_read_failed", storeRevision: "a".repeat(64),
+    }],
+    ["complete without storeRevision", { status: "complete" }],
+    ["complete with lastError", {
+      status: "complete", storeRevision: "a".repeat(64), lastError: "store_read_failed",
+    }],
+    ["pending with storeRevision", { status: "pending", storeRevision: "a".repeat(64) }],
+    ["running with lastError", { status: "running", lastError: "store_read_failed" }],
+  ])("strictly rejects a %s migration state", (_label, fields) => {
+    expect(parseMigrationState({
+      schemaVersion: 1,
+      usageMigrationVersion: PORTABLE_USAGE_MIGRATION_VERSION,
+      updatedAt: "2026-07-13T10:00:00.000Z",
+      ...fields,
+    })).toEqual({ rewriteRequired: true });
+  });
+
+  it.each([
+    ["pending", {}],
+    ["running", {}],
+    ["failed", { lastError: "store_read_failed" }],
+    ["complete", { storeRevision: "a".repeat(64) }],
+  ])("accepts the supported %s migration state shape", (status, fields) => {
+    const value = {
+      schemaVersion: 1,
+      status,
+      usageMigrationVersion: 0,
+      updatedAt: "2026-07-13T10:00:00.000Z",
+      ...fields,
+    };
+    expect(parseMigrationState(value)).toEqual({ state: value, rewriteRequired: false });
   });
 
   it.each([

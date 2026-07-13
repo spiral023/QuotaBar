@@ -36,14 +36,18 @@ export type RootLockFileSystem = Pick<
 export interface PortableRootLockDependencies {
   fileSystem?: RootLockFileSystem;
   isPidAlive?: (pid: number) => boolean;
+  lockWaitMs?: number;
   now?: () => number;
+  retryMs?: number;
   wait?: (milliseconds: number) => Promise<void>;
 }
 
 interface RootLockRuntime {
   fileSystem: RootLockFileSystem;
   isPidAlive: (pid: number) => boolean;
+  lockWaitMs: number;
   now: () => number;
+  retryMs: number;
   wait: (milliseconds: number) => Promise<void>;
 }
 
@@ -96,7 +100,7 @@ export async function withNamedPortableRootLock<T>(
 async function acquire(rootDir: string, lockDirectory: string, runtime: RootLockRuntime): Promise<HeldLock> {
   await runtime.fileSystem.mkdir(rootDir, { recursive: true });
   const directory = path.join(rootDir, lockDirectory);
-  const deadline = runtime.now() + LOCK_WAIT_MS;
+  const deadline = runtime.now() + runtime.lockWaitMs;
   while (true) {
     const owner = newOwner(runtime);
     try {
@@ -132,7 +136,7 @@ async function acquire(rootDir: string, lockDirectory: string, runtime: RootLock
       if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
       await reclaimIfAbandoned(directory, runtime);
       if (runtime.now() >= deadline) throw new Error("Timed out waiting for portable store lock", { cause: error });
-      await runtime.wait(RETRY_MS);
+      await runtime.wait(runtime.retryMs);
     }
   }
 }
@@ -278,7 +282,9 @@ function createRuntime(dependencies: PortableRootLockDependencies): RootLockRunt
   return {
     fileSystem: dependencies.fileSystem ?? fs,
     isPidAlive: dependencies.isPidAlive ?? checkPidAlive,
+    lockWaitMs: dependencies.lockWaitMs ?? LOCK_WAIT_MS,
     now: dependencies.now ?? (() => Date.now()),
+    retryMs: dependencies.retryMs ?? RETRY_MS,
     wait: dependencies.wait ?? delay,
   };
 }
