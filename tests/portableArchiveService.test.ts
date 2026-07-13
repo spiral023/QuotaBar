@@ -1,4 +1,5 @@
 import AdmZip from "adm-zip";
+import { randomBytes } from "node:crypto";
 import * as fsPromises from "node:fs/promises";
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -10,7 +11,7 @@ import {
   parseArchiveManifest,
   verifyArchiveEntryBytes,
 } from "../src/portable/archiveManifest";
-import { withPortableRootLock } from "../src/portable/rootLock";
+import { withNamedPortableRootLock, withPortableRootLock } from "../src/portable/rootLock";
 import {
   applyPendingImport,
   createFullBackup,
@@ -408,6 +409,31 @@ describe("portable archive service", () => {
     }
   });
 
+  it("waits for migration and ingestion transactions before exporting", async () => {
+    for (const lockName of [".portable-migration.lock", ".portable-ingestion.lock"] as const) {
+      const root = await tempRoot();
+      const appDir = path.join(root, `.quotabar-${lockName}`);
+      const archivePath = path.join(root, `${lockName}.zip`);
+      await put(appDir, "usage/events/2026-07.jsonl", "event\n");
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => { release = resolve; });
+      let acquired!: () => void;
+      const ready = new Promise<void>((resolve) => { acquired = resolve; });
+      const holder = withNamedPortableRootLock(path.join(appDir, "usage"), lockName, async () => {
+        acquired();
+        await barrier;
+      });
+      await ready;
+      let completed = false;
+      const exporting = exportPortableData(appDir, archivePath).then(() => { completed = true; });
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      expect(completed).toBe(false);
+      release();
+      await Promise.all([holder, exporting]);
+      expect(completed).toBe(true);
+    }
+  });
+
   it("waits for both store locks before applying a pending import", async () => {
     for (const managedRoot of ["usage", "quota"] as const) {
       const root = await tempRoot();
@@ -474,6 +500,7 @@ describe("portable archive service", () => {
       let opened = false;
       await expect(stagePortableImport("unused.zip", target, targetHome, {
         openZip: () => { opened = true; return { getEntries: () => item.entries }; },
+        skipSourceIdentity: true,
       }), item.name).rejects.toThrow("Portable data import failed");
       expect(opened, item.name).toBe(true);
       expect(getDataCalls, item.name).toBe(0);
@@ -494,9 +521,27 @@ describe("portable archive service", () => {
 
     await expect(stagePortableImport("unused.zip", target, targetHome, {
       openZip: () => ({ getEntries: () => [malicious] }),
+      skipSourceIdentity: true,
     })).rejects.toThrow("Portable data import failed");
     expect(getDataCalls).toBe(0);
     expect(await fsPromises.readdir(root)).toEqual([]);
+  });
+
+  it("rejects an oversized compressed source before target locks or parser allocation", async () => {
+    const root = await tempRoot();
+    const archivePath = path.join(root, "oversized-source.zip");
+    const handle = await fsPromises.open(archivePath, "w");
+    await handle.truncate(256 * 1024 * 1024 + 1);
+    await handle.close();
+    const targetHome = path.join(root, "target");
+    const target = path.join(targetHome, ".quotabar-win");
+    let parserCalls = 0;
+
+    await expect(stagePortableImport(archivePath, target, targetHome, {
+      openZip: () => { parserCalls += 1; throw new Error("parser should not run"); },
+    })).rejects.toThrow("Portable data import failed");
+    expect(parserCalls).toBe(0);
+    await expect(access(targetHome)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("restores byte-exact originals for every managed apply rename failure position", async () => {
@@ -593,5 +638,123 @@ describe("portable archive service", () => {
     expect(staged.backupPath).toContain("QuotaBar Backups");
     await expect(applyPendingImport(target)).resolves.toMatchObject({ applied: true });
     expect((await fsPromises.stat(largeLogPath)).size).toBe(largeSize);
+  });
+
+  it("resumes committed cleanup after crashes at every cleanup boundary", async () => {
+    for (const crashAt of ["rollback", "staging", "pending"] as const) {
+      const root = await tempRoot();
+      const source = path.join(root, "source", ".quotabar-win");
+      const targetHome = path.join(root, `target-cleanup-${crashAt}`);
+      const target = path.join(targetHome, ".quotabar-win");
+      const archivePath = path.join(root, `${crashAt}.zip`);
+      await put(source, "settings.json", "{\"costWindow\":\"7d\"}");
+      await put(target, "settings.json", "{\"costWindow\":\"30d\"}");
+      await exportPortableData(source, archivePath);
+      await stagePortableImport(archivePath, target, targetHome);
+      let cleanupCalls = 0;
+      let unlinkCalls = 0;
+      const removeTree = async (directory: string) => {
+        cleanupCalls += 1;
+        await fsPromises.rm(directory, { recursive: true });
+        if ((crashAt === "rollback" && cleanupCalls === 1) || (crashAt === "staging" && cleanupCalls === 2)) {
+          throw new Error("simulated cleanup crash");
+        }
+      };
+      const unlinkPending = async (filePath: string) => {
+        unlinkCalls += 1;
+        await fsPromises.unlink(filePath);
+        if (crashAt === "pending") throw new Error("simulated pending unlink crash");
+      };
+
+      await expect(applyPendingImport(target, { removeTree, unlinkPending })).rejects.toThrow("Portable data apply failed");
+      expect(cleanupCalls).toBeGreaterThan(0);
+      if (crashAt === "pending") expect(unlinkCalls).toBe(1);
+      await expect(applyPendingImport(target)).resolves.toMatchObject({ applied: crashAt !== "pending" });
+      expect(JSON.parse(await readFile(path.join(target, "settings.json"), "utf8")).costWindow).toBe("7d");
+    }
+  });
+
+  it("streams portable payloads sequentially with bounded chunks", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "source", ".quotabar-win");
+    const targetHome = path.join(root, "target-stream-observer");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "streamed.zip");
+    await mkdir(path.join(source, "usage/events"), { recursive: true });
+    await mkdir(path.join(source, "quota"), { recursive: true });
+    await writeFile(path.join(source, "usage/events/one.jsonl"), randomBytes(2 * 1024 * 1024));
+    await writeFile(path.join(source, "quota/two.jsonl"), randomBytes(2 * 1024 * 1024));
+    await put(target, "settings.json", "{}");
+    await exportPortableData(source, archivePath);
+    const entryOrder: string[] = [];
+    let maximumChunk = 0;
+
+    await stagePortableImport(archivePath, target, targetHome, {
+      onStreamChunk: (entryPath, bytes) => {
+        if (entryOrder.at(-1) !== entryPath) entryOrder.push(entryPath);
+        maximumChunk = Math.max(maximumChunk, bytes);
+      },
+    });
+
+    expect(new Set(entryOrder)).toEqual(new Set(["quota/two.jsonl", "usage/events/one.jsonl"]));
+    expect(entryOrder).toHaveLength(2);
+    expect(maximumChunk).toBeGreaterThan(0);
+    expect(maximumChunk).toBeLessThan(2 * 1024 * 1024);
+  });
+
+  it("rolls back when a staged file is swapped during its rename", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "source", ".quotabar-win");
+    const targetHome = path.join(root, "target-staged-swap");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "staged-swap.zip");
+    const original = "{\"costWindow\":\"30d\"}\n";
+    await put(source, "settings.json", "{\"costWindow\":\"7d\"}");
+    await put(target, "settings.json", original);
+    await exportPortableData(source, archivePath);
+    await stagePortableImport(archivePath, target, targetHome);
+    let swapped = false;
+    const rename: typeof fsPromises.rename = async (from, to) => {
+      if (!swapped && String(from).includes("portable-import-") && String(from).endsWith("settings.json")) {
+        swapped = true;
+        await writeFile(from, "swapped-after-validation", "utf8");
+      }
+      return fsPromises.rename(from, to);
+    };
+
+    await expect(applyPendingImport(target, { rename })).rejects.toThrow("Portable data apply failed");
+    expect(swapped).toBe(true);
+    expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe(original);
+  });
+
+  it("refuses a rollback-directory junction swap before recursive cleanup", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "source", ".quotabar-win");
+    const targetHome = path.join(root, "target-cleanup-junction");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "cleanup-junction.zip");
+    const external = path.join(root, "external-do-not-delete");
+    await put(source, "settings.json", "{\"costWindow\":\"7d\"}");
+    await put(target, "settings.json", "{\"costWindow\":\"30d\"}");
+    await put(external, "marker.txt", "keep-me");
+    await exportPortableData(source, archivePath);
+    await stagePortableImport(archivePath, target, targetHome);
+    const pendingPath = path.join(target, ".portable-import.pending.json");
+    const pending = JSON.parse(await readFile(pendingPath, "utf8"));
+    const rollbackDir = path.join(targetHome, pending.rollbackDirectory);
+    let swapped = false;
+    const rename: typeof fsPromises.rename = async (from, to) => {
+      await fsPromises.rename(from, to);
+      if (!swapped && String(from).includes("portable-import-") && String(from).endsWith(path.join("usage", "ingest-state.json"))) {
+        swapped = true;
+        await rm(rollbackDir, { recursive: true });
+        await symlink(external, rollbackDir, "junction");
+      }
+    };
+
+    await expect(applyPendingImport(target, { rename })).rejects.toThrow("Portable data apply failed");
+    expect(swapped).toBe(true);
+    expect(await readFile(path.join(external, "marker.txt"), "utf8")).toBe("keep-me");
+    await expect(access(pendingPath)).resolves.toBeUndefined();
   });
 });

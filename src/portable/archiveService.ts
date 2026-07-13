@@ -1,10 +1,18 @@
 import AdmZip from "adm-zip";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
+import { createWriteStream } from "node:fs";
 import * as fs from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { inflateRawSync } from "node:zlib";
+import CRC32 from "crc-32";
+import * as yauzl from "yauzl";
+import { ZipFile as YazlZipFile } from "yazl";
 import {
+  ARCHIVE_FORMAT,
+  ARCHIVE_FORMAT_VERSION,
   createArchiveManifest,
   isPortableArchivePath,
   metadataFromZipEntry,
@@ -14,11 +22,12 @@ import {
   validateArchiveStructure,
   validateZipEntryMetadata,
   verifyArchiveEntryBytes,
-  type ArchiveFileBytes,
   type ArchiveManifest,
+  type ArchiveManifestEntry,
 } from "./archiveManifest";
-import { withPortableRootLock } from "./rootLock";
+import { withNamedPortableRootLock, withPortableRootLock } from "./rootLock";
 import { PORTABLE_STORE_VERSION } from "./types";
+import { preflightPortableZip, type StreamingPortablePreflight } from "./streamingZip";
 
 const QUOTABAR_VERSION = "1.5.0";
 const ARCHIVE_LOCK_DIR = ".portable-store.lock";
@@ -27,6 +36,7 @@ const PENDING_FILE = ".portable-import.pending.json";
 const PENDING_FORMAT = "QuotaBar/pending-import";
 const PENDING_VERSION = 1;
 const MAX_PENDING_SIZE = 64 * 1024;
+const MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE = 256 * 1024 * 1024;
 
 export interface ArchiveOperationResult {
   path: string;
@@ -47,15 +57,34 @@ export interface AppliedImportResult {
 
 export interface ArchiveApplyDependencies {
   rename?: typeof fs.rename;
+  removeTree?: (directory: string) => Promise<void>;
+  unlinkPending?: (filePath: string) => Promise<void>;
 }
 
 export interface ArchiveImportDependencies {
   openZip?: (zipPath: string) => Pick<AdmZip, "getEntries">;
+  skipSourceIdentity?: boolean;
+  onStreamChunk?: (entryPath: string, bytes: number) => void;
 }
 
 interface SafeFile {
   path: string;
   data: Buffer;
+}
+
+interface PreparedPortableFile {
+  path: string;
+  size: number;
+  sha256: string;
+  data?: Buffer;
+  temporaryPath?: string;
+}
+
+interface SnapshotFile {
+  path: string;
+  absolutePath: string;
+  size: number;
+  sha256: string;
 }
 
 interface FileIdentity {
@@ -66,10 +95,12 @@ interface FileIdentity {
 interface PendingImport {
   format: typeof PENDING_FORMAT;
   formatVersion: typeof PENDING_VERSION;
+  phase: "prepared" | "applying" | "committed";
   stagingDirectory: string;
   rollbackDirectory: string;
   backup: PendingBackup;
   manifest: ArchiveManifest;
+  stagedEntries: ArchiveManifestEntry[];
   replacePaths: string[];
 }
 
@@ -87,17 +118,15 @@ export async function exportPortableData(appDir: string, destinationZip: string)
     await removeFileIfPresent(partialPath);
     try {
       await assertDestinationAvailable(destinationZip);
-      const files = (await readAppFiles(appDir))
+      const files = (await snapshotAppFiles(appDir))
         .filter((file) => isPortableArchivePath(file.path) && file.path !== "manifest.json");
-      const manifest = createArchiveManifest(files, { quotaBarVersion: QUOTABAR_VERSION });
-      const zip = new AdmZip();
-      for (const file of files) zip.addFile(file.path, file.data);
-      zip.addFile("manifest.json", Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8"));
+      const manifest = manifestFromSnapshots(files);
       await fs.mkdir(path.dirname(destinationZip), { recursive: true });
-      zip.writeZip(partialPath);
+      await writeStreamingZip(partialPath, files, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8"));
+      await verifySnapshotFiles(files);
       await validatePortableZip(partialPath);
       await fs.rename(partialPath, destinationZip);
-      return summarize(destinationZip, files);
+      return summarizeSnapshots(destinationZip, files);
     } catch {
       await removeFileIfPresent(partialPath);
       throw new Error("Portable data export failed");
@@ -117,29 +146,53 @@ export async function stagePortableImport(
   dependencies: ArchiveImportDependencies = {},
 ): Promise<StagedImportResult> {
   return genericFailure("Portable data import failed", async () => {
-    const sourceIdentity = dependencies.openZip ? undefined : await fileIdentity(zipPath);
-    const imported = await validatePortableZip(zipPath, dependencies.openZip);
+    let streaming: StreamingPortablePreflight | undefined;
+    const sourceIdentity = dependencies.openZip && !dependencies.skipSourceIdentity
+      ? await fileIdentity(zipPath, MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE)
+      : undefined;
+    const stagedFiles: PreparedPortableFile[] = dependencies.openZip
+      ? (await validatePortableZip(zipPath, dependencies.openZip)).map((file) => ({
+        path: file.path,
+        size: file.data.byteLength,
+        sha256: sha256Bytes(file.data),
+        data: file.data,
+      }))
+      : ((streaming = await preflightPortableZip(zipPath, { onStreamChunk: dependencies.onStreamChunk })), streaming.files.map((file) => ({
+        path: file.path,
+        size: file.size,
+        sha256: file.sha256,
+        temporaryPath: file.temporaryPath,
+      })));
     if (sourceIdentity) await assertFileIdentity(zipPath, sourceIdentity);
-    return withArchiveLocks(appDir, async () => {
+    try {
+      return await withArchiveLocks(appDir, async () => {
     let stagingDir: string | undefined;
     try {
-      if (sourceIdentity) await assertFileIdentity(zipPath, sourceIdentity);
+      if (streaming) await streaming.verifySourceIdentity();
+      else if (sourceIdentity) await assertFileIdentity(zipPath, sourceIdentity);
       await assertTargetHome(appDir, targetHome);
       await assertPendingMissing(appDir);
-      const stagedFiles = imported.map((file) => ({ ...file }));
       const settings = stagedFiles.find((file) => file.path === "settings.json");
       if (settings) {
         let parsed: unknown = {};
         try {
-          parsed = JSON.parse(settings.data.toString("utf8"));
+          parsed = JSON.parse((await preparedFileData(settings)).toString("utf8"));
         } catch {
           parsed = {};
         }
         settings.data = Buffer.from(`${JSON.stringify(sanitizeImportedSettings(parsed, targetHome), null, 2)}\n`, "utf8");
+        settings.temporaryPath = undefined;
+        settings.size = settings.data.byteLength;
+        settings.sha256 = sha256Bytes(settings.data);
       }
       const ingestState = Buffer.from(`${JSON.stringify({ schemaVersion: PORTABLE_STORE_VERSION, sources: {} }, null, 2)}\n`, "utf8");
-      const stagedManifest = createArchiveManifest(stagedFiles, { quotaBarVersion: QUOTABAR_VERSION });
-      const currentFiles = await readAppFiles(appDir);
+      const stagedManifest = streaming
+        ? { ...streaming.manifest, entries: stagedFiles.map(({ path: filePath, size, sha256 }) => ({ path: filePath, size, sha256 }))
+          .sort((left, right) => left.path.localeCompare(right.path, "en")) }
+        : createArchiveManifest(stagedFiles.map((file) => ({ path: file.path, data: file.data! })), {
+          quotaBarVersion: QUOTABAR_VERSION,
+        });
+      const currentFiles = await snapshotAppFiles(appDir);
       const replacePaths = new Set(
         currentFiles.filter((file) => isPortableArchivePath(file.path) && file.path !== "manifest.json").map((file) => file.path),
       );
@@ -157,12 +210,13 @@ export async function stagePortableImport(
       const rollbackDirectory = `${stagingDirectory}.rollback`;
       stagingDir = path.join(path.dirname(appDir), stagingDirectory);
       await fs.mkdir(stagingDir);
-      for (const file of stagedFiles) await writeNewContainedFile(stagingDir, file.path, file.data);
+      for (const file of stagedFiles) await writePreparedFile(stagingDir, file);
       await writeNewContainedFile(stagingDir, "usage/ingest-state.json", ingestState);
 
       const pending: PendingImport = {
         format: PENDING_FORMAT,
         formatVersion: PENDING_VERSION,
+        phase: "prepared",
         stagingDirectory,
         rollbackDirectory,
         backup: {
@@ -173,6 +227,10 @@ export async function stagePortableImport(
           expandedTotalBytes: backup.totalBytes,
         },
         manifest: stagedManifest,
+        stagedEntries: [
+          ...stagedManifest.entries,
+          { path: "usage/ingest-state.json", size: ingestState.byteLength, sha256: sha256Bytes(ingestState) },
+        ].sort((left, right) => left.path.localeCompare(right.path, "en")),
         replacePaths: [...replacePaths].sort((left, right) => left.localeCompare(right, "en")),
       };
       await writePending(appDir, pending);
@@ -181,13 +239,16 @@ export async function stagePortableImport(
         backupPath: backup.path,
         pending: true,
         fileCount: stagedFiles.length,
-        totalBytes: stagedFiles.reduce((sum, file) => sum + file.data.byteLength, 0),
+        totalBytes: stagedFiles.reduce((sum, file) => sum + file.size, 0),
       };
     } catch {
       if (stagingDir) await removeOwnedTree(stagingDir);
       throw new Error("Portable data import failed");
     }
-    });
+      });
+    } finally {
+      await streaming?.cleanup();
+    }
   });
 }
 
@@ -196,6 +257,8 @@ export async function applyPendingImport(
   dependencies: ArchiveApplyDependencies = {},
 ): Promise<AppliedImportResult> {
   const rename = dependencies.rename ?? fs.rename;
+  const removeTree = dependencies.removeTree ?? removeOwnedTree;
+  const unlinkPending = dependencies.unlinkPending ?? fs.unlink;
   return genericFailure("Portable data apply failed", () => withArchiveLocks(appDir, async () => {
     const pendingPath = path.join(appDir, PENDING_FILE);
     let raw: Buffer;
@@ -218,13 +281,24 @@ export async function applyPendingImport(
       await verifyReferencedBackup(appDir, pending);
       const stagingDir = safeSibling(parent, pending.stagingDirectory, `.${path.basename(appDir)}.portable-import-`);
       const rollbackDir = safeSibling(parent, pending.rollbackDirectory, `.${path.basename(appDir)}.portable-import-`);
-      const staged = await validateStaging(stagingDir, appDir, pending.manifest);
-      const stagedByPath = new Map(staged.map((file) => [file.path, file]));
+      if (pending.phase === "committed") {
+        await verifyCommittedLive(appDir, pending.stagedEntries);
+        await removeTree(rollbackDir);
+        await removeTree(stagingDir);
+        await unlinkPending(pendingPath);
+        return {
+          applied: true,
+          fileCount: pending.manifest.entries.length,
+          totalBytes: pending.manifest.entries.reduce((sum, entry) => sum + entry.size, 0),
+        };
+      }
+      const staged = await validateStaging(stagingDir, appDir, pending.stagedEntries);
+      const stagedByPath = new Map(staged.map((entry) => [entry.path, entry]));
       const ingestPath = "usage/ingest-state.json";
       const ingest = await readStagedOrAppliedFile(stagingDir, appDir, ingestPath);
       verifyFreshIngestState(ingest.data);
-      stagedByPath.set(ingestPath, ingest);
       await ensureOwnedDirectory(rollbackDir);
+      await updatePendingPhase(pendingPath, pending, "applying");
       try {
         for (const relativePath of pending.replacePaths) {
           const imported = stagedByPath.get(relativePath);
@@ -232,11 +306,14 @@ export async function applyPendingImport(
         }
       } catch {
         await rollbackAll(appDir, stagingDir, rollbackDir, pending.replacePaths, stagedByPath, rename);
+        await updatePendingPhase(pendingPath, pending, "prepared");
         throw new Error("apply");
       }
-      await removeOwnedTree(rollbackDir);
-      await removeOwnedTree(stagingDir);
-      await fs.unlink(pendingPath);
+      await verifyCommittedLive(appDir, pending.stagedEntries);
+      await updatePendingPhase(pendingPath, pending, "committed");
+      await removeTree(rollbackDir);
+      await removeTree(stagingDir);
+      await unlinkPending(pendingPath);
       return {
         applied: true,
         fileCount: pending.manifest.entries.length,
@@ -251,31 +328,101 @@ export async function applyPendingImport(
 async function verifyReferencedBackup(appDir: string, pending: PendingImport): Promise<void> {
   const backupPath = path.join(path.dirname(appDir), "QuotaBar Backups", pending.backup.fileName);
   await assertSafeBackupDestination(appDir, backupPath);
+  await verifyBackupArchive(backupPath, pending.backup);
+}
+
+async function verifyBackupArchive(backupPath: string, expected: PendingBackup): Promise<void> {
   const info = await fs.lstat(backupPath);
-  if (!info.isFile() || info.isSymbolicLink() || info.size !== pending.backup.archiveSize) {
+  if (!info.isFile() || info.isSymbolicLink() || info.size !== expected.archiveSize) {
     throw new Error("Invalid referenced backup");
   }
-  await assertFileIdentity(backupPath, { size: pending.backup.archiveSize, sha256: pending.backup.sha256 });
-  const zip = new AdmZip(backupPath);
-  const entries = zip.getEntries();
-  if (entries.length !== pending.backup.entryCount) throw new Error("Invalid referenced backup");
-  const paths = new Set<string>();
-  let totalSize = 0;
-  for (const entry of entries) {
-    const metadata = metadataFromZipEntry(entry);
-    if (entry.isDirectory || !isSafeNonNegativeInteger(metadata.size) || !isSafeNonNegativeInteger(metadata.compressedSize)) {
-      throw new Error("Invalid referenced backup");
-    }
-    const archivePath = normalizeArchivePath(entry.entryName);
-    const canonical = archivePath.toLowerCase();
-    if (paths.has(canonical)) throw new Error("Invalid referenced backup");
-    paths.add(canonical);
-    if (totalSize > Number.MAX_SAFE_INTEGER - metadata.size) throw new Error("Invalid referenced backup");
-    totalSize += metadata.size;
-    const data = entry.getData();
-    if (data.byteLength !== metadata.size) throw new Error("Invalid referenced backup");
+  const handle = await fs.open(backupPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const before = await fileIdentityFromHandle(handle);
+    assertIdentityMatches(before, expected);
+    await verifyBackupEntriesFromFd(handle.fd, expected);
+    const after = await fileIdentityFromHandle(handle);
+    assertIdentityMatches(after, expected);
+  } finally {
+    await handle.close();
   }
-  if (totalSize !== pending.backup.expandedTotalBytes) throw new Error("Invalid referenced backup");
+}
+
+function verifyBackupEntriesFromFd(fd: number, expected: PendingBackup): Promise<void> {
+  return new Promise((resolve, reject) => {
+    yauzl.fromFd(fd, {
+      autoClose: false,
+      decodeStrings: true,
+      lazyEntries: true,
+      strictFileNames: true,
+      validateEntrySizes: true,
+    }, (openError, zip) => {
+      if (openError) return reject(openError);
+      if (zip.entryCount !== expected.entryCount) {
+        return reject(new Error("Invalid referenced backup"));
+      }
+      const paths = new Set<string>();
+      let totalSize = 0;
+      let settled = false;
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+      zip.on("error", fail);
+      zip.on("entry", (entry: yauzl.Entry) => {
+        try {
+          if (entry.fileName.endsWith("/")
+            || entry.isEncrypted()
+            || entry.extraFields.some((field) => field.id === 0x0001)
+            || !isSafeNonNegativeInteger(entry.uncompressedSize)
+            || !isSafeNonNegativeInteger(entry.compressedSize)) {
+            throw new Error("Invalid referenced backup");
+          }
+          const archivePath = normalizeArchivePath(entry.fileName);
+          const canonical = archivePath.toLowerCase();
+          if (paths.has(canonical)) throw new Error("Invalid referenced backup");
+          paths.add(canonical);
+          if (totalSize > Number.MAX_SAFE_INTEGER - entry.uncompressedSize) throw new Error("Invalid referenced backup");
+          totalSize += entry.uncompressedSize;
+          zip.openReadStream(entry, (streamError, stream) => {
+            if (streamError) return fail(streamError);
+            let expanded = 0;
+            let crc = 0;
+            stream.on("data", (chunk: Buffer) => {
+              expanded += chunk.byteLength;
+              crc = CRC32.buf(chunk, crc);
+              if (expanded > entry.uncompressedSize) stream.destroy(new Error("Invalid referenced backup"));
+            });
+            stream.once("error", fail);
+            stream.once("end", () => {
+              if (expanded !== entry.uncompressedSize || (crc >>> 0) !== (entry.crc32 >>> 0)) {
+                return fail(new Error("Invalid referenced backup"));
+              }
+              zip.readEntry();
+            });
+          });
+        } catch (error) {
+          fail(error);
+        }
+      });
+      zip.on("end", () => {
+        if (settled) return;
+        if (totalSize !== expected.expandedTotalBytes || paths.size !== expected.entryCount) {
+          return fail(new Error("Invalid referenced backup"));
+        }
+        settled = true;
+        resolve();
+      });
+      zip.readEntry();
+    });
+  });
+}
+
+function assertIdentityMatches(actual: FileIdentity, expected: Pick<PendingBackup, "archiveSize" | "sha256">): void {
+  if (actual.size !== expected.archiveSize || actual.sha256 !== expected.sha256) {
+    throw new Error("Invalid referenced backup");
+  }
 }
 
 async function createFullBackupUnlocked(appDir: string, backupZip: string): Promise<ArchiveOperationResult> {
@@ -286,14 +433,20 @@ async function createFullBackupUnlocked(appDir: string, backupZip: string): Prom
     destinationApproved = true;
     await removeFileIfPresent(partialPath);
     await assertDestinationAvailable(backupZip);
-    const files = await readAppFiles(appDir);
-    const zip = new AdmZip();
-    for (const file of files) zip.addFile(file.path, file.data);
+    const files = await snapshotAppFiles(appDir);
     await fs.mkdir(path.dirname(backupZip), { recursive: true });
-    zip.writeZip(partialPath);
-    verifyFullBackup(partialPath, files);
+    await writeStreamingZip(partialPath, files);
+    await verifySnapshotFiles(files);
+    const identity = await fileIdentity(partialPath);
+    await verifyBackupArchive(partialPath, {
+      fileName: path.basename(backupZip),
+      archiveSize: identity.size,
+      sha256: identity.sha256,
+      entryCount: files.length,
+      expandedTotalBytes: files.reduce((sum, file) => sum + file.size, 0),
+    });
     await fs.rename(partialPath, backupZip);
-    return summarize(backupZip, files);
+    return summarizeSnapshots(backupZip, files);
   } catch {
     if (destinationApproved) await removeFileIfPresent(partialPath);
     throw new Error("QuotaBar backup failed");
@@ -378,18 +531,21 @@ function parsePending(input: Uint8Array): PendingImport {
   }
   if (!isRecord(parsed)
     || !hasExactKeys(parsed, [
-      "format", "formatVersion", "stagingDirectory", "rollbackDirectory", "backup", "manifest", "replacePaths",
+      "format", "formatVersion", "phase", "stagingDirectory", "rollbackDirectory", "backup", "manifest", "stagedEntries", "replacePaths",
     ])
     || parsed.format !== PENDING_FORMAT
     || parsed.formatVersion !== PENDING_VERSION
+    || !["prepared", "applying", "committed"].includes(String(parsed.phase))
     || typeof parsed.stagingDirectory !== "string"
     || typeof parsed.rollbackDirectory !== "string"
     || !isRecord(parsed.backup)
+    || !Array.isArray(parsed.stagedEntries)
     || !Array.isArray(parsed.replacePaths)) {
     throw new Error("Invalid pending import");
   }
   const manifest = parseArchiveManifest(Buffer.from(JSON.stringify(parsed.manifest), "utf8"));
   const backup = parsePendingBackup(parsed.backup);
+  const stagedEntries = parseStagedEntries(parsed.stagedEntries, manifest);
   const replacePaths = parsed.replacePaths.map((value) => {
     if (typeof value !== "string") throw new Error("Invalid pending import");
     const normalized = normalizeArchivePath(value);
@@ -412,12 +568,72 @@ function parsePending(input: Uint8Array): PendingImport {
   return {
     format: PENDING_FORMAT,
     formatVersion: PENDING_VERSION,
+    phase: parsed.phase as PendingImport["phase"],
     stagingDirectory: parsed.stagingDirectory,
     rollbackDirectory: parsed.rollbackDirectory,
     backup,
     manifest,
+    stagedEntries,
     replacePaths,
   };
+}
+
+function parseStagedEntries(values: unknown[], manifest: ArchiveManifest): ArchiveManifestEntry[] {
+  const entries = values.map((value) => {
+    if (!isRecord(value) || !hasExactKeys(value, ["path", "size", "sha256"])
+      || typeof value.path !== "string"
+      || (value.path !== "usage/ingest-state.json" && !isPortableArchivePath(value.path))
+      || normalizeArchivePath(value.path) !== value.path
+      || !isSafeNonNegativeInteger(value.size)
+      || typeof value.sha256 !== "string"
+      || !/^[0-9a-f]{64}$/.test(value.sha256)) {
+      throw new Error("Invalid pending import");
+    }
+    return { path: value.path, size: value.size, sha256: value.sha256 };
+  });
+  const expected = new Set([...manifest.entries.map((entry) => entry.path), "usage/ingest-state.json"]);
+  if (entries.length !== expected.size
+    || entries.some((entry) => !expected.delete(entry.path))
+    || manifest.entries.some((manifestEntry) => {
+      const staged = entries.find((entry) => entry.path === manifestEntry.path);
+      return !staged || staged.size !== manifestEntry.size || staged.sha256 !== manifestEntry.sha256;
+    })
+    || entries.some((entry, index) => index > 0 && entries[index - 1].path.localeCompare(entry.path, "en") >= 0)) {
+    throw new Error("Invalid pending import");
+  }
+  return entries;
+}
+
+async function updatePendingPhase(
+  pendingPath: string,
+  pending: PendingImport,
+  phase: PendingImport["phase"],
+): Promise<void> {
+  pending.phase = phase;
+  const data = Buffer.from(`${JSON.stringify(pending, null, 2)}\n`, "utf8");
+  if (data.byteLength > MAX_PENDING_SIZE) throw new Error("Invalid pending import metadata");
+  const handle = await fs.open(pendingPath, "r+");
+  try {
+    await handle.truncate(0);
+    await handle.writeFile(data);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function verifyCommittedLive(appDir: string, entries: readonly ArchiveManifestEntry[]): Promise<void> {
+  for (const entry of entries) {
+    if (entry.path === "usage/ingest-state.json") {
+      const file = await readRequiredSafeFile(appDir, entry.path);
+      if (file.data.byteLength !== entry.size || sha256Bytes(file.data) !== entry.sha256) {
+        throw new Error("Invalid committed ingest state");
+      }
+      verifyFreshIngestState(file.data);
+    } else {
+      await verifyManagedEntry(appDir, entry);
+    }
+  }
 }
 
 function parsePendingBackup(value: Record<string, unknown>): PendingBackup {
@@ -442,21 +658,27 @@ function parsePendingBackup(value: Record<string, unknown>): PendingBackup {
   };
 }
 
-async function validateStaging(stagingDir: string, liveDir: string, manifest: ArchiveManifest): Promise<SafeFile[]> {
+async function validateStaging(
+  stagingDir: string,
+  liveDir: string,
+  expectedEntries: readonly ArchiveManifestEntry[],
+): Promise<ArchiveManifestEntry[]> {
   await assertDirectory(stagingDir);
-  const files = await readAppFiles(stagingDir);
-  const expectedPaths = new Set([...manifest.entries.map((entry) => entry.path), "usage/ingest-state.json"]);
+  const files = await snapshotAppFiles(stagingDir);
+  const expectedPaths = new Set(expectedEntries.map((entry) => entry.path));
   if (files.some((file) => !expectedPaths.has(file.path))) {
     throw new Error("Invalid staged import");
   }
   const byPath = new Map(files.map((file) => [file.path, file]));
-  const validated: SafeFile[] = [];
-  for (const entry of manifest.entries) {
-    const file = byPath.get(entry.path) ?? await readRequiredSafeFile(liveDir, entry.path);
-    verifyArchiveEntryBytes(entry, file.data);
-    validated.push(file);
+  for (const entry of expectedEntries) {
+    const staged = byPath.get(entry.path);
+    if (staged) {
+      if (staged.size !== entry.size || staged.sha256 !== entry.sha256) throw new Error("Invalid staged import");
+    } else {
+      await verifyManagedEntry(liveDir, entry);
+    }
   }
-  return validated;
+  return [...expectedEntries];
 }
 
 async function applyOnePath(
@@ -464,7 +686,7 @@ async function applyOnePath(
   stagingDir: string,
   rollbackDir: string,
   relativePath: string,
-  imported: SafeFile | undefined,
+  imported: ArchiveManifestEntry | undefined,
   rename: typeof fs.rename,
 ): Promise<void> {
   const livePath = containedPath(appDir, relativePath);
@@ -475,9 +697,8 @@ async function applyOnePath(
   const rollbackExists = await safeRegularFileExists(rollbackPath);
 
   if (imported && !stagedExists && liveExists) {
-    const live = await readStableFile(livePath, (await fs.lstat(livePath)).size);
-    if (live.equals(imported.data)) return;
-    throw new Error("Invalid interrupted import state");
+    await verifyManagedEntry(appDir, imported);
+    return;
   }
   if (rollbackExists && !stagedExists && !imported) {
     if (liveExists) throw new Error("Invalid interrupted import state");
@@ -491,8 +712,10 @@ async function applyOnePath(
   }
   if (imported) {
     if (!stagedExists) throw new Error("Invalid interrupted import state");
+    await verifyManagedEntry(stagingDir, imported);
     await ensureSafeParents(appDir, relativePath);
     await rename(stagedPath, livePath);
+    await verifyManagedEntry(appDir, imported);
   }
 }
 
@@ -501,7 +724,7 @@ async function rollbackAll(
   stagingDir: string,
   rollbackDir: string,
   paths: readonly string[],
-  stagedByPath: ReadonlyMap<string, SafeFile>,
+  stagedByPath: ReadonlyMap<string, ArchiveManifestEntry>,
   rename: typeof fs.rename,
 ): Promise<void> {
   let rollbackError: unknown;
@@ -514,10 +737,19 @@ async function rollbackAll(
       const liveExists = await safeRegularFileExists(livePath);
       const stagedExists = await safeRegularFileExists(stagedPath);
       if (imported && liveExists && !stagedExists) {
-        const live = await readStableFile(livePath, (await fs.lstat(livePath)).size);
-        if (!live.equals(imported.data)) throw new Error("Unexpected live data during rollback");
         await ensureSafeParents(stagingDir, relativePath);
-        await rename(livePath, stagedPath);
+        let importedMatches = false;
+        try {
+          await verifyManagedEntry(appDir, imported);
+          importedMatches = true;
+        } catch {
+          // A replaced post-rename live file is quarantined before restoring the rollback copy.
+        }
+        if (importedMatches) {
+          await rename(livePath, stagedPath);
+        } else {
+          await rename(livePath, `${stagedPath}.corrupt-${randomUUID()}`);
+        }
       }
       if (await safeRegularFileExists(rollbackPath)) {
         if (await safeRegularFileExists(livePath)) throw new Error("Live target occupied during rollback");
@@ -529,6 +761,13 @@ async function rollbackAll(
     }
   }
   if (rollbackError) throw new Error("Portable data rollback failed");
+}
+
+async function verifyManagedEntry(root: string, entry: ArchiveManifestEntry): Promise<void> {
+  const identity = await fileIdentity(containedPath(root, entry.path), entry.size);
+  if (identity.size !== entry.size || identity.sha256 !== entry.sha256) {
+    throw new Error("Managed import file failed verification");
+  }
 }
 
 async function writePending(appDir: string, pending: PendingImport): Promise<void> {
@@ -560,6 +799,26 @@ async function writeNewContainedFile(root: string, relativePath: string, data: U
   } finally {
     await handle.close();
   }
+}
+
+async function preparedFileData(file: PreparedPortableFile): Promise<Buffer> {
+  if (file.data) return file.data;
+  if (!file.temporaryPath) throw new Error("Invalid prepared portable file");
+  const info = await fs.lstat(file.temporaryPath);
+  if (!info.isFile() || info.isSymbolicLink() || info.size !== file.size) throw new Error("Invalid prepared portable file");
+  const data = await readStableFile(file.temporaryPath, info.size);
+  if (sha256Bytes(data) !== file.sha256) throw new Error("Prepared portable file changed");
+  return data;
+}
+
+async function writePreparedFile(root: string, file: PreparedPortableFile): Promise<void> {
+  if (file.data) return writeNewContainedFile(root, file.path, file.data);
+  if (!file.temporaryPath) throw new Error("Invalid prepared portable file");
+  await ensureSafeParents(root, file.path);
+  const target = containedPath(root, file.path);
+  await fs.copyFile(file.temporaryPath, target, constants.COPYFILE_EXCL);
+  const copied = await fileIdentity(target);
+  if (copied.size !== file.size || copied.sha256 !== file.sha256) throw new Error("Prepared portable file copy failed verification");
 }
 
 async function ensureSafeParents(root: string, relativePath: string): Promise<void> {
@@ -651,13 +910,38 @@ async function safeRegularFileExists(filePath: string): Promise<boolean> {
 }
 
 async function removeOwnedTree(directory: string): Promise<void> {
+  const name = path.basename(directory);
+  if (!/^\.\.?[A-Za-z0-9._-]*portable-import-[0-9a-f-]+(?:\.rollback)?$/i.test(name)) {
+    throw new Error("Unsafe import work directory");
+  }
+  const parent = path.dirname(directory);
+  const tombstonePrefix = `${name}.delete-`;
+  for (const entry of await fs.readdir(parent, { withFileTypes: true })) {
+    if (entry.name.startsWith(tombstonePrefix)
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entry.name.slice(tombstonePrefix.length))) {
+      await removeOwnedTombstone(parent, entry.name);
+    }
+  }
   try {
     const info = await fs.lstat(directory);
     if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Unsafe import work directory");
-    await fs.rm(directory, { recursive: true });
+    const tombstoneName = `${name}.delete-${randomUUID()}`;
+    const tombstone = path.join(parent, tombstoneName);
+    await fs.rename(directory, tombstone);
+    await removeOwnedTombstone(parent, tombstoneName);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+}
+
+async function removeOwnedTombstone(parent: string, name: string): Promise<void> {
+  const tombstone = path.join(parent, name);
+  const moved = await fs.lstat(tombstone);
+  if (!moved.isDirectory() || moved.isSymbolicLink()) throw new Error("Unsafe import cleanup target");
+  const parentReal = await fs.realpath(parent);
+  const tombstoneReal = await fs.realpath(tombstone);
+  assertContained(parentReal, tombstoneReal);
+  await fs.rm(tombstone, { recursive: true });
 }
 
 async function ensureOwnedDirectory(directory: string): Promise<void> {
@@ -678,56 +962,80 @@ function isSafeNonNegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
+function sha256Bytes(data: Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
 }
 
-function verifyFullBackup(zipPath: string, expectedFiles: readonly SafeFile[]): void {
-  const zip = new AdmZip(zipPath);
-  const entries = zip.getEntries();
-  if (entries.length !== expectedFiles.length) throw new Error("Backup verification failed");
-  const expected = new Map(expectedFiles.map((file) => [file.path, file]));
-  for (const entry of entries) {
-    const archivePath = normalizeArchivePath(entry.entryName);
-    if (archivePath !== entry.entryName || entry.isDirectory) throw new Error("Backup verification failed");
-    const metadata = metadataFromZipEntry(entry);
-    if (metadata.size < 0 || metadata.compressedSize < 0) throw new Error("Backup verification failed");
-    const source = expected.get(archivePath);
-    if (!source) throw new Error("Backup verification failed");
-    const data = entry.getData();
-    if (!data.equals(source.data)) throw new Error("Backup verification failed");
-    expected.delete(archivePath);
-  }
-  if (expected.size !== 0) throw new Error("Backup verification failed");
+function manifestFromSnapshots(files: readonly SnapshotFile[]): ArchiveManifest {
+  return parseArchiveManifest(Buffer.from(JSON.stringify({
+    format: ARCHIVE_FORMAT,
+    formatVersion: ARCHIVE_FORMAT_VERSION,
+    quotaBarVersion: QUOTABAR_VERSION,
+    createdAt: new Date().toISOString(),
+    entries: files.map((file) => ({ path: file.path, size: file.size, sha256: file.sha256 }))
+      .sort((left, right) => left.path.localeCompare(right.path, "en")),
+  }), "utf8"));
 }
 
-async function readAppFiles(appDir: string): Promise<SafeFile[]> {
+async function writeStreamingZip(
+  destination: string,
+  files: readonly SnapshotFile[],
+  manifest?: Buffer,
+): Promise<void> {
+  const zip = new YazlZipFile();
+  for (const file of files) {
+    zip.addFile(file.absolutePath, file.path, { compress: true, forceZip64Format: file.size > 0xffff_ffff });
+  }
+  if (manifest) zip.addBuffer(manifest, "manifest.json", { compress: true });
+  const writing = pipeline(zip.outputStream, createWriteStream(destination, { flags: "wx", mode: 0o600 }));
+  zip.end();
+  await writing;
+}
+
+async function snapshotAppFiles(appDir: string): Promise<SnapshotFile[]> {
   await assertDirectory(appDir);
   const rootReal = await fs.realpath(appDir);
-  const result: SafeFile[] = [];
-  await walk(appDir, "", rootReal, result);
+  const result: SnapshotFile[] = [];
+  await walkSnapshots(appDir, "", rootReal, result);
   result.sort((left, right) => left.path.localeCompare(right.path, "en"));
   return result;
 }
 
-async function walk(directory: string, relativeDirectory: string, rootReal: string, output: SafeFile[]): Promise<void> {
+async function walkSnapshots(
+  directory: string,
+  relativeDirectory: string,
+  rootReal: string,
+  output: SnapshotFile[],
+): Promise<void> {
   const entries = await fs.readdir(directory, { withFileTypes: true });
   for (const entry of entries) {
     if (TRANSIENT_LOCK_DIRS.has(entry.name)) continue;
     const relativePath = normalizeArchivePath(relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name);
     const absolutePath = path.join(directory, entry.name);
     const info = await fs.lstat(absolutePath);
-    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
-      throw new Error("Unsupported application data entry");
-    }
+    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) throw new Error("Unsupported application data entry");
     const resolved = await fs.realpath(absolutePath);
     assertContained(rootReal, resolved);
     if (info.isDirectory()) {
-      await walk(absolutePath, relativePath, rootReal, output);
+      await walkSnapshots(absolutePath, relativePath, rootReal, output);
     } else {
-      output.push({ path: relativePath, data: await readStableFile(absolutePath, info.size) });
+      const identity = await fileIdentity(absolutePath);
+      output.push({ path: relativePath, absolutePath, size: identity.size, sha256: identity.sha256 });
+    }
+  }
+}
+
+async function verifySnapshotFiles(files: readonly SnapshotFile[]): Promise<void> {
+  for (const file of files) {
+    const identity = await fileIdentity(file.absolutePath);
+    if (identity.size !== file.size || identity.sha256 !== file.sha256) {
+      throw new Error("Application data changed during archive operation");
     }
   }
 }
@@ -751,31 +1059,35 @@ async function readStableFile(filePath: string, expectedSize: number): Promise<B
   }
 }
 
-async function fileIdentity(filePath: string): Promise<FileIdentity> {
+async function fileIdentity(filePath: string, maximumSize = Number.MAX_SAFE_INTEGER): Promise<FileIdentity> {
   const info = await fs.lstat(filePath);
-  if (!info.isFile() || info.isSymbolicLink() || !Number.isSafeInteger(info.size)) {
+  if (!info.isFile() || info.isSymbolicLink() || !Number.isSafeInteger(info.size) || info.size > maximumSize) {
     throw new Error("Invalid archive source");
   }
   const handle = await fs.open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
-    const before = await handle.stat();
-    const hash = createHash("sha256");
-    const buffer = Buffer.allocUnsafe(1024 * 1024);
-    let position = 0;
-    while (position < before.size) {
-      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, before.size - position), position);
-      if (bytesRead === 0) throw new Error("Archive source changed during validation");
-      hash.update(buffer.subarray(0, bytesRead));
-      position += bytesRead;
-    }
-    const after = await handle.stat();
-    if (position !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
-      throw new Error("Archive source changed during validation");
-    }
-    return { size: before.size, sha256: hash.digest("hex") };
+    return await fileIdentityFromHandle(handle);
   } finally {
     await handle.close();
   }
+}
+
+async function fileIdentityFromHandle(handle: FileHandle): Promise<FileIdentity> {
+  const before = await handle.stat();
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let position = 0;
+  while (position < before.size) {
+    const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, before.size - position), position);
+    if (bytesRead === 0) throw new Error("Archive source changed during validation");
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  const after = await handle.stat();
+  if (position !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
+    throw new Error("Archive source changed during validation");
+  }
+  return { size: before.size, sha256: hash.digest("hex") };
 }
 
 async function assertFileIdentity(filePath: string, expected: FileIdentity): Promise<void> {
@@ -817,10 +1129,13 @@ async function removeFileIfPresent(filePath: string): Promise<void> {
 
 async function withArchiveLocks<T>(appDir: string, operation: () => Promise<T>): Promise<T> {
   await assertDirectory(appDir);
-  // Global order: app -> usage -> quota. Store writers acquire only their own leaf lock.
+  // Global order mirrors writers: app -> migration -> ingestion -> usage store -> quota store.
+  const usageDir = path.join(appDir, "usage");
   return withPortableRootLock(appDir, () =>
-    withPortableRootLock(path.join(appDir, "usage"), () =>
-      withPortableRootLock(path.join(appDir, "quota"), operation)));
+    withNamedPortableRootLock(usageDir, ".portable-migration.lock", () =>
+      withNamedPortableRootLock(usageDir, ".portable-ingestion.lock", () =>
+        withPortableRootLock(usageDir, () =>
+          withPortableRootLock(path.join(appDir, "quota"), operation)))));
 }
 
 async function genericFailure<T>(message: string, operation: () => Promise<T>): Promise<T> {
@@ -831,10 +1146,10 @@ async function genericFailure<T>(message: string, operation: () => Promise<T>): 
   }
 }
 
-function summarize(outputPath: string, files: readonly ArchiveFileBytes[]): ArchiveOperationResult {
+function summarizeSnapshots(outputPath: string, files: readonly SnapshotFile[]): ArchiveOperationResult {
   return {
     path: outputPath,
     fileCount: files.length,
-    totalBytes: files.reduce((sum, file) => sum + file.data.byteLength, 0),
+    totalBytes: files.reduce((sum, file) => sum + file.size, 0),
   };
 }
