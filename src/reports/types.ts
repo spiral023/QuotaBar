@@ -16,7 +16,8 @@ export interface ReportRequest {
   codexSpeed?: CodexSpeed;
   order?: ReportOrder;
   breakdown?: boolean;
-  source?: "portable" | "legacy";
+  /** @deprecated Use "portable" or "legacy". "live" and "backfill" remain compatibility aliases. */
+  source?: "portable" | "legacy" | "live" | "backfill";
   limit?: number;
 }
 

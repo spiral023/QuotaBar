@@ -51,13 +51,15 @@ export function createAnalyticsSummaryRequest(
   settings: Settings,
   costWindow: CostWindow,
   cacheHitRate: AnalyticsSummary["cacheHitRate"],
+  periodEndMs = Date.now(),
 ): Record<string, unknown> {
-  const workerWindow = resolveAnalyticsWindow(costWindow);
+  const workerWindow = resolveAnalyticsWindow(costWindow, periodEndMs);
   return {
     task: "summary",
     periodStartMs: workerWindow.periodStartMs,
     windowDays: workerWindow.windowDays,
     since: workerWindow.since,
+    periodEndMs,
     settings: { ...settings, costWindow },
     cacheHitRate,
   };
@@ -186,7 +188,7 @@ export class DetailsWindowController {
     return this.analyticsSummaryCache.get(cacheKey, async () => {
       const startedAtMs = Date.now();
       const summary = await runAnalyticsWorker(
-        createAnalyticsSummaryRequest(runtimeSettings, costWindow, cacheHitRate),
+        createAnalyticsSummaryRequest(runtimeSettings, costWindow, cacheHitRate, startedAtMs),
       ) as AnalyticsSummary;
       const durationMs = Math.max(0, Date.now() - startedAtMs);
       if (this.quickStatsLoadMetric.record(durationMs)) {
@@ -658,20 +660,20 @@ function resolveAnalyticsGetWindow(
   return { ...cw, until: localDateKey(new Date()) };
 }
 
-function resolveAnalyticsWindow(costWindow: CostWindow): { periodStartMs: number; windowDays: number; since: string } {
+function resolveAnalyticsWindow(costWindow: CostWindow, periodEndMs = Date.now()): { periodStartMs: number; windowDays: number; since: string } {
   if (costWindow === "all") {
     return { periodStartMs: 0, windowDays: 0, since: new Date(0).toISOString().slice(0, 10) };
   }
   const windowDays = costWindow === "7d" ? 7 : 30;
-  return calendarWindow(windowDays);
+  return calendarWindow(windowDays, new Date(periodEndMs));
 }
 
 // Align the window to whole local calendar days: it covers exactly `windowDays`
 // days (today plus the previous windowDays-1), starting at local midnight. This
 // keeps the distinct active-day count from ever exceeding windowDays (e.g. 8/7),
 // which a rolling now-minus-N×24h start would otherwise allow at day boundaries.
-function calendarWindow(windowDays: number): { periodStartMs: number; windowDays: number; since: string } {
-  const start = new Date();
+function calendarWindow(windowDays: number, now = new Date()): { periodStartMs: number; windowDays: number; since: string } {
+  const start = new Date(now);
   start.setHours(0, 0, 0, 0);
   start.setDate(start.getDate() - (windowDays - 1));
   return { periodStartMs: start.getTime(), windowDays, since: localDateKey(start) };

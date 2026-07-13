@@ -67,6 +67,14 @@ describe("analytics summary worker request", () => {
     expect(request).not.toHaveProperty("claudeProjectsDirs");
     expect(request).not.toHaveProperty("codexSessionsDirs");
   });
+
+  it("includes a stable summary period end", () => {
+    const nowMs = Date.parse("2026-07-13T12:34:56.789Z");
+    const request = createAnalyticsSummaryRequest(defaultSettings, "7d", { claude: 0, codex: 0 }, nowMs);
+
+    expect(request.periodEndMs).toBe(nowMs);
+    expect(request.periodStartMs).toBeLessThan(nowMs);
+  });
 });
 
 describe("DetailsWindowController system IPC", () => {

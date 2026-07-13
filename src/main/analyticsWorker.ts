@@ -52,6 +52,7 @@ interface AnalyticsGetTaskInput extends AnalyticsBaseInput {
 
 export interface AnalyticsSummaryTaskInput extends Omit<AnalyticsBaseInput, "claudeProjectsDirs" | "codexSessionsDirs" | "logDir" | "nowMs"> {
   task: "summary";
+  periodEndMs: number;
   nowMs?: number;
 }
 
@@ -316,9 +317,14 @@ async function buildPortableSummary(
   input: AnalyticsSummaryTaskInput,
   deps: AnalyticsWorkerDependencies,
 ): Promise<AnalyticsSummary> {
-  const usageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(
-    portableSummaryRange(input.since, input.until),
-  );
+  const rawUsageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read({
+    since: new Date(input.periodStartMs).toISOString(),
+    until: new Date(input.periodEndMs).toISOString(),
+  });
+  const usageEvents = rawUsageEvents.filter((event) => {
+    const occurredAt = Date.parse(event.occurredAt);
+    return occurredAt >= input.periodStartMs && occurredAt <= input.periodEndMs;
+  });
   const [claudeReport, codexReport] = await Promise.all([
     generateUsageReport(
       { type: "daily", provider: "claude", since: input.since, until: input.until, order: "asc", breakdown: true },
@@ -337,14 +343,14 @@ async function buildPortableSummary(
   const claudeCost = claudeReport.totals.costUSD;
   const codexCost = codexReport.totals.costUSD;
   const fx = makeFxLookup(input.eurUsdRates ?? {}, input.fxEstimated ?? false);
-  const untilDay = input.until ?? localDayKey(new Date(input.nowMs ?? Date.now()).toISOString());
+  const untilDay = input.until ?? localDayKey(new Date(input.periodEndMs).toISOString());
   const claudePeriodSub = periodSubCostUSD(input.settings.plans, "claude", input.since, untilDay, fx);
   const codexPeriodSub = periodSubCostUSD(input.settings.plans, "codex", input.since, untilDay, fx);
   const combinedPeriodSub = claudePeriodSub + codexPeriodSub;
   let windowDays = input.windowDays;
   if (windowDays === 0) {
     const buckets = [...claudeReport.rows, ...codexReport.rows].map((row) => row.bucket).sort();
-    const nowMs = input.nowMs ?? Date.now();
+    const nowMs = input.periodEndMs;
     windowDays = buckets.length > 0
       ? Math.ceil((nowMs - new Date(buckets[0]).getTime()) / (24 * 3600 * 1000)) + 1
       : 30;
@@ -369,15 +375,6 @@ async function buildPortableSummary(
 function entryWithinSummaryRange(entry: ClaudeUsageEntry, input: AnalyticsSummaryTaskInput): boolean {
   const day = localDayKey(entry.timestamp);
   return day >= input.since && (!input.until || day <= input.until);
-}
-
-function portableSummaryRange(since: string, until?: string): { since: string; until?: string } {
-  const sinceDate = new Date(`${since}T00:00:00.000Z`);
-  sinceDate.setUTCDate(sinceDate.getUTCDate() - 1);
-  if (!until) return { since: sinceDate.toISOString() };
-  const untilDate = new Date(`${until}T23:59:59.999Z`);
-  untilDate.setUTCDate(untilDate.getUTCDate() + 1);
-  return { since: sinceDate.toISOString(), until: untilDate.toISOString() };
 }
 
 const DAY_MS = 24 * 3600 * 1000;

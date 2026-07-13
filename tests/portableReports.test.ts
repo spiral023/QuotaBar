@@ -184,6 +184,87 @@ describe("portable usage reports", () => {
     expect(readCodexSpeedTier).toHaveBeenCalledOnce();
   });
 
+  it("preserves exact stored Claude cost components", async () => {
+    const event = equivalentFixtures().usageEvents.find(({ provider }) => provider === "claude")!;
+    const report = await generateUsageReport({ provider: "claude", breakdown: true, timezone: "UTC" }, {
+      usageEvents: [{
+        ...event,
+        costUSD: 1,
+        inputCostUSD: 0.1,
+        outputCostUSD: 0.2,
+        cacheCreationCostUSD: 0.3,
+        cacheReadCostUSD: 0.4,
+      }],
+      pricingResolver: pricingResolver("claude-components"),
+    });
+
+    expect(report.rows[0].modelBreakdowns?.[0]).toMatchObject({
+      costUSD: 1,
+      inputCostUSD: 0.1,
+      outputCostUSD: 0.2,
+      cacheCreationCostUSD: 0.3,
+      cacheReadCostUSD: 0.4,
+    });
+  });
+
+  it.each(["claude", "codex"] as const)("reconciles %s stored costs without negative components", async (provider) => {
+    const template = equivalentFixtures().usageEvents.find((event) => event.provider === provider)!;
+    const cases = [
+      { id: "over", costUSD: 0.29, inputCostUSD: 0.3, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 },
+      { id: "floating", costUSD: 0.3, inputCostUSD: 0.1, outputCostUSD: 0.2, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 },
+      { id: "zero", costUSD: 0, inputCostUSD: 0.3, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 },
+      { id: "empty", costUSD: 0.29, inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 },
+    ];
+
+    for (const values of cases) {
+      const report = await generateUsageReport({ provider, breakdown: true, timezone: "UTC" }, {
+        usageEvents: [{ ...template, ...values, id: `${provider}-${values.id}` }],
+        pricingResolver: pricingResolver(`${provider}-${values.id}`),
+      });
+      const breakdown = report.rows[0].modelBreakdowns![0];
+      const components = [
+        breakdown.inputCostUSD!, breakdown.outputCostUSD!,
+        breakdown.cacheCreationCostUSD!, breakdown.cacheReadCostUSD!,
+      ];
+      expect(components.every((value) => value >= 0)).toBe(true);
+      expect(components.reduce((sum, value) => sum + value, 0)).toBeCloseTo(values.costUSD, 12);
+      expect(breakdown.costUSD).toBeCloseTo(values.costUSD, 12);
+    }
+  });
+
+  it("keeps unpriced portable Claude events neutral without pricing lookups", async () => {
+    let lookupCalls = 0;
+    const resolver = new HistoricalPricingResolver({
+      getModelPricing: async () => {
+        lookupCalls++;
+        throw new Error("portable Claude pricing lookup");
+      },
+    }, { historyPath: path.join(tmpRoot, "must-not-write.json") });
+    const event = equivalentFixtures().usageEvents.find(({ provider }) => provider === "claude")!;
+    const unpriced = { ...event };
+    delete unpriced.costUSD;
+    delete unpriced.inputCostUSD;
+    delete unpriced.outputCostUSD;
+    delete unpriced.cacheCreationCostUSD;
+    delete unpriced.cacheReadCostUSD;
+
+    const report = await generateUsageReport({ provider: "claude", breakdown: true, timezone: "UTC" }, {
+      usageEvents: [unpriced],
+      pricingResolver: resolver,
+    });
+
+    expect(report.totals.costUSD).toBe(0);
+    expect(report.rows[0].modelBreakdowns?.[0]).toMatchObject({
+      costUSD: 0,
+      inputCostUSD: 0,
+      outputCostUSD: 0,
+      cacheCreationCostUSD: 0,
+      cacheReadCostUSD: 0,
+    });
+    expect(lookupCalls).toBe(0);
+    expect(await fs.stat(path.join(tmpRoot, "must-not-write.json")).then(() => true).catch(() => false)).toBe(false);
+  });
+
   it("bounds store reads to the requested range and hides neutral reconciliation markers", async () => {
     const fixtures = equivalentFixtures();
     const marker: PortableUsageEvent = {

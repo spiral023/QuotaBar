@@ -12,7 +12,7 @@ import type { PortableUsageEvent } from "../portable/types";
 import { PortableUsageStore } from "../portable/usageStore";
 import { readBackfillDayRecords } from "./backfill-reader";
 import type { BackfillDayRecord, BackfillPerModelEntry } from "./types";
-import type { CostMode, ModelBreakdown, ReportRequest, ReportResult, ReportRow, ReportTotals } from "./types";
+import type { CostComponents, CostMode, ModelBreakdown, ReportRequest, ReportResult, ReportRow, ReportTotals } from "./types";
 
 export type { CostMode, CodexSpeed, ModelBreakdown, ReportRequest, ReportResult, ReportRow, ReportTotals, ReportType } from "./types";
 
@@ -44,9 +44,10 @@ const ZERO_TOTALS: ReportTotals = {
 
 export async function generateUsageReport(request: ReportRequest, deps: ReportDeps = {}): Promise<ReportResult> {
   const normalized = normalizeRequest(request);
+  const sourceMode = normalizeSourceMode(normalized.source);
 
-  const useBackfill = normalized.source === "legacy"
-    && (deps.backfillRecords !== undefined || deps.backfillLogDir !== undefined)
+  const useBackfill = (sourceMode === "legacy-backfill"
+    || (sourceMode === "legacy-auto" && (deps.backfillRecords !== undefined || deps.backfillLogDir !== undefined)))
     && normalized.type !== "session"
     && !normalized.project
     && !normalized.instances;
@@ -77,7 +78,7 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
     codexHomes: settings.codexHomes ?? [],
   };
 
-  const portableEvents = normalized.source === "portable"
+  const portableEvents = sourceMode === "portable"
     ? deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(portableReadRange(normalized.since, normalized.until))
     : undefined;
 
@@ -88,7 +89,7 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
         deps.claudeProjectsDirs ?? getClaudeProjectsDirs(pathContext),
         start,
       );
-    rows.push(...(await buildClaudeRows(entries, normalized, pricingResolver)));
+    rows.push(...(await buildClaudeRows(entries, normalized, pricingResolver, sourceMode === "portable")));
   }
 
   if (normalized.provider === "all" || normalized.provider === "codex") {
@@ -99,13 +100,13 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
         start,
       );
     const speed = normalized.codexSpeed === "auto"
-      ? normalized.source === "legacy"
+      ? sourceMode !== "portable"
         ? await (deps.readCodexSpeedTier ?? readCodexSpeedTierFromPaths)(
           deps.codexConfigPaths ?? getCodexConfigPaths(pathContext),
         )
         : "standard"
       : normalized.codexSpeed;
-    rows.push(...(await buildCodexRows(events, normalized, pricingResolver, speed, normalized.source === "portable")));
+    rows.push(...(await buildCodexRows(events, normalized, pricingResolver, speed, sourceMode === "portable")));
   }
 
   const sorted = rows
@@ -124,6 +125,7 @@ async function buildClaudeRows(
   entries: ClaudeUsageEntry[],
   request: ReturnType<typeof normalizeRequest>,
   pricingResolver: HistoricalPricingResolver,
+  useStoredCosts: boolean,
 ): Promise<ReportRow[]> {
   const filtered = request.project
     ? entries.filter((entry) => entry.project === request.project)
@@ -145,7 +147,7 @@ async function buildClaudeRows(
   const rows: ReportRow[] = [];
   for (const [key, list] of buckets) {
     const [bucket, project] = key.split("\0");
-    const costed = await costClaudeEntries(list, request.costMode, pricingResolver);
+    const costed = await costClaudeEntries(list, request.costMode, pricingResolver, useStoredCosts);
     const lastActivity = list.map((entry) => entry.timestamp).sort().at(-1);
     rows.push({
       bucket: request.type === "session" ? localDate(lastActivity ?? list[0].timestamp, request.timezone) : bucket,
@@ -292,7 +294,12 @@ function buildRowsFromBackfill(
   return rows;
 }
 
-async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, pricingResolver: HistoricalPricingResolver): Promise<{ totals: ReportTotals; breakdowns: ModelBreakdown[] }> {
+async function costClaudeEntries(
+  entries: ClaudeUsageEntry[],
+  mode: CostMode,
+  pricingResolver: HistoricalPricingResolver,
+  useStoredCosts: boolean,
+): Promise<{ totals: ReportTotals; breakdowns: ModelBreakdown[] }> {
   const byModel = new Map<string, ClaudeUsageEntry[]>();
   for (const entry of entries) {
     const list = byModel.get(entry.model) ?? [];
@@ -305,6 +312,12 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, pr
     let costUSD = 0;
     let components = { ...ZERO_BREAKDOWN };
     for (const entry of list) {
+      if (useStoredCosts) {
+        const stored = reconcileStoredCost(entry);
+        costUSD += stored.costUSD;
+        components = addCostComponents(components, stored);
+        continue;
+      }
       const sourceCost = entry.costUSD;
       const useSourceCost = mode !== "calculate" && sourceCost !== undefined;
       if (useSourceCost) {
@@ -357,28 +370,14 @@ async function costCodexBreakdowns(
       totalTokens: acc.totalTokens + event.totalTokens,
       costUSD: 0,
     }), { ...ZERO_TOTALS });
-    const c = useStoredCosts
-      ? list.reduce((acc, event) => {
-        const supplied = [event.inputCostUSD, event.outputCostUSD, event.cacheCreationCostUSD, event.cacheReadCostUSD]
-          .some((value) => value !== undefined);
-        const inputCostUSD = event.inputCostUSD ?? 0;
-        const outputCostUSD = event.outputCostUSD ?? 0;
-        const cacheCreationCostUSD = event.cacheCreationCostUSD ?? 0;
-        const cacheReadCostUSD = event.cacheReadCostUSD ?? 0;
-        const componentTotal = inputCostUSD + outputCostUSD + cacheCreationCostUSD + cacheReadCostUSD;
-        const authoritativeTotal = event.costUSD ?? componentTotal;
-        return {
-          inputCostUSD: acc.inputCostUSD + inputCostUSD,
-          outputCostUSD: acc.outputCostUSD + outputCostUSD + (supplied ? authoritativeTotal - componentTotal : authoritativeTotal),
-          cacheCreationCostUSD: acc.cacheCreationCostUSD + cacheCreationCostUSD,
-          cacheReadCostUSD: acc.cacheReadCostUSD + cacheReadCostUSD,
-        };
-      }, { ...ZERO_BREAKDOWN })
+    const storedCosts = useStoredCosts ? list.map(reconcileStoredCost) : undefined;
+    const c = storedCosts
+      ? storedCosts.reduce((acc, stored) => addCostComponents(acc, stored), { ...ZERO_BREAKDOWN })
       : await calculateCodexApiCostBreakdown(list, pricingResolver, speed);
     return {
       model,
       ...totals,
-      costUSD: sumBreakdown(c),
+      costUSD: storedCosts ? storedCosts.reduce((sum, stored) => sum + stored.costUSD, 0) : sumBreakdown(c),
       ...c,
     };
   }));
@@ -401,6 +400,72 @@ function normalizeRequest(request: ReportRequest) {
     source: request.source ?? "portable",
     limit: request.limit ? Math.max(1, Math.floor(Number(request.limit))) : undefined,
   } as const;
+}
+
+type NormalizedSourceMode = "portable" | "legacy-auto" | "legacy-live" | "legacy-backfill";
+
+function normalizeSourceMode(source: ReportRequest["source"]): NormalizedSourceMode {
+  if (source === undefined || source === "portable") return "portable";
+  if (source === "live") return "legacy-live";
+  if (source === "backfill") return "legacy-backfill";
+  return "legacy-auto";
+}
+
+type StoredCost = ReturnType<typeof reconcileStoredCost>;
+
+function reconcileStoredCost(item: CostComponents & { costUSD?: number }): {
+  costUSD: number;
+  inputCostUSD: number;
+  outputCostUSD: number;
+  cacheCreationCostUSD: number;
+  cacheReadCostUSD: number;
+} {
+  const input = Math.max(0, item.inputCostUSD ?? 0);
+  const output = Math.max(0, item.outputCostUSD ?? 0);
+  const creation = Math.max(0, item.cacheCreationCostUSD ?? 0);
+  const read = Math.max(0, item.cacheReadCostUSD ?? 0);
+  const componentSum = input + output + creation + read;
+  const total = Math.max(0, item.costUSD ?? componentSum);
+  if (total === 0) {
+    return { costUSD: 0, ...ZERO_BREAKDOWN };
+  }
+  if (componentSum === 0) {
+    return { costUSD: total, ...ZERO_BREAKDOWN, outputCostUSD: total };
+  }
+  if (componentSum === total) {
+    return {
+      costUSD: total,
+      inputCostUSD: input,
+      outputCostUSD: output,
+      cacheCreationCostUSD: creation,
+      cacheReadCostUSD: read,
+    };
+  }
+  if (componentSum > total) {
+    const scale = total / componentSum;
+    const inputCostUSD = input * scale;
+    const outputCostUSD = output * scale;
+    const cacheCreationCostUSD = creation * scale;
+    const cacheReadCostUSD = Math.max(0, total - inputCostUSD - outputCostUSD - cacheCreationCostUSD);
+    return { costUSD: total, inputCostUSD, outputCostUSD, cacheCreationCostUSD, cacheReadCostUSD };
+  }
+  const inputCostUSD = input;
+  const cacheCreationCostUSD = creation;
+  const cacheReadCostUSD = read;
+  const outputCostUSD = Math.max(0, total - inputCostUSD - cacheCreationCostUSD - cacheReadCostUSD);
+  return { costUSD: total, inputCostUSD, outputCostUSD, cacheCreationCostUSD, cacheReadCostUSD };
+}
+
+function addCostComponents(
+  target: CostComponents & { inputCostUSD: number; outputCostUSD: number; cacheCreationCostUSD: number; cacheReadCostUSD: number },
+  source: StoredCost,
+) {
+  return {
+    inputCostUSD: target.inputCostUSD + source.inputCostUSD,
+    outputCostUSD: target.outputCostUSD + source.outputCostUSD,
+    cacheCreationCostUSD: target.cacheCreationCostUSD + source.cacheCreationCostUSD,
+    cacheReadCostUSD: target.cacheReadCostUSD + source.cacheReadCostUSD,
+  };
 }
 
 function portableReadRange(since?: string, until?: string): { since?: string; until?: string } {

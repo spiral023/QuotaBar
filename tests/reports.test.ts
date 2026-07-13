@@ -6,6 +6,7 @@ import { defaultSettings } from "../src/config/settings";
 import type { ModelPricing } from "../src/pricing/cost-calculator";
 import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests } from "../src/pricing/historical-pricing-resolver";
 import { generateUsageReport } from "../src/reports/reportService";
+import type { ReportRequest } from "../src/reports/types";
 
 const tmpRoot = path.join(os.tmpdir(), `quotabar-reports-${process.pid}`);
 
@@ -37,6 +38,28 @@ async function createHistoricalResolver(
 }
 
 describe("usage reports", () => {
+  it("keeps deprecated live and backfill source behavior explicit", async () => {
+    const live: ReportRequest = { provider: "claude", type: "daily", timezone: "UTC", source: "live" };
+    const backfill: ReportRequest = { provider: "claude", type: "daily", timezone: "UTC", source: "backfill" };
+    const claudeEntries = [{
+      provider: "claude" as const, timestamp: "2026-05-18T10:00:00.000Z", model: "claude-test",
+      project: "project", session: "session", inputTokens: 1, outputTokens: 1,
+      cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 1,
+    }];
+    const backfillRecords = [{
+      date: "2026-05-18", provider: "claude" as const, inputTokens: 1, outputTokens: 1,
+      cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 2, costUSD: 99,
+      sessionCount: 1, models: ["claude-test"], perModel: {},
+    }];
+
+    const liveReport = await generateUsageReport(live, { claudeEntries, backfillRecords });
+    const backfillReport = await generateUsageReport(backfill, { claudeEntries, backfillRecords });
+
+    expect(liveReport.totals.costUSD).toBe(1);
+    expect(liveReport.request.source).toBe("live");
+    expect(backfillReport.totals.costUSD).toBe(99);
+    expect(backfillReport.request.source).toBe("backfill");
+  });
   it("uses the event-time Claude price while preserving source costs in auto mode", async () => {
     const model = "historical-claude";
     const resolver = await createHistoricalResolver(path.join(tmpRoot, "report-prices.json"), model);
