@@ -19,6 +19,8 @@ describe("readClaudeTokensForPeriod", () => {
   it.each([
     ["C:\\Users\\person\\src\\QuotaBar", "QuotaBar"],
     ["/home/person/src/quota-bar", "quota-bar"],
+    ["/home/alice/-frontend", "-frontend"],
+    ["C:\\work\\C--compiler", "C--compiler"],
   ])("uses only the basename of cwd as projectName (%s)", async (cwd, expected) => {
     await writeJsonl(path.join(tmpDir, "legacy-project"), "session.jsonl", [{
       timestamp: "2026-05-10T10:00:00.000Z",

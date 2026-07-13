@@ -14,7 +14,6 @@ export function basenameAnySeparator(value: unknown): string | undefined {
 
   const basename = parts.at(-1)?.trim();
   if (!basename || basename === "." || basename === "..") return undefined;
-  if (/^[A-Za-z]--/.test(basename) || basename.startsWith("-")) return undefined;
   return basename;
 }
 
@@ -23,5 +22,6 @@ export function plainClaudeProjectName(value: unknown): string | undefined {
   const trimmed = value.trim();
   const basename = basenameAnySeparator(trimmed);
   if (!basename || basename !== trimmed) return undefined;
+  if (/^[A-Za-z]--/.test(basename) || basename.startsWith("-")) return undefined;
   return basename;
 }

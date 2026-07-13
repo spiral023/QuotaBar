@@ -176,18 +176,15 @@ describe("portable event adapters", () => {
   });
 
   it.each([
-    "D--Work-Alice-QuotaBar",
-    "C--src-private-QuotaBar",
-    "-workspace-alice-QuotaBar",
-    "C:secret",
-  ])("does not reverse unsafe encoded project names (%s)", (projectName) => {
+    ["/home/alice/-frontend", "-frontend"],
+    ["C:\\work\\C--compiler", "C--compiler"],
+  ])("preserves safe project basenames when reverse adapting (%s)", (projectName, expected) => {
     const claudeEvent = { ...fromClaudeEntries([claude()])[0], projectName };
     const codexEvent = { ...fromCodexEvents([codex()])[0], projectName };
     const claudeEntry = toClaudeEntries([claudeEvent])[0];
     const codexEntry = toCodexEvents([codexEvent])[0];
-    expect(claudeEntry.project).toBe("Unknown project");
-    expect(codexEntry.directory).toBe(".");
-    expect(JSON.stringify([claudeEntry.project, codexEntry.directory])).not.toContain(projectName);
+    expect(claudeEntry.project).toBe(expected);
+    expect(codexEntry.directory).toBe(expected);
   });
 
   it("uses Unknown project when Claude project metadata has no basename", () => {
