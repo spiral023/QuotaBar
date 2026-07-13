@@ -187,6 +187,42 @@ describe("ZIP path validation before content access", () => {
     ])).not.toThrow();
   });
 
+  it("rejects a DOS directory attribute spoofed onto a file entry", () => {
+    expect(() => validateZipEntryMetadata([
+      entry("manifest.json", 1, { attributes: 0x10 }),
+    ])).toThrow("Unsupported archive entry type");
+  });
+
+  it.each([
+    entry("usage/events/day/", 0, { isDirectory: false, attributes: 0x10 }),
+    entry("usage/events/day", 0, { isDirectory: true, attributes: 0x10 }),
+    entry("usage/events/day/", 0, {
+      isDirectory: true,
+      madeBy: 3 << 8,
+      attributes: (0o100755 << 16) >>> 0,
+    }),
+    entry("usage/events/day.jsonl", 0, {
+      isDirectory: false,
+      madeBy: 3 << 8,
+      attributes: (0o040755 << 16) >>> 0,
+    }),
+  ])("rejects inconsistent ZIP directory metadata", (zipEntry) => {
+    expect(() => validateZipEntryMetadata([zipEntry])).toThrow("Unsupported archive entry type");
+  });
+
+  it("accepts consistent regular files and keeps consistent directories unsupported", () => {
+    expect(() => validateZipEntryMetadata([
+      entry("manifest.json", 1, { attributes: (0o100644 << 16) >>> 0 }),
+    ])).not.toThrow();
+    expect(() => validateZipEntryMetadata([
+      entry("usage/events/day/", 0, {
+        isDirectory: true,
+        madeBy: 3 << 8,
+        attributes: ((0o040755 << 16) >>> 0) | 0x10,
+      }),
+    ])).toThrow("Unsupported archive entry type");
+  });
+
   it("rejects encrypted, unsupported, and malformed header metadata", () => {
     expect(() => validateZipEntryMetadata([entry("manifest.json", 1, { flags: 1 })]))
       .toThrow("Unsupported archive entry metadata");
@@ -295,6 +331,16 @@ describe("ZIP metadata limits", () => {
     const startedAt = performance.now();
 
     expect(validateZipEntryMetadata(entries)).toHaveLength(MAX_ARCHIVE_ENTRIES);
+    expect(performance.now() - startedAt).toBeLessThan(5_000);
+  }, 15_000);
+
+  it("validates near-limit ZIP names with over 20,000 segments without prefix-string growth", () => {
+    const deepPrefix = `usage/events/${"aa/".repeat(20_000)}`;
+    const entries = Array.from({ length: 40 }, (_, index) => entry(`${deepPrefix}${index}.jsonl`, 0));
+    expect(Buffer.byteLength(entries[0].entryName, "utf8")).toBeGreaterThan(60_000);
+    const startedAt = performance.now();
+
+    expect(validateZipEntryMetadata(entries)).toHaveLength(entries.length);
     expect(performance.now() - startedAt).toBeLessThan(5_000);
   }, 15_000);
 

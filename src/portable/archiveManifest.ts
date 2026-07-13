@@ -54,6 +54,11 @@ export interface CreateArchiveManifestOptions {
   createdAt?: string;
 }
 
+interface ArchivePathTrieNode {
+  terminalFile: boolean;
+  children: Map<string, ArchivePathTrieNode>;
+}
+
 /** Copies only metadata from an AdmZip entry. This helper never calls getData(). */
 export function metadataFromZipEntry(entry: AdmZip.IZipEntry): ArchiveEntryMetadata {
   try {
@@ -164,12 +169,11 @@ export function validateZipEntryMetadata(entries: readonly ArchiveEntryMetadata[
   }
 
   const validated: ValidatedArchiveEntry[] = [];
-  const canonicalPaths = new Set<string>();
-  const directoryPrefixes = new Set<string>();
+  const pathIndex = createPathTrieNode();
   let totalSize = 0;
 
   for (const entry of entries) {
-    if (entry.isDirectory || isUnsupportedEntryType(entry)) {
+    if (isUnsupportedEntryType(entry) || entry.isDirectory) {
       throw new Error("Unsupported archive entry type");
     }
     const archivePath = normalizeArchivePath(entry.entryName);
@@ -179,22 +183,13 @@ export function validateZipEntryMetadata(entries: readonly ArchiveEntryMetadata[
     validateEntrySizes(entry);
 
     const canonicalPath = archivePath.toLowerCase();
-    if (canonicalPaths.has(canonicalPath)) {
+    const pathConflict = addPathToTrie(pathIndex, canonicalPath);
+    if (pathConflict === "duplicate") {
       throw new Error("Archive contains a duplicate entry");
     }
-    if (directoryPrefixes.has(canonicalPath)) {
+    if (pathConflict === "collision") {
       throw new Error("Archive contains a file/directory collision");
     }
-    const segments = canonicalPath.split("/");
-    let prefix = "";
-    for (let index = 0; index < segments.length - 1; index += 1) {
-      prefix = prefix ? `${prefix}/${segments[index]}` : segments[index];
-      if (canonicalPaths.has(prefix)) {
-        throw new Error("Archive contains a file/directory collision");
-      }
-      directoryPrefixes.add(prefix);
-    }
-    canonicalPaths.add(canonicalPath);
 
     if (totalSize > MAX_ARCHIVE_TOTAL_SIZE - entry.size) {
       throw new Error("Archive exceeds the expanded size limit");
@@ -204,6 +199,32 @@ export function validateZipEntryMetadata(entries: readonly ArchiveEntryMetadata[
   }
 
   return validated;
+}
+
+function createPathTrieNode(): ArchivePathTrieNode {
+  return { terminalFile: false, children: new Map() };
+}
+
+function addPathToTrie(root: ArchivePathTrieNode, canonicalPath: string): "duplicate" | "collision" | undefined {
+  const segments = canonicalPath.split("/");
+  let node = root;
+  for (let index = 0; index < segments.length; index += 1) {
+    if (node.terminalFile) return "collision";
+    const segment = segments[index];
+    let child = node.children.get(segment);
+    if (!child) {
+      child = createPathTrieNode();
+      node.children.set(segment, child);
+    }
+    if (index === segments.length - 1) {
+      if (child.terminalFile) return "duplicate";
+      if (child.children.size > 0) return "collision";
+      child.terminalFile = true;
+      return undefined;
+    }
+    node = child;
+  }
+  return undefined;
 }
 
 export function createArchiveManifest(
@@ -491,8 +512,16 @@ function validateEntrySizes(entry: ArchiveEntryMetadata): void {
 
 function isUnsupportedEntryType(entry: ArchiveEntryMetadata): boolean {
   if ((entry.attributes & 0x400) !== 0) return true;
+  const pathMarksDirectory = /[/\\]$/.test(entry.entryName);
+  const dosMarksDirectory = (entry.attributes & 0x10) !== 0;
   const unixMode = entry.attributes >>> 16;
   const fileType = unixMode & 0o170000;
+  const unixMarksDirectory = fileType === 0o040000;
+  const unixMarksRegularFile = fileType === 0o100000;
+  if (pathMarksDirectory !== entry.isDirectory) return true;
+  if (dosMarksDirectory && !entry.isDirectory) return true;
+  if (unixMarksDirectory && !entry.isDirectory) return true;
+  if (unixMarksRegularFile && entry.isDirectory) return true;
   return fileType !== 0 && fileType !== 0o100000;
 }
 
