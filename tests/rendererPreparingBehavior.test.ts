@@ -30,6 +30,26 @@ describe("portable renderer preparing behavior", () => {
     expect(h.timers.pendingCount()).toBe(0);
   });
 
+  it("cancels a pending summary retry when another window becomes active", async () => {
+    const sevenDay = { ...summary, apiCostUSD: { total: 7 } };
+    const thirtyDay = { ...summary, apiCostUSD: { total: 30 } };
+    const h = rendererHarness({
+      "app:meta": [{ version: "1" }], "settings:get": [{ costWindow: "7d" }],
+      "analytics:summary": [preparing, thirtyDay, summary, sevenDay],
+    });
+    h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "app-shell.js"));
+    await h.handlers.get("quota:ready-ack")?.({ viewMode: "dashboard" }); await flush();
+    expect(h.timers.pendingCount()).toBe(1);
+    const thirtyDayPill = h.document.windowPills.find((pill) => pill.dataset.win === "30d")!;
+    await thirtyDayPill.emit("click"); await flush();
+    expect(h.document.getElementById("qs-api-cost").textContent).toBe("$30");
+    const sevenDayCalls = () => h.invocations.filter(({ channel, args }) => channel === "analytics:summary" && (args[0] as any)?.costWindow === "7d").length;
+    expect(sevenDayCalls()).toBe(1);
+    h.timers.advanceBy(1_000); await flush();
+    expect(sevenDayCalls()).toBe(1);
+    expect(h.document.getElementById("qs-api-cost").textContent).toBe("$30");
+  });
+
   it("retries models after preparing and renders valid days", async () => {
     const h = rendererHarness({ "models:get": [preparing, preparing, { days: [], benchmarks: {}, benchmarksAsOf: "", benchmarkIndexes: {}, pricing: {}, minModelTokenSharePct: 0 }] });
     h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "tabs", "models-calc.js")); h.run(path.join(renderer, "tabs", "models.js"));
@@ -74,6 +94,27 @@ describe("portable renderer preparing behavior", () => {
     h.timers.advanceBy(1_000); await flush();
     expect(h.calls.filter((call) => call === "windowBudget:get")).toHaveLength(2);
     expect(h.document.getElementById("wb-forecast-claude").innerHTML).toContain("No reliable forecast");
+    expect(h.timers.pendingCount()).toBe(0);
+  });
+
+  it("cancels an old window-budget retry when newer snapshots start loading", async () => {
+    let resolveCurrent!: (value: unknown) => void;
+    const current = new Promise((resolve) => { resolveCurrent = resolve; });
+    const valid = { perProvider: { claude: { forecast: { reason: "insufficient-data", primaryKind: "linear", confidence: "none", primaryLastsUntilReset: false, burnRateLastsUntilReset: null }, series: { points: [{}] }, hasSeriesData: true, currentUsage: null } } };
+    const h = rendererHarness({ "windowBudget:get": [preparing, current] });
+    const chartResets: string[] = [];
+    h.QB.weeklyBudgetChart = (_context: unknown, _series: unknown, _forecast: unknown, resetsAt: string) => { chartResets.push(resetsAt); return { destroy() {} }; };
+    h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "tabs", "live.js"));
+    const snapshot = (email: string, resetsAt: string) => [{ provider: "claude", status: "ok", identity: { email }, windows: [{ name: "weekly", usedPercent: 10, resetsAt }], windowBudget: { learning: false, windowsPerWeek: 2, usedWindows: .2, remainingWindows: 1.8 } }];
+    h.QB.renderLive(snapshot("old@example.com", "2026-07-20T00:00:00.000Z")); await flush();
+    expect(h.timers.pendingCount()).toBe(1);
+    h.QB.renderLive(snapshot("new@example.com", "2026-07-21T00:00:00.000Z")); await flush();
+    const currentMarkup = h.document.getElementById("content").innerHTML;
+    h.timers.advanceBy(1_000); await flush();
+    resolveCurrent(valid); await flush();
+    expect(h.document.getElementById("content").innerHTML).toBe(currentMarkup);
+    expect(currentMarkup).toContain("new@example.com");
+    expect(chartResets).toEqual(["2026-07-21T00:00:00.000Z"]);
     expect(h.timers.pendingCount()).toBe(0);
   });
 });

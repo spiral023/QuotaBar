@@ -60,9 +60,22 @@ describe("portable models and analytics parity", () => {
     if (!("sessionStats" in result)) throw new Error("expected analytics data");
     expect(result.apiCostUSD.claude).toBe(2);
     expect(result.totalTokens.claude.input).toBeGreaterThan(0);
+    expect(result.activeDays).toBe(0);
     expect(result.sessionStats.claude.count).toBe(0);
+    expect(result.sessionStats.claude.sessionsPerActiveDay).toBe(0);
     expect(result.hourHeatmap.claude.every((bucket) => bucket.count === 0)).toBe(true);
     expect(result.topActiveDays.claude).toEqual([]);
+  });
+
+  it("counts only real provider days in activity KPIs when reconciliation spans other days", async () => {
+    const real = { ...events[0], id: "real-day" };
+    const syntheticSameDay = { ...events[1], id: "synthetic-same", source: "legacy-reconciliation" as const, synthetic: true };
+    const syntheticOtherDay = { ...events[2], id: "synthetic-other", source: "legacy-reconciliation" as const, synthetic: true };
+    const result = await runAnalyticsTask({ task: "get", periodStartMs: Date.parse("2026-07-10T00:00:00Z"), windowDays: 2, since: "2026-07-10", until: "2026-07-11", settings, cacheHitRate: { claude: 0, codex: 0 }, nowMs: Date.parse("2026-07-11T23:59:59.999Z") }, { usageEvents: [real, syntheticSameDay, syntheticOtherDay] });
+    if (!("sessionStats" in result)) throw new Error("expected analytics data");
+    expect(result.apiCostUSD.claude).toBe(real.costUSD + syntheticSameDay.costUSD + syntheticOtherDay.costUSD);
+    expect(result.activeDays).toBe(1);
+    expect(result.sessionStats.claude.sessionsPerActiveDay).toBe(1);
   });
 
   it("keeps a custom-timezone evening event after UTC midnight", async () => {

@@ -65,6 +65,20 @@ describe("analytics summary portable isolation", () => {
     expect(readCodexEvents).not.toHaveBeenCalled();
   });
 
+  it("derives summary active days only from real provider activity", async () => {
+    const [real] = fromClaudeEntries([{ provider: "claude", timestamp: "2026-07-10T10:00:00.000Z", model: "claude-test", project: "project", session: "real", inputTokens: 10, outputTokens: 5, cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 1 }]);
+    const [realCodex] = fromCodexEvents([{ timestamp: "2026-07-12T10:00:00.000Z", model: "codex-test", isFallback: false, session: "codex-real", directory: "project", inputTokens: 10, cachedInputTokens: 0, outputTokens: 5, reasoningOutputTokens: 0, totalTokens: 15, costUSD: 1 }]);
+    const synthetic = { ...real, id: "synthetic-other", occurredAt: "2026-07-11T10:00:00.000Z", source: "legacy-reconciliation" as const, synthetic: true, costUSD: 2 };
+    const summary = await runAnalyticsTask({ task: "summary", periodStartMs: Date.parse("2026-07-10T00:00:00.000Z"), periodEndMs: Date.parse("2026-07-12T23:59:59.999Z"), windowDays: 3, since: "2026-07-10", until: "2026-07-12", settings: { ...defaultSettings, pricingOfflineMode: true }, cacheHitRate: { claude: 0, codex: 0 } }, { usageEvents: [real, synthetic, realCodex] });
+    expect(summary.apiCostUSD.claude).toBe(3);
+    expect(summary.apiCostUSD.codex).toBe(1);
+    expect(summary.activeDays).toBe(2);
+
+    const reconciliationOnly = await runAnalyticsTask({ task: "summary", periodStartMs: Date.parse("2026-07-10T00:00:00.000Z"), periodEndMs: Date.parse("2026-07-11T23:59:59.999Z"), windowDays: 2, since: "2026-07-10", until: "2026-07-11", settings: { ...defaultSettings, pricingOfflineMode: true }, cacheHitRate: { claude: 0, codex: 0 } }, { usageEvents: [synthetic] });
+    expect(reconciliationOnly.apiCostUSD.claude).toBe(2);
+    expect(reconciliationOnly.activeDays).toBe(0);
+  });
+
   it("bounds store reads and excludes future events from all summary metrics", async () => {
     const usageEvents = fromClaudeEntries([
       {

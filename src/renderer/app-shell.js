@@ -288,6 +288,7 @@
 
     async function loadAnalyticsSummary(costWindow, { skeleton = false } = {}) {
       const win = costWindow ?? activeCostWindowFromUI();
+      clearInactiveSummaryRetries(win);
       // Synchronous (before the first await): the old values are already
       // replaced by skeleton bars when the click handler returns.
       if (skeleton) setQuickStatsLoading();
@@ -358,6 +359,13 @@
 
     function clearDashboardDataCache() {
       analyticsSummaryCache.clear();
+      clearInactiveSummaryRetries(null);
+    }
+
+    function clearInactiveSummaryRetries(activeWindow) {
+      for (const win of ['7d', '30d', 'all']) {
+        if (win !== activeWindow) QB.clearPortableDataRetry(`analytics-summary:${win}`);
+      }
     }
 
     // Reference counter: the skeleton stays as long as at least one

@@ -40,6 +40,12 @@ export class FakeDocument {
   elements = new Map<string, FakeElement>();
   generic = new FakeElement(this);
   body = new FakeElement(this, "body");
+  windowPills = ["7d", "30d", "all"].map((win) => {
+    const pill = new FakeElement(this);
+    pill.dataset.win = win;
+    if (win === "30d") pill.classList.add("active");
+    return pill;
+  });
   private optionalMissingIds = new Set(["an-noplan-chip"]);
   register(id: string, element: FakeElement) { this.elements.set(id, element); }
   getElementById(id: string) {
@@ -51,10 +57,12 @@ export class FakeDocument {
   createElement() { const element = new FakeElement(this); element.parentNode = this.generic; return element; }
   querySelector(selector: string) {
     if (selector.startsWith("#")) return this.getElementById(selector.slice(1).split(/[ .:[>]/)[0]);
+    if (selector === "#window-pill-grid .pill.active") return this.windowPills.find((pill) => pill.classList.contains("active")) ?? null;
     const el = this.generic; if (selector.includes(".pill.active")) el.dataset.win = "30d"; return el;
   }
   querySelectorAll(selector = "") {
     if (selector === "#qs-grid .qs-tile-val") return ["qs-api-cost", "qs-roi", "qs-active-days", "qs-session"].map((id) => this.getElementById(id));
+    if (selector === "#window-pill-grid .pill") return this.windowPills;
     return [] as FakeElement[];
   }
   discover(html: string) {

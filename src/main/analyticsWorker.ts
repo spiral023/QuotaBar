@@ -3,7 +3,7 @@ import { defaultSettings, type Settings } from "../config/settings";
 import { generateUsageReport } from "../reports/reportService";
 import type { BackfillDayRecord } from "../reports/types";
 import {
-  computeActiveDays, buildSparkline7d, buildTopModels,
+  buildSparkline7d, buildTopModels,
   computeAvgSessionMinutes,
   buildDailyBuckets, buildSessionStats, buildTotalTokens,
   buildHourHeatmap, buildWeekdayDistribution, buildTopActiveDays,
@@ -213,7 +213,7 @@ export async function runAnalyticsTask(
     ),
   ]);
 
-  const activeDays        = computeActiveDays(claudeReport.rows, codexReport.rows);
+  const activeDays        = activityDayCount([...claudeEntries, ...codexEvents], input.timeZone);
   const sparkline7d       = buildSparkline7d(claudeReport.rows, codexReport.rows);
   const topModels         = buildTopModels(claudeReport.rows, codexReport.rows, 5);
   const avgSessionMinutes = computeAvgSessionMinutes(claudeEntries);
@@ -368,7 +368,8 @@ async function buildPortableSummary(
   ]);
   const activityUsageEvents = usageEvents.filter((event) => event.source !== "legacy-reconciliation");
   const claudeEntries = toClaudeEntries(activityUsageEvents).filter((entry) => entryWithinSummaryRange(entry, input));
-  const activeDays = computeActiveDays(claudeReport.rows, codexReport.rows);
+  const codexEvents = toCodexEvents(activityUsageEvents).filter((event) => entryWithinSummaryRange(event, input));
+  const activeDays = activityDayCount([...claudeEntries, ...codexEvents], input.timeZone);
   const sparkline7d = buildSparkline7d(claudeReport.rows, codexReport.rows);
   const topModels = buildTopModels(claudeReport.rows, codexReport.rows, 5);
   const avgSessionMinutes = computeAvgSessionMinutes(claudeEntries);
@@ -407,6 +408,14 @@ async function buildPortableSummary(
 function entryWithinSummaryRange(entry: { timestamp: string }, input: AnalyticsSummaryTaskInput): boolean {
   const day = localDayKey(entry.timestamp);
   return day >= input.since && (!input.until || day <= input.until);
+}
+
+function activityDayCount(entries: Array<{ timestamp: string }>, timeZone?: string): number {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+    year: "numeric", month: "2-digit", day: "2-digit",
+  });
+  return new Set(entries.map((entry) => formatter.format(new Date(entry.timestamp)))).size;
 }
 
 const DAY_MS = 24 * 3600 * 1000;
