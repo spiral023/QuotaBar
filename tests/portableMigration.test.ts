@@ -754,6 +754,24 @@ describe("migrateLegacyData", () => {
     expect(parseMigrationState(value)).toEqual({ state: value, rewriteRequired: false });
   });
 
+  it("accepts UUID-owned and legacy unowned running states but rejects invalid owner fields", () => {
+    const base = {
+      schemaVersion: 1,
+      status: "running" as const,
+      usageMigrationVersion: 1,
+      updatedAt: "2026-07-13T12:00:00.000Z",
+    };
+    expect(parseMigrationState(base)).toEqual({ state: base, rewriteRequired: false });
+    const owned = { ...base, ownerId: "123e4567-e89b-42d3-a456-426614174000" };
+    expect(parseMigrationState(owned)).toEqual({ state: owned, rewriteRequired: false });
+    expect(parseMigrationState({ ...base, ownerId: "not-a-uuid" })).toEqual({ rewriteRequired: true });
+    expect(parseMigrationState({
+      ...base,
+      status: "pending",
+      ownerId: "123e4567-e89b-42d3-a456-426614174000",
+    })).toEqual({ rewriteRequired: true });
+  });
+
   it.each([
     [2, PORTABLE_USAGE_MIGRATION_VERSION],
     [1, PORTABLE_USAGE_MIGRATION_VERSION + 1],

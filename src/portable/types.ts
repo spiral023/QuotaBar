@@ -67,6 +67,7 @@ export interface PortableMigrationState {
   status: "pending" | "running" | "complete" | "failed";
   usageMigrationVersion: number;
   storeRevision?: string;
+  ownerId?: string;
   lastError?: string;
   updatedAt: string;
 }

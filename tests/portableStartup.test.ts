@@ -13,6 +13,7 @@ import {
 } from "../src/main/debugBackfill";
 import {
   beginMigrationRefresh,
+  beginMigrationRefreshRecovery,
   markMigrationComplete,
   markMigrationFailed,
   markMigrationRunning,
@@ -349,7 +350,11 @@ describe("portable ingestion lifecycle", () => {
   it("runs changed ongoing ingestion through owned reconciliation, completion and one consumer refresh", async () => {
     const oldRevision = "a".repeat(64);
     const newRevision = "b".repeat(64);
-    const owner = { status: "running" as const, updatedAt: "2026-07-13T12:00:00.000Z" };
+    const owner = {
+      status: "running" as const,
+      ownerId: "123e4567-e89b-42d3-a456-426614174001",
+      updatedAt: "2026-07-13T12:00:00.000Z",
+    };
     const calls: string[] = [];
 
     const result = await refreshPortableData({
@@ -410,7 +415,11 @@ describe("portable ingestion lifecycle", () => {
   it("refreshes a store revision changed by another process even when local ingestion reports zero", async () => {
     const oldRevision = "a".repeat(64);
     const newRevision = "b".repeat(64);
-    const owner = { status: "running" as const, updatedAt: "2026-07-13T12:00:00.000Z" };
+    const owner = {
+      status: "running" as const,
+      ownerId: "123e4567-e89b-42d3-a456-426614174002",
+      updatedAt: "2026-07-13T12:00:00.000Z",
+    };
     const reconcileLegacy = vi.fn(async () => ({
       storeRevision: newRevision,
       syntheticInserted: 0,
@@ -436,7 +445,11 @@ describe("portable ingestion lifecycle", () => {
   });
 
   it("reconciles again when another process changes the store before owned completion", async () => {
-    const owner = { status: "running" as const, updatedAt: "2026-07-13T12:00:00.000Z" };
+    const owner = {
+      status: "running" as const,
+      ownerId: "123e4567-e89b-42d3-a456-426614174003",
+      updatedAt: "2026-07-13T12:00:00.000Z",
+    };
     const revisions = ["b".repeat(64), "c".repeat(64)];
     const reconcileLegacy = vi.fn(async () => ({
       storeRevision: revisions.shift() as string,
@@ -464,6 +477,79 @@ describe("portable ingestion lifecycle", () => {
     expect(reconcileLegacy).toHaveBeenCalledTimes(2);
     expect(completeMigration).toHaveBeenCalledTimes(2);
     expect(refreshConsumers).toHaveBeenCalledOnce();
+  });
+
+  it("fails its owned refresh after three stale revisions without looping forever", async () => {
+    const owner = {
+      status: "running" as const,
+      ownerId: "123e4567-e89b-42d3-a456-426614174004",
+      updatedAt: "2026-07-13T12:00:00.000Z",
+    };
+    const completeMigration = vi.fn(async () => ({
+      status: "stale_revision" as const,
+      revision: "c".repeat(64),
+    }));
+    const failMigration = vi.fn(async () => ({ status: "applied" as const }));
+    const refreshConsumers = vi.fn();
+
+    await expect(refreshPortableData({
+      readCompleteRevision: async () => "a".repeat(64),
+      readStoreRevision: async () => "b".repeat(64),
+      recoverRefresh: async () => ({ status: "not_running" }),
+      ingestProviderEvents: async () => ({ inserted: 1, updated: 0 }),
+      beginRefresh: async () => ({ status: "applied", owner }),
+      readLegacyRecords: async () => [],
+      reconcileLegacy: async () => ({
+        storeRevision: "b".repeat(64), syntheticInserted: 0, syntheticUpdated: 0,
+      }),
+      completeMigration,
+      failMigration,
+      refreshConsumers,
+    })).rejects.toThrow("Portable data refresh failed at migration_completion");
+
+    expect(completeMigration).toHaveBeenCalledTimes(3);
+    expect(failMigration).toHaveBeenCalledWith("refresh_revision_unstable", owner);
+    expect(refreshConsumers).not.toHaveBeenCalled();
+  });
+
+  it("recovers only an allowlisted unstable refresh failure on the next trigger", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-refresh-recovery-"));
+    const statePath = path.join(root, "migration-state.json");
+    const store = new PortableUsageStore(root);
+    const revision = await store.getRevision();
+    await markMigrationRunning(statePath);
+    await markMigrationComplete(statePath, revision, store);
+    const first = await beginMigrationRefresh(statePath, revision);
+    if (first.status !== "applied") throw new Error("refresh did not begin");
+    await expect(markMigrationFailed(
+      statePath,
+      "refresh_revision_unstable",
+      first.owner,
+    )).resolves.toEqual({ status: "applied" });
+    expect(await portableDataIsReady(statePath)).toBe(false);
+    const refreshConsumers = vi.fn();
+
+    await expect(refreshPortableData({
+      readCompleteRevision: () => readCompleteMigrationRevision(statePath),
+      readStoreRevision: () => store.getRevision(),
+      recoverRefresh: () => beginMigrationRefreshRecovery(statePath),
+      ingestProviderEvents: async () => ({ inserted: 0, updated: 0 }),
+      beginRefresh: (current) => beginMigrationRefresh(statePath, current),
+      readLegacyRecords: async () => [],
+      reconcileLegacy: (records, owner) => migrateLegacyData({
+        store, records, statePath, finalizeState: false, expectedOwner: owner,
+      }),
+      completeMigration: (current, owner) => markMigrationComplete(statePath, current, store, owner),
+      failMigration: (code, expectation) => markMigrationFailed(statePath, code, expectation, store),
+      refreshConsumers,
+    })).resolves.toMatchObject({ status: "complete", ingested: 0 });
+
+    expect(await portableDataIsReady(statePath)).toBe(true);
+    expect(refreshConsumers).toHaveBeenCalledOnce();
+
+    await markMigrationRunning(statePath);
+    await markMigrationFailed(statePath, "quota_migration_failed");
+    await expect(beginMigrationRefreshRecovery(statePath)).resolves.toEqual({ status: "not_running" });
   });
 
   it("stops polling idempotently while allowing an in-flight run to finish", async () => {
@@ -760,7 +846,7 @@ describe("legacy quota compatibility", () => {
       revision,
       () => new Date("2026-07-13T12:00:00.000Z"),
     );
-    expect(begun).toEqual({
+    expect(begun).toMatchObject({
       status: "applied",
       owner: { status: "running", updatedAt: "2026-07-13T12:00:00.000Z" },
     });
@@ -773,6 +859,74 @@ describe("legacy quota compatibility", () => {
     expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({
       status: "running",
       updatedAt: "2026-07-13T12:00:01.000Z",
+    });
+  });
+
+  it("uses unique refresh owner IDs even when two owners share the same clock", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-refresh-owner-id-"));
+    const statePath = path.join(root, "migration-state.json");
+    const store = new PortableUsageStore(root);
+    const revision = await store.getRevision();
+    const sameClock = () => new Date("2026-07-13T12:00:00.000Z");
+    await markMigrationRunning(statePath);
+    await markMigrationComplete(statePath, revision, store);
+
+    const first = await beginMigrationRefresh(statePath, revision, sameClock);
+    if (first.status !== "applied") throw new Error("first refresh did not begin");
+    expect(first.owner.ownerId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    await markMigrationComplete(statePath, revision, store, first.owner);
+
+    const second = await beginMigrationRefresh(statePath, revision, sameClock);
+    if (second.status !== "applied") throw new Error("second refresh did not begin");
+    expect(second.owner.ownerId).not.toBe(first.owner.ownerId);
+    expect(second.owner.updatedAt).toBe(first.owner.updatedAt);
+
+    await expect(markMigrationComplete(statePath, revision, store, first.owner)).resolves.toEqual({
+      status: "not_running",
+    });
+    await expect(markMigrationFailed(
+      statePath,
+      "migration_completion_failed",
+      first.owner,
+    )).resolves.toEqual({ status: "not_running" });
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({
+      status: "running",
+      ownerId: second.owner.ownerId,
+    });
+  });
+
+  it("does not record an expected complete failure after the usage store revision advances", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-preclaim-gap-"));
+    const statePath = path.join(root, "migration-state.json");
+    const store = new PortableUsageStore(root);
+    const revision = await store.getRevision();
+    await markMigrationRunning(statePath);
+    await markMigrationComplete(statePath, revision, store);
+    await store.upsert([{
+      schemaVersion: 1,
+      id: "preclaim-newer",
+      provider: "claude",
+      occurredAt: "2026-07-13T12:00:00.000Z",
+      model: "model",
+      sessionKey: "preclaim-session",
+      source: "claude-log",
+      synthetic: false,
+      inputTokens: 1,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      reasoningOutputTokens: 0,
+    }]);
+
+    await expect(markMigrationFailed(
+      statePath,
+      "consumer_prewarm_failed",
+      { status: "complete", storeRevision: revision },
+      store,
+    )).resolves.toMatchObject({ status: "stale_revision" });
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({
+      status: "complete",
+      storeRevision: revision,
     });
   });
 
@@ -810,9 +964,32 @@ describe("legacy quota compatibility", () => {
     ]);
 
     expect(JSON.parse(await readFile(path.join(usageRoot, "refresh-a-result.json"), "utf8"))).toEqual({
-      status: "not_running",
+      completion: { status: "not_running" },
+      failure: { status: "not_running" },
     });
     expect(JSON.parse(await readFile(path.join(usageRoot, "refresh-b-result.json"), "utf8"))).toEqual({
+      status: "applied",
+    });
+    expect(await portableDataIsReady(statePath)).toBe(true);
+  });
+
+  it("prevents a real prewarm failure in the ingestion-to-claim gap", async () => {
+    const usageRoot = await mkdtemp(path.join(os.tmpdir(), "quotabar-preclaim-process-"));
+    const statePath = path.join(usageRoot, "migration-state.json");
+    const store = new PortableUsageStore(usageRoot);
+    const revision = await store.getRevision();
+    await markMigrationRunning(statePath);
+    await markMigrationComplete(statePath, revision, store);
+
+    await Promise.all([
+      runPreclaimGapChild(usageRoot, "a"),
+      runPreclaimGapChild(usageRoot, "b"),
+    ]);
+
+    expect(JSON.parse(await readFile(path.join(usageRoot, "preclaim-a-result.json"), "utf8"))).toMatchObject({
+      status: "stale_revision",
+    });
+    expect(JSON.parse(await readFile(path.join(usageRoot, "preclaim-b-result.json"), "utf8"))).toMatchObject({
       status: "applied",
     });
     expect(await portableDataIsReady(statePath)).toBe(true);
@@ -935,6 +1112,13 @@ function runRefreshOwnerChild(root: string, role: "a" | "b"): Promise<void> {
   return runVitestChild(
     "tests/fixtures/portableRefreshOwnerChild.test.ts",
     { QUOTABAR_REFRESH_OWNER_ROOT: root, QUOTABAR_REFRESH_OWNER_ROLE: role },
+  );
+}
+
+function runPreclaimGapChild(root: string, role: "a" | "b"): Promise<void> {
+  return runVitestChild(
+    "tests/fixtures/portablePreclaimGapChild.test.ts",
+    { QUOTABAR_PRECLAIM_ROOT: root, QUOTABAR_PRECLAIM_ROLE: role },
   );
 }
 

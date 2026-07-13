@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   beginMigrationRefresh,
   markMigrationComplete,
-  markMigrationRunning,
+  markMigrationFailed,
 } from "../../src/portable/migration";
 import { PortableUsageStore } from "../../src/portable/usageStore";
 
@@ -25,17 +25,29 @@ describe.runIf(Boolean(root && role))("portable refresh owner child", () => {
         () => new Date("2026-07-13T12:00:00.000Z"),
       );
       if (begun.status !== "applied") throw new Error("Refresh owner A did not start");
+      await markMigrationComplete(statePath, revision, store, begun.owner);
       await writeFile(path.join(usageRoot, "refresh-a-ready.json"), JSON.stringify(begun.owner), "utf8");
       await waitFor(path.join(usageRoot, "refresh-b-ready"));
-      const result = await markMigrationComplete(statePath, revision, store, begun.owner);
-      await writeFile(path.join(usageRoot, "refresh-a-result.json"), JSON.stringify(result), "utf8");
-      expect(result.status).toBe("not_running");
+      const completion = await markMigrationComplete(statePath, revision, store, begun.owner);
+      const failure = await markMigrationFailed(statePath, "refresh_revision_unstable", begun.owner);
+      await writeFile(
+        path.join(usageRoot, "refresh-a-result.json"),
+        JSON.stringify({ completion, failure }),
+        "utf8",
+      );
+      expect(completion.status).toBe("not_running");
+      expect(failure.status).toBe("not_running");
     } else {
       await waitFor(path.join(usageRoot, "refresh-a-ready.json"));
-      await markMigrationRunning(statePath, () => new Date("2026-07-13T12:00:01.000Z"));
+      const begun = await beginMigrationRefresh(
+        statePath,
+        revision,
+        () => new Date("2026-07-13T12:00:01.000Z"),
+      );
+      if (begun.status !== "applied") throw new Error("Refresh owner B did not start");
       await writeFile(path.join(usageRoot, "refresh-b-ready"), "ready", "utf8");
       await waitFor(path.join(usageRoot, "refresh-a-result.json"));
-      const result = await markMigrationComplete(statePath, revision, store);
+      const result = await markMigrationComplete(statePath, revision, store, begun.owner);
       await writeFile(path.join(usageRoot, "refresh-b-result.json"), JSON.stringify(result), "utf8");
       expect(result.status).toBe("applied");
       expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({

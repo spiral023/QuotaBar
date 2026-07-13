@@ -78,6 +78,7 @@ export type PreparePortableDataResult = {
 export interface RefreshPortableDataDependencies {
   readCompleteRevision(): Promise<string | undefined>;
   readStoreRevision(): Promise<string>;
+  recoverRefresh(): Promise<MigrationRefreshTransitionResult>;
   ingestProviderEvents(): Promise<PortableIngestionCounts>;
   beginRefresh(expectedCompleteRevision: string): Promise<MigrationRefreshTransitionResult>;
   readLegacyRecords(): Promise<readonly BackfillDayRecord[]>;
@@ -90,7 +91,7 @@ export interface RefreshPortableDataDependencies {
     owner: MigrationRefreshOwner,
   ): Promise<MigrationStateTransitionResult | void>;
   failMigration(
-    code: `${PortablePreparationFailureStage}_failed`,
+    code: `${PortablePreparationFailureStage}_failed` | "refresh_revision_unstable",
     expectation: MigrationStateExpectation,
   ): Promise<MigrationStateTransitionResult | void>;
   refreshConsumers(): void | Promise<void>;
@@ -101,6 +102,8 @@ export type RefreshPortableDataResult =
   | { status: "unchanged" }
   | { status: "superseded" }
   | { status: "complete"; ingested: number; legacyUpdated: number };
+
+class RefreshRevisionUnstableError extends Error {}
 
 /**
  * Activates portable consumers only after every persistent migration stage has committed.
@@ -185,23 +188,31 @@ export async function refreshPortableData(
   dependencies: RefreshPortableDataDependencies,
 ): Promise<RefreshPortableDataResult> {
   const previousRevision = await dependencies.readCompleteRevision();
-  if (!previousRevision) return { status: "superseded" };
-
   let stage: PortablePreparationFailureStage = "ingestion";
   let expectation: MigrationStateExpectation | undefined;
+  let owner: MigrationRefreshOwner | undefined;
+  if (!previousRevision) {
+    const recovered = await dependencies.recoverRefresh();
+    if (recovered.status !== "applied") return { status: "superseded" };
+    owner = recovered.owner;
+    expectation = owner;
+  }
   try {
     let startedAt = Date.now();
     const ingestion = await dependencies.ingestProviderEvents();
     const ingested = ingestion.inserted + ingestion.updated;
     dependencies.onStageComplete?.(stage, Date.now() - startedAt, ingested);
-    if (ingested === 0 && await dependencies.readStoreRevision() === previousRevision) {
+    if (owner === undefined && ingested === 0
+      && await dependencies.readStoreRevision() === previousRevision) {
       return { status: "unchanged" };
     }
 
-    const begun = await dependencies.beginRefresh(previousRevision);
-    if (begun.status !== "applied") return { status: "superseded" };
-    const owner = begun.owner;
-    expectation = owner;
+    if (owner === undefined) {
+      const begun = await dependencies.beginRefresh(previousRevision as string);
+      if (begun.status !== "applied") return { status: "superseded" };
+      owner = begun.owner;
+      expectation = owner;
+    }
 
     const records = await dependencies.readLegacyRecords();
     let legacyUpdated = 0;
@@ -223,7 +234,11 @@ export async function refreshPortableData(
       dependencies.onStageComplete?.(stage, Date.now() - startedAt, 1);
       break;
     }
-    if (!completedRevision) return { status: "superseded" };
+    if (!completedRevision) {
+      const failed = await dependencies.failMigration("refresh_revision_unstable", owner);
+      if (transitionWasSuperseded(failed)) return { status: "superseded" };
+      throw new RefreshRevisionUnstableError();
+    }
     expectation = { status: "complete", storeRevision: completedRevision };
 
     stage = "consumer_prewarm";
@@ -231,7 +246,14 @@ export async function refreshPortableData(
     await dependencies.refreshConsumers();
     dependencies.onStageComplete?.(stage, Date.now() - startedAt, 1);
     return { status: "complete", ingested, legacyUpdated };
-  } catch {
+  } catch (error) {
+    if (error instanceof RefreshRevisionUnstableError) {
+      // The underlying store diagnostic may expose host paths; retain only the fixed boundary category.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error("Portable data refresh failed at migration_completion");
+    }
+    // Provider and store diagnostics may contain private source data; expose only the fixed stage category.
+    // eslint-disable-next-line preserve-caught-error
     if (!expectation) throw new Error(`Portable data refresh failed at ${stage}`);
     let failure: MigrationStateTransitionResult | void;
     try {
@@ -241,8 +263,12 @@ export async function refreshPortableData(
     }
     if (transitionWasSuperseded(failure)) return { status: "superseded" };
     if (failure?.status === "already_failed") {
+      // The caught diagnostic is intentionally replaced by the persisted allowlisted state code.
+      // eslint-disable-next-line preserve-caught-error
       throw new Error(`Portable data refresh failed: ${failure.lastError}`);
     }
+    // Provider and store diagnostics may contain private source data; expose only the fixed stage category.
+    // eslint-disable-next-line preserve-caught-error
     throw new Error(`Portable data refresh failed at ${stage}`);
   }
 }

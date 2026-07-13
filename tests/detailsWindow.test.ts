@@ -166,7 +166,7 @@ describe("portable analytics readiness", () => {
       readLegacyQuota: async () => [],
       migrateQuota: async () => undefined,
       completeMigration: (revision) => markMigrationComplete(statePath, revision, store),
-      failMigration: (code, expectation) => markMigrationFailed(statePath, code, expectation),
+      failMigration: (code, expectation) => markMigrationFailed(statePath, code, expectation, store),
       prewarmConsumers: () => controller.prewarmAnalytics(),
     })).rejects.toThrow("Portable data preparation failed at consumer_prewarm");
     expect(JSON.parse(await fs.readFile(statePath, "utf8"))).toMatchObject({
@@ -195,7 +195,7 @@ describe("portable analytics readiness", () => {
       readLegacyQuota: async () => [],
       migrateQuota: async () => undefined,
       completeMigration: (current) => markMigrationComplete(statePath, current, store),
-      failMigration: (code, expectation) => markMigrationFailed(statePath, code, expectation),
+      failMigration: (code, expectation) => markMigrationFailed(statePath, code, expectation, store),
       prewarmConsumers: () => controller.prewarmAnalytics(),
     });
 

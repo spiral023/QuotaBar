@@ -35,6 +35,7 @@ const STATE_KEYS = new Set([
   "status",
   "usageMigrationVersion",
   "storeRevision",
+  "ownerId",
   "lastError",
   "updatedAt",
 ]);
@@ -48,9 +49,11 @@ const STATE_ERROR_CODES = new Set([
   "quota_migration_failed",
   "migration_completion_failed",
   "consumer_prewarm_failed",
+  "refresh_revision_unstable",
 ]);
 const LEGACY_RECONCILIATION_IDENTITY_NAMESPACE = "quotabar-legacy-reconciliation-event-v1";
 const MIGRATION_OPERATION_ERROR = Symbol("migration-operation-error");
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 type TokenField = typeof TOKEN_FIELDS[number];
 type ComponentCostField = typeof COMPONENT_COST_FIELDS[number];
@@ -124,7 +127,8 @@ export type PortableMigrationFailureCode =
   | "legacy_reconciliation_failed"
   | "quota_migration_failed"
   | "migration_completion_failed"
-  | "consumer_prewarm_failed";
+  | "consumer_prewarm_failed"
+  | "refresh_revision_unstable";
 
 export type MigrationStateTransitionResult =
   | { status: "applied" }
@@ -136,7 +140,7 @@ export type MigrationStateTransitionResult =
 
 export type MigrationStateExpectation =
   | { status: "complete"; storeRevision: string }
-  | { status: "running"; updatedAt: string };
+  | { status: "running"; ownerId: string; updatedAt: string };
 
 export type MigrationRefreshOwner = Extract<MigrationStateExpectation, { status: "running" }>;
 export type MigrationRefreshTransitionResult =
@@ -330,9 +334,32 @@ export async function beginMigrationRefresh(
     if (loaded.state?.status !== "complete" || loaded.state.storeRevision !== expectedCompleteRevision) {
       return { status: "not_running" };
     }
-    const running = state("running", now);
+    const running = { ...state("running", now), ownerId: randomUUID() };
     await writeStateSafely(resolvedStatePath, running);
-    return { status: "applied", owner: { status: "running", updatedAt: running.updatedAt } };
+    return {
+      status: "applied",
+      owner: { status: "running", ownerId: running.ownerId, updatedAt: running.updatedAt },
+    };
+  });
+}
+
+export async function beginMigrationRefreshRecovery(
+  statePath: string,
+  now: () => Date = () => new Date(),
+): Promise<MigrationRefreshTransitionResult> {
+  const resolvedStatePath = path.resolve(statePath);
+  return await withMigrationStateLock(resolvedStatePath, async () => {
+    const loaded = await readCurrentForTransition(resolvedStatePath);
+    if (loaded === "future_state") return { status: "future_state" };
+    if (loaded.state?.status !== "failed" || loaded.state.lastError !== "refresh_revision_unstable") {
+      return { status: "not_running" };
+    }
+    const running = { ...state("running", now), ownerId: randomUUID() };
+    await writeStateSafely(resolvedStatePath, running);
+    return {
+      status: "applied",
+      owner: { status: "running", ownerId: running.ownerId, updatedAt: running.updatedAt },
+    };
   });
 }
 
@@ -367,11 +394,17 @@ export async function markMigrationFailed(
   statePath: string,
   lastError: PortableMigrationFailureCode,
   expectationOrNow?: MigrationStateExpectation | (() => Date),
+  storeOrNow?: Pick<PortableUsageStore, "commitIfRevision"> | (() => Date),
   now: () => Date = () => new Date(),
 ): Promise<MigrationStateTransitionResult> {
   if (!STATE_ERROR_CODES.has(lastError)) throw new Error("Portable migration failure code is invalid");
   const expectation = typeof expectationOrNow === "function" ? undefined : expectationOrNow;
-  const transitionNow = typeof expectationOrNow === "function" ? expectationOrNow : now;
+  const revisionStore = typeof storeOrNow === "object" ? storeOrNow : undefined;
+  const transitionNow = typeof expectationOrNow === "function"
+    ? expectationOrNow
+    : typeof storeOrNow === "function"
+      ? storeOrNow
+      : now;
   const resolvedStatePath = path.resolve(statePath);
   return await withMigrationStateLock(resolvedStatePath, async () => {
     const loaded = await readCurrentForTransition(resolvedStatePath);
@@ -387,6 +420,15 @@ export async function markMigrationFailed(
       && !(loaded.state?.status === "complete" && lastError === "consumer_prewarm_failed")) {
       return { status: "not_running" };
     }
+    if (expectation?.status === "complete") {
+      if (!revisionStore) throw new Error("Portable migration failure revision store is required");
+      const failed = await revisionStore.commitIfRevision(expectation.storeRevision, () => (
+        writeFailedState(resolvedStatePath, lastError, transitionNow)
+      ));
+      return failed.status === "stale"
+        ? { status: "stale_revision", revision: failed.revision }
+        : { status: "applied" };
+    }
     await writeFailedState(resolvedStatePath, lastError, transitionNow);
     return { status: "applied" };
   });
@@ -398,7 +440,7 @@ function migrationStateMatches(
 ): boolean {
   return expectation.status === "complete"
     ? current?.status === "complete" && current.storeRevision === expectation.storeRevision
-    : current?.status === "running" && current.updatedAt === expectation.updatedAt;
+    : current?.status === "running" && current.ownerId === expectation.ownerId;
 }
 
 function isPortableMigrationFailureCode(value: unknown): value is PortableMigrationFailureCode {
@@ -798,11 +840,15 @@ export function parseMigrationState(value: unknown): LoadedMigrationState {
     && STATE_ERROR_CODES.has(item.lastError);
   const validStoreRevision = typeof item.storeRevision === "string"
     && /^[a-f0-9]{64}$/.test(item.storeRevision);
+  const validOwnerId = typeof item.ownerId === "string" && UUID_PATTERN.test(item.ownerId);
   const validStatusShape = item.status === "failed"
-    ? validLastError && item.storeRevision === undefined
+    ? validLastError && item.storeRevision === undefined && item.ownerId === undefined
     : item.status === "complete"
-      ? validStoreRevision && item.lastError === undefined
-      : item.storeRevision === undefined && item.lastError === undefined;
+      ? validStoreRevision && item.lastError === undefined && item.ownerId === undefined
+      : item.status === "running"
+        ? item.storeRevision === undefined && item.lastError === undefined
+          && (item.ownerId === undefined || validOwnerId)
+        : item.storeRevision === undefined && item.lastError === undefined && item.ownerId === undefined;
   if (!validStatusShape) return { rewriteRequired: true };
   const rewriteRequired = Object.keys(item).some((key) => !STATE_KEYS.has(key));
   const state: PortableMigrationState = {
@@ -810,6 +856,7 @@ export function parseMigrationState(value: unknown): LoadedMigrationState {
     status: item.status as PortableMigrationState["status"],
     usageMigrationVersion: item.usageMigrationVersion as number,
     ...(validStoreRevision ? { storeRevision: item.storeRevision as string } : {}),
+    ...(validOwnerId ? { ownerId: item.ownerId as string } : {}),
     ...(validLastError ? { lastError: item.lastError as string } : {}),
     updatedAt: item.updatedAt,
   };

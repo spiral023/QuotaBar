@@ -31,7 +31,7 @@ import { registerLifecycleEvents } from "./lifecycleEvents";
 import { appendQuotaSnapshots } from "../portable/quotaStore";
 import { PortableUsageStore } from "../portable/usageStore";
 import { ingestPortableUsage } from "../portable/ingestion";
-import { beginMigrationRefresh, markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData, readCompleteMigrationRevision } from "../portable/migration";
+import { beginMigrationRefresh, beginMigrationRefreshRecovery, markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData, readCompleteMigrationRevision } from "../portable/migration";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
 
 interface CliOptions {
@@ -189,7 +189,12 @@ if (!app.requestSingleInstanceLock()) {
         readLegacyQuota: () => readLegacyQuotaSnapshots(getDebugLogDir()),
         migrateQuota: (snapshots) => appendQuotaSnapshots(getPortableQuotaDir(), snapshots),
         completeMigration: (revision) => markMigrationComplete(getPortableMigrationPath(), revision, portableUsageStore),
-        failMigration: (code, expectation) => markMigrationFailed(getPortableMigrationPath(), code, expectation),
+        failMigration: (code, expectation) => markMigrationFailed(
+          getPortableMigrationPath(),
+          code,
+          expectation,
+          portableUsageStore,
+        ),
         prewarmConsumers: () => detailsWindow.prewarmAnalytics(),
         onStageComplete: (stage, durationMs, count) => {
           log.info(`Portable data stage=${stage} count=${count} durationMs=${durationMs}`);
@@ -204,6 +209,7 @@ if (!app.requestSingleInstanceLock()) {
           await refreshPortableData({
             readCompleteRevision: () => readCompleteMigrationRevision(getPortableMigrationPath()),
             readStoreRevision: () => portableUsageStore.getRevision(),
+            recoverRefresh: () => beginMigrationRefreshRecovery(getPortableMigrationPath()),
             ingestProviderEvents: ingestPortableSources,
             beginRefresh: (revision) => beginMigrationRefresh(getPortableMigrationPath(), revision),
             readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
@@ -224,6 +230,7 @@ if (!app.requestSingleInstanceLock()) {
               getPortableMigrationPath(),
               code,
               expectation,
+              portableUsageStore,
             ),
             refreshConsumers: () => detailsWindow.prewarmAnalytics(),
             onStageComplete: (stage, durationMs, count) => {
