@@ -50,6 +50,7 @@ describe("readClaudeTokensForPeriod", () => {
     }]);
     const [entry] = await readClaudeUsageEntriesForPeriod(tmpDir, new Date("2026-05-01"));
     expect(entry.projectName).toBeUndefined();
+    expect(Object.keys(entry)).not.toContain("projectName");
     expect(JSON.stringify({ projectName: entry.projectName })).not.toMatch(/Alice|alice|home|Documents/);
   });
 

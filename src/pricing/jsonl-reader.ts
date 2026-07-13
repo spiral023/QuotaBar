@@ -211,7 +211,7 @@ function processEntry(
     timestamp: ts,
     model,
     project,
-    projectName,
+    ...(projectName ? { projectName } : {}),
     session: typeof entry.sessionId === "string" ? entry.sessionId : fileBase,
     inputTokens: input,
     outputTokens: output,
