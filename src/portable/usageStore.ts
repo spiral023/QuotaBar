@@ -122,6 +122,28 @@ export class PortableUsageStore {
     return this.exclusive(() => this.prepareStore());
   }
 
+  getRevision(): Promise<string> {
+    return this.exclusive(async () => {
+      await this.prepareStore();
+      const snapshots = await this.scanPartitions({ acceptMisplaced: false });
+      return storeRevision(snapshotsToMaps(snapshots));
+    });
+  }
+
+  commitIfRevision(
+    expectedRevision: string,
+    commit: () => Promise<void>,
+  ): Promise<{ status: "applied" | "stale"; revision: string }> {
+    return this.exclusive(async () => {
+      await this.prepareStore();
+      const snapshots = await this.scanPartitions({ acceptMisplaced: false });
+      const revision = storeRevision(snapshotsToMaps(snapshots));
+      if (revision !== expectedRevision) return { status: "stale", revision };
+      await commit();
+      return { status: "applied", revision };
+    });
+  }
+
   read(range: Range = {}): Promise<PortableUsageEvent[]> {
     return this.exclusive(async () => {
       await this.prepareStore();

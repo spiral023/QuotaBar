@@ -56,7 +56,7 @@ type TokenField = typeof TOKEN_FIELDS[number];
 type ComponentCostField = typeof COMPONENT_COST_FIELDS[number];
 type MigrationStore = Pick<
   PortableUsageStore,
-  "getIngestStatePath" | "recoverPending" | "reconcileLegacyDerived"
+  "getIngestStatePath" | "recoverPending" | "reconcileLegacyDerived" | "commitIfRevision"
 >;
 
 interface Aggregate {
@@ -129,7 +129,8 @@ export type MigrationStateTransitionResult =
   | { status: "already_complete" }
   | { status: "already_failed"; lastError: PortableMigrationFailureCode }
   | { status: "not_running" }
-  | { status: "future_state" };
+  | { status: "future_state" }
+  | { status: "stale_revision"; revision: string };
 
 /**
  * Reconciles immutable legacy day aggregates against provider events already stored in the portable archive.
@@ -262,7 +263,11 @@ async function migrateLegacyDataExclusive(
       syntheticUpdated: reconciled.updated,
     };
   }
-  await writeStateSafely(statePath, state("complete", now, reconciled.revision));
+  // Global lock order: migration lock (held by migrateLegacyData) -> usage-store writer lock.
+  const finalized = await store.commitIfRevision(reconciled.revision, () => (
+    writeStateSafely(statePath, state("complete", now, reconciled.revision))
+  ));
+  if (finalized.status === "stale") throw new Error("Portable usage migration revision changed");
   return {
     status: "complete",
     syntheticInserted: reconciled.inserted,
@@ -286,6 +291,7 @@ export async function markMigrationRunning(
 export async function markMigrationComplete(
   statePath: string,
   storeRevision: string,
+  store: Pick<PortableUsageStore, "commitIfRevision">,
   now: () => Date = () => new Date(),
 ): Promise<MigrationStateTransitionResult> {
   if (!/^[a-f0-9]{64}$/.test(storeRevision)) throw new Error("Portable migration revision is invalid");
@@ -293,12 +299,15 @@ export async function markMigrationComplete(
   return await withMigrationStateLock(resolvedStatePath, async () => {
     const loaded = await readCurrentForTransition(resolvedStatePath);
     if (loaded === "future_state") return { status: "future_state" };
-    if (loaded.state?.status === "complete" && loaded.state.storeRevision === storeRevision) {
-      return { status: "already_complete" };
-    }
-    if (loaded.state?.status !== "running") return { status: "not_running" };
-    await writeStateSafely(resolvedStatePath, state("complete", now, storeRevision));
-    return { status: "applied" };
+    const alreadyComplete = loaded.state?.status === "complete" && loaded.state.storeRevision === storeRevision;
+    if (!alreadyComplete && loaded.state?.status !== "running") return { status: "not_running" };
+    // Global lock order: migration state lock -> usage-store writer/root lock. Store operations never acquire
+    // an outer migration/ingestion lock, so this order cannot form a cycle.
+    const finalized = await store.commitIfRevision(storeRevision, async () => {
+      if (!alreadyComplete) await writeStateSafely(resolvedStatePath, state("complete", now, storeRevision));
+    });
+    if (finalized.status === "stale") return { status: "stale_revision", revision: finalized.revision };
+    return alreadyComplete ? { status: "already_complete" } : { status: "applied" };
   });
 }
 

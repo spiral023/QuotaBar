@@ -1,4 +1,6 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import * as nodeFs from "node:fs/promises";
+import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -153,6 +155,7 @@ describe("portable startup preparation", () => {
   it("does not prewarm or claim failure when a future state appears before completion", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-prepare-future-complete-"));
     const statePath = path.join(root, "migration-state.json");
+    const revisionStore = new PortableUsageStore(root);
     const future = `${JSON.stringify({
       schemaVersion: 2, status: "complete", usageMigrationVersion: 2,
       storeRevision: "f".repeat(64), updatedAt: "2026-07-12T10:00:00.000Z",
@@ -170,7 +173,7 @@ describe("portable startup preparation", () => {
       migrateQuota: async () => undefined,
       completeMigration: async (revision) => {
         await writeFile(statePath, future, "utf8");
-        return await markMigrationComplete(statePath, revision);
+        return await markMigrationComplete(statePath, revision, revisionStore);
       },
       failMigration: (code) => markMigrationFailed(statePath, code),
       prewarmConsumers: prewarm,
@@ -183,6 +186,7 @@ describe("portable startup preparation", () => {
   it("does not overwrite or falsely report failed when a future state appears before failure handling", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-prepare-future-failed-"));
     const statePath = path.join(root, "migration-state.json");
+    const revisionStore = new PortableUsageStore(root);
     const future = `${JSON.stringify({
       schemaVersion: 2, status: "complete", usageMigrationVersion: 2,
       storeRevision: "f".repeat(64), updatedAt: "2026-07-12T10:00:00.000Z",
@@ -197,7 +201,7 @@ describe("portable startup preparation", () => {
       }),
       readLegacyQuota: async () => [],
       migrateQuota: async () => undefined,
-      completeMigration: (revision) => markMigrationComplete(statePath, revision),
+      completeMigration: (revision) => markMigrationComplete(statePath, revision, revisionStore),
       failMigration: async (code) => {
         await writeFile(statePath, future, "utf8");
         return await markMigrationFailed(statePath, code);
@@ -230,7 +234,7 @@ describe("portable startup preparation", () => {
       }),
       readLegacyQuota: async () => [],
       migrateQuota: async () => undefined,
-      completeMigration: (revision) => markMigrationComplete(statePath, revision),
+      completeMigration: (revision) => markMigrationComplete(statePath, revision, store),
       failMigration: async (code) => {
         beforeOuter = await readFile(statePath, "utf8");
         outerResult = await markMigrationFailed(statePath, code);
@@ -347,6 +351,36 @@ describe("ongoing portable ingestion", () => {
     expect(diagnostics).toEqual(["Portable ingestion failed"]);
   });
 
+  it("runs a trigger arriving at the exact drain-cleanup boundary without overlap", async () => {
+    let enterBoundary!: () => void;
+    const boundaryEntered = new Promise<void>((resolve) => { enterBoundary = resolve; });
+    let leaveBoundary!: () => void;
+    const boundaryGate = new Promise<void>((resolve) => { leaveBoundary = resolve; });
+    let active = 0;
+    let maximum = 0;
+    let runs = 0;
+    const runner = createPortableIngestionRunner(async () => {
+      runs += 1;
+      active += 1;
+      maximum = Math.max(maximum, active);
+      active -= 1;
+    }, undefined, {
+      beforeActiveCleanup: async () => {
+        enterBoundary();
+        await boundaryGate;
+      },
+    });
+
+    const first = runner.trigger("startup");
+    await boundaryEntered;
+    const boundary = runner.trigger("source-change");
+    leaveBoundary();
+    await Promise.all([first, boundary]);
+
+    expect(runs).toBe(2);
+    expect(maximum).toBe(1);
+  });
+
 });
 
 describe("legacy quota compatibility", () => {
@@ -374,6 +408,73 @@ describe("legacy quota compatibility", () => {
     expect(await readFile(file, "utf8")).toBe(original);
   });
 
+  it("treats a legacy quota file read error as fatal while preserving every source", async () => {
+    const logDir = await mkdtemp(path.join(os.tmpdir(), "quotabar-startup-quota-io-"));
+    const readable = path.join(logDir, "2026-07-11.jsonl");
+    const denied = path.join(logDir, "2026-07-12.jsonl");
+    const contents = `${JSON.stringify({
+      kind: "snapshot", provider: "claude", status: "ok",
+      fetchedAt: "2026-07-11T10:00:00.000Z", windows: [],
+    })}\n`;
+    await writeFile(readable, contents, "utf8");
+    await writeFile(denied, contents, "utf8");
+    const fileSystem = {
+      readdir: nodeFs.readdir.bind(nodeFs),
+      readFile: async (filePath: string, encoding: BufferEncoding) => {
+        if (path.resolve(filePath) === path.resolve(denied)) {
+          throw Object.assign(new Error("raw denied path"), { code: "EACCES" });
+        }
+        return await nodeFs.readFile(filePath, encoding);
+      },
+    };
+
+    await expect(readLegacyQuotaSnapshots(logDir, { fileSystem })).rejects.toThrow("Legacy quota file read failed");
+    expect(await readFile(readable, "utf8")).toBe(contents);
+    expect(await readFile(denied, "utf8")).toBe(contents);
+  });
+
+  it("records quota_migration_failed and skips prewarm after legacy quota I/O failure", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-startup-quota-state-"));
+    const usageRoot = path.join(root, "usage");
+    const statePath = path.join(usageRoot, "migration-state.json");
+    const store = new PortableUsageStore(usageRoot);
+    const prewarm = vi.fn();
+
+    await expect(preparePortableData({
+      beginMigration: () => markMigrationRunning(statePath),
+      ingestProviderEvents: async () => ({ inserted: 0, updated: 0 }),
+      readLegacyRecords: async () => [],
+      reconcileLegacy: async () => ({
+        storeRevision: await store.getRevision(), syntheticInserted: 0, syntheticUpdated: 0,
+      }),
+      readLegacyQuota: async () => { throw new Error("Legacy quota file read failed"); },
+      migrateQuota: async () => undefined,
+      completeMigration: (revision) => markMigrationComplete(statePath, revision, store),
+      failMigration: (code) => markMigrationFailed(statePath, code),
+      prewarmConsumers: prewarm,
+    })).rejects.toThrow("Portable data preparation failed at quota_migration");
+
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({
+      status: "failed", lastError: "quota_migration_failed",
+    });
+    expect(prewarm).not.toHaveBeenCalled();
+
+    await expect(preparePortableData({
+      beginMigration: () => markMigrationRunning(statePath),
+      ingestProviderEvents: async () => ({ inserted: 0, updated: 0 }),
+      readLegacyRecords: async () => [],
+      reconcileLegacy: async () => ({
+        storeRevision: await store.getRevision(), syntheticInserted: 0, syntheticUpdated: 0,
+      }),
+      readLegacyQuota: async () => [],
+      migrateQuota: async () => undefined,
+      completeMigration: (revision) => markMigrationComplete(statePath, revision, store),
+      failMigration: (code) => markMigrationFailed(statePath, code),
+      prewarmConsumers: prewarm,
+    })).resolves.toMatchObject({ status: "complete", quotaSnapshots: 0 });
+    expect(prewarm).toHaveBeenCalledOnce();
+  });
+
   it("keeps migration running through quota commit, then completes idempotently", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-startup-state-"));
     const usageRoot = path.join(root, "usage");
@@ -394,12 +495,61 @@ describe("legacy quota compatibility", () => {
     await appendQuotaSnapshots(quotaRoot, [snapshot]);
     await appendQuotaSnapshots(quotaRoot, [snapshot]);
     expect(await readQuotaSnapshots(quotaRoot)).toEqual([snapshot]);
-    await markMigrationComplete(statePath, usage.storeRevision);
+    await markMigrationComplete(statePath, usage.storeRevision, store);
 
     expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({
       status: "complete",
       storeRevision: usage.storeRevision,
     });
+  });
+
+  it("does not publish a reconciled revision after another writer mutates the usage store", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-startup-stale-revision-"));
+    const usageRoot = path.join(root, "usage");
+    const statePath = path.join(usageRoot, "migration-state.json");
+    const store = new PortableUsageStore(usageRoot);
+    await markMigrationRunning(statePath);
+    const migration = await migrateLegacyData({ store, records: [], statePath, finalizeState: false });
+    await store.upsert([{
+      schemaVersion: 1,
+      id: "newer-provider-event",
+      provider: "claude",
+      occurredAt: "2026-07-12T12:00:00.000Z",
+      model: "claude-sonnet-4",
+      sessionKey: "newer-session",
+      source: "claude-log",
+      synthetic: false,
+      inputTokens: 1,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      reasoningOutputTokens: 0,
+    }]);
+
+    await expect(markMigrationComplete(statePath, migration.storeRevision, store)).resolves.toMatchObject({
+      status: "stale_revision",
+    });
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({ status: "running" });
+  });
+
+  it("prevents a real second process from making another process publish a stale revision", async () => {
+    const usageRoot = await mkdtemp(path.join(os.tmpdir(), "quotabar-finalize-process-"));
+    await Promise.all([
+      runFinalizeChild(usageRoot, "a"),
+      runFinalizeChild(usageRoot, "b"),
+    ]);
+    const stale = JSON.parse(await readFile(path.join(usageRoot, "a-result.json"), "utf8"));
+    expect(stale.status).toBe("stale_revision");
+    expect(JSON.parse(await readFile(path.join(usageRoot, "migration-state.json"), "utf8"))).toMatchObject({
+      status: "running",
+    });
+
+    const store = new PortableUsageStore(usageRoot);
+    const retried = await migrateLegacyData({ store, records: [], statePath: path.join(usageRoot, "migration-state.json"), finalizeState: false });
+    await expect(markMigrationComplete(path.join(usageRoot, "migration-state.json"), retried.storeRevision, store))
+      .resolves.toMatchObject({ status: "applied" });
+    const finalState = JSON.parse(await readFile(path.join(usageRoot, "migration-state.json"), "utf8"));
+    expect(finalState.storeRevision).toBe(await store.getRevision());
   });
 
   it("writes only strict allowlisted startup failure states", async () => {
@@ -431,6 +581,7 @@ describe("legacy quota compatibility", () => {
   it.each(["complete", "failed"] as const)("does not overwrite a future state immediately before %s", async (transition) => {
     const root = await mkdtemp(path.join(os.tmpdir(), `quotabar-startup-future-${transition}-`));
     const statePath = path.join(root, "migration-state.json");
+    const store = new PortableUsageStore(root);
     const future = `${JSON.stringify({
       schemaVersion: 2,
       status: "complete",
@@ -441,7 +592,7 @@ describe("legacy quota compatibility", () => {
     await writeFile(statePath, future, "utf8");
 
     const result = transition === "complete"
-      ? await markMigrationComplete(statePath, "d".repeat(64))
+      ? await markMigrationComplete(statePath, "d".repeat(64), store)
       : await markMigrationFailed(statePath, "quota_migration_failed");
 
     expect(result).toEqual({ status: "future_state" });
@@ -451,10 +602,12 @@ describe("legacy quota compatibility", () => {
   it("serializes competing finalizers and never overwrites the first committed terminal state", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-startup-finalize-race-"));
     const statePath = path.join(root, "migration-state.json");
+    const store = new PortableUsageStore(root);
     await markMigrationRunning(statePath);
+    const revision = await store.getRevision();
 
     const results = await Promise.all([
-      markMigrationComplete(statePath, "a".repeat(64)),
+      markMigrationComplete(statePath, revision, store),
       markMigrationFailed(statePath, "quota_migration_failed"),
     ]);
     const parsed = parseMigrationState(JSON.parse(await readFile(statePath, "utf8"))).state;
@@ -464,3 +617,25 @@ describe("legacy quota compatibility", () => {
     expect(["complete", "failed"]).toContain(parsed?.status);
   });
 });
+
+function runFinalizeChild(root: string, role: "a" | "b"): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      path.resolve("node_modules/vitest/vitest.mjs"),
+      "run",
+      "tests/fixtures/portableFinalizeChild.test.ts",
+    ], {
+      cwd: process.cwd(),
+      env: { ...process.env, QUOTABAR_FINALIZE_ROOT: root, QUOTABAR_FINALIZE_ROLE: role },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += String(chunk); });
+    child.stderr.on("data", (chunk) => { output += String(chunk); });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Portable finalization child exited with code ${code}: ${output}`));
+    });
+  });
+}

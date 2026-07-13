@@ -35,6 +35,8 @@ import { QuickStatsLoadMetric } from "./quickStatsLoadMetric";
 import { detectAppVariant } from "./appIdentity";
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { mergeAndSaveSettings } from "./settingsSave";
+import { parseMigrationState } from "../portable/migration";
+import { PortableUsageStore } from "../portable/usageStore";
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -108,12 +110,30 @@ export interface PortableDataPreparing {
 
 const PORTABLE_DATA_PREPARING: PortableDataPreparing = Object.freeze({ portableDataPreparing: true });
 
-export async function portableDataIsReady(statePath = getPortableMigrationPath()): Promise<boolean> {
+export async function portableDataIsReady(
+  statePath = getPortableMigrationPath(),
+  store = new PortableUsageStore(path.dirname(statePath)),
+): Promise<boolean> {
+  let raw: string;
   try {
-    const value = JSON.parse(await fs.readFile(statePath, "utf8")) as { status?: unknown };
-    return value.status === "complete";
+    raw = await fs.readFile(statePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
+    // Read diagnostics can contain host paths; expose only the fixed readiness category.
+    // eslint-disable-next-line preserve-caught-error
+    throw new Error("Portable migration readiness read failed");
+  }
+  let state;
+  try {
+    state = parseMigrationState(JSON.parse(raw)).state;
   } catch {
     return false;
+  }
+  if (state?.status !== "complete" || !state.storeRevision) return false;
+  try {
+    return await store.getRevision() === state.storeRevision;
+  } catch {
+    throw new Error("Portable readiness store read failed");
   }
 }
 
@@ -275,17 +295,15 @@ export class DetailsWindowController {
   }
 
   /** Warms the worker and portable summary store before the dashboard opens. */
-  prewarmAnalytics(): void {
-    void this.isPortableDataReady().then((ready) => {
-      if (!ready) return;
-      const until = this.nowMs();
-      const since = until - 30 * 24 * 3600 * 1000;
-      return this.requestAnalyticsWorker({
-        task: "prewarm",
-        usageRange: { since: new Date(since).toISOString(), until: new Date(until).toISOString() },
-        quotaRange: { since: new Date(since).toISOString(), until: new Date(until).toISOString() },
-      });
-    }).catch(() => log.warn("Analytics prewarm failed"));
+  async prewarmAnalytics(): Promise<void> {
+    if (!await this.isPortableDataReady()) throw new Error("Portable analytics prewarm is not ready");
+    const until = this.nowMs();
+    const since = until - 30 * 24 * 3600 * 1000;
+    await this.requestAnalyticsWorker({
+      task: "prewarm",
+      usageRange: { since: new Date(since).toISOString(), until: new Date(until).toISOString() },
+      quotaRange: { since: new Date(since).toISOString(), until: new Date(until).toISOString() },
+    });
   }
 
   private pushUpdate(): void {

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import { listClaudeSourceFiles, readClaudeUsageEntriesFromFiles, type ClaudeUsageEntry, type SourceFileRef } from "../pricing/jsonl-reader";
 import { listCodexSourceFiles, readCodexTokensFromFiles, type CodexTokenEvent, type CodexSourceFileRef } from "../pricing/codex-log-reader";
@@ -138,7 +139,7 @@ export async function preparePortableData(
 }
 
 function transitionWasSuperseded(result: MigrationStateTransitionResult | void): boolean {
-  return result?.status === "future_state" || result?.status === "not_running";
+  return result?.status === "future_state" || result?.status === "not_running" || result?.status === "stale_revision";
 }
 
 export type PortableIngestionTrigger = "startup" | "source-change" | "manual-recompute";
@@ -146,35 +147,57 @@ export interface PortableIngestionRunner {
   trigger(reason: PortableIngestionTrigger): Promise<void>;
 }
 
+interface PortableIngestionRunnerOptions {
+  beforeActiveCleanup?: () => Promise<void>;
+}
+
 /** Runs at most one ingestion at a time and folds any burst of triggers into one follow-up pass. */
 export function createPortableIngestionRunner(
   run: () => Promise<void>,
   onDiagnostic: (diagnostic: "Portable ingestion failed") => void = () => undefined,
+  options: PortableIngestionRunnerOptions = {},
 ): PortableIngestionRunner {
-  let requested = false;
+  let requestedGeneration = 0;
+  let completedGeneration = 0;
   let active: Promise<void> | undefined;
 
   const drain = async (): Promise<void> => {
-    while (requested) {
-      requested = false;
-      try {
-        await run();
-      } catch {
-        onDiagnostic("Portable ingestion failed");
+    while (true) {
+      while (completedGeneration < requestedGeneration) {
+        const generation = requestedGeneration;
+        try {
+          await run();
+        } catch {
+          onDiagnostic("Portable ingestion failed");
+        }
+        completedGeneration = generation;
       }
+      await options.beforeActiveCleanup?.();
+      if (completedGeneration >= requestedGeneration) return;
     }
+  };
+
+  const ensureActive = (): Promise<void> => {
+    if (!active) {
+      const settled = drain().finally(() => {
+        if (active === settled) active = undefined;
+        if (completedGeneration < requestedGeneration) void ensureActive();
+      });
+      active = settled;
+    }
+    return active;
+  };
+
+  const waitForGeneration = async (generation: number): Promise<void> => {
+    while (completedGeneration < generation) await ensureActive();
   };
 
   return {
     trigger(reason): Promise<void> {
       void reason;
-      requested = true;
-      if (!active) {
-        active = drain().finally(() => {
-          active = undefined;
-        });
-      }
-      return active;
+      requestedGeneration += 1;
+      void ensureActive();
+      return waitForGeneration(requestedGeneration);
     },
   };
 }
@@ -238,13 +261,25 @@ export function createPortableIngestionLifecycle(
 
 const LEGACY_DEBUG_FILE = /^\d{4}-\d{2}-\d{2}\.jsonl$/;
 
+interface LegacyQuotaFileSystem {
+  readdir(directory: string, options: { withFileTypes: true }): Promise<Dirent[]>;
+  readFile(filePath: string, encoding: "utf8"): Promise<string>;
+}
+
 /** Reads the allowlisted legacy debug directory without following nested paths or links. */
-export async function readLegacyQuotaSnapshots(logDir: string): Promise<SnapshotEvent[]> {
-  let entries;
+export async function readLegacyQuotaSnapshots(
+  logDir: string,
+  options: { fileSystem?: LegacyQuotaFileSystem } = {},
+): Promise<SnapshotEvent[]> {
+  const fileSystem = options.fileSystem ?? fs;
+  let entries: Dirent[];
   try {
-    entries = await fs.readdir(logDir, { withFileTypes: true });
-  } catch {
-    return [];
+    entries = await fileSystem.readdir(logDir, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return [];
+    // Host diagnostics can contain paths; expose only the fixed migration category.
+    // eslint-disable-next-line preserve-caught-error
+    throw new Error("Legacy quota directory read failed");
   }
   const result: SnapshotEvent[] = [];
   for (const entry of entries
@@ -252,9 +287,9 @@ export async function readLegacyQuotaSnapshots(logDir: string): Promise<Snapshot
     .sort((left, right) => left.name.localeCompare(right.name))) {
     let contents: string;
     try {
-      contents = await fs.readFile(path.join(logDir, entry.name), "utf8");
+      contents = await fileSystem.readFile(path.join(logDir, entry.name), "utf8");
     } catch {
-      continue;
+      throw new Error("Legacy quota file read failed");
     }
     for (const line of contents.split(/\r?\n/)) {
       if (!line.trim() || !line.includes('"kind":"snapshot"')) continue;

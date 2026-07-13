@@ -63,6 +63,25 @@ describe("PortableUsageStore", () => {
     expect(await readdir(rootDir)).toEqual([]);
   });
 
+  it("commits a callback only while the expected revision is still current", async () => {
+    await store.upsert([event("base", "2026-07-01T00:00:00.000Z")]);
+    const revision = await store.getRevision();
+    const committed = vi.fn(async () => undefined);
+    await expect(store.commitIfRevision(revision, committed)).resolves.toEqual({
+      status: "applied",
+      revision,
+    });
+    expect(committed).toHaveBeenCalledOnce();
+
+    await store.upsert([event("newer", "2026-07-02T00:00:00.000Z")]);
+    const currentRevision = await store.getRevision();
+    await expect(store.commitIfRevision(revision, committed)).resolves.toEqual({
+      status: "stale",
+      revision: currentRevision,
+    });
+    expect(committed).toHaveBeenCalledOnce();
+  });
+
   it("writes events to their UTC monthly partitions", async () => {
     await store.upsert([
       event("july-2", "2026-07-31T23:59:59.000Z"),

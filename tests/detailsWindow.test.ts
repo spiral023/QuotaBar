@@ -35,6 +35,9 @@ import {
   portableDataIsReady,
 } from "../src/main/detailsWindow";
 import { ipcMain, shell } from "electron";
+import { PortableUsageStore } from "../src/portable/usageStore";
+import { preparePortableData } from "../src/main/debugBackfill";
+import { markMigrationComplete, markMigrationFailed, markMigrationRunning } from "../src/portable/migration";
 
 let tmpDir: string;
 
@@ -106,13 +109,69 @@ describe("portable analytics readiness", () => {
       loadRuntimeSettings: vi.fn(async () => defaultSettings),
       now: () => Date.parse("2026-07-13T12:00:00.000Z"),
     });
-    controller.prewarmAnalytics();
-    await vi.waitFor(() => expect(runWorker).toHaveBeenCalled());
+    await controller.prewarmAnalytics();
     expect(runWorker).toHaveBeenCalledWith(expect.objectContaining({
       task: "prewarm",
       usageRange: { since: "2026-06-13T12:00:00.000Z", until: "2026-07-13T12:00:00.000Z" },
       quotaRange: { since: "2026-06-13T12:00:00.000Z", until: "2026-07-13T12:00:00.000Z" },
     }));
+  });
+
+  it("propagates real prewarm worker failures to startup", async () => {
+    const controller = new DetailsWindowController(() => null, undefined, undefined, {
+      portableDataIsReady: vi.fn(async () => true),
+      runAnalyticsWorker: vi.fn(async () => { throw new Error("raw worker detail"); }),
+      now: () => Date.parse("2026-07-13T12:00:00.000Z"),
+    });
+
+    await expect(controller.prewarmAnalytics()).rejects.toThrow("raw worker detail");
+  });
+
+  it("propagates readiness read failures to startup", async () => {
+    const controller = new DetailsWindowController(() => null, undefined, undefined, {
+      portableDataIsReady: vi.fn(async () => { throw new Error("read failed"); }),
+      runAnalyticsWorker: vi.fn(async () => ({})),
+    });
+
+    await expect(controller.prewarmAnalytics()).rejects.toThrow("read failed");
+  });
+
+  it("rejects prewarm when revision readiness changed before the worker request", async () => {
+    const runWorker = vi.fn(async () => ({}));
+    const controller = new DetailsWindowController(() => null, undefined, undefined, {
+      portableDataIsReady: vi.fn(async () => false),
+      runAnalyticsWorker: runWorker,
+    });
+
+    await expect(controller.prewarmAnalytics()).rejects.toThrow("Portable analytics prewarm is not ready");
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+
+  it("persists consumer_prewarm_failed when the real controller worker rejects", async () => {
+    const statePath = path.join(tmpDir, "migration-state.json");
+    const store = new PortableUsageStore(tmpDir);
+    const controller = new DetailsWindowController(() => null, undefined, undefined, {
+      portableDataIsReady: vi.fn(async () => true),
+      runAnalyticsWorker: vi.fn(async () => { throw new Error("raw worker detail"); }),
+      now: () => Date.parse("2026-07-13T12:00:00.000Z"),
+    });
+
+    await expect(preparePortableData({
+      beginMigration: () => markMigrationRunning(statePath),
+      ingestProviderEvents: async () => ({ inserted: 0, updated: 0 }),
+      readLegacyRecords: async () => [],
+      reconcileLegacy: async () => ({
+        storeRevision: await store.getRevision(), syntheticInserted: 0, syntheticUpdated: 0,
+      }),
+      readLegacyQuota: async () => [],
+      migrateQuota: async () => undefined,
+      completeMigration: (revision) => markMigrationComplete(statePath, revision, store),
+      failMigration: (code) => markMigrationFailed(statePath, code),
+      prewarmConsumers: () => controller.prewarmAnalytics(),
+    })).rejects.toThrow("Portable data preparation failed at consumer_prewarm");
+    expect(JSON.parse(await fs.readFile(statePath, "utf8"))).toMatchObject({
+      status: "failed", lastError: "consumer_prewarm_failed",
+    });
   });
 
   it("treats missing, pending and malformed migration state as preparing", async () => {
@@ -124,10 +183,24 @@ describe("portable analytics readiness", () => {
     await expect(portableDataIsReady(statePath)).resolves.toBe(false);
   });
 
-  it("accepts only a complete migration state", async () => {
+  it("accepts a complete migration state only while its usage revision still matches", async () => {
     const statePath = path.join(tmpDir, "migration-state.json");
-    await fs.writeFile(statePath, JSON.stringify({ status: "complete" }));
+    const store = new PortableUsageStore(tmpDir);
+    const revision = await store.getRevision();
+    await fs.writeFile(statePath, JSON.stringify({
+      schemaVersion: 1,
+      status: "complete",
+      usageMigrationVersion: 1,
+      storeRevision: revision,
+      updatedAt: "2026-07-13T12:00:00.000Z",
+    }));
     await expect(portableDataIsReady(statePath)).resolves.toBe(true);
+    await store.upsert([{
+      schemaVersion: 1, id: "newer", provider: "claude", occurredAt: "2026-07-13T12:00:00.000Z",
+      model: "model", sessionKey: "session", source: "claude-log", synthetic: false,
+      inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, reasoningOutputTokens: 0,
+    }]);
+    await expect(portableDataIsReady(statePath)).resolves.toBe(false);
   });
 
   it("creates analytics worker requests without provider directories or debug logs", () => {

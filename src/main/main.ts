@@ -188,7 +188,7 @@ if (!app.requestSingleInstanceLock()) {
         }),
         readLegacyQuota: () => readLegacyQuotaSnapshots(getDebugLogDir()),
         migrateQuota: (snapshots) => appendQuotaSnapshots(getPortableQuotaDir(), snapshots),
-        completeMigration: (revision) => markMigrationComplete(getPortableMigrationPath(), revision),
+        completeMigration: (revision) => markMigrationComplete(getPortableMigrationPath(), revision, portableUsageStore),
         failMigration: (code) => markMigrationFailed(getPortableMigrationPath(), code),
         prewarmConsumers: () => detailsWindow.prewarmAnalytics(),
         onStageComplete: (stage, durationMs, count) => {
