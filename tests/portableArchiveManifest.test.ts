@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import AdmZip from "adm-zip";
 import { describe, expect, it } from "vitest";
 import { defaultSettings } from "../src/config/settings";
 import {
@@ -11,6 +12,7 @@ import {
   ArchiveManifest,
   createArchiveManifest,
   isPortableArchivePath,
+  metadataFromZipEntry,
   normalizeArchivePath,
   parseArchiveManifest,
   sanitizeImportedSettings,
@@ -110,6 +112,33 @@ describe("ZIP path validation before content access", () => {
     expect(() => normalizeArchivePath(path)).toThrow("Invalid archive entry path");
   });
 
+  it.each([
+    "usage/events/bad<name.jsonl",
+    "usage/events/bad>name.jsonl",
+    "usage/events/bad\"name.jsonl",
+    "usage/events/bad|name.jsonl",
+    "usage/events/bad?name.jsonl",
+    "usage/events/bad*name.jsonl",
+    "usage/events/COM¹.jsonl",
+    "usage/events/com²",
+    "usage/events/CoM³.data",
+    "usage/events/LPT¹.jsonl",
+    "usage/events/lpt²",
+    "usage/events/LpT³.data",
+    "usage/events/CON .jsonl",
+    "usage/events/prn .data",
+  ])("rejects Windows-invalid archive name %j", (path) => {
+    expect(() => normalizeArchivePath(path)).toThrow("Invalid archive entry path");
+  });
+
+  it.each([
+    "usage/events/computer.jsonl",
+    "usage/events/com0.jsonl",
+    "usage/events/lpt10.jsonl",
+  ])("allows non-device Windows name %j", (path) => {
+    expect(normalizeArchivePath(path)).toBe(path);
+  });
+
   it("rejects case-insensitive and canonical duplicates", () => {
     expect(() => validateZipEntryMetadata([
       entry("manifest.json"),
@@ -138,6 +167,26 @@ describe("ZIP path validation before content access", () => {
     ])).toThrow("Unsupported archive entry type");
   });
 
+  it.each([
+    { platform: 3, mode: 0o120777 },
+    { platform: 19, mode: 0o120777 },
+    { platform: 0, mode: 0o120777 },
+    { platform: 19, mode: 0o010644 },
+    { platform: 7, mode: 0o020644 },
+    { platform: 3, mode: 0o060644 },
+    { platform: 0, mode: 0o140644 },
+  ])("rejects special file mode $mode from platform $platform", ({ platform, mode }) => {
+    expect(() => validateZipEntryMetadata([
+      entry("manifest.json", 1, { madeBy: platform << 8, attributes: (mode << 16) >>> 0 }),
+    ])).toThrow("Unsupported archive entry type");
+  });
+
+  it("allows a regular file mode regardless of creator platform", () => {
+    expect(() => validateZipEntryMetadata([
+      entry("manifest.json", 1, { madeBy: 19 << 8, attributes: (0o100644 << 16) >>> 0 }),
+    ])).not.toThrow();
+  });
+
   it("rejects encrypted, unsupported, and malformed header metadata", () => {
     expect(() => validateZipEntryMetadata([entry("manifest.json", 1, { flags: 1 })]))
       .toThrow("Unsupported archive entry metadata");
@@ -159,7 +208,96 @@ describe("ZIP path validation before content access", () => {
   });
 });
 
+describe("AdmZip metadata adaptation", () => {
+  it("fails closed with a generic error when raw extra metadata is uninspectable", () => {
+    let getDataCalls = 0;
+    const zipEntry = {
+      entryName: "settings.json",
+      isDirectory: false,
+      get extra(): Buffer {
+        throw new Error("private raw metadata");
+      },
+      attr: 0,
+      header: { size: 2, compressedSize: 2, flags: 0, method: 0, made: 0 },
+      getData(): Buffer {
+        getDataCalls += 1;
+        return Buffer.alloc(0);
+      },
+    } as unknown as AdmZip.IZipEntry;
+
+    expect(() => metadataFromZipEntry(zipEntry)).toThrow("Unsupported ZIP64 archive entry");
+    try {
+      metadataFromZipEntry(zipEntry);
+    } catch (error) {
+      expect(String(error)).not.toContain("private raw metadata");
+    }
+    expect(getDataCalls).toBe(0);
+  });
+
+  it.each([
+    { size: 0xffff_ffff, compressedSize: 1 },
+    { size: 1, compressedSize: 0xffff_ffff },
+  ])("rejects ZIP64 sentinel header sizes before reading data", ({ size, compressedSize }) => {
+    const zip = new AdmZip();
+    const zipEntry = zip.addFile("settings.json", Buffer.from("{}"));
+    zipEntry.header.size = size;
+    zipEntry.header.compressedSize = compressedSize;
+    let getDataCalls = 0;
+    zipEntry.getData = () => {
+      getDataCalls += 1;
+      return Buffer.alloc(0);
+    };
+
+    expect(() => metadataFromZipEntry(zipEntry)).toThrow("Unsupported ZIP64 archive entry");
+    expect(getDataCalls).toBe(0);
+  });
+
+  it("rejects ZIP64 extra data even when AdmZip wrapped 64-bit sizes", () => {
+    const zip64Extra = Buffer.alloc(20);
+    zip64Extra.writeUInt16LE(0x0001, 0);
+    zip64Extra.writeUInt16LE(16, 2);
+    zip64Extra.writeBigUInt64LE(0x1_0000_0001n, 4);
+    zip64Extra.writeBigUInt64LE(0x1_0000_0002n, 12);
+    const zip = new AdmZip();
+    const zipEntry = zip.addFile("settings.json", Buffer.from("{}"));
+    zipEntry.header.size = 0xffff_ffff;
+    zipEntry.header.compressedSize = 0xffff_ffff;
+    zipEntry.extra = zip64Extra;
+    let getDataCalls = 0;
+    zipEntry.getData = () => {
+      getDataCalls += 1;
+      return Buffer.alloc(0);
+    };
+
+    expect(zipEntry.header.size).toBe(1);
+    expect(zipEntry.header.compressedSize).toBe(2);
+    expect(() => metadataFromZipEntry(zipEntry)).toThrow("Unsupported ZIP64 archive entry");
+    expect(getDataCalls).toBe(0);
+  });
+
+  it.each([
+    Buffer.from([0x01, 0x00]),
+    Buffer.from([0x34, 0x12, 0x00, 0x00, 0x01, 0x00]),
+    Buffer.from([0x01, 0x00, 0x10, 0x00, 0x01]),
+  ])("rejects truncated or malformed ZIP64 extra fields", (extra) => {
+    const zip = new AdmZip();
+    const zipEntry = zip.addFile("settings.json", Buffer.from("{}"));
+    zipEntry.extra = extra;
+    expect(() => metadataFromZipEntry(zipEntry)).toThrow("Unsupported ZIP64 archive entry");
+  });
+});
+
 describe("ZIP metadata limits", () => {
+  it("validates exactly 25,000 unique entries without quadratic path scans", () => {
+    const entries = Array.from({ length: MAX_ARCHIVE_ENTRIES }, (_, index) =>
+      entry(`usage/events/2026/${index}.jsonl`, 0),
+    );
+    const startedAt = performance.now();
+
+    expect(validateZipEntryMetadata(entries)).toHaveLength(MAX_ARCHIVE_ENTRIES);
+    expect(performance.now() - startedAt).toBeLessThan(5_000);
+  }, 15_000);
+
   it("rejects more than 25,000 entries", () => {
     const entries = Array.from({ length: MAX_ARCHIVE_ENTRIES + 1 }, (_, index) =>
       entry(`usage/events/${index}.jsonl`, 0),

@@ -12,7 +12,7 @@ const MAX_COMPRESSION_RATIO = 1_000;
 const COMMON_ZIP_FLAGS = 0x0008 | 0x0800;
 const DEFLATE_OPTION_FLAGS = 0x0002 | 0x0004;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const WINDOWS_RESERVED_BASE = /^(?:con|prn|aux|nul|com(?:[1-9¹²³])|lpt(?:[1-9¹²³]))$/i;
 
 export interface ArchiveManifestEntry {
   path: string;
@@ -56,6 +56,11 @@ export interface CreateArchiveManifestOptions {
 
 /** Copies only metadata from an AdmZip entry. This helper never calls getData(). */
 export function metadataFromZipEntry(entry: AdmZip.IZipEntry): ArchiveEntryMetadata {
+  try {
+    assertNoZip64Metadata(entry);
+  } catch {
+    throw new Error("Unsupported ZIP64 archive entry");
+  }
   return {
     entryName: entry.entryName,
     isDirectory: entry.isDirectory,
@@ -66,6 +71,47 @@ export function metadataFromZipEntry(entry: AdmZip.IZipEntry): ArchiveEntryMetad
     madeBy: entry.header.made,
     attributes: entry.attr,
   };
+}
+
+function assertNoZip64Metadata(entry: AdmZip.IZipEntry): void {
+  if (entry.header.size === 0xffff_ffff || entry.header.compressedSize === 0xffff_ffff) {
+    throw new Error("Unsupported ZIP64 archive entry");
+  }
+
+  const runtimeEntry = entry as unknown as {
+    extra?: unknown;
+    rawEntry?: { extra?: unknown };
+    header: { extra?: unknown };
+  };
+  const centralExtra = runtimeEntry.extra;
+  if (!(centralExtra instanceof Uint8Array)) {
+    throw new Error("Unsupported ZIP64 archive entry");
+  }
+  assertNoZip64Extra(centralExtra);
+  for (const optionalExtra of [runtimeEntry.rawEntry?.extra, runtimeEntry.header.extra]) {
+    if (optionalExtra !== undefined) {
+      if (!(optionalExtra instanceof Uint8Array)) {
+        throw new Error("Unsupported ZIP64 archive entry");
+      }
+      assertNoZip64Extra(optionalExtra);
+    }
+  }
+}
+
+function assertNoZip64Extra(extra: Uint8Array): void {
+  const bytes = Buffer.from(extra.buffer, extra.byteOffset, extra.byteLength);
+  let offset = 0;
+  while (offset < bytes.length) {
+    if (bytes.length - offset < 4) {
+      throw new Error("Unsupported ZIP64 archive entry");
+    }
+    const fieldId = bytes.readUInt16LE(offset);
+    const fieldSize = bytes.readUInt16LE(offset + 2);
+    if (fieldId === 0x0001 || fieldSize > bytes.length - offset - 4) {
+      throw new Error("Unsupported ZIP64 archive entry");
+    }
+    offset += 4 + fieldSize;
+  }
 }
 
 export function normalizeArchivePath(rawPath: string): string {
@@ -84,7 +130,7 @@ export function normalizeArchivePath(rawPath: string): string {
     || segment === "."
     || segment === ".."
     || /[. ]$/.test(segment)
-    || WINDOWS_RESERVED_NAME.test(segment)
+    || isInvalidWindowsSegment(segment)
   )) {
     throw new Error("Invalid archive entry path");
   }
@@ -119,6 +165,7 @@ export function validateZipEntryMetadata(entries: readonly ArchiveEntryMetadata[
 
   const validated: ValidatedArchiveEntry[] = [];
   const canonicalPaths = new Set<string>();
+  const directoryPrefixes = new Set<string>();
   let totalSize = 0;
 
   for (const entry of entries) {
@@ -135,10 +182,17 @@ export function validateZipEntryMetadata(entries: readonly ArchiveEntryMetadata[
     if (canonicalPaths.has(canonicalPath)) {
       throw new Error("Archive contains a duplicate entry");
     }
-    for (const existing of canonicalPaths) {
-      if (existing.startsWith(`${canonicalPath}/`) || canonicalPath.startsWith(`${existing}/`)) {
+    if (directoryPrefixes.has(canonicalPath)) {
+      throw new Error("Archive contains a file/directory collision");
+    }
+    const segments = canonicalPath.split("/");
+    let prefix = "";
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      prefix = prefix ? `${prefix}/${segments[index]}` : segments[index];
+      if (canonicalPaths.has(prefix)) {
         throw new Error("Archive contains a file/directory collision");
       }
+      directoryPrefixes.add(prefix);
     }
     canonicalPaths.add(canonicalPath);
 
@@ -437,8 +491,6 @@ function validateEntrySizes(entry: ArchiveEntryMetadata): void {
 
 function isUnsupportedEntryType(entry: ArchiveEntryMetadata): boolean {
   if ((entry.attributes & 0x400) !== 0) return true;
-  const platform = (entry.madeBy >>> 8) & 0xff;
-  if (platform !== 3) return false;
   const unixMode = entry.attributes >>> 16;
   const fileType = unixMode & 0o170000;
   return fileType !== 0 && fileType !== 0o100000;
@@ -483,6 +535,12 @@ function hasControlCharacter(value: string): boolean {
     if (codePoint < 32 || codePoint === 127) return true;
   }
   return false;
+}
+
+function isInvalidWindowsSegment(segment: string): boolean {
+  if (/[<>:"|?*]/.test(segment)) return true;
+  const basename = (segment.split(".", 1)[0] ?? "").replace(/[ .]+$/g, "");
+  return WINDOWS_RESERVED_BASE.test(basename);
 }
 
 function isIsoDate(value: unknown): value is string {
