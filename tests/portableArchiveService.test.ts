@@ -330,7 +330,11 @@ describe("portable archive service", () => {
       await exportPortableData(source, archivePath);
       const staged = await stagePortableImport(archivePath, target, targetHome);
       if (corruption === "missing") await rm(staged.backupPath);
-      else await writeFile(staged.backupPath, "not-a-zip", "utf8");
+      else {
+        const replacement = await readFile(staged.backupPath);
+        replacement[Math.floor(replacement.length / 2)] ^= 0xff;
+        await writeFile(staged.backupPath, replacement);
+      }
       let renames = 0;
       const rename: typeof fsPromises.rename = async (from, to) => {
         renames += 1;
@@ -344,7 +348,7 @@ describe("portable archive service", () => {
   });
 
   it("rejects oversized or extended pending metadata before managed renames", async () => {
-    for (const variant of ["oversized", "extra", "reserved-name"] as const) {
+    for (const variant of ["oversized", "extra", "reserved-name", "backup-total"] as const) {
       const root = await tempRoot();
       const source = path.join(root, "source", ".quotabar-win");
       const targetHome = path.join(root, `target-${variant}`);
@@ -359,10 +363,10 @@ describe("portable archive service", () => {
       else {
         const pending = JSON.parse(await readFile(pendingPath, "utf8"));
         if (variant === "extra") pending.extra = true;
-        else {
-          pending.backupFileName = "CON.zip";
+        else if (variant === "reserved-name") {
+          pending.backup.fileName = "CON.zip";
           await fsPromises.rename(staged.backupPath, path.join(path.dirname(staged.backupPath), "CON.zip"));
-        }
+        } else pending.backup.expandedTotalBytes += 1;
         await writeFile(pendingPath, JSON.stringify(pending), "utf8");
       }
       let renames = 0;
@@ -474,9 +478,25 @@ describe("portable archive service", () => {
       expect(opened, item.name).toBe(true);
       expect(getDataCalls, item.name).toBe(0);
       await expect(access(path.join(target, ".portable-import.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(path.join(target, "usage"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(path.join(target, "quota"))).rejects.toMatchObject({ code: "ENOENT" });
       await expect(access(path.join(targetHome, "QuotaBar Backups"))).rejects.toMatchObject({ code: "ENOENT" });
       expect((await fsPromises.readdir(targetHome)).filter((name) => name.includes("portable-import"))).toEqual([]);
     }
+  });
+
+  it("leaves a nonexistent target tree untouched when archive preflight fails", async () => {
+    const root = await tempRoot();
+    const targetHome = path.join(root, "empty-target");
+    const target = path.join(targetHome, ".quotabar-win");
+    let getDataCalls = 0;
+    const malicious = fakeZipEntry("../escape.json", {}, () => { getDataCalls += 1; });
+
+    await expect(stagePortableImport("unused.zip", target, targetHome, {
+      openZip: () => ({ getEntries: () => [malicious] }),
+    })).rejects.toThrow("Portable data import failed");
+    expect(getDataCalls).toBe(0);
+    expect(await fsPromises.readdir(root)).toEqual([]);
   });
 
   it("restores byte-exact originals for every managed apply rename failure position", async () => {
@@ -553,5 +573,25 @@ describe("portable archive service", () => {
     await expect(access(pendingPath)).resolves.toBeUndefined();
     await expect(access(stagingDir)).resolves.toBeUndefined();
     expect(await readFile(path.join(rollbackDir, "settings.json"), "utf8")).toBe("original-settings\n");
+  });
+
+  it("stages, verifies, and applies with a private backup file larger than 64 MiB", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "source", ".quotabar-win");
+    const targetHome = path.join(root, "target-large-backup");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "large-backup.zip");
+    const largeLogPath = path.join(target, "debug", "large.log");
+    const largeSize = MAX_ARCHIVE_FILE_SIZE + 1;
+    await put(source, "settings.json", "{\"costWindow\":\"7d\"}");
+    await put(target, "settings.json", "{\"costWindow\":\"30d\"}");
+    await mkdir(path.dirname(largeLogPath), { recursive: true });
+    await writeFile(largeLogPath, Buffer.alloc(largeSize, 0x61));
+    await exportPortableData(source, archivePath);
+
+    const staged = await stagePortableImport(archivePath, target, targetHome);
+    expect(staged.backupPath).toContain("QuotaBar Backups");
+    await expect(applyPendingImport(target)).resolves.toMatchObject({ applied: true });
+    expect((await fsPromises.stat(largeLogPath)).size).toBe(largeSize);
   });
 });
