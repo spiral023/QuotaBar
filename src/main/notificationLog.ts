@@ -1,5 +1,6 @@
 import fsSync from "node:fs";
 import { getNotificationLogPath } from "../config/paths";
+import { updateAppDataFile } from "../portable/appDataLock";
 import { localISOString } from "./logging";
 import type { NotificationEvent, NotificationSeverity } from "./notificationEngine";
 
@@ -7,10 +8,15 @@ const MAX_BYTES = 1_000_000;
 
 export class NotificationLog {
   private readonly path: string;
+  private pendingWrite: Promise<void> = Promise.resolve();
 
-  constructor() {
-    this.path = getNotificationLogPath();
+  constructor(filePath = getNotificationLogPath()) {
+    this.path = filePath;
     this.append(JSON.stringify({ t: localISOString(new Date()), evt: "start" }));
+  }
+
+  flush(): Promise<void> {
+    return this.pendingWrite;
   }
 
   write(event: NotificationEvent): void {
@@ -55,22 +61,14 @@ export class NotificationLog {
   }
 
   private append(line: string): void {
-    try {
-      this.trimIfNeeded();
-      fsSync.appendFileSync(this.path, line + "\n", "utf8");
-    } catch {
-      // Never crash the tray app due to logging failure
-    }
-  }
-
-  private trimIfNeeded(): void {
-    try {
-      if (fsSync.statSync(this.path).size < MAX_BYTES) return;
-      const lines = fsSync.readFileSync(this.path, "utf8").split("\n").filter(Boolean);
-      const keep = Math.floor(lines.length * 0.7);
-      fsSync.writeFileSync(this.path, lines.slice(lines.length - keep).join("\n") + "\n", "utf8");
-    } catch {
-      // File doesn't exist yet or unreadable — next append creates it fresh
-    }
+    this.pendingWrite = this.pendingWrite.then(() => updateAppDataFile(this.path, (current) => {
+      let existing = current ?? "";
+      if (Buffer.byteLength(existing, "utf8") >= MAX_BYTES) {
+        const lines = existing.split("\n").filter(Boolean);
+        const keep = Math.floor(lines.length * 0.7);
+        existing = lines.slice(lines.length - keep).join("\n") + "\n";
+      }
+      return `${existing}${line}\n`;
+    })).catch(() => undefined);
   }
 }

@@ -10,6 +10,7 @@ import { NotificationEngine, NotificationStateStore } from "./notificationEngine
 import type { NotificationEvent, NotificationOpenTab, PersistedNotificationState } from "./notificationEngine";
 import { NotificationHistory } from "./notificationHistory";
 import { NotificationLog } from "./notificationLog";
+import { writeAppDataFile } from "../portable/appDataLock";
 import { getNotificationStatePath } from "../config/paths";
 import { localISOString, log } from "./logging";
 import { buildMissingPlanNotifications } from "./missingPlanNotifications";
@@ -47,6 +48,7 @@ export class NotificationService {
   private previous: UsageSnapshot[] = [];
   private settings: NotificationSettings;
   private actionHandlers: NotificationActionHandlers | null = null;
+  private pendingStateWrite: Promise<void> = Promise.resolve();
 
   constructor(settings: NotificationSettings) {
     this.settings = settings;
@@ -66,11 +68,10 @@ export class NotificationService {
   }
 
   private savePersistedState(): void {
-    try {
-      fsSync.writeFileSync(getNotificationStatePath(), JSON.stringify(this.state.serialize()), "utf8");
-    } catch {
-      // Best-effort — never crash the app
-    }
+    const serialized = this.state.serialize();
+    this.pendingStateWrite = this.pendingStateWrite
+      .then(() => saveNotificationStateFile(getNotificationStatePath(), serialized))
+      .catch(() => undefined);
   }
 
   updateSettings(settings: NotificationSettings): void {
@@ -276,6 +277,10 @@ export class NotificationService {
     this.history.add([entry]);
     log.info(`Notification rule ${ruleId} muted via toast action`);
   }
+}
+
+export async function saveNotificationStateFile(filePath: string, state: unknown): Promise<void> {
+  await writeAppDataFile(filePath, JSON.stringify(state));
 }
 
 export function buildNotificationOptions(event: NotificationEvent, withActions = false): NotificationConstructorOptions {

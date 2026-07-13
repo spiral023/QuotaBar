@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import path from "node:path";
+import { writeAppDataFile } from "../portable/appDataLock";
 import { emptyRatioFile, type ProviderRatioState, type WindowRatioFile } from "./windowRatio";
 
 export async function loadWindowRatioFile(filePath: string): Promise<WindowRatioFile> {
@@ -13,8 +13,7 @@ export async function loadWindowRatioFile(filePath: string): Promise<WindowRatio
 }
 
 export async function saveWindowRatioFile(filePath: string, file: WindowRatioFile): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+  await writeAppDataFile(filePath, `${JSON.stringify(file, null, 2)}\n`);
 }
 
 function isWindowRatioFile(value: unknown): value is WindowRatioFile {

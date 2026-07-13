@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { ensureConfigDir } from "../main/logging";
 import { DEFAULT_PROVIDER_ORDER, normalizeProviderOrder } from "../providers/providerOrder";
 import { getSettingsPath } from "./paths";
+import { writeAppDataFile } from "../portable/appDataLock";
 
 export type CostWindow = "7d" | "30d" | "all";
 export type ViewMode = "dashboard" | "compact";
@@ -178,9 +180,10 @@ export async function loadSettings(overrides: Partial<Settings> = {}): Promise<S
   }
 }
 
-export async function saveSettings(settings: Settings): Promise<void> {
-  await ensureConfigDir();
-  await fs.writeFile(getSettingsPath(), `${JSON.stringify(normalizeSettings(settings), null, 2)}\n`, "utf8");
+export async function saveSettings(settings: Settings, options: { appDir?: string } = {}): Promise<void> {
+  if (!options.appDir) await ensureConfigDir();
+  const settingsPath = options.appDir ? path.join(options.appDir, "settings.json") : getSettingsPath();
+  await writeAppDataFile(settingsPath, `${JSON.stringify(normalizeSettings(settings), null, 2)}\n`);
 }
 
 /** Begrenzt einen Prozentwert auf 0–100; bei ungültiger Eingabe → Fallback. */

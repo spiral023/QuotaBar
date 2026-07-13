@@ -7,7 +7,9 @@ import path from "node:path";
 import CRC32 from "crc-32";
 import * as yauzl from "yauzl";
 import {
+  MAX_ARCHIVE_ENTRIES,
   MAX_ARCHIVE_FILE_SIZE,
+  MAX_ARCHIVE_TOTAL_SIZE,
   parseArchiveManifest,
   validateArchiveStructure,
   validateZipEntryMetadata,
@@ -15,7 +17,8 @@ import {
   type ArchiveManifest,
 } from "./archiveManifest";
 
-export const MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE = 256 * 1024 * 1024;
+export const MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE = MAX_ARCHIVE_TOTAL_SIZE + 64 * 1024 * 1024;
+export const MAX_CENTRAL_DIRECTORY_METADATA_SIZE = 16 * 1024 * 1024;
 
 export interface SpooledPortableFile {
   path: string;
@@ -33,6 +36,7 @@ export interface StreamingPortablePreflight {
 
 export interface StreamingPreflightOptions {
   onStreamChunk?: (entryPath: string, bytes: number) => void;
+  onCentralDirectoryEntry?: (seen: number, retained: number) => void;
 }
 
 interface Identity {
@@ -54,7 +58,7 @@ export async function preflightPortableZip(
   try {
     const identity = await identityFromHandle(handle);
     const zip = await openZipFromHandle(handle);
-    const entries = await enumerateEntries(zip);
+    const entries = await enumerateEntries(zip, options.onCentralDirectoryEntry);
     const metadata = entries.map(entryMetadata);
     validateZipEntryMetadata(metadata);
     const manifestEntry = entries.find((entry) => entry.fileName === "manifest.json");
@@ -111,15 +115,44 @@ function openZipFromHandle(handle: FileHandle): Promise<yauzl.ZipFile> {
   });
 }
 
-function enumerateEntries(zip: yauzl.ZipFile): Promise<yauzl.Entry[]> {
+function enumerateEntries(
+  zip: yauzl.ZipFile,
+  onEntry?: (seen: number, retained: number) => void,
+): Promise<yauzl.Entry[]> {
   return new Promise((resolve, reject) => {
     const entries: yauzl.Entry[] = [];
-    zip.on("error", reject);
+    let seen = 0;
+    let metadataBytes = 0;
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    zip.on("error", fail);
     zip.on("entry", (entry: yauzl.Entry) => {
+      if (settled) return;
+      seen += 1;
+      if (seen > MAX_ARCHIVE_ENTRIES) {
+        onEntry?.(seen, entries.length);
+        return fail(new Error("Archive contains too many entries"));
+      }
+      const entryMetadataBytes = Buffer.byteLength(entry.fileName, "utf8")
+        + Buffer.byteLength((entry as yauzl.Entry & { fileComment?: string }).fileComment ?? "", "utf8")
+        + entry.extraFields.reduce((sum, field) => sum + 4 + field.data.byteLength, 0);
+      if (metadataBytes > MAX_CENTRAL_DIRECTORY_METADATA_SIZE - entryMetadataBytes) {
+        return fail(new Error("Archive central directory metadata exceeds the limit"));
+      }
+      metadataBytes += entryMetadataBytes;
       entries.push(entry);
+      onEntry?.(seen, entries.length);
       zip.readEntry();
     });
-    zip.on("end", () => resolve(entries));
+    zip.on("end", () => {
+      if (settled) return;
+      settled = true;
+      resolve(entries);
+    });
     zip.readEntry();
   });
 }

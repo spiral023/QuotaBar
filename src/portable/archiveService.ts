@@ -5,6 +5,7 @@ import { createWriteStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { inflateRawSync } from "node:zlib";
 import CRC32 from "crc-32";
@@ -27,7 +28,11 @@ import {
 } from "./archiveManifest";
 import { withNamedPortableRootLock, withPortableRootLock } from "./rootLock";
 import { PORTABLE_STORE_VERSION } from "./types";
-import { preflightPortableZip, type StreamingPortablePreflight } from "./streamingZip";
+import {
+  MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE,
+  preflightPortableZip,
+  type StreamingPortablePreflight,
+} from "./streamingZip";
 
 const QUOTABAR_VERSION = "1.5.0";
 const ARCHIVE_LOCK_DIR = ".portable-store.lock";
@@ -36,7 +41,6 @@ const PENDING_FILE = ".portable-import.pending.json";
 const PENDING_FORMAT = "QuotaBar/pending-import";
 const PENDING_VERSION = 1;
 const MAX_PENDING_SIZE = 64 * 1024;
-const MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE = 256 * 1024 * 1024;
 
 export interface ArchiveOperationResult {
   path: string;
@@ -59,12 +63,25 @@ export interface ArchiveApplyDependencies {
   rename?: typeof fs.rename;
   removeTree?: (directory: string) => Promise<void>;
   unlinkPending?: (filePath: string) => Promise<void>;
+  pendingWriteCheckpoint?: (checkpoint: PendingWriteCheckpoint) => Promise<void>;
 }
+
+export type PendingWriteCheckpoint = "before-temp-write" | "after-temp-write" | "after-temp-fsync" | "after-rename";
 
 export interface ArchiveImportDependencies {
   openZip?: (zipPath: string) => Pick<AdmZip, "getEntries">;
   skipSourceIdentity?: boolean;
   onStreamChunk?: (entryPath: string, bytes: number) => void;
+}
+
+export interface ArchiveExportDependencies {
+  maximumArchiveBytes?: number;
+}
+
+export interface ArchiveBackupDependencies {
+  afterSnapshot?: () => Promise<void>;
+  beforeVerification?: () => Promise<void>;
+  forceZip64Format?: boolean;
 }
 
 interface SafeFile {
@@ -112,7 +129,11 @@ interface PendingBackup {
   expandedTotalBytes: number;
 }
 
-export async function exportPortableData(appDir: string, destinationZip: string): Promise<ArchiveOperationResult> {
+export async function exportPortableData(
+  appDir: string,
+  destinationZip: string,
+  dependencies: ArchiveExportDependencies = {},
+): Promise<ArchiveOperationResult> {
   return genericFailure("Portable data export failed", () => withArchiveLocks(appDir, async () => {
     const partialPath = `${destinationZip}.partial`;
     await removeFileIfPresent(partialPath);
@@ -122,9 +143,17 @@ export async function exportPortableData(appDir: string, destinationZip: string)
         .filter((file) => isPortableArchivePath(file.path) && file.path !== "manifest.json");
       const manifest = manifestFromSnapshots(files);
       await fs.mkdir(path.dirname(destinationZip), { recursive: true });
-      await writeStreamingZip(partialPath, files, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8"));
+      await writeStreamingZip(
+        partialPath,
+        files,
+        Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8"),
+        dependencies.maximumArchiveBytes ?? MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE,
+        false,
+        false,
+      );
       await verifySnapshotFiles(files);
-      await validatePortableZip(partialPath);
+      const verified = await preflightPortableZip(partialPath);
+      await verified.cleanup();
       await fs.rename(partialPath, destinationZip);
       return summarizeSnapshots(destinationZip, files);
     } catch {
@@ -134,9 +163,13 @@ export async function exportPortableData(appDir: string, destinationZip: string)
   }));
 }
 
-export async function createFullBackup(appDir: string, backupZip: string): Promise<ArchiveOperationResult> {
+export async function createFullBackup(
+  appDir: string,
+  backupZip: string,
+  dependencies: ArchiveBackupDependencies = {},
+): Promise<ArchiveOperationResult> {
   return genericFailure("QuotaBar backup failed", () =>
-    withArchiveLocks(appDir, async () => createFullBackupUnlocked(appDir, backupZip)));
+    withArchiveLocks(appDir, async () => createFullBackupUnlocked(appDir, backupZip, dependencies)));
 }
 
 export async function stagePortableImport(
@@ -263,6 +296,7 @@ export async function applyPendingImport(
     const pendingPath = path.join(appDir, PENDING_FILE);
     let raw: Buffer;
     try {
+      await cleanupPendingTemps(appDir);
       const pendingInfo = await fs.lstat(pendingPath);
       if (!pendingInfo.isFile() || pendingInfo.isSymbolicLink() || pendingInfo.size > MAX_PENDING_SIZE) {
         throw new Error("Invalid pending import metadata");
@@ -298,7 +332,7 @@ export async function applyPendingImport(
       const ingest = await readStagedOrAppliedFile(stagingDir, appDir, ingestPath);
       verifyFreshIngestState(ingest.data);
       await ensureOwnedDirectory(rollbackDir);
-      await updatePendingPhase(pendingPath, pending, "applying");
+      await updatePendingPhase(appDir, pendingPath, pending, "applying", dependencies.pendingWriteCheckpoint);
       try {
         for (const relativePath of pending.replacePaths) {
           const imported = stagedByPath.get(relativePath);
@@ -306,11 +340,11 @@ export async function applyPendingImport(
         }
       } catch {
         await rollbackAll(appDir, stagingDir, rollbackDir, pending.replacePaths, stagedByPath, rename);
-        await updatePendingPhase(pendingPath, pending, "prepared");
+        await updatePendingPhase(appDir, pendingPath, pending, "prepared", dependencies.pendingWriteCheckpoint);
         throw new Error("apply");
       }
       await verifyCommittedLive(appDir, pending.stagedEntries);
-      await updatePendingPhase(pendingPath, pending, "committed");
+      await updatePendingPhase(appDir, pendingPath, pending, "committed", dependencies.pendingWriteCheckpoint);
       await removeTree(rollbackDir);
       await removeTree(stagingDir);
       await unlinkPending(pendingPath);
@@ -331,7 +365,11 @@ async function verifyReferencedBackup(appDir: string, pending: PendingImport): P
   await verifyBackupArchive(backupPath, pending.backup);
 }
 
-async function verifyBackupArchive(backupPath: string, expected: PendingBackup): Promise<void> {
+async function verifyBackupArchive(
+  backupPath: string,
+  expected: PendingBackup,
+  expectedFiles?: readonly SnapshotFile[],
+): Promise<void> {
   const info = await fs.lstat(backupPath);
   if (!info.isFile() || info.isSymbolicLink() || info.size !== expected.archiveSize) {
     throw new Error("Invalid referenced backup");
@@ -340,7 +378,7 @@ async function verifyBackupArchive(backupPath: string, expected: PendingBackup):
   try {
     const before = await fileIdentityFromHandle(handle);
     assertIdentityMatches(before, expected);
-    await verifyBackupEntriesFromFd(handle.fd, expected);
+    await verifyBackupEntriesFromFd(handle.fd, expected, expectedFiles);
     const after = await fileIdentityFromHandle(handle);
     assertIdentityMatches(after, expected);
   } finally {
@@ -348,7 +386,12 @@ async function verifyBackupArchive(backupPath: string, expected: PendingBackup):
   }
 }
 
-function verifyBackupEntriesFromFd(fd: number, expected: PendingBackup): Promise<void> {
+function verifyBackupEntriesFromFd(
+  fd: number,
+  expected: PendingBackup,
+  expectedFiles?: readonly SnapshotFile[],
+): Promise<void> {
+  const expectedByPath = expectedFiles ? new Map(expectedFiles.map((file) => [file.path, file])) : undefined;
   return new Promise((resolve, reject) => {
     yauzl.fromFd(fd, {
       autoClose: false,
@@ -374,7 +417,6 @@ function verifyBackupEntriesFromFd(fd: number, expected: PendingBackup): Promise
         try {
           if (entry.fileName.endsWith("/")
             || entry.isEncrypted()
-            || entry.extraFields.some((field) => field.id === 0x0001)
             || !isSafeNonNegativeInteger(entry.uncompressedSize)
             || !isSafeNonNegativeInteger(entry.compressedSize)) {
             throw new Error("Invalid referenced backup");
@@ -389,14 +431,20 @@ function verifyBackupEntriesFromFd(fd: number, expected: PendingBackup): Promise
             if (streamError) return fail(streamError);
             let expanded = 0;
             let crc = 0;
+            const hash = createHash("sha256");
             stream.on("data", (chunk: Buffer) => {
               expanded += chunk.byteLength;
               crc = CRC32.buf(chunk, crc);
+              hash.update(chunk);
               if (expanded > entry.uncompressedSize) stream.destroy(new Error("Invalid referenced backup"));
             });
             stream.once("error", fail);
             stream.once("end", () => {
               if (expanded !== entry.uncompressedSize || (crc >>> 0) !== (entry.crc32 >>> 0)) {
+                return fail(new Error("Invalid referenced backup"));
+              }
+              const expectedFile = expectedByPath?.get(archivePath);
+              if (expectedByPath && (!expectedFile || expectedFile.size !== expanded || expectedFile.sha256 !== hash.digest("hex"))) {
                 return fail(new Error("Invalid referenced backup"));
               }
               zip.readEntry();
@@ -425,7 +473,11 @@ function assertIdentityMatches(actual: FileIdentity, expected: Pick<PendingBacku
   }
 }
 
-async function createFullBackupUnlocked(appDir: string, backupZip: string): Promise<ArchiveOperationResult> {
+async function createFullBackupUnlocked(
+  appDir: string,
+  backupZip: string,
+  dependencies: ArchiveBackupDependencies = {},
+): Promise<ArchiveOperationResult> {
   const partialPath = `${backupZip}.partial`;
   let destinationApproved = false;
   try {
@@ -434,8 +486,16 @@ async function createFullBackupUnlocked(appDir: string, backupZip: string): Prom
     await removeFileIfPresent(partialPath);
     await assertDestinationAvailable(backupZip);
     const files = await snapshotAppFiles(appDir);
+    await dependencies.afterSnapshot?.();
     await fs.mkdir(path.dirname(backupZip), { recursive: true });
-    await writeStreamingZip(partialPath, files);
+    await writeStreamingZip(
+      partialPath,
+      files,
+      undefined,
+      MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE,
+      dependencies.forceZip64Format ?? false,
+    );
+    await dependencies.beforeVerification?.();
     await verifySnapshotFiles(files);
     const identity = await fileIdentity(partialPath);
     await verifyBackupArchive(partialPath, {
@@ -444,7 +504,7 @@ async function createFullBackupUnlocked(appDir: string, backupZip: string): Prom
       sha256: identity.sha256,
       entryCount: files.length,
       expandedTotalBytes: files.reduce((sum, file) => sum + file.size, 0),
-    });
+    }, files);
     await fs.rename(partialPath, backupZip);
     return summarizeSnapshots(backupZip, files);
   } catch {
@@ -605,21 +665,17 @@ function parseStagedEntries(values: unknown[], manifest: ArchiveManifest): Archi
 }
 
 async function updatePendingPhase(
+  appDir: string,
   pendingPath: string,
   pending: PendingImport,
   phase: PendingImport["phase"],
+  checkpoint?: (checkpoint: PendingWriteCheckpoint) => Promise<void>,
 ): Promise<void> {
-  pending.phase = phase;
-  const data = Buffer.from(`${JSON.stringify(pending, null, 2)}\n`, "utf8");
+  const updated = { ...pending, phase };
+  const data = Buffer.from(`${JSON.stringify(updated, null, 2)}\n`, "utf8");
   if (data.byteLength > MAX_PENDING_SIZE) throw new Error("Invalid pending import metadata");
-  const handle = await fs.open(pendingPath, "r+");
-  try {
-    await handle.truncate(0);
-    await handle.writeFile(data);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
+  await atomicWritePending(appDir, pendingPath, data, true, checkpoint);
+  pending.phase = phase;
 }
 
 async function verifyCommittedLive(appDir: string, entries: readonly ArchiveManifestEntry[]): Promise<void> {
@@ -705,8 +761,17 @@ async function applyOnePath(
     return;
   }
   if (!rollbackExists && liveExists) {
+    const original = await readRequiredSafeFile(appDir, relativePath);
     await ensureSafeParents(rollbackDir, relativePath);
-    await rename(livePath, rollbackPath);
+    try {
+      await renameWithBoundParents(livePath, rollbackPath, rename);
+    } catch (error) {
+      if (!await safeRegularFileExists(livePath)) {
+        await ensureSafeParents(appDir, relativePath);
+        await writeNewContainedFile(appDir, relativePath, original.data);
+      }
+      throw error;
+    }
   } else if (rollbackExists && liveExists) {
     throw new Error("Invalid interrupted import state");
   }
@@ -714,7 +779,7 @@ async function applyOnePath(
     if (!stagedExists) throw new Error("Invalid interrupted import state");
     await verifyManagedEntry(stagingDir, imported);
     await ensureSafeParents(appDir, relativePath);
-    await rename(stagedPath, livePath);
+    await renameWithBoundParents(stagedPath, livePath, rename);
     await verifyManagedEntry(appDir, imported);
   }
 }
@@ -746,15 +811,15 @@ async function rollbackAll(
           // A replaced post-rename live file is quarantined before restoring the rollback copy.
         }
         if (importedMatches) {
-          await rename(livePath, stagedPath);
+          await renameWithBoundParents(livePath, stagedPath, rename);
         } else {
-          await rename(livePath, `${stagedPath}.corrupt-${randomUUID()}`);
+          await renameWithBoundParents(livePath, `${stagedPath}.corrupt-${randomUUID()}`, rename);
         }
       }
       if (await safeRegularFileExists(rollbackPath)) {
         if (await safeRegularFileExists(livePath)) throw new Error("Live target occupied during rollback");
         await ensureSafeParents(appDir, relativePath);
-        await rename(rollbackPath, livePath);
+        await renameWithBoundParents(rollbackPath, livePath, rename);
       }
     } catch (error) {
       rollbackError ??= error;
@@ -770,22 +835,66 @@ async function verifyManagedEntry(root: string, entry: ArchiveManifestEntry): Pr
   }
 }
 
+async function renameWithBoundParents(from: string, to: string, rename: typeof fs.rename): Promise<void> {
+  const sourceParent = path.dirname(from);
+  const targetParent = path.dirname(to);
+  const sourceBinding = await bindDirectory(sourceParent);
+  const targetBinding = sourceParent === targetParent ? sourceBinding : await bindDirectory(targetParent);
+  try {
+    await assertDirectoryBinding(sourceBinding);
+    await assertDirectoryBinding(targetBinding);
+    await rename(from, to);
+    await assertDirectoryBinding(sourceBinding);
+    await assertDirectoryBinding(targetBinding);
+  } finally {
+    if (targetBinding !== sourceBinding) await targetBinding.handle.close();
+    await sourceBinding.handle.close();
+  }
+}
+
 async function writePending(appDir: string, pending: PendingImport): Promise<void> {
   const pendingPath = path.join(appDir, PENDING_FILE);
-  const temporaryPath = `${pendingPath}.${randomUUID()}.tmp`;
   const data = Buffer.from(`${JSON.stringify(pending, null, 2)}\n`, "utf8");
-  const handle = await fs.open(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+  if (data.byteLength > MAX_PENDING_SIZE) throw new Error("Invalid pending import metadata");
+  await atomicWritePending(appDir, pendingPath, data, false);
+}
+
+async function atomicWritePending(
+  appDir: string,
+  pendingPath: string,
+  data: Buffer,
+  replace: boolean,
+  checkpoint?: (checkpoint: PendingWriteCheckpoint) => Promise<void>,
+): Promise<void> {
+  const parentBinding = await bindDirectory(appDir);
+  const temporaryPath = `${pendingPath}.${randomUUID()}.tmp`;
+  let temporaryExists = false;
   try {
-    await handle.writeFile(data);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
+    await checkpoint?.("before-temp-write");
+    const handle = await fs.open(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+    temporaryExists = true;
+    try {
+      await handle.writeFile(data);
+      await checkpoint?.("after-temp-write");
+      await handle.sync();
+      await checkpoint?.("after-temp-fsync");
+    } finally {
+      await handle.close();
+    }
+    await assertDirectoryBinding(parentBinding);
+    if (replace) await assertRegularPending(pendingPath);
+    else await assertPathMissing(pendingPath);
     await fs.rename(temporaryPath, pendingPath);
+    temporaryExists = false;
+    await checkpoint?.("after-rename");
+    await assertDirectoryBinding(parentBinding);
+    await assertRegularPending(pendingPath);
+    await syncDirectoryIfSupported(appDir);
   } catch (error) {
-    await removeFileIfPresent(temporaryPath);
+    if (temporaryExists) await removeFileIfPresent(temporaryPath).catch(() => undefined);
     throw error;
+  } finally {
+    await parentBinding.handle.close();
   }
 }
 
@@ -881,11 +990,94 @@ async function assertTargetHome(appDir: string, targetHome: string): Promise<voi
 }
 
 async function assertPendingMissing(appDir: string): Promise<void> {
+  await cleanupPendingTemps(appDir);
+  await assertPathMissing(path.join(appDir, PENDING_FILE));
+}
+
+async function assertPathMissing(filePath: string): Promise<void> {
   try {
-    await fs.lstat(path.join(appDir, PENDING_FILE));
+    await fs.lstat(filePath);
     throw new Error("Pending import already exists");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+async function assertRegularPending(filePath: string): Promise<void> {
+  const info = await fs.lstat(filePath);
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error("Unsafe pending import path");
+}
+
+interface DirectoryIdentity {
+  device: number;
+  inode: number;
+  realPath: string;
+}
+
+interface DirectoryBinding extends DirectoryIdentity {
+  directory: string;
+  handle: FileHandle;
+}
+
+async function directoryIdentity(directory: string): Promise<DirectoryIdentity> {
+  const info = await fs.lstat(directory);
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Unsafe pending import parent");
+  return { device: info.dev, inode: info.ino, realPath: await fs.realpath(directory) };
+}
+
+async function assertDirectoryIdentity(directory: string, expected: DirectoryIdentity): Promise<void> {
+  const actual = await directoryIdentity(directory);
+  if (actual.device !== expected.device || actual.inode !== expected.inode || actual.realPath !== expected.realPath) {
+    throw new Error("Pending import parent changed");
+  }
+}
+
+async function bindDirectory(directory: string): Promise<DirectoryBinding> {
+  const identity = await directoryIdentity(directory);
+  const handle = await fs.open(directory, constants.O_RDONLY);
+  try {
+    const info = await handle.stat();
+    if (!info.isDirectory() || info.dev !== identity.device || info.ino !== identity.inode) {
+      throw new Error("Managed rename parent changed");
+    }
+    return { ...identity, directory, handle };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+async function assertDirectoryBinding(binding: DirectoryBinding): Promise<void> {
+  await assertDirectoryIdentity(binding.directory, binding);
+  const info = await binding.handle.stat();
+  if (!info.isDirectory() || info.dev !== binding.device || info.ino !== binding.inode) {
+    throw new Error("Managed rename parent changed");
+  }
+}
+
+async function syncDirectoryIfSupported(directory: string): Promise<void> {
+  try {
+    const handle = await fs.open(directory, constants.O_RDONLY);
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (!["EINVAL", "EISDIR", "ENOTSUP", "EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+  }
+}
+
+async function cleanupPendingTemps(appDir: string): Promise<void> {
+  const prefix = `${PENDING_FILE}.`;
+  for (const entry of await fs.readdir(appDir, { withFileTypes: true })) {
+    if (!entry.name.startsWith(prefix) || !entry.name.endsWith(".tmp")) continue;
+    const token = entry.name.slice(prefix.length, -4);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(token)) continue;
+    const candidate = path.join(appDir, entry.name);
+    const info = await fs.lstat(candidate);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error("Unsafe pending import temporary path");
+    await fs.unlink(candidate);
   }
 }
 
@@ -987,14 +1179,24 @@ async function writeStreamingZip(
   destination: string,
   files: readonly SnapshotFile[],
   manifest?: Buffer,
+  maximumArchiveBytes = MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE,
+  forceZip64Format = false,
+  compressFiles = true,
 ): Promise<void> {
   const zip = new YazlZipFile();
   for (const file of files) {
-    zip.addFile(file.absolutePath, file.path, { compress: true, forceZip64Format: file.size > 0xffff_ffff });
+    zip.addFile(file.absolutePath, file.path, { compress: compressFiles, forceZip64Format: forceZip64Format || file.size > 0xffff_ffff });
   }
   if (manifest) zip.addBuffer(manifest, "manifest.json", { compress: true });
-  const writing = pipeline(zip.outputStream, createWriteStream(destination, { flags: "wx", mode: 0o600 }));
-  zip.end();
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      outputBytes += chunk.byteLength;
+      callback(outputBytes > maximumArchiveBytes ? new Error("Archive output exceeds the size limit") : undefined, chunk);
+    },
+  });
+  let outputBytes = 0;
+  const writing = pipeline(zip.outputStream, limiter, createWriteStream(destination, { flags: "wx", mode: 0o600 }));
+  zip.end({ forceZip64Format, comment: "" });
   await writing;
 }
 

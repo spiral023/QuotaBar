@@ -1,10 +1,13 @@
 import AdmZip from "adm-zip";
 import { randomBytes } from "node:crypto";
+import { createWriteStream } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import { ZipFile as YazlZipFile } from "yazl";
 import {
   MAX_ARCHIVE_ENTRIES,
   MAX_ARCHIVE_FILE_SIZE,
@@ -18,6 +21,8 @@ import {
   exportPortableData,
   stagePortableImport,
 } from "../src/portable/archiveService";
+import { preflightPortableZip } from "../src/portable/streamingZip";
+import { MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE } from "../src/portable/streamingZip";
 
 const roots: string[] = [];
 
@@ -35,6 +40,14 @@ async function put(root: string, relativePath: string, data: string): Promise<vo
   const target = path.join(root, ...relativePath.split("/"));
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, data, "utf8");
+}
+
+async function writeSyntheticZip(target: string, addEntries: (zip: YazlZipFile) => void): Promise<void> {
+  const zip = new YazlZipFile();
+  addEntries(zip);
+  const writing = pipeline(zip.outputStream, createWriteStream(target));
+  zip.end();
+  await writing;
 }
 
 function fakeZipEntry(
@@ -531,7 +544,7 @@ describe("portable archive service", () => {
     const root = await tempRoot();
     const archivePath = path.join(root, "oversized-source.zip");
     const handle = await fsPromises.open(archivePath, "w");
-    await handle.truncate(256 * 1024 * 1024 + 1);
+    await handle.truncate(MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE + 1);
     await handle.close();
     const targetHome = path.join(root, "target");
     const target = path.join(targetHome, ".quotabar-win");
@@ -756,5 +769,168 @@ describe("portable archive service", () => {
     expect(swapped).toBe(true);
     expect(await readFile(path.join(external, "marker.txt"), "utf8")).toBe("keep-me");
     await expect(access(pendingPath)).resolves.toBeUndefined();
+  });
+
+  it("stops central-directory collection at entry 25,001 without retaining the overflow entry", async () => {
+    const root = await tempRoot();
+    const archivePath = path.join(root, "too-many.zip");
+    await writeSyntheticZip(archivePath, (zip) => {
+      for (let index = 0; index <= MAX_ARCHIVE_ENTRIES; index += 1) {
+        zip.addBuffer(Buffer.alloc(0), `quota/${index}.jsonl`, { compress: false });
+      }
+    });
+    let observed = 0;
+    let maximumRetained = 0;
+
+    await expect(preflightPortableZip(archivePath, {
+      onCentralDirectoryEntry: (seen, retained) => {
+        observed = seen;
+        maximumRetained = Math.max(maximumRetained, retained);
+      },
+    })).rejects.toThrow("Archive contains too many entries");
+    expect(observed).toBe(MAX_ARCHIVE_ENTRIES + 1);
+    expect(maximumRetained).toBe(MAX_ARCHIVE_ENTRIES);
+  });
+
+  it("rejects excessive cumulative central-directory metadata before reading payloads", async () => {
+    const root = await tempRoot();
+    const archivePath = path.join(root, "metadata-bomb.zip");
+    const comment = "x".repeat(60_000);
+    await writeSyntheticZip(archivePath, (zip) => {
+      for (let index = 0; index < 300; index += 1) {
+        zip.addBuffer(Buffer.alloc(0), `quota/${index}.jsonl`, { compress: false, fileComment: comment });
+      }
+    });
+    let payloadChunks = 0;
+
+    await expect(preflightPortableZip(archivePath, {
+      onStreamChunk: () => { payloadChunks += 1; },
+    })).rejects.toThrow("Archive central directory metadata exceeds the limit");
+    expect(payloadChunks).toBe(0);
+  });
+
+  it("uses one portable cap that permits a valid incompressible archive above 256 MiB", async () => {
+    expect(MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE).toBeGreaterThan(256 * 1024 * 1024);
+  });
+
+  it("exports and imports a practical incompressible portable archive above 256 MiB", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "large-incompressible-source", ".quotabar-win");
+    const targetHome = path.join(root, "large-incompressible-target");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "large-incompressible.zip");
+    await mkdir(path.join(source, "quota"), { recursive: true });
+    for (let index = 0; index < 4; index += 1) {
+      await writeFile(path.join(source, "quota", `${index}.jsonl`), randomBytes(MAX_ARCHIVE_FILE_SIZE));
+    }
+    await put(target, "settings.json", "{}");
+
+    await exportPortableData(source, archivePath);
+    expect((await fsPromises.stat(archivePath)).size).toBeGreaterThan(256 * 1024 * 1024);
+    await expect(stagePortableImport(archivePath, target, targetHome)).resolves.toMatchObject({ pending: true, fileCount: 4 });
+  }, 120_000);
+
+  it("removes a partial export when the streaming output cap is exceeded", async () => {
+    const root = await tempRoot();
+    const appDir = path.join(root, ".quotabar-win");
+    const archivePath = path.join(root, "capped.zip");
+    await mkdir(path.join(appDir, "quota"), { recursive: true });
+    await writeFile(path.join(appDir, "quota/data.jsonl"), randomBytes(2 * 1024 * 1024));
+
+    await expect(exportPortableData(appDir, archivePath, { maximumArchiveBytes: 1024 }))
+      .rejects.toThrow("Portable data export failed");
+    await expect(access(archivePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(`${archivePath}.partial`)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps pending metadata parseable across every atomic phase-write crash boundary", async () => {
+    for (const crashAt of ["before-temp-write", "after-temp-write", "after-temp-fsync", "after-rename"] as const) {
+      const root = await tempRoot();
+      const source = path.join(root, `source-${crashAt}`, ".quotabar-win");
+      const targetHome = path.join(root, `target-${crashAt}`);
+      const target = path.join(targetHome, ".quotabar-win");
+      const archivePath = path.join(root, `${crashAt}.zip`);
+      await put(source, "settings.json", "{\"costWindow\":\"7d\"}");
+      await put(target, "settings.json", "{\"costWindow\":\"30d\"}");
+      await exportPortableData(source, archivePath);
+      await stagePortableImport(archivePath, target, targetHome);
+      const pendingPath = path.join(target, ".portable-import.pending.json");
+      let crashed = false;
+
+      await expect(applyPendingImport(target, {
+        pendingWriteCheckpoint: async (checkpoint) => {
+          if (!crashed && checkpoint === crashAt) {
+            crashed = true;
+            throw new Error("simulated pending phase crash");
+          }
+        },
+      })).rejects.toThrow("Portable data apply failed");
+      expect(crashed).toBe(true);
+      const pendingText = await readFile(pendingPath, "utf8");
+      expect(() => JSON.parse(pendingText)).not.toThrow();
+      await expect(applyPendingImport(target)).resolves.toMatchObject({ applied: true });
+      expect((await fsPromises.readdir(target)).filter((name) => name.includes("pending.json.") && name.endsWith(".tmp")))
+        .toEqual([]);
+    }
+  });
+
+  it("rejects a full backup whose source changes A-to-B-to-A around the streaming writer", async () => {
+    const root = await tempRoot();
+    const appDir = path.join(root, ".quotabar-win");
+    const backupPath = path.join(root, "QuotaBar Backups", "swap.zip");
+    const settingsPath = path.join(appDir, "settings.json");
+    await put(appDir, "settings.json", "original-A");
+
+    await expect(createFullBackup(appDir, backupPath, {
+      afterSnapshot: async () => { await writeFile(settingsPath, "replacement-B"); },
+      beforeVerification: async () => { await writeFile(settingsPath, "original-A"); },
+    })).rejects.toThrow("QuotaBar backup failed");
+    await expect(access(backupPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(`${backupPath}.partial`)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("writes and verifies private ZIP64 backups while portable ZIP64 remains forbidden", async () => {
+    const root = await tempRoot();
+    const appDir = path.join(root, ".quotabar-win");
+    const backupPath = path.join(root, "QuotaBar Backups", "zip64.zip");
+    await put(appDir, "settings.json", "small-private-backup");
+
+    await expect(createFullBackup(appDir, backupPath, { forceZip64Format: true }))
+      .resolves.toMatchObject({ path: backupPath, fileCount: 1 });
+    const bytes = await readFile(backupPath);
+    expect(bytes.includes(Buffer.from([0x50, 0x4b, 0x06, 0x06]))).toBe(true);
+  });
+
+  it("restores root settings when the rollback parent is replaced by a junction at the rename boundary", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "source-parent-swap", ".quotabar-win");
+    const targetHome = path.join(root, "target-parent-swap");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "parent-swap.zip");
+    const external = path.join(root, "external-parent-swap");
+    const original = "{\"costWindow\":\"30d\"}\n";
+    await put(source, "settings.json", "{\"costWindow\":\"7d\"}");
+    await put(target, "settings.json", original);
+    await put(external, "marker.txt", "external-must-survive");
+    await exportPortableData(source, archivePath);
+    await stagePortableImport(archivePath, target, targetHome);
+    const pending = JSON.parse(await readFile(path.join(target, ".portable-import.pending.json"), "utf8"));
+    const rollbackDir = path.join(targetHome, pending.rollbackDirectory);
+    const displaced = `${rollbackDir}.displaced`;
+    let swapped = false;
+    const rename: typeof fsPromises.rename = async (from, to) => {
+      await fsPromises.rename(from, to);
+      if (!swapped && from === path.join(target, "settings.json")) {
+        swapped = true;
+        await fsPromises.rename(rollbackDir, displaced);
+        await symlink(external, rollbackDir, "junction");
+      }
+    };
+
+    await expect(applyPendingImport(target, { rename })).rejects.toThrow("Portable data apply failed");
+    expect(swapped).toBe(true);
+    expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe(original);
+    expect(await readFile(path.join(external, "marker.txt"), "utf8")).toBe("external-must-survive");
+    expect(await readFile(path.join(displaced, "settings.json"), "utf8")).toBe(original);
   });
 });
