@@ -354,7 +354,7 @@ export class DetailsWindowController {
 
     ipcMain.handle("reports:get", async (_, request: ReportRequest) => {
       const settings = await loadRuntimeSettings();
-      const report = await generateUsageReport(request, { settings });
+      const report = await generateUsageReport({ ...request, source: "portable" }, { settings });
       const sinceDay = request.since ?? report.rows[0]?.bucket?.slice(0, 10);
       const untilDay = request.until ?? new Date().toISOString().slice(0, 10);
       const planChanges = (sinceDay && untilDay) ? [
@@ -366,7 +366,7 @@ export class DetailsWindowController {
 
     ipcMain.handle("reports:copy-json", async (_, request: ReportRequest) => {
       const settings = await loadRuntimeSettings();
-      const report = await generateUsageReport(request, { settings });
+      const report = await generateUsageReport({ ...request, source: "portable" }, { settings });
       clipboard.writeText(JSON.stringify(report, null, 2));
       return { ok: true };
     });

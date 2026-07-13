@@ -16,7 +16,7 @@ export interface ReportRequest {
   codexSpeed?: CodexSpeed;
   order?: ReportOrder;
   breakdown?: boolean;
-  source?: "live" | "backfill";
+  source?: "portable" | "legacy";
   limit?: number;
 }
 

@@ -131,7 +131,6 @@ QB.clearAnalyticsCache = function clearAnalyticsCache() {
 async function _fetchMinDate() {
   try {
     const report = await QB.ipc.invoke('reports:get', {
-      source:    'backfill',
       type:      'daily',
       order:     'asc',
       timezone:  Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -526,7 +525,7 @@ async function _ensureHourlyBuckets() {
   if (_hourlyBuckets !== null) return;
   try {
     const base = {
-      source: 'live', type: 'hourly', limit: 168,
+      type: 'hourly', limit: 168,
       since: _from || undefined, until: _to || undefined,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       order: 'asc', breakdown: false,

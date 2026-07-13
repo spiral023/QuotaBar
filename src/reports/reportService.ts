@@ -7,6 +7,9 @@ import { calculateCostBreakdown, sumBreakdown, ZERO_BREAKDOWN } from "../pricing
 import { readClaudeUsageEntriesForPeriod, type ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
+import { toClaudeEntries, toCodexEvents } from "../portable/eventAdapters";
+import type { PortableUsageEvent } from "../portable/types";
+import { PortableUsageStore } from "../portable/usageStore";
 import { readBackfillDayRecords } from "./backfill-reader";
 import type { BackfillDayRecord, BackfillPerModelEntry } from "./types";
 import type { CostMode, ModelBreakdown, ReportRequest, ReportResult, ReportRow, ReportTotals } from "./types";
@@ -23,6 +26,10 @@ export interface ReportDeps {
   backfillLogDir?: string;
   backfillRecords?: BackfillDayRecord[];
   pricingResolver?: HistoricalPricingResolver;
+  usageEvents?: PortableUsageEvent[];
+  usageStore?: PortableUsageStore;
+  readClaudeEntries?: typeof readClaudeUsageEntriesForPeriod;
+  readCodexEvents?: typeof readCodexTokensForPeriod;
 }
 
 const ZERO_TOTALS: ReportTotals = {
@@ -37,7 +44,8 @@ const ZERO_TOTALS: ReportTotals = {
 export async function generateUsageReport(request: ReportRequest, deps: ReportDeps = {}): Promise<ReportResult> {
   const normalized = normalizeRequest(request);
 
-  const useBackfill = normalized.source === "backfill"
+  const useBackfill = normalized.source === "legacy"
+    && (deps.backfillRecords !== undefined || deps.backfillLogDir !== undefined)
     && normalized.type !== "session"
     && !normalized.project
     && !normalized.instances;
@@ -68,13 +76,27 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
     codexHomes: settings.codexHomes ?? [],
   };
 
+  const portableEvents = normalized.source === "portable"
+    ? deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(portableReadRange(normalized.since, normalized.until))
+    : undefined;
+
   if (normalized.provider === "all" || normalized.provider === "claude") {
-    const entries = deps.claudeEntries ?? await readClaudeUsageEntriesForPeriod(deps.claudeProjectsDirs ?? getClaudeProjectsDirs(pathContext), start);
+    const entries = portableEvents
+      ? toClaudeEntries(portableEvents)
+      : deps.claudeEntries ?? await (deps.readClaudeEntries ?? readClaudeUsageEntriesForPeriod)(
+        deps.claudeProjectsDirs ?? getClaudeProjectsDirs(pathContext),
+        start,
+      );
     rows.push(...(await buildClaudeRows(entries, normalized, pricingResolver)));
   }
 
   if (normalized.provider === "all" || normalized.provider === "codex") {
-    const events = deps.codexEvents ?? await readCodexTokensForPeriod(deps.codexSessionsDirs ?? getCodexSessionsDirs(pathContext), start);
+    const events = portableEvents
+      ? toCodexEvents(portableEvents)
+      : deps.codexEvents ?? await (deps.readCodexEvents ?? readCodexTokensForPeriod)(
+        deps.codexSessionsDirs ?? getCodexSessionsDirs(pathContext),
+        start,
+      );
     const speed = normalized.codexSpeed === "auto"
       ? await readCodexSpeedTierFromPaths(deps.codexConfigPaths ?? getCodexConfigPaths(pathContext))
       : normalized.codexSpeed;
@@ -348,9 +370,22 @@ function normalizeRequest(request: ReportRequest) {
     codexSpeed: request.codexSpeed ?? "auto",
     order: request.order ?? "desc",
     breakdown: Boolean(request.breakdown),
-    source: request.source ?? "live",
+    source: request.source ?? "portable",
     limit: request.limit ? Math.max(1, Math.floor(Number(request.limit))) : undefined,
   } as const;
+}
+
+function portableReadRange(since?: string, until?: string): { since?: string; until?: string } {
+  return {
+    ...(since ? { since: shiftedUtcBoundary(since, -1, false) } : {}),
+    ...(until ? { until: shiftedUtcBoundary(until, 1, true) } : {}),
+  };
+}
+
+function shiftedUtcBoundary(day: string, days: number, endOfDay: boolean): string {
+  const date = new Date(`${day}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString();
 }
 
 function bucketFor(timestamp: string, type: string, timezone: string): string {

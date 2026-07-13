@@ -32,7 +32,6 @@ QB.renderHistory = async function renderHistory() {
 async function _fetchMinDate() {
   try {
     const report = await QB.ipc.invoke('reports:get', {
-      source:   'backfill',
       type:     'daily',
       order:    'asc',
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -204,7 +203,6 @@ async function _loadAndRender() {
   try {
     const isHourly = agg === 'hourly';
     const report = await QB.ipc.invoke('reports:get', {
-      source:    isHourly ? 'live' : 'backfill',
       type:      agg,
       provider:  prov === 'all' ? undefined : prov,
       since:     from || undefined,

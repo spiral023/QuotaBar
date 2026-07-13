@@ -151,6 +151,7 @@ async function mergeLiveTail(
         timezone: "UTC",
         order: "asc",
         breakdown: true,
+        source: "legacy",
         ...(lastBackfillDate ? { since: lastBackfillDate } : {}),
       },
       {
