@@ -4,6 +4,19 @@ export type PortableStoreVersion = typeof PORTABLE_STORE_VERSION;
 export type PortableProvider = "claude" | "codex";
 export type PortableEventSource = "claude-log" | "codex-log" | "legacy-reconciliation";
 
+export interface PortableLegacyTarget {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  reasoningOutputTokens: number;
+  costUSD: number;
+  inputCostUSD: number;
+  outputCostUSD: number;
+  cacheCreationCostUSD: number;
+  cacheReadCostUSD: number;
+}
+
 export interface PortableUsageEvent {
   schemaVersion: PortableStoreVersion;
   id: string;
@@ -25,6 +38,7 @@ export interface PortableUsageEvent {
   cacheCreationCostUSD?: number;
   cacheReadCostUSD?: number;
   pricingVersion?: string;
+  legacyTarget?: PortableLegacyTarget;
 }
 
 export interface PortableStoreMetadata {

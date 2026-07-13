@@ -27,6 +27,7 @@ export const PORTABLE_USAGE_EVENT_KEYS = Object.freeze([
   "cacheCreationCostUSD",
   "cacheReadCostUSD",
   "pricingVersion",
+  "legacyTarget",
 ] as const satisfies readonly (keyof PortableUsageEvent)[]);
 
 export function fromClaudeEntries(entries: readonly ClaudeUsageEntry[]): PortableUsageEvent[] {

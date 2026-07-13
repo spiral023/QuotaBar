@@ -157,10 +157,14 @@ describe("migrateLegacyData", () => {
     await migrateLegacyData({ store, records: [may20, may21], statePath });
 
     const synthetic = (await store.read()).filter(({ source }) => source === "legacy-reconciliation");
-    expect(synthetic).toHaveLength(1);
-    expect(synthetic[0]).toMatchObject({
+    expect(synthetic).toHaveLength(2);
+    expect(synthetic.find(({ occurredAt }) => occurredAt === "2026-05-20T12:00:00.000Z")).toMatchObject({
       occurredAt: "2026-05-20T12:00:00.000Z",
       inputTokens: 10,
+    });
+    expect(synthetic.find(({ occurredAt }) => occurredAt === "2026-05-21T12:00:00.000Z")).toMatchObject({
+      inputTokens: 0,
+      legacyTarget: { inputTokens: 10 },
     });
   });
 
@@ -215,10 +219,17 @@ describe("migrateLegacyData", () => {
     });
 
     expect(await migrateLegacyData({ store, records: [legacy], statePath })).toMatchObject({
-      syntheticInserted: 0,
+      syntheticInserted: 1,
       syntheticUpdated: 0,
     });
-    expect((await store.read()).map(({ source }) => source)).toEqual(["claude-log"]);
+    const marker = (await store.read()).find(({ source }) => source === "legacy-reconciliation");
+    expect(marker).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      costUSD: 0,
+    });
   });
 
   it("reconciles every token and cost component independently without negative deltas", async () => {
@@ -314,8 +325,99 @@ describe("migrateLegacyData", () => {
     )]);
     await migrateLegacyData({ store, records: [legacy], statePath });
     events = await store.read();
-    expect(events.filter(({ source }) => source === "legacy-reconciliation")).toEqual([]);
+    const [marker] = events.filter(({ source }) => source === "legacy-reconciliation");
+    expect(marker).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      reasoningOutputTokens: 0,
+      costUSD: 0,
+      legacyTarget: { inputTokens: 10 },
+    });
     expect(events.reduce((sum, event) => sum + event.inputTokens, 0)).toBe(10);
+  });
+
+  it("retains an interrupted historical target when resumed with a smaller legacy snapshot", async () => {
+    const target10 = record("2026-05-20", "claude", "model", { inputTokens: 10, totalTokens: 10 });
+    await expect(migrateLegacyData({ store, records: [target10], statePath, failAfterState: "events" }))
+      .rejects.toThrow("Portable usage migration interrupted");
+    expect(JSON.parse(await readFile(statePath, "utf8")).status).toBe("running");
+
+    const target5 = record("2026-05-20", "claude", "model", { inputTokens: 5, totalTokens: 5 });
+    await migrateLegacyData({ store, records: [target5], statePath });
+
+    const [marker] = (await store.read()).filter(({ source }) => source === "legacy-reconciliation");
+    expect(marker).toMatchObject({ inputTokens: 10, legacyTarget: { inputTokens: 10 } });
+  });
+
+  it("retains targets across revision mismatches while provider growth still shrinks the derived delta", async () => {
+    const target10 = record("2026-05-20", "claude", "model", {
+      inputTokens: 10,
+      outputTokens: 8,
+      totalTokens: 18,
+      costUSD: 1,
+      inputCostUSD: 0.4,
+      outputCostUSD: 0.6,
+    });
+    await migrateLegacyData({ store, records: [target10], statePath });
+    await store.upsert([providerEvent(
+      "unrelated-revision",
+      "2026-05-21T08:00:00.000Z",
+      "claude",
+      "other-model",
+      { inputTokens: 1 },
+    )]);
+    const target5 = record("2026-05-20", "claude", "model", {
+      inputTokens: 5,
+      outputTokens: 4,
+      totalTokens: 9,
+      costUSD: 0.5,
+      inputCostUSD: 0.2,
+      outputCostUSD: 0.3,
+    });
+    await migrateLegacyData({ store, records: [target5], statePath });
+    let marker = (await store.read()).find(({ source, model }) =>
+      source === "legacy-reconciliation" && model === "model");
+    expect(marker).toMatchObject({
+      inputTokens: 10,
+      outputTokens: 8,
+      costUSD: 1,
+      inputCostUSD: 0.4,
+      outputCostUSD: 0.6,
+      legacyTarget: {
+        inputTokens: 10,
+        outputTokens: 8,
+        costUSD: 1,
+        inputCostUSD: 0.4,
+        outputCostUSD: 0.6,
+      },
+    });
+
+    await store.upsert([providerEvent(
+      "provider-growth",
+      "2026-05-20T09:00:00.000Z",
+      "claude",
+      "model",
+      {
+        inputTokens: 6,
+        outputTokens: 3,
+        costUSD: 0.4,
+        inputCostUSD: 0.2,
+        outputCostUSD: 0.2,
+      },
+    )]);
+    await migrateLegacyData({ store, records: [target5], statePath });
+    marker = (await store.read()).find(({ source, model }) =>
+      source === "legacy-reconciliation" && model === "model");
+    expect(marker).toMatchObject({
+      inputTokens: 4,
+      outputTokens: 5,
+      costUSD: 0.6,
+      inputCostUSD: 0.2,
+      outputCostUSD: 0.4,
+      legacyTarget: { inputTokens: 10, outputTokens: 8, costUSD: 1 },
+    });
   });
 
   it("serializes real-process migrations so a waiting smaller snapshot cannot overwrite complete state", async () => {
@@ -377,7 +479,9 @@ describe("migrateLegacyData", () => {
     const codex = record("2026-05-20", "codex", "gpt-5.5-20260520", { inputTokens: 20, totalTokens: 20 });
 
     await migrateLegacyData({ store, records: [claude, codex], statePath });
-    expect((await store.read()).filter(({ source }) => source === "legacy-reconciliation")).toEqual([]);
+    const markers = (await store.read()).filter(({ source }) => source === "legacy-reconciliation");
+    expect(markers.map(({ model }) => model).sort()).toEqual(["claude-sonnet-4-6", "gpt-5.5"]);
+    expect(markers.every(({ inputTokens, outputTokens }) => inputTokens === 0 && outputTokens === 0)).toBe(true);
   });
 
   it("aggregates legacy model aliases and reconciles reasoning tokens", async () => {
@@ -435,7 +539,7 @@ describe("migrateLegacyData", () => {
       outputCostUSD: 0.75,
     });
     expect(byModel.get("total")).toMatchObject({ costUSD: 2 });
-    expect(byModel.get("total")).not.toHaveProperty("inputCostUSD");
+    expect(byModel.get("total")).toMatchObject({ inputCostUSD: 0, outputCostUSD: 0 });
   });
 
   it("uses explicit total costs as authoritative despite inconsistent component sums", async () => {

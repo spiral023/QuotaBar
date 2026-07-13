@@ -7,6 +7,7 @@ import { eventId, sessionKey } from "./eventIdentity";
 import { withNamedPortableRootLock } from "./rootLock";
 import {
   PORTABLE_STORE_VERSION,
+  type PortableLegacyTarget,
   type PortableMigrationState,
   type PortableProvider,
   type PortableUsageEvent,
@@ -160,9 +161,7 @@ async function migrateLegacyDataExclusive(
   let reconciled;
   try {
     reconciled = await store.reconcileLegacyDerived((current, revision) => {
-      const revisionMatches = loadedState.state?.status === "complete"
-        && loadedState.state.usageMigrationVersion === PORTABLE_USAGE_MIGRATION_VERSION
-        && loadedState.state.storeRevision === revision;
+      void revision;
       let baseline: Map<string, Aggregate>;
       try {
         baseline = aggregateProviderEvents(current);
@@ -170,27 +169,22 @@ async function migrateLegacyDataExclusive(
         throw new InvalidStoreEventsError();
       }
       const events: PortableUsageEvent[] = [];
-      const removeIds: string[] = [];
-      const existingLegacyIds = new Set(
-        current.filter(({ source }) => source === "legacy-reconciliation").map(({ id }) => id),
-      );
       const existingLegacyById = new Map(
         current.filter(({ source }) => source === "legacy-reconciliation").map((event) => [event.id, event]),
       );
       for (const item of records.values()) {
         const identity = reconciliationIdentity(item);
         const existing = existingLegacyById.get(identity.id);
-        const desired = reconciliationEvent(item, baseline.get(aggregateKey(item.date, item.provider, item.model)));
-        const event = revisionMatches && existing
-          ? desired ? preserveUnchangedStoreTargetMaximum(desired, existing) : existing
-          : desired;
-        if (event) events.push(event);
-        else {
-          const id = identity.id;
-          if (existingLegacyIds.has(id)) removeIds.push(id);
-        }
+        const currentProvider = baseline.get(aggregateKey(item.date, item.provider, item.model)) ?? zeroAggregate();
+        const historicalTarget = existing
+          ? existing.legacyTarget
+            ? legacyTargetFromPortable(existing.legacyTarget)
+            : seedHistoricalTarget(currentProvider, existing, item.target)
+          : item.target;
+        const effectiveTarget = maximumLegacyTarget(historicalTarget, item.target);
+        events.push(reconciliationEvent({ ...item, target: effectiveTarget }, currentProvider));
       }
-      return { events, removeIds };
+      return { events, removeIds: [] };
     });
   } catch (error) {
     if (error instanceof InvalidStoreEventsError) {
@@ -360,7 +354,7 @@ function aggregateProviderEvents(events: readonly PortableUsageEvent[]): Map<str
 function reconciliationEvent(
   item: { date: string; provider: PortableProvider; model: string; target: LegacyTarget },
   current = zeroAggregate(),
-): PortableUsageEvent | undefined {
+): PortableUsageEvent {
   const tokenDeltas: Record<TokenField, number> = {
     inputTokens: positiveIntegerDelta(item.target.inputTokens, current.inputTokens),
     outputTokens: positiveIntegerDelta(item.target.outputTokens, current.outputTokens),
@@ -376,10 +370,6 @@ function reconciliationEvent(
     componentDeltas[field] = positiveDecimalDelta(item.target[field], current[field]);
   }
   const totalCostDelta = positiveDecimalDelta(item.target.effectiveCostUSD, current.effectiveCostUSD);
-  const hasTokens = TOKEN_FIELDS.some((field) => tokenDeltas[field] > 0);
-  const hasComponents = [...item.target.presentCostComponents].some((field) => componentDeltas[field] > 0);
-  if (!hasTokens && totalCostDelta === 0 && !hasComponents) return undefined;
-
   const identity = reconciliationIdentity(item);
   const occurredAt = identity.occurredAt;
   const event: PortableUsageEvent = {
@@ -393,13 +383,13 @@ function reconciliationEvent(
     source: "legacy-reconciliation",
     synthetic: true,
     ...tokenDeltas,
+    costUSD: totalCostDelta,
+    inputCostUSD: componentDeltas.inputCostUSD,
+    outputCostUSD: componentDeltas.outputCostUSD,
+    cacheCreationCostUSD: componentDeltas.cacheCreationCostUSD,
+    cacheReadCostUSD: componentDeltas.cacheReadCostUSD,
+    legacyTarget: portableLegacyTarget(item.target),
   };
-  for (const field of item.target.presentCostComponents) event[field] = componentDeltas[field];
-  // Explicit total cost is authoritative downstream. A zero suppresses component fallback when
-  // the provider already covers the effective total but the legacy component breakdown has gaps.
-  if (totalCostDelta > 0 || hasComponents) {
-    event.costUSD = totalCostDelta;
-  }
   return event;
 }
 
@@ -429,17 +419,78 @@ function reconciliationIdentity(item: { date: string; provider: PortableProvider
   };
 }
 
-function preserveUnchangedStoreTargetMaximum(
-  desired: PortableUsageEvent,
+function portableLegacyTarget(target: LegacyTarget): PortableLegacyTarget {
+  return {
+    inputTokens: target.inputTokens,
+    outputTokens: target.outputTokens,
+    cacheCreationTokens: target.cacheCreationTokens,
+    cacheReadTokens: target.cacheReadTokens,
+    reasoningOutputTokens: target.reasoningOutputTokens,
+    costUSD: target.effectiveCostUSD,
+    inputCostUSD: target.inputCostUSD,
+    outputCostUSD: target.outputCostUSD,
+    cacheCreationCostUSD: target.cacheCreationCostUSD,
+    cacheReadCostUSD: target.cacheReadCostUSD,
+  };
+}
+
+function legacyTargetFromPortable(target: PortableLegacyTarget): LegacyTarget {
+  return {
+    inputTokens: target.inputTokens,
+    outputTokens: target.outputTokens,
+    cacheCreationTokens: target.cacheCreationTokens,
+    cacheReadTokens: target.cacheReadTokens,
+    reasoningOutputTokens: target.reasoningOutputTokens,
+    effectiveCostUSD: target.costUSD,
+    inputCostUSD: target.inputCostUSD,
+    outputCostUSD: target.outputCostUSD,
+    cacheCreationCostUSD: target.cacheCreationCostUSD,
+    cacheReadCostUSD: target.cacheReadCostUSD,
+    authoritativeTotalCost: true,
+    presentCostComponents: new Set(COMPONENT_COST_FIELDS),
+  };
+}
+
+function seedHistoricalTarget(
+  provider: Aggregate,
   existing: PortableUsageEvent,
-): PortableUsageEvent {
-  const result = { ...desired };
-  for (const field of TOKEN_FIELDS) result[field] = Math.max(desired[field], existing[field]);
-  for (const field of ["costUSD", ...COMPONENT_COST_FIELDS] as const) {
-    const maximum = Math.max(desired[field] ?? 0, existing[field] ?? 0);
-    if (desired[field] !== undefined || existing[field] !== undefined) result[field] = maximum;
-  }
-  return result;
+  incoming: LegacyTarget,
+): LegacyTarget {
+  const seeded: LegacyTarget = {
+    inputTokens: provider.inputTokens + existing.inputTokens,
+    outputTokens: provider.outputTokens + existing.outputTokens,
+    cacheCreationTokens: provider.cacheCreationTokens + existing.cacheCreationTokens,
+    cacheReadTokens: provider.cacheReadTokens + existing.cacheReadTokens,
+    reasoningOutputTokens: provider.reasoningOutputTokens + existing.reasoningOutputTokens,
+    effectiveCostUSD: provider.effectiveCostUSD + (existing.costUSD ?? sumEventComponents(existing)),
+    inputCostUSD: provider.inputCostUSD + (existing.inputCostUSD ?? 0),
+    outputCostUSD: provider.outputCostUSD + (existing.outputCostUSD ?? 0),
+    cacheCreationCostUSD: provider.cacheCreationCostUSD + (existing.cacheCreationCostUSD ?? 0),
+    cacheReadCostUSD: provider.cacheReadCostUSD + (existing.cacheReadCostUSD ?? 0),
+    authoritativeTotalCost: true,
+    presentCostComponents: new Set([
+      ...incoming.presentCostComponents,
+      ...COMPONENT_COST_FIELDS.filter((field) => existing[field] !== undefined),
+    ]),
+  };
+  return seeded;
+}
+
+function maximumLegacyTarget(left: LegacyTarget, right: LegacyTarget): LegacyTarget {
+  return {
+    inputTokens: Math.max(left.inputTokens, right.inputTokens),
+    outputTokens: Math.max(left.outputTokens, right.outputTokens),
+    cacheCreationTokens: Math.max(left.cacheCreationTokens, right.cacheCreationTokens),
+    cacheReadTokens: Math.max(left.cacheReadTokens, right.cacheReadTokens),
+    reasoningOutputTokens: Math.max(left.reasoningOutputTokens, right.reasoningOutputTokens),
+    effectiveCostUSD: Math.max(left.effectiveCostUSD, right.effectiveCostUSD),
+    inputCostUSD: Math.max(left.inputCostUSD, right.inputCostUSD),
+    outputCostUSD: Math.max(left.outputCostUSD, right.outputCostUSD),
+    cacheCreationCostUSD: Math.max(left.cacheCreationCostUSD, right.cacheCreationCostUSD),
+    cacheReadCostUSD: Math.max(left.cacheReadCostUSD, right.cacheReadCostUSD),
+    authoritativeTotalCost: left.authoritativeTotalCost || right.authoritativeTotalCost,
+    presentCostComponents: new Set([...left.presentCostComponents, ...right.presentCostComponents]),
+  };
 }
 
 function zeroAggregate(): Aggregate {

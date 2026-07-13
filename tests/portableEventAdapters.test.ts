@@ -16,6 +16,7 @@ const portableKeys = [
   "cacheCreationTokens", "cacheReadTokens", "reasoningOutputTokens", "costUSD",
   "inputCostUSD", "outputCostUSD", "cacheCreationCostUSD", "cacheReadCostUSD",
   "pricingVersion",
+  "legacyTarget",
 ];
 
 function claude(overrides: Partial<ClaudeUsageEntry> = {}): ClaudeUsageEntry {

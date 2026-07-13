@@ -128,6 +128,41 @@ describe("PortableUsageStore", () => {
     expect(await store.read()).toEqual([provider]);
   });
 
+  it("strictly validates legacy target metadata and isolates nested builder mutations", async () => {
+    const target = {
+      inputTokens: 10,
+      outputTokens: 20,
+      cacheCreationTokens: 30,
+      cacheReadTokens: 40,
+      reasoningOutputTokens: 0,
+      costUSD: 1,
+      inputCostUSD: 0.1,
+      outputCostUSD: 0.2,
+      cacheCreationCostUSD: 0.3,
+      cacheReadCostUSD: 0.4,
+    };
+    const legacy = event("legacy-target", "2026-07-02T12:00:00.000Z", {
+      source: "legacy-reconciliation",
+      synthetic: true,
+      legacyTarget: target,
+    });
+    await store.upsert([legacy]);
+    await store.reconcileLegacyDerived((current) => {
+      current[0].legacyTarget!.inputTokens = 999;
+      return { events: [], removeIds: [] };
+    });
+    expect((await store.read())[0].legacyTarget).toEqual(target);
+
+    const providerWithTarget = event("provider-target", "2026-07-03T00:00:00.000Z", { legacyTarget: target });
+    await expect(store.upsert([providerWithTarget])).rejects.toThrow(
+      "legacyTarget is allowed only for legacy reconciliation events",
+    );
+    await expect(store.upsert([{ ...legacy, id: "unknown-field", legacyTarget: { ...target, authorization: 1 } } as PortableUsageEvent]))
+      .rejects.toThrow("legacyTarget has invalid fields");
+    await expect(store.upsert([{ ...legacy, id: "negative-field", legacyTarget: { ...target, costUSD: -1 } }]))
+      .rejects.toThrow("legacyTarget costs must be finite and non-negative");
+  });
+
   it("keeps the first incoming occurrence when an ID spans monthly partitions", async () => {
     expect(await store.upsert([
       event("global-id", "2026-07-31T23:00:00.000Z"),

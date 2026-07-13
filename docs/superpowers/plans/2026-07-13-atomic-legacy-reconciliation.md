@@ -31,7 +31,7 @@
 
 - [ ] Add the failing regression: legacy 10/provider 4 creates 6; provider reaches 6 updates synthetic to 4; provider reaches 10 removes synthetic.
 - [ ] Run `npm test -- tests/portableMigration.test.ts` and verify the stale maximum policy fails.
-- [ ] Move baseline/delta construction into `reconcileLegacyDerived`; emit exact desired deltas and stable IDs, return zero desired IDs as `removeIds`, and remove maximum preservation.
+- [ ] Move baseline/delta construction into `reconcileLegacyDerived`; persist exact historical targets on stable legacy-only markers, emit exact desired deltas, and retain zero-valued markers after providers cover the target.
 - [ ] Add `storeRevision` to strict migration state parsing/writing; skip only when current revision equals the complete state's revision.
 - [ ] Run migration/store tests and verify exact total remains 10.
 

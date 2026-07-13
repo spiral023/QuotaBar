@@ -6,6 +6,7 @@ import { getPortableUsageDir } from "../config/paths";
 import {
   PORTABLE_STORE_VERSION,
   type PortableIngestState,
+  type PortableLegacyTarget,
   type PortableStoreMetadata,
   type PortableUsageEvent,
 } from "./types";
@@ -26,6 +27,14 @@ const TOKEN_FIELDS = [
   "reasoningOutputTokens",
 ] as const;
 const COST_FIELDS = [
+  "costUSD",
+  "inputCostUSD",
+  "outputCostUSD",
+  "cacheCreationCostUSD",
+  "cacheReadCostUSD",
+] as const;
+const LEGACY_TARGET_KEYS = [
+  ...TOKEN_FIELDS,
   "costUSD",
   "inputCostUSD",
   "outputCostUSD",
@@ -750,6 +759,15 @@ function sanitizePortableEvent(value: unknown): SanitizedResult {
   if (item.pricingVersion !== undefined && !isNonEmptyString(item.pricingVersion)) {
     return { problem: "pricingVersion must be a non-empty string" };
   }
+  let legacyTarget: PortableLegacyTarget | undefined;
+  if (item.legacyTarget !== undefined) {
+    if (item.source !== "legacy-reconciliation") {
+      return { problem: "legacyTarget is allowed only for legacy reconciliation events" };
+    }
+    const sanitizedTarget = sanitizeLegacyTarget(item.legacyTarget);
+    if (typeof sanitizedTarget === "string") return { problem: sanitizedTarget };
+    legacyTarget = sanitizedTarget;
+  }
 
   const event: PortableUsageEvent = {
     schemaVersion: PORTABLE_STORE_VERSION,
@@ -771,7 +789,42 @@ function sanitizePortableEvent(value: unknown): SanitizedResult {
     if (item[field] !== undefined) event[field] = item[field] as number;
   }
   if (item.pricingVersion !== undefined) event.pricingVersion = item.pricingVersion;
+  if (legacyTarget !== undefined) event.legacyTarget = legacyTarget;
   return { event };
+}
+
+function sanitizeLegacyTarget(value: unknown): PortableLegacyTarget | string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "legacyTarget must be an object";
+  }
+  const item = value as Record<string, unknown>;
+  const keys = Object.keys(item);
+  if (keys.length !== LEGACY_TARGET_KEYS.length || keys.some((key) =>
+    !(LEGACY_TARGET_KEYS as readonly string[]).includes(key))) {
+    return "legacyTarget has invalid fields";
+  }
+  for (const field of TOKEN_FIELDS) {
+    if (!isNonNegativeFiniteNumber(item[field])) {
+      return "legacyTarget tokens must be finite and non-negative";
+    }
+  }
+  for (const field of COST_FIELDS) {
+    if (!isNonNegativeFiniteNumber(item[field])) {
+      return "legacyTarget costs must be finite and non-negative";
+    }
+  }
+  return {
+    inputTokens: item.inputTokens as number,
+    outputTokens: item.outputTokens as number,
+    cacheCreationTokens: item.cacheCreationTokens as number,
+    cacheReadTokens: item.cacheReadTokens as number,
+    reasoningOutputTokens: item.reasoningOutputTokens as number,
+    costUSD: item.costUSD as number,
+    inputCostUSD: item.inputCostUSD as number,
+    outputCostUSD: item.outputCostUSD as number,
+    cacheCreationCostUSD: item.cacheCreationCostUSD as number,
+    cacheReadCostUSD: item.cacheReadCostUSD as number,
+  };
 }
 
 function requirePortableEvent(value: unknown): PortableUsageEvent {
@@ -852,7 +905,10 @@ function canonicalSerialize(event: PortableUsageEvent): string {
 }
 
 function clonePortableEvent(event: PortableUsageEvent): PortableUsageEvent {
-  return { ...event };
+  return {
+    ...event,
+    ...(event.legacyTarget ? { legacyTarget: { ...event.legacyTarget } } : {}),
+  };
 }
 
 function compareCanonicalEvents(left: PortableUsageEvent, right: PortableUsageEvent): number {
