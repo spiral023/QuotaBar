@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  createPortableIngestionLifecycle,
   createPortableIngestionRunner,
   preparePortableData,
   readLegacyQuotaSnapshots,
@@ -30,11 +31,27 @@ describe("portable startup preparation", () => {
 
   it("replaces the delayed Backfill job with startup, source-change and manual ingestion triggers", async () => {
     const source = await readFile(path.resolve("src/main/main.ts"), "utf8");
+    const lifecycleSource = await readFile(path.resolve("src/main/debugBackfill.ts"), "utf8");
     expect(source).not.toContain("const backfillTimer");
-    expect(source).toContain('trigger("startup")');
-    expect(source).toContain('trigger("source-change")');
+    expect(source).toContain("createPortableIngestionLifecycle");
+    expect(source).toContain("portableIngestionLifecycle.start()");
     expect(source).toContain('trigger("manual-recompute")');
-    expect(source).toContain("setInterval");
+    expect(lifecycleSource).toContain('runner.trigger("startup")');
+    expect(lifecycleSource).toContain('runner.trigger("source-change")');
+    expect(lifecycleSource).toContain("setInterval");
+  });
+
+  it("owns the ingestion lifecycle outside startup and stops it before quit flushing", async () => {
+    const source = await readFile(path.resolve("src/main/main.ts"), "utf8");
+    const moduleLifecycle = source.indexOf("let portableIngestionLifecycle");
+    const whenReady = source.indexOf("app.whenReady()");
+    const beforeQuit = source.indexOf('app.on("before-quit"');
+    const stop = source.indexOf("portableIngestionLifecycle?.stop()", beforeQuit);
+    const flush = source.indexOf("recorder.flush()", beforeQuit);
+    expect(moduleLifecycle).toBeGreaterThan(-1);
+    expect(moduleLifecycle).toBeLessThan(whenReady);
+    expect(stop).toBeGreaterThan(beforeQuit);
+    expect(stop).toBeLessThan(flush);
   });
 
   it("orders ingestion, legacy reconciliation, quota migration, completion and prewarm", async () => {
@@ -131,6 +148,123 @@ describe("portable startup preparation", () => {
     expect(second.ingested).toBe(0);
     expect(second.legacyInserted).toBe(0);
     expect(runs).toBe(2);
+  });
+
+  it("does not prewarm or claim failure when a future state appears before completion", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-prepare-future-complete-"));
+    const statePath = path.join(root, "migration-state.json");
+    const future = `${JSON.stringify({
+      schemaVersion: 2, status: "complete", usageMigrationVersion: 2,
+      storeRevision: "f".repeat(64), updatedAt: "2026-07-12T10:00:00.000Z",
+    })}\n`;
+    const prewarm = vi.fn();
+
+    const result = await preparePortableData({
+      beginMigration: () => markMigrationRunning(statePath),
+      ingestProviderEvents: async () => ({ inserted: 0, updated: 0 }),
+      readLegacyRecords: async () => [],
+      reconcileLegacy: async () => ({
+        storeRevision: "a".repeat(64), syntheticInserted: 0, syntheticUpdated: 0,
+      }),
+      readLegacyQuota: async () => [],
+      migrateQuota: async () => undefined,
+      completeMigration: async (revision) => {
+        await writeFile(statePath, future, "utf8");
+        return await markMigrationComplete(statePath, revision);
+      },
+      failMigration: (code) => markMigrationFailed(statePath, code),
+      prewarmConsumers: prewarm,
+    });
+    expect(result).toEqual({ status: "superseded" });
+    expect(prewarm).not.toHaveBeenCalled();
+    expect(await readFile(statePath, "utf8")).toBe(future);
+  });
+
+  it("does not overwrite or falsely report failed when a future state appears before failure handling", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-prepare-future-failed-"));
+    const statePath = path.join(root, "migration-state.json");
+    const future = `${JSON.stringify({
+      schemaVersion: 2, status: "complete", usageMigrationVersion: 2,
+      storeRevision: "f".repeat(64), updatedAt: "2026-07-12T10:00:00.000Z",
+    })}\n`;
+
+    const result = await preparePortableData({
+      beginMigration: () => markMigrationRunning(statePath),
+      ingestProviderEvents: async () => { throw new Error("raw-sensitive-detail"); },
+      readLegacyRecords: async () => [],
+      reconcileLegacy: async () => ({
+        storeRevision: "a".repeat(64), syntheticInserted: 0, syntheticUpdated: 0,
+      }),
+      readLegacyQuota: async () => [],
+      migrateQuota: async () => undefined,
+      completeMigration: (revision) => markMigrationComplete(statePath, revision),
+      failMigration: async (code) => {
+        await writeFile(statePath, future, "utf8");
+        return await markMigrationFailed(statePath, code);
+      },
+      prewarmConsumers: () => undefined,
+    });
+    expect(result).toEqual({ status: "superseded" });
+    expect(await readFile(statePath, "utf8")).toBe(future);
+  });
+});
+
+describe("portable ingestion lifecycle", () => {
+  it("stops polling idempotently while allowing an in-flight run to finish", async () => {
+    let poll: (() => void) | undefined;
+    const clearInterval = vi.fn(() => { poll = undefined; });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let runs = 0;
+    const runner = createPortableIngestionRunner(async () => {
+      runs += 1;
+      if (runs === 1) await gate;
+    });
+    const lifecycle = createPortableIngestionLifecycle(runner, {
+      setInterval: (callback) => {
+        poll = callback;
+        return 1 as unknown as NodeJS.Timeout;
+      },
+      clearInterval,
+    });
+
+    const startup = lifecycle.start();
+    await vi.waitFor(() => expect(runs).toBe(1));
+    const stopping = lifecycle.stop();
+    const stoppingAgain = lifecycle.stop();
+    poll?.();
+    await lifecycle.trigger("manual-recompute");
+    let cleanupFinished = false;
+    void stopping.then(() => { cleanupFinished = true; });
+    await Promise.resolve();
+    expect(cleanupFinished).toBe(false);
+    release();
+    await Promise.all([startup, stopping, stoppingAgain]);
+
+    expect(runs).toBe(1);
+    expect(cleanupFinished).toBe(true);
+    expect(clearInterval).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears and recreates its interval safely when reinitialized", async () => {
+    const handles: number[] = [];
+    const cleared: number[] = [];
+    const runner = createPortableIngestionRunner(async () => undefined);
+    const lifecycle = createPortableIngestionLifecycle(runner, {
+      setInterval: () => {
+        const handle = handles.length + 1;
+        handles.push(handle);
+        return handle as unknown as NodeJS.Timeout;
+      },
+      clearInterval: (handle) => cleared.push(handle as unknown as number),
+    });
+
+    await lifecycle.start();
+    await lifecycle.start();
+    await lifecycle.stop();
+
+    expect(handles).toEqual([1, 2]);
+    expect(cleared).toEqual([1, 2]);
   });
 });
 
@@ -233,7 +367,8 @@ describe("legacy quota compatibility", () => {
   it("writes only strict allowlisted startup failure states", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-startup-failed-"));
     const statePath = path.join(root, "migration-state.json");
-    await markMigrationFailed(statePath, "quota_migration_failed");
+    await markMigrationRunning(statePath);
+    expect(await markMigrationFailed(statePath, "quota_migration_failed")).toEqual({ status: "applied" });
     const raw = JSON.parse(await readFile(statePath, "utf8"));
     expect(parseMigrationState(raw).state).toEqual(raw);
     expect(raw).toMatchObject({ status: "failed", lastError: "quota_migration_failed" });
@@ -251,7 +386,43 @@ describe("legacy quota compatibility", () => {
       updatedAt: "2026-07-12T10:00:00.000Z",
     })}\n`;
     await writeFile(statePath, future, "utf8");
-    await expect(markMigrationRunning(statePath)).rejects.toThrow("newer than this QuotaBar version");
+    await expect(markMigrationRunning(statePath)).resolves.toEqual({ status: "future_state" });
     expect(await readFile(statePath, "utf8")).toBe(future);
+  });
+
+  it.each(["complete", "failed"] as const)("does not overwrite a future state immediately before %s", async (transition) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), `quotabar-startup-future-${transition}-`));
+    const statePath = path.join(root, "migration-state.json");
+    const future = `${JSON.stringify({
+      schemaVersion: 2,
+      status: "complete",
+      usageMigrationVersion: 2,
+      storeRevision: "e".repeat(64),
+      updatedAt: "2026-07-12T10:00:00.000Z",
+    })}\n`;
+    await writeFile(statePath, future, "utf8");
+
+    const result = transition === "complete"
+      ? await markMigrationComplete(statePath, "d".repeat(64))
+      : await markMigrationFailed(statePath, "quota_migration_failed");
+
+    expect(result).toEqual({ status: "future_state" });
+    expect(await readFile(statePath, "utf8")).toBe(future);
+  });
+
+  it("serializes competing finalizers and never overwrites the first committed terminal state", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-startup-finalize-race-"));
+    const statePath = path.join(root, "migration-state.json");
+    await markMigrationRunning(statePath);
+
+    const results = await Promise.all([
+      markMigrationComplete(statePath, "a".repeat(64)),
+      markMigrationFailed(statePath, "quota_migration_failed"),
+    ]);
+    const parsed = parseMigrationState(JSON.parse(await readFile(statePath, "utf8"))).state;
+
+    expect(results.filter(({ status }) => status === "applied")).toHaveLength(1);
+    expect(results.filter(({ status }) => status === "not_running")).toHaveLength(1);
+    expect(["complete", "failed"]).toContain(parsed?.status);
   });
 });

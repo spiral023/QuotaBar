@@ -19,7 +19,7 @@ import { collectSystemData, formatSystemPathDiagnostics, formatWslDiscoveryDiagn
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { DebugRecorder } from "./debugRecorder";
 import { snapshotEvent } from "./debugEvents";
-import { createPortableIngestionRunner, preparePortableData, readLegacyQuotaSnapshots } from "./debugBackfill";
+import { createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, readLegacyQuotaSnapshots, type PortableIngestionLifecycle } from "./debugBackfill";
 import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
 import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
@@ -50,6 +50,7 @@ configureAppIdentity();
 // Wird in whenReady gesetzt, sobald der NotificationService existiert. Der
 // second-instance-Handler kann eine quotabar://-Aktivierung dann weiterreichen.
 let onProtocolUrl: ((url: string) => void) | null = null;
+let portableIngestionLifecycle: PortableIngestionLifecycle | undefined;
 
 function findProtocolUrl(argv: readonly string[]): string | null {
   return argv.find((arg) => arg.startsWith("quotabar://")) ?? null;
@@ -69,6 +70,8 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady()
     .then(async () => {
+      await portableIngestionLifecycle?.stop();
+      portableIngestionLifecycle = undefined;
       ensureWindowsNotificationShortcut();
       // quotabar://-Protokoll registrieren, damit Windows Toast-Aktivierungen an
       // diese App weiterleitet (Voraussetzung für funktionierende Toast-Buttons).
@@ -155,9 +158,8 @@ if (!app.requestSingleInstanceLock()) {
           codexSessionsDirs: getCodexSessionsDirs(pathContext),
         });
       };
-      let ingestionRunner: ReturnType<typeof createPortableIngestionRunner> | undefined;
       const tray = new TrayController(providers, refreshLoop, async () => {
-        await ingestionRunner?.trigger("manual-recompute");
+        await portableIngestionLifecycle?.trigger("manual-recompute");
       }, settings.providerOrder);
       const detailsWindow = new DetailsWindowController(
         () => tray.getTray(),
@@ -192,25 +194,21 @@ if (!app.requestSingleInstanceLock()) {
         onStageComplete: (stage, durationMs, count) => {
           log.info(`Portable data stage=${stage} count=${count} durationMs=${durationMs}`);
         },
-      }).then(() => {
-        portableReady = true;
+      }).then((result) => {
+        portableReady = result.status === "complete";
       }).catch(() => {
         log.warn("Portable data preparation failed");
       });
       if (portableReady) {
-        ingestionRunner = createPortableIngestionRunner(async () => {
+        portableIngestionLifecycle = createPortableIngestionLifecycle(createPortableIngestionRunner(async () => {
           const startedAt = Date.now();
           const result = await ingestPortableSources();
           log.info(`Portable data stage=ongoing_ingestion count=${result.inserted + result.updated} durationMs=${Date.now() - startedAt}`);
-        }, (diagnostic) => log.warn(diagnostic));
-        await ingestionRunner.trigger("startup");
-        const ingestionTimer = setInterval(() => {
-          void ingestionRunner?.trigger("source-change");
-        }, 15_000);
-        ingestionTimer.unref();
+        }, (diagnostic) => log.warn(diagnostic)));
+        await portableIngestionLifecycle.start();
       }
       const recomputeCostsAndIngest = (): void => {
-        void refreshLoop.recomputeCost().finally(() => ingestionRunner?.trigger("manual-recompute"));
+        void refreshLoop.recomputeCost().finally(() => portableIngestionLifecycle?.trigger("manual-recompute"));
       };
       await tray.rebuildMenu();
       if (cli.openWindow) {
@@ -303,8 +301,10 @@ if (!app.requestSingleInstanceLock()) {
       app.on("before-quit", (event) => {
         if (flushed) return;
         event.preventDefault();
+        const ingestionStopped = portableIngestionLifecycle?.stop() ?? Promise.resolve();
+        portableIngestionLifecycle = undefined;
         recorder.write({ kind: "app.exit", reason: "user-quit" });
-        void recorder.flush().finally(() => {
+        void ingestionStopped.then(() => recorder.flush()).finally(() => {
           flushed = true;
           app.quit();
         });

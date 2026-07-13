@@ -124,6 +124,13 @@ export type PortableMigrationFailureCode =
   | "migration_completion_failed"
   | "consumer_prewarm_failed";
 
+export type MigrationStateTransitionResult =
+  | { status: "applied" }
+  | { status: "already_complete" }
+  | { status: "already_failed" }
+  | { status: "not_running" }
+  | { status: "future_state" };
+
 /**
  * Reconciles immutable legacy day aggregates against provider events already stored in the portable archive.
  * Duplicate provider/day records are rejected because treating aggregate snapshots as additive can double count.
@@ -266,28 +273,82 @@ async function migrateLegacyDataExclusive(
 export async function markMigrationRunning(
   statePath: string,
   now: () => Date = () => new Date(),
-): Promise<void> {
+): Promise<MigrationStateTransitionResult> {
   const resolvedStatePath = path.resolve(statePath);
-  await readMigrationState(resolvedStatePath);
-  await writeStateSafely(resolvedStatePath, state("running", now));
+  return await withMigrationStateLock(resolvedStatePath, async () => {
+    const loaded = await readCurrentForTransition(resolvedStatePath);
+    if (loaded === "future_state") return { status: "future_state" };
+    await writeStateSafely(resolvedStatePath, state("running", now));
+    return { status: "applied" };
+  });
 }
 
 export async function markMigrationComplete(
   statePath: string,
   storeRevision: string,
   now: () => Date = () => new Date(),
-): Promise<void> {
+): Promise<MigrationStateTransitionResult> {
   if (!/^[a-f0-9]{64}$/.test(storeRevision)) throw new Error("Portable migration revision is invalid");
-  await writeStateSafely(path.resolve(statePath), state("complete", now, storeRevision));
+  const resolvedStatePath = path.resolve(statePath);
+  return await withMigrationStateLock(resolvedStatePath, async () => {
+    const loaded = await readCurrentForTransition(resolvedStatePath);
+    if (loaded === "future_state") return { status: "future_state" };
+    if (loaded.state?.status === "complete" && loaded.state.storeRevision === storeRevision) {
+      return { status: "already_complete" };
+    }
+    if (loaded.state?.status !== "running") return { status: "not_running" };
+    await writeStateSafely(resolvedStatePath, state("complete", now, storeRevision));
+    return { status: "applied" };
+  });
 }
 
 export async function markMigrationFailed(
   statePath: string,
   lastError: PortableMigrationFailureCode,
   now: () => Date = () => new Date(),
-): Promise<void> {
+): Promise<MigrationStateTransitionResult> {
   if (!STATE_ERROR_CODES.has(lastError)) throw new Error("Portable migration failure code is invalid");
-  await writeFailedState(path.resolve(statePath), lastError, now);
+  const resolvedStatePath = path.resolve(statePath);
+  return await withMigrationStateLock(resolvedStatePath, async () => {
+    const loaded = await readCurrentForTransition(resolvedStatePath);
+    if (loaded === "future_state") return { status: "future_state" };
+    if (loaded.state?.status === "failed" && loaded.state.lastError === lastError) {
+      return { status: "already_failed" };
+    }
+    if (loaded.state?.status !== "running"
+      && !(loaded.state?.status === "complete" && lastError === "consumer_prewarm_failed")) {
+      return { status: "not_running" };
+    }
+    await writeFailedState(resolvedStatePath, lastError, now);
+    return { status: "applied" };
+  });
+}
+
+async function withMigrationStateLock<T>(statePath: string, operation: () => Promise<T>): Promise<T> {
+  try {
+    return await withNamedPortableRootLock(path.dirname(statePath), ".portable-migration.lock", operation);
+  } catch (error) {
+    if (error instanceof FutureMigrationStateError) throw error;
+    if (error instanceof Error && (
+      error.message === "Portable migration state read failed"
+      || error.message === "Portable migration state write failed"
+      || error.message === "Portable migration clock is invalid"
+    )) throw error;
+    // Lock diagnostics can contain host paths; expose only the fixed boundary category.
+    // eslint-disable-next-line preserve-caught-error
+    throw new Error("Portable migration state transition failed");
+  }
+}
+
+async function readCurrentForTransition(
+  statePath: string,
+): Promise<LoadedMigrationState | "future_state"> {
+  try {
+    return await readMigrationState(statePath);
+  } catch (error) {
+    if (error instanceof FutureMigrationStateError) return "future_state";
+    throw error;
+  }
 }
 
 function compareReconciliationItems(
