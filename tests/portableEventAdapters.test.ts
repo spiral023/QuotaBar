@@ -125,8 +125,6 @@ describe("portable event adapters", () => {
       cacheCreationTokens: 13,
       cacheReadTokens: 14,
       costUSD: 0.42,
-      portableEventId: portable[0].id,
-      portableSessionKey: portable[0].sessionKey,
     }]);
     expect(toCodexEvents(portable)).toEqual([{
       timestamp: "2026-07-13T10:34:56.000Z",
@@ -140,8 +138,6 @@ describe("portable event adapters", () => {
       outputTokens: 23,
       reasoningOutputTokens: 7,
       totalTokens: 124,
-      portableEventId: portable[1].id,
-      portableSessionKey: portable[1].sessionKey,
     }]);
   });
 
@@ -165,7 +161,10 @@ describe("portable event adapters", () => {
 
   it.each([
     "C--Users-alice-Documents-GitHub-QuotaBar",
+    "D--Work-Alice-QuotaBar",
+    "C--src-private-QuotaBar",
     "-home-alice-projects-QuotaBar",
+    "-workspace-alice-QuotaBar",
   ])("rejects path-encoded Claude project labels (%s)", (project) => {
     const [event] = fromClaudeEntries([claude({ projectName: undefined, project })]);
     expect(event.projectName).toBe("Unknown project");
@@ -174,6 +173,21 @@ describe("portable event adapters", () => {
 
   it("keeps a plain legacy Claude project label recognizable", () => {
     expect(fromClaudeEntries([claude({ projectName: undefined, project: "QuotaBar" })])[0].projectName).toBe("QuotaBar");
+  });
+
+  it.each([
+    "D--Work-Alice-QuotaBar",
+    "C--src-private-QuotaBar",
+    "-workspace-alice-QuotaBar",
+    "C:secret",
+  ])("does not reverse unsafe encoded project names (%s)", (projectName) => {
+    const claudeEvent = { ...fromClaudeEntries([claude()])[0], projectName };
+    const codexEvent = { ...fromCodexEvents([codex()])[0], projectName };
+    const claudeEntry = toClaudeEntries([claudeEvent])[0];
+    const codexEntry = toCodexEvents([codexEvent])[0];
+    expect(claudeEntry.project).toBe("Unknown project");
+    expect(codexEntry.directory).toBe(".");
+    expect(JSON.stringify([claudeEntry.project, codexEntry.directory])).not.toContain(projectName);
   });
 
   it("uses Unknown project when Claude project metadata has no basename", () => {
@@ -214,9 +228,9 @@ describe("portable event adapters", () => {
   });
 
   it("keeps IDs stable across insertion, deletion, and permutation of distinct statistical records", () => {
-    const a = claude({ inputTokens: 1, outputTokens: 2, costUSD: 0.1 });
-    const b = claude({ inputTokens: 3, outputTokens: 4, costUSD: 0.2 });
-    const c = claude({ inputTokens: 5, outputTokens: 6, costUSD: 0.3 });
+    const a = claude({ sourceEventId: "source-a", inputTokens: 1, outputTokens: 2, costUSD: 0.1 });
+    const b = claude({ sourceEventId: "source-b", inputTokens: 3, outputTokens: 4, costUSD: 0.2 });
+    const c = claude({ sourceEventId: "source-c", inputTokens: 5, outputTokens: 6, costUSD: 0.3 });
     const idByInput = (entries: ClaudeUsageEntry[]) => new Map(fromClaudeEntries(entries).map((event) => [event.inputTokens, event.id]));
     const baseline = idByInput([a, b]);
     const inserted = idByInput([c, a, b]);
@@ -224,6 +238,17 @@ describe("portable event adapters", () => {
     expect([inserted.get(1), inserted.get(3)]).toEqual([baseline.get(1), baseline.get(3)]);
     expect([permuted.get(1), permuted.get(3)]).toEqual([baseline.get(1), baseline.get(3)]);
     expect(idByInput([a]).get(1)).toBe(baseline.get(1));
+  });
+
+  it("keeps source event identity stable when mutable statistics and pricing change", () => {
+    const before = claude({ sourceEventId: "immutable-source", inputTokens: 1, costUSD: 0.1, pricingVersion: "v1" });
+    const after = claude({ sourceEventId: "immutable-source", inputTokens: 999, outputCostUSD: 4.2, costUSD: 9, pricingVersion: "v2" });
+    expect(fromClaudeEntries([before])[0].id).toBe(fromClaudeEntries([after])[0].id);
+  });
+
+  it("uses deterministic coarse ordinals when provider source IDs are unavailable", () => {
+    const entries = [claude({ inputTokens: 1 }), claude({ inputTokens: 2 })];
+    expect(fromClaudeEntries(entries).map((event) => event.id)).toEqual(fromClaudeEntries(entries).map((event) => event.id));
   });
 
   it("keeps existing duplicate IDs when an exact copy is added", () => {
@@ -292,14 +317,24 @@ describe("portable event adapters", () => {
     expect([codexRoundtrip.id, codexRoundtrip.sessionKey]).toEqual([originalCodex.id, originalCodex.sessionKey]);
   });
 
-  it.each([
-    ["raw-session", "a".repeat(64)],
-    ["A".repeat(64), "b".repeat(64)],
-    ["a".repeat(63), "b".repeat(64)],
-    ["a".repeat(64), undefined],
-    [undefined, "b".repeat(64)],
-  ])("rejects invalid portable provenance", (portableEventId, portableSessionKey) => {
-    expect(() => fromClaudeEntries([claude({ portableEventId, portableSessionKey })])).toThrow("Invalid portable event provenance");
+  it("ignores structurally injected provenance fields", () => {
+    const injected = claude() as ClaudeUsageEntry & { portableEventId: string; portableSessionKey: string };
+    injected.portableEventId = "a".repeat(64);
+    injected.portableSessionKey = "b".repeat(64);
+    const [event] = fromClaudeEntries([injected]);
+    expect(event.id).not.toBe(injected.portableEventId);
+    expect(event.sessionKey).not.toBe(injected.portableSessionKey);
+  });
+
+  it("keeps reverse provenance private and loses it across JSON clones", () => {
+    const original = fromClaudeEntries([claude()])[0];
+    const [reversed] = toClaudeEntries([original]);
+    expect(Object.keys(reversed)).not.toContain("portableEventId");
+    expect(Object.keys(reversed)).not.toContain("portableSessionKey");
+    const direct = fromClaudeEntries([reversed])[0];
+    const cloned = fromClaudeEntries([JSON.parse(JSON.stringify(reversed)) as ClaudeUsageEntry])[0];
+    expect([direct.id, direct.sessionKey]).toEqual([original.id, original.sessionKey]);
+    expect([cloned.id, cloned.sessionKey]).not.toEqual([original.id, original.sessionKey]);
   });
 
   it.each([

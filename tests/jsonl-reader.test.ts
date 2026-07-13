@@ -42,7 +42,10 @@ describe("readClaudeTokensForPeriod", () => {
 
   it.each([
     "C--Users-Alice-Documents-GitHub-QuotaBar",
+    "D--Work-Alice-QuotaBar",
+    "C--src-private-QuotaBar",
     "-home-alice-projects-QuotaBar",
+    "-workspace-alice-QuotaBar",
   ])("does not expose encoded provider directory labels (%s)", async (encodedProject) => {
     await writeJsonl(path.join(tmpDir, encodedProject), "session.jsonl", [{
       timestamp: "2026-05-10T10:00:00.000Z",
@@ -52,6 +55,15 @@ describe("readClaudeTokensForPeriod", () => {
     expect(entry.projectName).toBeUndefined();
     expect(Object.keys(entry)).not.toContain("projectName");
     expect(JSON.stringify({ projectName: entry.projectName })).not.toMatch(/Alice|alice|home|Documents/);
+  });
+
+  it("exposes the provider message ID as in-memory source identity", async () => {
+    await writeJsonl(path.join(tmpDir, "QuotaBar"), "source-id.jsonl", [{
+      timestamp: "2026-05-10T10:00:00.000Z",
+      message: { id: "msg_source_123", model: "claude-sonnet-4-6", usage: { input_tokens: 1, output_tokens: 2 } },
+    }]);
+    const [entry] = await readClaudeUsageEntriesForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(entry.sourceEventId).toBe("msg_source_123");
   });
 
   it("returns zeros when directory does not exist", async () => {

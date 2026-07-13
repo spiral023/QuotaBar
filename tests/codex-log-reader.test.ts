@@ -273,6 +273,17 @@ describe("readCodexTokensForPeriod", () => {
     expect(events[0].isFallback).toBe(false);
   });
 
+  it("exposes a raw event id as in-memory source identity", async () => {
+    await writeJsonl(path.join(tmpDir, "2026/05/18"), "source-id.jsonl", [{
+      ...makeTokenCountWithLast("2026-05-18T10:00:01.000Z", {
+        input_tokens: 100, cached_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 0, total_tokens: 110,
+      }),
+      id: "codex-event-123",
+    }]);
+    const [event] = await readCodexTokensForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(event.sourceEventId).toBe("codex-event-123");
+  });
+
   it("skips invalid JSONL lines without throwing", async () => {
     await fs.mkdir(path.join(tmpDir, "2026/05/18"), { recursive: true });
     await fs.writeFile(

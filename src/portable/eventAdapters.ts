@@ -4,6 +4,8 @@ import { basenameAnySeparator, plainClaudeProjectName } from "../shared/projectN
 import { eventId, sessionKey } from "./eventIdentity";
 import { PORTABLE_STORE_VERSION, type PortableProvider, type PortableUsageEvent } from "./types";
 
+const reverseProvenance = new WeakMap<object, { id: string; sessionKey: string }>();
+
 export const PORTABLE_USAGE_EVENT_KEYS = Object.freeze([
   "schemaVersion",
   "id",
@@ -30,25 +32,14 @@ export const PORTABLE_USAGE_EVENT_KEYS = Object.freeze([
 export function fromClaudeEntries(entries: readonly ClaudeUsageEntry[]): PortableUsageEvent[] {
   const ordinals = new Map<string, number>();
   return entries.map((entry) => {
-    const provenance = validatePortableProvenance(entry.portableEventId, entry.portableSessionKey);
+    const provenance = reverseProvenance.get(entry);
     const occurredAt = normalizeTimestamp(entry.timestamp, "Claude");
-    const statisticalSession = canonicalStatisticalSession(entry.session, [
-      entry.inputTokens,
-      entry.outputTokens,
-      entry.cacheCreationTokens,
-      entry.cacheReadTokens,
-      entry.costUSD,
-      entry.inputCostUSD,
-      entry.outputCostUSD,
-      entry.cacheCreationCostUSD,
-      entry.cacheReadCostUSD,
-      entry.pricingVersion,
-    ]);
-    const ordinal = nextOrdinal(ordinals, "claude", occurredAt, entry.model, statisticalSession);
+    const identitySession = providerIdentitySession(entry.session, entry.sourceEventId);
+    const ordinal = nextOrdinal(ordinals, "claude", occurredAt, entry.model, identitySession);
     const projectName = basenameAnySeparator(entry.projectName) ?? plainClaudeProjectName(entry.project) ?? "Unknown project";
     return {
       schemaVersion: PORTABLE_STORE_VERSION,
-      id: provenance?.id ?? eventId({ provider: "claude", occurredAt, model: entry.model, session: statisticalSession, ordinal }),
+      id: provenance?.id ?? eventId({ provider: "claude", occurredAt, model: entry.model, session: identitySession, ordinal }),
       provider: "claude",
       occurredAt,
       model: entry.model,
@@ -75,27 +66,14 @@ export function fromCodexEvents(events: readonly CodexTokenEvent[]): PortableUsa
   const ordinals = new Map<string, number>();
   return events.map((entry) => {
     requireValidCodexTokens(entry);
-    const provenance = validatePortableProvenance(entry.portableEventId, entry.portableSessionKey);
+    const provenance = reverseProvenance.get(entry);
     const occurredAt = normalizeTimestamp(entry.timestamp, "Codex");
-    const statisticalSession = canonicalStatisticalSession(entry.session, [
-      entry.inputTokens,
-      entry.cachedInputTokens,
-      entry.outputTokens,
-      entry.reasoningOutputTokens,
-      entry.totalTokens,
-      entry.isFallback,
-      entry.costUSD,
-      entry.inputCostUSD,
-      entry.outputCostUSD,
-      entry.cacheCreationCostUSD,
-      entry.cacheReadCostUSD,
-      entry.pricingVersion,
-    ]);
-    const ordinal = nextOrdinal(ordinals, "codex", occurredAt, entry.model, statisticalSession);
+    const identitySession = providerIdentitySession(entry.session, entry.sourceEventId);
+    const ordinal = nextOrdinal(ordinals, "codex", occurredAt, entry.model, identitySession);
     const projectName = basenameAnySeparator(entry.projectName);
     return {
       schemaVersion: PORTABLE_STORE_VERSION,
-      id: provenance?.id ?? eventId({ provider: "codex", occurredAt, model: entry.model, session: statisticalSession, ordinal }),
+      id: provenance?.id ?? eventId({ provider: "codex", occurredAt, model: entry.model, session: identitySession, ordinal }),
       provider: "codex",
       occurredAt,
       model: entry.model,
@@ -130,7 +108,7 @@ export function toClaudeEntries(events: readonly PortableUsageEvent[]): ClaudeUs
         event.cacheReadCostUSD,
       ]);
       const costUSD = event.costUSD ?? componentCost;
-      return {
+      const entry: ClaudeUsageEntry = {
         provider: "claude",
         timestamp: event.occurredAt,
         model: event.model,
@@ -147,9 +125,9 @@ export function toClaudeEntries(events: readonly PortableUsageEvent[]): ClaudeUs
         ...(event.cacheCreationCostUSD !== undefined ? { cacheCreationCostUSD: event.cacheCreationCostUSD } : {}),
         ...(event.cacheReadCostUSD !== undefined ? { cacheReadCostUSD: event.cacheReadCostUSD } : {}),
         ...(event.pricingVersion !== undefined ? { pricingVersion: event.pricingVersion } : {}),
-        portableEventId: event.id,
-        portableSessionKey: event.sessionKey,
       };
+      reverseProvenance.set(entry, { id: event.id, sessionKey: event.sessionKey });
+      return entry;
     });
 }
 
@@ -159,7 +137,7 @@ export function toCodexEvents(events: readonly PortableUsageEvent[]): CodexToken
     .map((event) => {
       const inputTokens = event.inputTokens + event.cacheReadTokens;
       const projectName = basenameAnySeparator(event.projectName);
-      return {
+      const entry: CodexTokenEvent = {
         timestamp: event.occurredAt,
         model: event.model,
         isFallback: event.model === "gpt-5",
@@ -177,9 +155,9 @@ export function toCodexEvents(events: readonly PortableUsageEvent[]): CodexToken
         ...(event.cacheCreationCostUSD !== undefined ? { cacheCreationCostUSD: event.cacheCreationCostUSD } : {}),
         ...(event.cacheReadCostUSD !== undefined ? { cacheReadCostUSD: event.cacheReadCostUSD } : {}),
         ...(event.pricingVersion !== undefined ? { pricingVersion: event.pricingVersion } : {}),
-        portableEventId: event.id,
-        portableSessionKey: event.sessionKey,
       };
+      reverseProvenance.set(entry, { id: event.id, sessionKey: event.sessionKey });
+      return entry;
     });
 }
 
@@ -210,9 +188,12 @@ function daysForMonth(year: number, month: number): number {
   return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
 
-function canonicalStatisticalSession(rawSession: string, statistics: readonly unknown[]): string {
-  // eventId retains its public API; JSON framing scopes ordinals to an unambiguous statistical identity.
-  return JSON.stringify(["provider-session", rawSession, "statistics", statistics.map((value) => value ?? null)]);
+function providerIdentitySession(rawSession: string, sourceEventId: string | undefined): string {
+  // Prefer immutable provider source IDs. Coarse encounter ordinals are the fallback when providers omit them.
+  // Task 5 changed-source reconciliation owns replacement if source-less colliding records are edited or reordered.
+  return sourceEventId
+    ? JSON.stringify(["provider-session", rawSession, "source-event", sourceEventId])
+    : rawSession;
 }
 
 function requireValidCodexTokens(entry: CodexTokenEvent): void {
@@ -220,18 +201,6 @@ function requireValidCodexTokens(entry: CodexTokenEvent): void {
   if (values.some((value) => !Number.isFinite(value) || value < 0)) {
     throw new Error("Invalid Codex token counts");
   }
-}
-
-function validatePortableProvenance(
-  id: string | undefined,
-  key: string | undefined,
-): { id: string; sessionKey: string } | undefined {
-  if (id === undefined && key === undefined) return undefined;
-  const sha256 = /^[0-9a-f]{64}$/;
-  if (id === undefined || key === undefined || !sha256.test(id) || !sha256.test(key)) {
-    throw new Error("Invalid portable event provenance");
-  }
-  return { id, sessionKey: key };
 }
 
 function sumFiniteCosts(costs: readonly (number | undefined)[]): number | undefined {

@@ -23,8 +23,7 @@ export interface CodexTokenEvent {
   cacheCreationCostUSD?: number;
   cacheReadCostUSD?: number;
   pricingVersion?: string;
-  portableEventId?: string;
-  portableSessionKey?: string;
+  sourceEventId?: string;
 }
 
 type TokenTotals = {
@@ -160,6 +159,7 @@ async function parseCodexJsonlFile(
         outputTokens: delta.output_tokens,
         reasoningOutputTokens: delta.reasoning_output_tokens,
         totalTokens: delta.total_tokens,
+        ...(typeof entry.id === "string" && entry.id ? { sourceEventId: entry.id } : {}),
       });
     }
   } catch {

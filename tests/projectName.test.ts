@@ -11,7 +11,8 @@ describe("basenameAnySeparator", () => {
   });
 
   it.each([
-    "", "   ", ".", "..", "/", "C:\\", "\\\\server\\share", "bad\u0000name",
+    "", "   ", ".", "..", "/", "C:\\", "C:secret", "C:..", "\\\\server\\share", "bad\u0000name",
+    "D--Work-Alice-QuotaBar", "C--src-private-QuotaBar", "-workspace-alice-QuotaBar",
   ])("rejects unsafe or root-only value %o", (value) => {
     expect(basenameAnySeparator(value)).toBeUndefined();
   });

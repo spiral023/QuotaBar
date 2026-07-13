@@ -36,8 +36,7 @@ export interface ClaudeUsageEntry extends ModelTokens {
   cacheCreationCostUSD?: number;
   cacheReadCostUSD?: number;
   pricingVersion?: string;
-  portableEventId?: string;
-  portableSessionKey?: string;
+  sourceEventId?: string;
 }
 
 interface ParsedClaudeUsageEntry extends ClaudeUsageEntry {
@@ -217,6 +216,7 @@ function processEntry(
     outputTokens: output,
     cacheCreationTokens: cacheCreate,
     cacheReadTokens: cacheRead,
+    ...(msgId ? { sourceEventId: msgId } : {}),
     ...(msgId ? { messageId: msgId } : {}),
     ...(cost > 0 ? { costUSD: cost } : {}),
   };
