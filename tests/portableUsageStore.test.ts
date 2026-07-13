@@ -90,6 +90,44 @@ describe("PortableUsageStore", () => {
     expect((await store.read()).map((item) => item.id)).toEqual(["same-id", "other-id"]);
   });
 
+  it("reconciles legacy-derived updates and removals from one current snapshot", async () => {
+    const provider = event("provider", "2026-07-02T00:00:00.000Z", { inputTokens: 4 });
+    const legacy = event("legacy", "2026-07-02T12:00:00.000Z", {
+      source: "legacy-reconciliation",
+      synthetic: true,
+      inputTokens: 6,
+    });
+    await store.upsert([provider, legacy]);
+
+    const updated = { ...legacy, inputTokens: 4 };
+    const result = await store.reconcileLegacyDerived((current, revision) => {
+      expect(current).toEqual([provider, legacy]);
+      expect(revision).toMatch(/^[a-f0-9]{64}$/);
+      current[0].inputTokens = 999;
+      return { events: [updated], removeIds: [] };
+    });
+
+    expect(result).toMatchObject({ inserted: 0, updated: 1, removed: 0, existing: 0 });
+    expect((await store.read()).find(({ id }) => id === "provider")?.inputTokens).toBe(4);
+    const removed = await store.reconcileLegacyDerived(() => ({ events: [], removeIds: ["legacy"] }));
+    expect(removed).toMatchObject({ inserted: 0, updated: 0, removed: 1, existing: 0 });
+    expect((await store.read()).map(({ id }) => id)).toEqual(["provider"]);
+    expect(removed.revision).not.toBe(result.revision);
+  });
+
+  it("rejects non-legacy derived writes and provider removals", async () => {
+    const provider = event("provider", "2026-07-02T00:00:00.000Z");
+    await store.upsert([provider]);
+
+    await expect(store.reconcileLegacyDerived(() => ({ events: [provider], removeIds: [] })))
+      .rejects.toThrow("Derived reconciliation accepts only legacy events");
+    await expect(store.reconcileLegacyDerived(() => ({ events: [], removeIds: [provider.id] })))
+      .rejects.toThrow("Derived reconciliation cannot remove provider events");
+    await expect(store.reconcileLegacyDerived(() => ({ events: [], removeIds: ["missing-legacy"] })))
+      .rejects.toThrow("Derived reconciliation cannot remove unknown events");
+    expect(await store.read()).toEqual([provider]);
+  });
+
   it("keeps the first incoming occurrence when an ID spans monthly partitions", async () => {
     expect(await store.upsert([
       event("global-id", "2026-07-31T23:00:00.000Z"),

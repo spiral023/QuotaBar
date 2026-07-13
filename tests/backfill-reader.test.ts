@@ -65,7 +65,7 @@ describe("readBackfillDayRecords", () => {
     expect(records[0].perModel["claude-sonnet-4-6"]).toMatchObject({
       inputTokens: 1000, outputTokens: 500,
       cacheCreationTokens: 200, cacheReadTokens: 3000,
-      totalTokens: 4700, costUSD: 0.025,
+      reasoningOutputTokens: 0, totalTokens: 4700, costUSD: 0.025,
     });
   });
 
@@ -92,8 +92,63 @@ describe("readBackfillDayRecords", () => {
       totalTokens: 51000, costUSD: 1.23,
     });
     expect(records[0].perModel["gpt-5.5"]).toMatchObject({
-      inputTokens: 3000, cacheReadTokens: 47000, totalTokens: 51000,
+      inputTokens: 3000, cacheReadTokens: 47000, reasoningOutputTokens: 200, totalTokens: 51000,
     });
+  });
+
+  it("derives reasoning from an older normalized Codex model total", async () => {
+    await writeBackfill(path.join(tmpDir, "2026-05-22.backfill.jsonl"), [
+      {
+        kind: "tokens.daySummary", provider: "codex", date: "2026-05-22",
+        input: 50000, output: 800, cachedInput: 47000,
+        totalTokens: 51000, totalCostUSD: 1.23, sessionCount: 2,
+        models: ["gpt-5.5"],
+        perModel: {
+          "gpt-5.5": { input: 50000, output: 800, cachedInput: 47000, totalTokens: 51000, costUSD: 1.23 },
+        },
+      },
+    ]);
+
+    const [result] = await readBackfillDayRecords(tmpDir);
+    expect(result.perModel["gpt-5.5"]).toMatchObject({
+      inputTokens: 3000,
+      cacheReadTokens: 47000,
+      outputTokens: 800,
+      reasoningOutputTokens: 200,
+      totalTokens: 51000,
+    });
+  });
+
+  it("skips an older Codex summary with a negative normalized reasoning remainder", async () => {
+    await writeBackfill(path.join(tmpDir, "2026-05-23.backfill.jsonl"), [
+      {
+        kind: "tokens.daySummary", provider: "codex", date: "2026-05-23",
+        input: 100, output: 20, cachedInput: 50,
+        totalTokens: 60, totalCostUSD: 0, sessionCount: 1,
+        models: ["gpt-5.5"],
+        perModel: {
+          "gpt-5.5": { input: 100, output: 20, cachedInput: 50, totalTokens: 60, costUSD: 0 },
+        },
+      },
+    ]);
+
+    expect(await readBackfillDayRecords(tmpDir)).toEqual([]);
+  });
+
+  it("skips a Codex summary with an explicit negative reasoning value", async () => {
+    await writeBackfill(path.join(tmpDir, "2026-05-24.backfill.jsonl"), [
+      {
+        kind: "tokens.daySummary", provider: "codex", date: "2026-05-24",
+        input: 100, output: 20, cachedInput: 50, reasoningOutput: -1,
+        totalTokens: 120, totalCostUSD: 0, sessionCount: 1,
+        models: ["gpt-5.5"],
+        perModel: {
+          "gpt-5.5": { input: 100, output: 20, cachedInput: 50, reasoningOutput: -1, costUSD: 0 },
+        },
+      },
+    ]);
+
+    expect(await readBackfillDayRecords(tmpDir)).toEqual([]);
   });
 
   it("filtert nach since-Datum", async () => {

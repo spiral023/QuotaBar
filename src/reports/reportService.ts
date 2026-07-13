@@ -219,12 +219,13 @@ function buildRowsFromBackfill(
     for (const r of list) {
       r.models.forEach((m) => modelSet.add(m));
       for (const [model, pm] of Object.entries(r.perModel)) {
-        const acc = modelAgg.get(model) ?? { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 };
+        const acc = modelAgg.get(model) ?? { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, reasoningOutputTokens: 0, totalTokens: 0, costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 };
         modelAgg.set(model, {
           inputTokens: acc.inputTokens + pm.inputTokens,
           outputTokens: acc.outputTokens + pm.outputTokens,
           cacheCreationTokens: acc.cacheCreationTokens + pm.cacheCreationTokens,
           cacheReadTokens: acc.cacheReadTokens + pm.cacheReadTokens,
+          reasoningOutputTokens: acc.reasoningOutputTokens + pm.reasoningOutputTokens,
           totalTokens: acc.totalTokens + pm.totalTokens,
           costUSD: acc.costUSD + pm.costUSD,
           inputCostUSD: (acc.inputCostUSD ?? 0) + (pm.inputCostUSD ?? 0),

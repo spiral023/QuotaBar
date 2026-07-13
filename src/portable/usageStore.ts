@@ -76,6 +76,19 @@ interface RepairCandidate {
   canonical: boolean;
 }
 
+export interface LegacyDerivedPlan {
+  events: readonly PortableUsageEvent[];
+  removeIds: readonly string[];
+}
+
+export interface LegacyDerivedResult {
+  inserted: number;
+  updated: number;
+  removed: number;
+  existing: number;
+  revision: string;
+}
+
 const rootQueues = new Map<string, Promise<void>>();
 
 export class PortableUsageStore {
@@ -159,6 +172,96 @@ export class PortableUsageStore {
 
   async reconcile(events: readonly PortableUsageEvent[]): Promise<{ inserted: number; updated: number; existing: number }> {
     return this.exclusive(() => this.reconcileUnlocked(events));
+  }
+
+  reconcileLegacyDerived(
+    builder: (currentEvents: readonly PortableUsageEvent[], revision: string) => LegacyDerivedPlan,
+  ): Promise<LegacyDerivedResult> {
+    return this.exclusive(async () => {
+      await this.prepareStore();
+      const snapshots = await this.scanPartitions({ acceptMisplaced: false });
+      const storedByMonth = snapshotsToMaps(snapshots);
+      const current = deduplicateGlobally(snapshots.flatMap(({ events }) => events));
+      const storedById = new Map(current.map((event) => [event.id, event]));
+      const plan = builder(current.map(clonePortableEvent), storeRevision(storedByMonth));
+      if (!plan || !Array.isArray(plan.events) || !Array.isArray(plan.removeIds)) {
+        throw new Error("Invalid derived reconciliation plan");
+      }
+
+      const incomingById = new Map<string, PortableUsageEvent>();
+      for (const candidate of plan.events) {
+        const event = requirePortableEvent(candidate);
+        if (event.source !== "legacy-reconciliation") {
+          throw new Error("Derived reconciliation accepts only legacy events");
+        }
+        const stored = storedById.get(event.id);
+        if (stored && stored.source !== "legacy-reconciliation") {
+          throw new Error("Derived reconciliation cannot replace provider events");
+        }
+        incomingById.set(event.id, event);
+      }
+      const removeIds = new Set<string>();
+      for (const id of plan.removeIds) {
+        if (!isNonEmptyString(id)) throw new Error("Invalid derived reconciliation removal ID");
+        if (incomingById.has(id)) throw new Error("Derived reconciliation cannot write and remove the same event");
+        const stored = storedById.get(id);
+        if (!stored) throw new Error("Derived reconciliation cannot remove unknown events");
+        if (stored && stored.source !== "legacy-reconciliation") {
+          throw new Error("Derived reconciliation cannot remove provider events");
+        }
+        removeIds.add(id);
+      }
+
+      const affected = new Set<string>();
+      let removed = 0;
+      for (const id of removeIds) {
+        if (!storedById.has(id)) continue;
+        removed += 1;
+        for (const [month, partition] of storedByMonth) {
+          if (partition.delete(id)) affected.add(month);
+        }
+      }
+
+      let inserted = 0;
+      let updated = 0;
+      let existing = 0;
+      for (const event of incomingById.values()) {
+        const stored = storedById.get(event.id);
+        if (!stored) {
+          inserted += 1;
+        } else if (canonicalSerialize(stored) === canonicalSerialize(event)) {
+          existing += 1;
+          continue;
+        } else {
+          updated += 1;
+          for (const [month, partition] of storedByMonth) {
+            if (partition.delete(event.id)) affected.add(month);
+          }
+        }
+        const month = monthKey(new Date(event.occurredAt));
+        const partition = storedByMonth.get(month) ?? new Map<string, PortableUsageEvent>();
+        partition.set(event.id, event);
+        storedByMonth.set(month, partition);
+        affected.add(month);
+      }
+
+      if (affected.size > 0) {
+        const writes = new Map<string, string>();
+        const removals: string[] = [];
+        for (const month of [...affected].sort()) {
+          const partition = storedByMonth.get(month);
+          if (!partition || partition.size === 0) {
+            removals.push(this.partitionPath(month));
+            storedByMonth.delete(month);
+          } else {
+            writes.set(this.partitionPath(month), serializeEvents(partition.values()));
+          }
+        }
+        writes.set(this.metadataPath(), `${JSON.stringify(buildMetadata(storedByMonth), null, 2)}\n`);
+        await this.commitTransaction(writes, removals);
+      }
+      return { inserted, updated, removed, existing, revision: storeRevision(storedByMonth) };
+    });
   }
 
   async reconcileWithIngestState(
@@ -727,6 +830,16 @@ function buildMetadata(partitions: ReadonlyMap<string, ReadonlyMap<string, Porta
     };
   }
   return metadata;
+}
+
+function storeRevision(partitions: ReadonlyMap<string, ReadonlyMap<string, PortableUsageEvent>>): string {
+  const canonical = [...partitions]
+    .sort(([left], [right]) => compareText(left, right))
+    .map(([month, events]) => [
+      month,
+      [...events.values()].sort(compareCanonicalEvents).map(canonicalSerialize),
+    ]);
+  return sha256(JSON.stringify([PORTABLE_STORE_VERSION, canonical]));
 }
 
 function serializeEvents(events: Iterable<PortableUsageEvent>): string {

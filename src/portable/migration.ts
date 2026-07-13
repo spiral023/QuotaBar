@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import type { BackfillDayRecord, BackfillPerModelEntry } from "../reports/types";
+import { normalizeModelName } from "../shared/modelNames";
 import { eventId, sessionKey } from "./eventIdentity";
+import { withNamedPortableRootLock } from "./rootLock";
 import {
   PORTABLE_STORE_VERSION,
   type PortableMigrationState,
@@ -31,6 +33,7 @@ const STATE_KEYS = new Set([
   "schemaVersion",
   "status",
   "usageMigrationVersion",
+  "storeRevision",
   "lastError",
   "updatedAt",
 ]);
@@ -41,11 +44,14 @@ const STATE_ERROR_CODES = new Set([
   "store_reconciliation_failed",
 ]);
 const LEGACY_RECONCILIATION_IDENTITY_NAMESPACE = "quotabar-legacy-reconciliation-event-v1";
+const MIGRATION_OPERATION_ERROR = Symbol("migration-operation-error");
 
 type TokenField = typeof TOKEN_FIELDS[number];
 type ComponentCostField = typeof COMPONENT_COST_FIELDS[number];
-type ReconcileResult = { inserted: number; updated: number; existing: number };
-type MigrationStore = Pick<PortableUsageStore, "getIngestStatePath" | "recoverPending" | "read" | "reconcile">;
+type MigrationStore = Pick<
+  PortableUsageStore,
+  "getIngestStatePath" | "recoverPending" | "reconcileLegacyDerived"
+>;
 
 interface Aggregate {
   inputTokens: number;
@@ -68,6 +74,13 @@ interface LegacyTarget extends Aggregate {
 interface LoadedMigrationState {
   state?: PortableMigrationState;
   rewriteRequired: boolean;
+}
+
+class InvalidStoreEventsError extends Error {}
+class FutureMigrationStateError extends Error {
+  constructor() {
+    super("Portable migration state is newer than this QuotaBar version");
+  }
 }
 
 export interface MigrateLegacyDataOptions {
@@ -96,7 +109,32 @@ export async function migrateLegacyData(options: MigrateLegacyDataOptions): Prom
   if (canonicalPath(statePath) !== canonicalPath(expectedStatePath)) {
     throw new Error("Portable migration state path must match the store root");
   }
+  try {
+    // Lock order is outer migration/ingestion lock first, then the store root lock acquired by store methods.
+    // PortableUsageStore never acquires an outer named lock, so the inverse order cannot occur here.
+    return await withNamedPortableRootLock(path.dirname(statePath), ".portable-migration.lock", async () => {
+      try {
+        return await migrateLegacyDataExclusive(options, store, statePath);
+      } catch (error) {
+        throw { marker: MIGRATION_OPERATION_ERROR, error };
+      }
+    });
+  } catch (error) {
+    if (isMigrationOperationError(error)) throw error.error;
+    // Lock diagnostics may expose host paths; retain only the fixed boundary category.
+    // eslint-disable-next-line preserve-caught-error
+    throw new Error("Portable usage migration lock failed");
+  }
+}
+
+async function migrateLegacyDataExclusive(
+  options: MigrateLegacyDataOptions,
+  store: MigrationStore,
+  statePath: string,
+): Promise<MigrateLegacyDataResult> {
   const now = options.now ?? (() => new Date());
+
+  const loadedState = await readMigrationState(statePath);
 
   try {
     await store.recoverPending();
@@ -104,11 +142,8 @@ export async function migrateLegacyData(options: MigrateLegacyDataOptions): Prom
     throw new Error("Portable usage store recovery failed");
   }
 
-  const loadedState = await readMigrationState(statePath);
-  if (loadedState.state?.status === "complete"
-    && loadedState.state.usageMigrationVersion === PORTABLE_USAGE_MIGRATION_VERSION) {
-    if (loadedState.rewriteRequired) await writeStateSafely(statePath, loadedState.state);
-    return completeResult();
+  if (loadedState.rewriteRequired && loadedState.state) {
+    await writeStateSafely(statePath, loadedState.state);
   }
 
   await writeStateSafely(statePath, state("running", now));
@@ -122,45 +157,56 @@ export async function migrateLegacyData(options: MigrateLegacyDataOptions): Prom
     throw new Error("Legacy backfill records are invalid");
   }
 
-  let current: PortableUsageEvent[];
+  let reconciled;
   try {
-    current = await store.read();
-  } catch {
-    await writeFailedState(statePath, "store_read_failed", now);
-    throw new Error("Portable usage migration could not read the store");
-  }
-
-  let baseline: Map<string, Aggregate>;
-  try {
-    baseline = aggregateProviderEvents(current);
-  } catch {
-    await writeFailedState(statePath, "store_events_invalid", now);
-    throw new Error("Portable usage store events are invalid");
-  }
-  const existingSynthetic = new Map(
-    current
-      .filter((event) => event.source === "legacy-reconciliation")
-      .map((event) => [event.id, event]),
-  );
-  const synthetic: PortableUsageEvent[] = [];
-  for (const item of records.values()) {
-    const event = reconciliationEvent(item, baseline.get(aggregateKey(item.date, item.provider, item.model)));
-    if (!event) continue;
-    synthetic.push(preserveHistoricalMaximum(event, existingSynthetic.get(event.id)));
-  }
-
-  let reconciled: ReconcileResult = { inserted: 0, updated: 0, existing: 0 };
-  if (synthetic.length > 0) {
-    try {
-      reconciled = await store.reconcile(synthetic);
-    } catch {
-      await writeFailedState(statePath, "store_reconciliation_failed", now);
-      throw new Error("Portable usage migration could not reconcile events");
+    reconciled = await store.reconcileLegacyDerived((current, revision) => {
+      const revisionMatches = loadedState.state?.status === "complete"
+        && loadedState.state.usageMigrationVersion === PORTABLE_USAGE_MIGRATION_VERSION
+        && loadedState.state.storeRevision === revision;
+      let baseline: Map<string, Aggregate>;
+      try {
+        baseline = aggregateProviderEvents(current);
+      } catch {
+        throw new InvalidStoreEventsError();
+      }
+      const events: PortableUsageEvent[] = [];
+      const removeIds: string[] = [];
+      const existingLegacyIds = new Set(
+        current.filter(({ source }) => source === "legacy-reconciliation").map(({ id }) => id),
+      );
+      const existingLegacyById = new Map(
+        current.filter(({ source }) => source === "legacy-reconciliation").map((event) => [event.id, event]),
+      );
+      for (const item of records.values()) {
+        const identity = reconciliationIdentity(item);
+        const existing = existingLegacyById.get(identity.id);
+        const desired = reconciliationEvent(item, baseline.get(aggregateKey(item.date, item.provider, item.model)));
+        const event = revisionMatches && existing
+          ? desired ? preserveUnchangedStoreTargetMaximum(desired, existing) : existing
+          : desired;
+        if (event) events.push(event);
+        else {
+          const id = identity.id;
+          if (existingLegacyIds.has(id)) removeIds.push(id);
+        }
+      }
+      return { events, removeIds };
+    });
+  } catch (error) {
+    if (error instanceof InvalidStoreEventsError) {
+      await writeFailedState(statePath, "store_events_invalid", now);
+      // Builder diagnostics can contain event details; expose only the fixed boundary category.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error("Portable usage store events are invalid");
     }
+    await writeFailedState(statePath, "store_reconciliation_failed", now);
+    // Store diagnostics can contain host paths; expose only the fixed boundary category.
+    // eslint-disable-next-line preserve-caught-error
+    throw new Error("Portable usage migration could not reconcile events");
   }
   if (options.failAfterState === "events") throw new Error("Portable usage migration interrupted");
 
-  await writeStateSafely(statePath, state("complete", now));
+  await writeStateSafely(statePath, state("complete", now, reconciled.revision));
   return {
     status: "complete",
     syntheticInserted: reconciled.inserted,
@@ -194,13 +240,19 @@ function canonicalizeLegacyRecords(
     providerDays.add(providerDay);
     for (const model of Object.keys(record.perModel).sort(compareText)) {
       const entry = record.perModel[model];
-      const key = aggregateKey(record.date, record.provider, model);
-      result.set(key, {
-        date: record.date,
-        provider: record.provider,
-        model,
-        target: legacyTarget(entry),
-      });
+      const normalizedModel = normalizeModelName(model);
+      const key = aggregateKey(record.date, record.provider, normalizedModel);
+      const existing = result.get(key);
+      if (existing) {
+        existing.target = mergeLegacyTargets(existing.target, legacyTarget(entry));
+      } else {
+        result.set(key, {
+          date: record.date,
+          provider: record.provider,
+          model: normalizedModel,
+          target: legacyTarget(entry),
+        });
+      }
     }
   }
   return new Map([...result].sort(([left], [right]) => compareText(left, right)));
@@ -223,7 +275,14 @@ function validateRecord(value: unknown): asserts value is BackfillDayRecord {
     || !isPlainObject(record.perModel)) throw new Error("invalid record fields");
   for (const [model, entry] of Object.entries(record.perModel)) {
     if (!isCanonicalName(model) || !isPlainObject(entry)) throw new Error("invalid model entry");
-    for (const field of ["inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "totalTokens"] as const) {
+    for (const field of [
+      "inputTokens",
+      "outputTokens",
+      "cacheCreationTokens",
+      "cacheReadTokens",
+      "reasoningOutputTokens",
+      "totalTokens",
+    ] as const) {
       if (!isNonNegativeSafeInteger(entry[field])) throw new Error("invalid model tokens");
     }
     if (!isNonNegativeFinite(entry.costUSD)) throw new Error("invalid model cost");
@@ -240,7 +299,7 @@ function legacyTarget(entry: BackfillPerModelEntry): LegacyTarget {
     outputTokens: entry.outputTokens,
     cacheCreationTokens: entry.cacheCreationTokens,
     cacheReadTokens: entry.cacheReadTokens,
-    reasoningOutputTokens: 0,
+    reasoningOutputTokens: entry.reasoningOutputTokens,
     effectiveCostUSD: 0,
     inputCostUSD: 0,
     outputCostUSD: 0,
@@ -263,13 +322,32 @@ function legacyTarget(entry: BackfillPerModelEntry): LegacyTarget {
   return target;
 }
 
+function mergeLegacyTargets(left: LegacyTarget, right: LegacyTarget): LegacyTarget {
+  const merged: LegacyTarget = {
+    inputTokens: left.inputTokens + right.inputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    cacheCreationTokens: left.cacheCreationTokens + right.cacheCreationTokens,
+    cacheReadTokens: left.cacheReadTokens + right.cacheReadTokens,
+    reasoningOutputTokens: left.reasoningOutputTokens + right.reasoningOutputTokens,
+    effectiveCostUSD: left.effectiveCostUSD + right.effectiveCostUSD,
+    inputCostUSD: left.inputCostUSD + right.inputCostUSD,
+    outputCostUSD: left.outputCostUSD + right.outputCostUSD,
+    cacheCreationCostUSD: left.cacheCreationCostUSD + right.cacheCreationCostUSD,
+    cacheReadCostUSD: left.cacheReadCostUSD + right.cacheReadCostUSD,
+    authoritativeTotalCost: left.authoritativeTotalCost || right.authoritativeTotalCost,
+    presentCostComponents: new Set([...left.presentCostComponents, ...right.presentCostComponents]),
+  };
+  return merged;
+}
+
 function aggregateProviderEvents(events: readonly PortableUsageEvent[]): Map<string, Aggregate> {
   const result = new Map<string, Aggregate>();
   for (const event of events) {
     const date = utcDay(event.occurredAt);
     validateBaselineEventNumbers(event);
     if (event.source === "legacy-reconciliation") continue;
-    const key = aggregateKey(date, event.provider, event.model);
+    const normalizedModel = normalizeModelName(event.model);
+    const key = aggregateKey(date, event.provider, normalizedModel);
     const aggregate = result.get(key) ?? zeroAggregate();
     for (const field of TOKEN_FIELDS) aggregate[field] += event[field];
     for (const field of COMPONENT_COST_FIELDS) aggregate[field] += event[field] ?? 0;
@@ -288,7 +366,10 @@ function reconciliationEvent(
     outputTokens: positiveIntegerDelta(item.target.outputTokens, current.outputTokens),
     cacheCreationTokens: positiveIntegerDelta(item.target.cacheCreationTokens, current.cacheCreationTokens),
     cacheReadTokens: positiveIntegerDelta(item.target.cacheReadTokens, current.cacheReadTokens),
-    reasoningOutputTokens: 0,
+    reasoningOutputTokens: positiveIntegerDelta(
+      item.target.reasoningOutputTokens,
+      current.reasoningOutputTokens,
+    ),
   };
   const componentDeltas = {} as Record<ComponentCostField, number>;
   for (const field of COMPONENT_COST_FIELDS) {
@@ -299,27 +380,16 @@ function reconciliationEvent(
   const hasComponents = [...item.target.presentCostComponents].some((field) => componentDeltas[field] > 0);
   if (!hasTokens && totalCostDelta === 0 && !hasComponents) return undefined;
 
-  const identitySession = JSON.stringify([
-    LEGACY_RECONCILIATION_IDENTITY_NAMESPACE,
-    item.date,
-    item.provider,
-    item.model,
-  ]);
-  const occurredAt = `${item.date}T12:00:00.000Z`;
+  const identity = reconciliationIdentity(item);
+  const occurredAt = identity.occurredAt;
   const event: PortableUsageEvent = {
     schemaVersion: PORTABLE_STORE_VERSION,
-    id: eventId({
-      provider: item.provider,
-      occurredAt,
-      model: item.model,
-      session: identitySession,
-      ordinal: 0,
-    }),
+    id: identity.id,
     provider: item.provider,
     occurredAt,
     model: item.model,
     projectName: "Imported legacy data",
-    sessionKey: sessionKey(item.provider, identitySession),
+    sessionKey: identity.sessionKey,
     source: "legacy-reconciliation",
     synthetic: true,
     ...tokenDeltas,
@@ -333,11 +403,36 @@ function reconciliationEvent(
   return event;
 }
 
-function preserveHistoricalMaximum(
+function reconciliationIdentity(item: { date: string; provider: PortableProvider; model: string }): {
+  id: string;
+  occurredAt: string;
+  sessionKey: string;
+} {
+  const session = JSON.stringify([
+    LEGACY_RECONCILIATION_IDENTITY_NAMESPACE,
+    item.date,
+    item.provider,
+    item.model,
+  ]);
+  const occurredAt = `${item.date}T12:00:00.000Z`;
+  return {
+    id: eventId({
+      domain: "legacy-reconciliation-v1",
+      provider: item.provider,
+      occurredAt,
+      model: item.model,
+      session,
+      ordinal: 0,
+    }),
+    occurredAt,
+    sessionKey: sessionKey(item.provider, session),
+  };
+}
+
+function preserveUnchangedStoreTargetMaximum(
   desired: PortableUsageEvent,
-  existing: PortableUsageEvent | undefined,
+  existing: PortableUsageEvent,
 ): PortableUsageEvent {
-  if (!existing || existing.source !== "legacy-reconciliation") return desired;
   const result = { ...desired };
   for (const field of TOKEN_FIELDS) result[field] = Math.max(desired[field], existing[field]);
   for (const field of ["costUSD", ...COMPONENT_COST_FIELDS] as const) {
@@ -366,13 +461,18 @@ function aggregateKey(date: string, provider: PortableProvider, model: string): 
   return JSON.stringify([date, provider, model]);
 }
 
-function state(status: PortableMigrationState["status"], now: () => Date): PortableMigrationState {
+function state(
+  status: PortableMigrationState["status"],
+  now: () => Date,
+  storeRevision?: string,
+): PortableMigrationState {
   const date = now();
   if (!(date instanceof Date) || !Number.isFinite(date.getTime())) throw new Error("Portable migration clock is invalid");
   return {
     schemaVersion: PORTABLE_STORE_VERSION,
     status,
     usageMigrationVersion: PORTABLE_USAGE_MIGRATION_VERSION,
+    ...(storeRevision !== undefined ? { storeRevision } : {}),
     updatedAt: date.toISOString(),
   };
 }
@@ -382,6 +482,7 @@ async function readMigrationState(statePath: string): Promise<LoadedMigrationSta
     const parsed: unknown = JSON.parse(await fs.readFile(statePath, "utf8"));
     return parseMigrationState(parsed);
   } catch (error) {
+    if (error instanceof FutureMigrationStateError) throw error;
     if (isMissing(error)) return { rewriteRequired: false };
     if (error instanceof SyntaxError || (error as NodeJS.ErrnoException)?.code === "EISDIR") {
       return { rewriteRequired: true };
@@ -395,6 +496,12 @@ async function readMigrationState(statePath: string): Promise<LoadedMigrationSta
 function parseMigrationState(value: unknown): LoadedMigrationState {
   if (!isPlainObject(value)) return { rewriteRequired: true };
   const item = value as Record<string, unknown>;
+  if ((typeof item.schemaVersion === "number" && item.schemaVersion > PORTABLE_STORE_VERSION)
+    || (item.schemaVersion === PORTABLE_STORE_VERSION
+      && typeof item.usageMigrationVersion === "number"
+      && item.usageMigrationVersion > PORTABLE_USAGE_MIGRATION_VERSION)) {
+    throw new FutureMigrationStateError();
+  }
   if (item.schemaVersion !== PORTABLE_STORE_VERSION
     || typeof item.status !== "string" || !STATE_STATUSES.has(item.status)
     || !Number.isSafeInteger(item.usageMigrationVersion) || (item.usageMigrationVersion as number) < 0
@@ -404,12 +511,16 @@ function parseMigrationState(value: unknown): LoadedMigrationState {
   const validLastError = item.status === "failed"
     && typeof item.lastError === "string"
     && STATE_ERROR_CODES.has(item.lastError);
+  const validStoreRevision = item.storeRevision === undefined
+    || (typeof item.storeRevision === "string" && /^[a-f0-9]{64}$/.test(item.storeRevision));
+  if (!validStoreRevision) return { rewriteRequired: true };
   const rewriteRequired = Object.keys(item).some((key) => !STATE_KEYS.has(key))
     || (item.lastError !== undefined && !validLastError);
   const state: PortableMigrationState = {
     schemaVersion: PORTABLE_STORE_VERSION,
     status: item.status as PortableMigrationState["status"],
     usageMigrationVersion: item.usageMigrationVersion as number,
+    ...(typeof item.storeRevision === "string" ? { storeRevision: item.storeRevision } : {}),
     ...(validLastError ? { lastError: item.lastError as string } : {}),
     updatedAt: item.updatedAt,
   };
@@ -511,10 +622,6 @@ function positiveDecimalDelta(target: number, current: number): number {
   return delta === 0 ? 0 : Number(delta.toPrecision(15));
 }
 
-function completeResult(): MigrateLegacyDataResult {
-  return { status: "complete", syntheticInserted: 0, syntheticUpdated: 0 };
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -550,4 +657,10 @@ function compareText(left: string, right: string): number {
 
 function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === "ENOENT";
+}
+
+function isMigrationOperationError(error: unknown): error is { marker: symbol; error: unknown } {
+  return Boolean(error && typeof error === "object"
+    && (error as { marker?: unknown }).marker === MIGRATION_OPERATION_ERROR
+    && "error" in error);
 }

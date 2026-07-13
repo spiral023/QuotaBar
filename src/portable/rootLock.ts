@@ -4,6 +4,7 @@ import path from "node:path";
 
 const LOCK_DIRECTORY = ".portable-store.lock";
 const INGESTION_LOCK_DIRECTORY = ".portable-ingestion.lock";
+const MIGRATION_LOCK_DIRECTORY = ".portable-migration.lock";
 const OWNER_FILE = "owner.json";
 const HEARTBEAT_INTERVAL_MS = 1_000;
 const STALE_HEARTBEAT_MS = 2 * 60 * 1_000;
@@ -60,11 +61,13 @@ export async function withPortableRootLock<T>(
 
 export async function withNamedPortableRootLock<T>(
   rootDir: string,
-  lockDirectory: ".portable-store.lock" | ".portable-ingestion.lock",
+  lockDirectory: ".portable-store.lock" | ".portable-ingestion.lock" | ".portable-migration.lock",
   operation: () => Promise<T>,
   dependencies: PortableRootLockDependencies = {},
 ): Promise<T> {
-  if (lockDirectory !== LOCK_DIRECTORY && lockDirectory !== INGESTION_LOCK_DIRECTORY) {
+  if (lockDirectory !== LOCK_DIRECTORY
+    && lockDirectory !== INGESTION_LOCK_DIRECTORY
+    && lockDirectory !== MIGRATION_LOCK_DIRECTORY) {
     throw new Error("Unsupported portable lock name");
   }
   const held = await acquire(rootDir, lockDirectory, createRuntime(dependencies));

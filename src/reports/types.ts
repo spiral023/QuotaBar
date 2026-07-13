@@ -71,6 +71,7 @@ export interface BackfillPerModelEntry extends CostComponents {
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
+  reasoningOutputTokens: number;
   totalTokens: number;
   costUSD: number;
 }

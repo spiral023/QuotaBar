@@ -27,6 +27,13 @@ describe("portable root lock", () => {
     await expect(nodeFs.access(path.join(rootDir, ".portable-ingestion.lock"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("supports an independent allowlisted migration lock", async () => {
+    let ran = false;
+    await withNamedPortableRootLock(rootDir, ".portable-migration.lock", async () => { ran = true; });
+    expect(ran).toBe(true);
+    await expect(nodeFs.access(path.join(rootDir, ".portable-migration.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("never reclaims a stale lock whose owner PID is alive", async () => {
     const now = Date.parse("2026-07-13T12:00:00.000Z");
     await createOwner(rootDir, {

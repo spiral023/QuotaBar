@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +17,7 @@ const ZERO_MODEL: BackfillPerModelEntry = {
   outputTokens: 0,
   cacheCreationTokens: 0,
   cacheReadTokens: 0,
+  reasoningOutputTokens: 0,
   totalTokens: 0,
   costUSD: 0,
 };
@@ -131,6 +133,7 @@ describe("migrateLegacyData", () => {
       "claude-sonnet-4-6",
     ]);
     expect(event.id).toBe(eventId({
+      domain: "legacy-reconciliation-v1",
       provider: "claude",
       occurredAt: "2026-05-20T12:00:00.000Z",
       model: "claude-sonnet-4-6",
@@ -164,7 +167,10 @@ describe("migrateLegacyData", () => {
   it("rejects an invalid stored timestamp with a fixed safe error", async () => {
     const unsafeTimestamp = "private-invalid-timestamp-value";
     const invalid = providerEvent("invalid", unsafeTimestamp, "claude", "model");
-    store.read = async () => [invalid];
+    store.reconcileLegacyDerived = async (builder) => {
+      builder([invalid], "0".repeat(64));
+      throw new Error("builder unexpectedly accepted an invalid timestamp");
+    };
 
     let message = "";
     try {
@@ -263,12 +269,6 @@ describe("migrateLegacyData", () => {
     const first = record("2026-05-20", "claude", "model", { inputTokens: 10, totalTokens: 10 });
     await migrateLegacyData({ store, records: [first], statePath });
     const [before] = await store.read();
-    await writeFile(statePath, `${JSON.stringify({
-      schemaVersion: 1,
-      status: "complete",
-      usageMigrationVersion: 0,
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    })}\n`, "utf8");
 
     const second = record("2026-05-20", "claude", "model", { inputTokens: 15, totalTokens: 15 });
     expect(await migrateLegacyData({ store, records: [second], statePath })).toMatchObject({
@@ -279,6 +279,59 @@ describe("migrateLegacyData", () => {
     expect(after.id).toBe(before.id);
     expect(after.inputTokens).toBe(15);
   });
+
+  it("shrinks and removes a derived delta after later provider ingestion", async () => {
+    const legacy = record("2026-05-20", "claude", "model", { inputTokens: 10, totalTokens: 10 });
+    await store.upsert([providerEvent(
+      "provider-4",
+      "2026-05-20T08:00:00.000Z",
+      "claude",
+      "model",
+      { inputTokens: 4 },
+    )]);
+
+    await migrateLegacyData({ store, records: [legacy], statePath });
+    expect((await store.read()).find(({ source }) => source === "legacy-reconciliation")?.inputTokens).toBe(6);
+
+    await store.upsert([providerEvent(
+      "provider-plus-2",
+      "2026-05-20T09:00:00.000Z",
+      "claude",
+      "model",
+      { inputTokens: 2 },
+    )]);
+    await migrateLegacyData({ store, records: [legacy], statePath });
+    let events = await store.read();
+    expect(events.find(({ source }) => source === "legacy-reconciliation")?.inputTokens).toBe(4);
+    expect(events.reduce((sum, event) => sum + event.inputTokens, 0)).toBe(10);
+
+    await store.upsert([providerEvent(
+      "provider-plus-4",
+      "2026-05-20T10:00:00.000Z",
+      "claude",
+      "model",
+      { inputTokens: 4 },
+    )]);
+    await migrateLegacyData({ store, records: [legacy], statePath });
+    events = await store.read();
+    expect(events.filter(({ source }) => source === "legacy-reconciliation")).toEqual([]);
+    expect(events.reduce((sum, event) => sum + event.inputTokens, 0)).toBe(10);
+  });
+
+  it("serializes real-process migrations so a waiting smaller snapshot cannot overwrite complete state", async () => {
+    const childFile = path.join(process.cwd(), "tests", "fixtures", "portableMigrationChild.test.ts");
+    const vitestCli = path.join(process.cwd(), "node_modules", "vitest", "vitest.mjs");
+    const larger = runMigrationChild(vitestCli, childFile, rootDir, 10, 800);
+    await waitForMigrationStatus(statePath, "running");
+    const smaller = runMigrationChild(vitestCli, childFile, rootDir, 8, 0);
+
+    await Promise.all([larger, smaller]);
+
+    const events = await store.read();
+    expect(events.filter(({ source }) => source === "legacy-reconciliation")).toHaveLength(1);
+    expect(events.find(({ source }) => source === "legacy-reconciliation")?.inputTokens).toBe(10);
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({ status: "complete" });
+  }, 30_000);
 
   it("reconciles multiple providers, days, and normalized Codex/Claude models independently", async () => {
     const records = [
@@ -292,7 +345,10 @@ describe("migrateLegacyData", () => {
     ];
 
     await migrateLegacyData({ store, records, statePath });
-    expect((await store.read()).map((event) => [
+    expect((await store.read()).sort((left, right) =>
+      left.occurredAt.localeCompare(right.occurredAt)
+      || left.provider.localeCompare(right.provider)
+      || left.model.localeCompare(right.model)).map((event) => [
       event.occurredAt,
       event.provider,
       event.model,
@@ -306,6 +362,46 @@ describe("migrateLegacyData", () => {
       ["2026-05-20T12:00:00.000Z", "codex", "codex-model", 5, 6, 0, 7, 0],
       ["2026-05-21T12:00:00.000Z", "claude", "other-model", 0, 8, 0, 0, 0],
     ]);
+  });
+
+  it("normalizes provider and legacy aliases before grouping and synthetic identity", async () => {
+    await store.upsert([
+      providerEvent("claude-dated", "2026-05-20T08:00:00.000Z", "claude", "claude-sonnet-4-6-20260520", {
+        inputTokens: 10,
+      }),
+      providerEvent("codex-canonical", "2026-05-20T09:00:00.000Z", "codex", "gpt-5.5", {
+        inputTokens: 20,
+      }),
+    ]);
+    const claude = record("2026-05-20", "claude", "claude-sonnet-4-6", { inputTokens: 10, totalTokens: 10 });
+    const codex = record("2026-05-20", "codex", "gpt-5.5-20260520", { inputTokens: 20, totalTokens: 20 });
+
+    await migrateLegacyData({ store, records: [claude, codex], statePath });
+    expect((await store.read()).filter(({ source }) => source === "legacy-reconciliation")).toEqual([]);
+  });
+
+  it("aggregates legacy model aliases and reconciles reasoning tokens", async () => {
+    const legacy = record("2026-05-20", "codex", "gpt-5.5", {
+      inputTokens: 3,
+      reasoningOutputTokens: 5,
+      totalTokens: 8,
+    });
+    legacy.models.push("gpt-5.5-20260520");
+    legacy.perModel["gpt-5.5-20260520"] = {
+      ...ZERO_MODEL,
+      inputTokens: 2,
+      reasoningOutputTokens: 7,
+      totalTokens: 9,
+    };
+
+    await migrateLegacyData({ store, records: [legacy], statePath });
+    const synthetic = (await store.read()).filter(({ source }) => source === "legacy-reconciliation");
+    expect(synthetic).toHaveLength(1);
+    expect(synthetic[0]).toMatchObject({
+      model: "gpt-5.5",
+      inputTokens: 5,
+      reasoningOutputTokens: 12,
+    });
   });
 
   it("handles component-only and total-only costs without NaN or double-count fallback", async () => {
@@ -436,14 +532,13 @@ describe("migrateLegacyData", () => {
   it("skips current complete state, reruns older versions, and safely resets corrupt state", async () => {
     const legacy = record("2026-05-20", "claude", "model", { inputTokens: 10, totalTokens: 10 });
     const now = () => new Date("2026-07-13T10:00:00.000Z");
+    await migrateLegacyData({ store, records: [], statePath, now });
+    const currentState = JSON.parse(await readFile(statePath, "utf8"));
     await writeFile(statePath, `${JSON.stringify({
-      schemaVersion: 1,
-      status: "complete",
-      usageMigrationVersion: PORTABLE_USAGE_MIGRATION_VERSION,
-      updatedAt: "2026-01-01T00:00:00.000Z",
+      ...currentState,
       authorization: "private-sensitive-state-value",
     })}\n`, "utf8");
-    expect(await migrateLegacyData({ store, records: [legacy], statePath, now })).toEqual({
+    expect(await migrateLegacyData({ store, records: [], statePath, now })).toEqual({
       status: "complete", syntheticInserted: 0, syntheticUpdated: 0,
     });
     expect(await store.read()).toEqual([]);
@@ -452,12 +547,21 @@ describe("migrateLegacyData", () => {
       schemaVersion: 1,
       status: "complete",
       usageMigrationVersion: PORTABLE_USAGE_MIGRATION_VERSION,
-      updatedAt: "2026-01-01T00:00:00.000Z",
+      storeRevision: currentState.storeRevision,
+      updatedAt: "2026-07-13T10:00:00.000Z",
     });
     expect(sanitizedComplete).not.toContain("private-sensitive-state-value");
 
+    await writeFile(statePath, `${JSON.stringify({
+      ...currentState,
+      usageMigrationVersion: 0,
+    })}\n`, "utf8");
+    expect(await migrateLegacyData({ store, records: [legacy], statePath, now }))
+      .toMatchObject({ syntheticInserted: 1 });
+
     await writeFile(statePath, "private malformed state contents", "utf8");
-    expect(await migrateLegacyData({ store, records: [legacy], statePath, now })).toMatchObject({ syntheticInserted: 1 });
+    expect(await migrateLegacyData({ store, records: [legacy], statePath, now }))
+      .toMatchObject({ syntheticInserted: 0 });
     expect(await readdir(rootDir)).not.toContain("private malformed state contents");
     expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({
       status: "complete",
@@ -486,6 +590,28 @@ describe("migrateLegacyData", () => {
       usageMigrationVersion: PORTABLE_USAGE_MIGRATION_VERSION,
     });
     expect(rewritten).not.toContain(unsafeValue);
+  });
+
+  it.each([
+    [2, PORTABLE_USAGE_MIGRATION_VERSION],
+    [1, PORTABLE_USAGE_MIGRATION_VERSION + 1],
+  ])("leaves future migration state %s/%s and the store byte-identical", async (schemaVersion, usageMigrationVersion) => {
+    const future = `${JSON.stringify({
+      schemaVersion,
+      status: "complete",
+      usageMigrationVersion,
+      storeRevision: "a".repeat(64),
+      updatedAt: "2026-07-13T10:00:00.000Z",
+    }, null, 2)}\n`;
+    await writeFile(statePath, future, "utf8");
+
+    await expect(migrateLegacyData({
+      store,
+      records: [record("2026-05-20", "claude", "model", { inputTokens: 10, totalTokens: 10 })],
+      statePath,
+    })).rejects.toThrow("Portable migration state is newer than this QuotaBar version");
+    expect(await readFile(statePath, "utf8")).toBe(future);
+    expect(await store.read()).toEqual([]);
   });
 
   it("rejects a migration state path outside or elsewhere inside the store root", async () => {
@@ -519,3 +645,46 @@ describe("migrateLegacyData", () => {
     expect(await readFile(legacyPath, "utf8")).toBe(contents);
   });
 });
+
+function runMigrationChild(
+  vitestCli: string,
+  childFile: string,
+  root: string,
+  target: number,
+  delay: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [vitestCli, "run", childFile, "--maxWorkers=1"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        QUOTABAR_MIGRATION_CHILD_ROOT: root,
+        QUOTABAR_MIGRATION_CHILD_TARGET: String(target),
+        QUOTABAR_MIGRATION_CHILD_DELAY: String(delay),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += String(chunk); });
+    child.stderr.on("data", (chunk) => { output += String(chunk); });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Portable migration child exited with code ${code}: ${output}`));
+    });
+  });
+}
+
+async function waitForMigrationStatus(filePath: string, status: string): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    try {
+      const state = JSON.parse(await readFile(filePath, "utf8"));
+      if (state.status === status) return;
+    } catch {
+      // The state may be absent or between its unique temp and atomic rename.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for migration state ${status}`);
+}

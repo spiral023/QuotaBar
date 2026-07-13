@@ -104,4 +104,19 @@ describe("portable event identity", () => {
       "e247161342b149e06d894410dc5f107160d67bcc0a415168da8a6ce6be153347",
     );
   });
+
+  it("keeps provider identity stable while separating an explicit identity domain", () => {
+    const base = {
+      provider: "claude" as const,
+      occurredAt: "2026-07-13T10:00:00.000Z",
+      model: "m",
+      session: "secret-session",
+      ordinal: 2,
+    };
+    expect(eventId(base)).toBe("e247161342b149e06d894410dc5f107160d67bcc0a415168da8a6ce6be153347");
+    expect(eventId({ ...base, domain: "legacy-reconciliation-v1" })).not.toBe(eventId(base));
+    expect(eventId({ ...base, domain: "legacy-reconciliation-v1" })).not.toBe(
+      eventId({ ...base, domain: "other-domain" }),
+    );
+  });
 });

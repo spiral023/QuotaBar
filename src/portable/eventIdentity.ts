@@ -16,6 +16,7 @@ export function sessionKey(
 }
 
 export function eventId(input: {
+  domain?: string;
   provider: PortableProvider;
   occurredAt: string;
   model: string;
@@ -25,8 +26,22 @@ export function eventId(input: {
   if (!Number.isSafeInteger(input.ordinal) || input.ordinal < 0) {
     throw new RangeError("ordinal must be a non-negative safe integer");
   }
+  if (input.domain !== undefined && input.domain.length === 0) {
+    throw new RangeError("domain must be a non-empty string when provided");
+  }
 
   // Provider adapters own timestamp normalization; identity preserves occurredAt exactly.
+  if (input.domain !== undefined) {
+    return hash([
+      "event-domain",
+      input.domain,
+      input.provider,
+      input.occurredAt,
+      input.model,
+      input.session,
+      input.ordinal,
+    ]);
+  }
   return hash([
     "event",
     input.provider,

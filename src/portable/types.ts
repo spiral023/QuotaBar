@@ -52,6 +52,7 @@ export interface PortableMigrationState {
   schemaVersion: PortableStoreVersion;
   status: "pending" | "running" | "complete" | "failed";
   usageMigrationVersion: number;
+  storeRevision?: string;
   lastError?: string;
   updatedAt: string;
 }
