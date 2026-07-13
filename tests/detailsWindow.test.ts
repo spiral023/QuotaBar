@@ -144,6 +144,28 @@ describe("portable analytics readiness", () => {
     expect(request).not.toHaveProperty("logDir");
     expect(request).toMatchObject({ task: "get", since: "2026-07-01", until: "2026-07-13" });
   });
+
+  it.each([
+    ["spring-forward", "2026-03-08", "2026-03-08T05:00:00.000Z", "2026-03-09T03:59:59.999Z", 23],
+    ["fall-back", "2026-11-01", "2026-11-01T04:00:00.000Z", "2026-11-02T04:59:59.999Z", 25],
+  ])("bounds a New York %s custom day to its local calendar day", (_label, day, sinceIso, untilIso, hours) => {
+    const request = createAnalyticsGetRequest(defaultSettings, { since: day, until: day, timeZone: "America/New_York" }, { claude: 0, codex: 0 }, Date.parse("2026-12-01T00:00:00.000Z"), {}, false);
+    expect(request.usageRange).toEqual({ since: sinceIso, until: untilIso });
+    expect(request.quotaRange).toEqual({ since: sinceIso, until: untilIso });
+    expect((Date.parse(untilIso) + 1 - Date.parse(sinceIso)) / 3_600_000).toBe(hours);
+  });
+
+  it("includes the local evening through the exact historical custom end instant", () => {
+    const request = createAnalyticsGetRequest(defaultSettings, { since: "2026-07-10", until: "2026-07-10", timeZone: "America/New_York" }, { claude: 0, codex: 0 }, Date.parse("2026-12-01T00:00:00.000Z"), {}, false);
+    expect(request.usageRange).toEqual({ since: "2026-07-10T04:00:00.000Z", until: "2026-07-11T03:59:59.999Z" });
+    expect(Date.parse((request.usageRange as { until: string }).until)).toBeGreaterThan(Date.parse("2026-07-11T03:00:00.000Z"));
+  });
+
+  it("allowlists worker settings without roots or unrelated configuration", () => {
+    const request = createAnalyticsGetRequest({ ...defaultSettings, claudeRoots: ["C:/secret/claude"], codexHomes: ["C:/secret/codex"] }, undefined, { claude: 0, codex: 0 }, Date.now(), {}, false);
+    expect(JSON.stringify(request)).not.toMatch(/claudeRoots|codexHomes|C:\/secret/);
+    expect(request.settings).toEqual({ plans: defaultSettings.plans, pricingOfflineMode: defaultSettings.pricingOfflineMode, minModelTokenSharePct: defaultSettings.minModelTokenSharePct });
+  });
 });
 
 describe("DetailsWindowController system IPC", () => {

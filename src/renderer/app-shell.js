@@ -295,6 +295,11 @@
       try {
         const s = await loadAnalyticsSummaryForWindow(win);
         if (token !== _summaryRenderToken) return; // stale — a newer request owns the UI
+        if (QB.isPortableDataPreparing(s)) {
+          QB.schedulePortableDataRetry(`analytics-summary:${win}`, () => loadAnalyticsSummary(win));
+        } else {
+          QB.clearPortableDataRetry(`analytics-summary:${win}`);
+        }
         if (_statsLoadingCount > 0) {
           // Hold the result until every in-flight load is done, so the
           // numbers appear exactly once instead of changing after the fact.

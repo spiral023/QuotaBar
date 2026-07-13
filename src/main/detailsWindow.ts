@@ -16,7 +16,7 @@ import { loadWindowHistoryFile, saveWindowHistoryFile, mergeWindowHistory } from
 import type { CostWindow, ViewMode, Settings } from "../config/settings";
 import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
 import type { ModelsData } from "./modelsData";
-import type { WindowBudgetData, WindowHistoryData } from "./analyticsWorker";
+import type { AnalyticsWorkerSettings, WindowBudgetData, WindowHistoryData } from "./analyticsWorker";
 import type { NotificationService } from "./notifications";
 import type { DebugRecorder } from "./debugRecorder";
 import { AsyncResultCache } from "./asyncResultCache";
@@ -47,6 +47,14 @@ function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
   return analyticsWorker.request(data);
 }
 
+function analyticsWorkerSettings(settings: Settings): AnalyticsWorkerSettings {
+  return {
+    plans: settings.plans,
+    pricingOfflineMode: settings.pricingOfflineMode,
+    minModelTokenSharePct: settings.minModelTokenSharePct,
+  };
+}
+
 export function createAnalyticsSummaryRequest(
   settings: Settings,
   costWindow: CostWindow,
@@ -60,7 +68,7 @@ export function createAnalyticsSummaryRequest(
     windowDays: workerWindow.windowDays,
     since: workerWindow.since,
     periodEndMs,
-    settings: { ...settings, costWindow },
+    settings: analyticsWorkerSettings(settings),
     cacheHitRate,
     usageRange: { since: new Date(workerWindow.periodStartMs).toISOString(), until: new Date(periodEndMs).toISOString() },
     quotaRange: { since: new Date(workerWindow.periodStartMs).toISOString(), until: new Date(periodEndMs).toISOString() },
@@ -69,26 +77,28 @@ export function createAnalyticsSummaryRequest(
 
 export function createAnalyticsGetRequest(
   settings: Settings,
-  request: { since?: string; until?: string } | undefined,
+  request: { since?: string; until?: string; timeZone?: string } | undefined,
   cacheHitRate: AnalyticsSummary["cacheHitRate"],
   nowMs: number,
   eurUsdRates: Record<string, number>,
   fxEstimated: boolean,
 ): Record<string, unknown> {
-  const { periodStartMs, windowDays, since, until } = resolveAnalyticsGetWindow(request);
+  const { periodStartMs, periodEndMs, windowDays, since, until, timeZone } = resolveAnalyticsGetWindow(request, nowMs);
   return {
     task: "get",
     periodStartMs,
     windowDays,
     since,
     until,
-    settings,
+    settings: analyticsWorkerSettings(settings),
     cacheHitRate,
     eurUsdRates,
     fxEstimated,
     nowMs,
-    usageRange: { since: new Date(periodStartMs).toISOString(), until: new Date(nowMs).toISOString() },
-    quotaRange: { since: new Date(periodStartMs).toISOString(), until: new Date(nowMs).toISOString() },
+    periodEndMs,
+    timeZone,
+    usageRange: { since: new Date(periodStartMs).toISOString(), until: new Date(periodEndMs).toISOString() },
+    quotaRange: { since: new Date(periodStartMs).toISOString(), until: new Date(periodEndMs).toISOString() },
   };
 }
 
@@ -452,10 +462,10 @@ export class DetailsWindowController {
       return this.computeSummary(settings, costWindow);
     });
 
-    ipcMain.handle("analytics:get", async (_, request?: { since?: string; until?: string }) => {
+    ipcMain.handle("analytics:get", async (_, request?: { since?: string; until?: string; timeZone?: string }) => {
       if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings     = await this.runtimeSettings();
-      const { since, until } = resolveAnalyticsGetWindow(request);
+      const { since, until } = resolveAnalyticsGetWindow(request, this.nowMs());
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
       const needsFx = settings.plans.some((p) => p.currency === "EUR");
@@ -464,8 +474,8 @@ export class DetailsWindowController {
       const fxEstimated = sharedFxFetcher.estimated;
       const planSig = JSON.stringify(settings.plans);
 
-      return this.analyticsDataCache.get(`get:${since}:${until}:${planSig}`, () => this.requestAnalyticsWorker(
-        createAnalyticsGetRequest(settings, request, cacheHitRate, Date.now(), eurUsdRates, fxEstimated),
+      return this.analyticsDataCache.get(`get:${since}:${until}:${request?.timeZone ?? "local"}:${planSig}`, () => this.requestAnalyticsWorker(
+        createAnalyticsGetRequest(settings, request, cacheHitRate, this.nowMs(), eurUsdRates, fxEstimated),
       ) as Promise<AnalyticsData>);
     });
 
@@ -494,7 +504,7 @@ export class DetailsWindowController {
       const settings = await loadSettings();
       return this.modelsDataCache.get("models", () => this.requestAnalyticsWorker({
         task: "models",
-        settings,
+        settings: analyticsWorkerSettings(settings),
         usageRange: { since: "1970-01-01T00:00:00.000Z", until: new Date().toISOString() },
       }) as Promise<ModelsData>);
     });
@@ -715,8 +725,9 @@ function formatPathListForLog(value: unknown): string {
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function resolveAnalyticsGetWindow(
-  request?: { since?: string; until?: string },
-): { periodStartMs: number; windowDays: number; since: string; until: string } {
+  request?: { since?: string; until?: string; timeZone?: string },
+  nowMs = Date.now(),
+): { periodStartMs: number; periodEndMs: number; windowDays: number; since: string; until: string; timeZone: string } {
   if (
     request && typeof request.since === "string" && typeof request.until === "string" &&
     DATE_KEY_RE.test(request.since) && DATE_KEY_RE.test(request.until)
@@ -724,14 +735,63 @@ function resolveAnalyticsGetWindow(
     let since = request.since;
     let until = request.until;
     if (since > until) [since, until] = [until, since];
-    const start = new Date(`${since}T00:00:00`);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(`${until}T00:00:00`);
-    const windowDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
-    return { periodStartMs: start.getTime(), windowDays, since, until };
+    const timeZone = validTimeZone(request.timeZone);
+    const periodStartMs = zonedMidnightMs(since, timeZone);
+    const periodEndMs = zonedMidnightMs(nextDateKey(until), timeZone) - 1;
+    const windowDays = calendarDayDistance(since, until) + 1;
+    return { periodStartMs, periodEndMs, windowDays, since, until, timeZone };
   }
-  const cw = calendarWindow(30);
-  return { ...cw, until: localDateKey(new Date()) };
+  const now = new Date(nowMs);
+  const cw = calendarWindow(30, now);
+  return { ...cw, periodEndMs: nowMs, until: localDateKey(now), timeZone: validTimeZone(request?.timeZone) };
+}
+
+function validTimeZone(candidate: string | undefined): string {
+  const fallback = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!candidate) return fallback;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format();
+    return candidate;
+  } catch {
+    return fallback;
+  }
+}
+
+function nextDateKey(dateKey: string): string {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return next.toISOString().slice(0, 10);
+}
+
+function calendarDayDistance(since: string, until: string): number {
+  return Math.max(0, Math.round((Date.parse(`${until}T00:00:00.000Z`) - Date.parse(`${since}T00:00:00.000Z`)) / 86_400_000));
+}
+
+function zonedMidnightMs(dateKey: string, timeZone: string): number {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const targetUtc = Date.UTC(year, month - 1, day);
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  let candidate = targetUtc;
+  for (let i = 0; i < 4; i++) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(candidate)).map((part) => [part.type, part.value]));
+    const representedAsUtc = Date.UTC(
+      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+      Number(parts.hour), Number(parts.minute), Number(parts.second),
+    );
+    const correction = targetUtc - representedAsUtc;
+    candidate += correction;
+    if (correction === 0) break;
+  }
+  return candidate;
 }
 
 function resolveAnalyticsWindow(costWindow: CostWindow, periodEndMs = Date.now()): { periodStartMs: number; windowDays: number; since: string } {

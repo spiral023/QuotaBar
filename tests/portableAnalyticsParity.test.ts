@@ -54,6 +54,25 @@ describe("portable models and analytics parity", () => {
     expect(result.fiveHourPressure.claude.total).toBeGreaterThanOrEqual(0);
   });
 
+  it("counts synthetic reconciliation usage without inventing activity", async () => {
+    const synthetic = events.filter((event) => event.provider === "claude").slice(0, 2).map((event, index) => ({ ...event, id: `synthetic-${index}`, source: "legacy-reconciliation" as const, synthetic: true, sessionKey: `synthetic-session-${index}` }));
+    const result = await runAnalyticsTask({ task: "get", periodStartMs: Date.parse("2026-07-10T00:00:00Z"), windowDays: 1, since: "2026-07-10", until: "2026-07-10", settings, cacheHitRate: { claude: 0, codex: 0 }, nowMs: Date.parse("2026-07-10T23:59:59.999Z") }, { usageEvents: synthetic });
+    if (!("sessionStats" in result)) throw new Error("expected analytics data");
+    expect(result.apiCostUSD.claude).toBe(2);
+    expect(result.totalTokens.claude.input).toBeGreaterThan(0);
+    expect(result.sessionStats.claude.count).toBe(0);
+    expect(result.hourHeatmap.claude.every((bucket) => bucket.count === 0)).toBe(true);
+    expect(result.topActiveDays.claude).toEqual([]);
+  });
+
+  it("keeps a custom-timezone evening event after UTC midnight", async () => {
+    const evening = [{ ...events[0], occurredAt: "2026-07-11T03:30:00.000Z" }];
+    const result = await runAnalyticsTask({ task: "get", periodStartMs: Date.parse("2026-07-10T04:00:00.000Z"), periodEndMs: Date.parse("2026-07-11T03:59:59.999Z"), windowDays: 1, since: "2026-07-10", until: "2026-07-10", timeZone: "America/New_York", settings, cacheHitRate: { claude: 0, codex: 0 }, nowMs: Date.parse("2026-12-01T00:00:00.000Z") }, { usageEvents: evening });
+    if (!("sessionStats" in result)) throw new Error("expected analytics data");
+    expect(result.apiCostUSD.claude).toBe(evening[0].costUSD);
+    expect(result.sessionStats.claude.count).toBe(1);
+  });
+
   it("keeps provider and backfill readers out of modelsData and analytics worker", () => {
     for (const file of ["modelsData.ts", "analyticsWorker.ts"]) {
       const source = fs.readFileSync(path.join(__dirname, "..", "src", "main", file), "utf8");

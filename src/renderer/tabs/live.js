@@ -320,8 +320,10 @@ async function hydrateWindowBudgets(snapshots, gen) {
         const forecast = document.getElementById(`wb-forecast-${snap.provider}`);
         if (forecast) forecast.textContent = 'Preparing data…';
       }
+      QB.schedulePortableDataRetry('window-budget', () => hydrateWindowBudgets(snapshots, _wbGeneration));
       return;
     }
+    QB.clearPortableDataRetry('window-budget');
     if (gen !== _wbGeneration) return; // ein neuerer Render-Zyklus hat das DOM bereits ersetzt
     for (const snap of wanted) {
       const d = data.perProvider?.[snap.provider];

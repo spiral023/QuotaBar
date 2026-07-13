@@ -124,8 +124,10 @@ window.QB = window.QB || {};
       _data = await loadData();
       if (QB.isPortableDataPreparing(_data)) {
         container.innerHTML = '<div class="empty"><span>Preparing data…</span></div>';
+        QB.schedulePortableDataRetry('models', () => QB.renderModels());
         return;
       }
+      QB.clearPortableDataRetry('models');
       renderUI();
     } catch (e) {
       console.error('models:get failed', e);
@@ -139,6 +141,7 @@ window.QB = window.QB || {};
   };
 
   QB.clearModelsCache = function clearModelsCache() {
+    QB.clearPortableDataRetry('models');
     // _data bewusst NICHT nullen: Der Models-Tab kann gerade sichtbar sein,
     // und seine Pill-Handler greifen synchron auf _data.days zu. Würde _data
     // hier null, käme es beim nächsten Pill-Klick zu einem TypeError und die

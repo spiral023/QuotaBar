@@ -23,21 +23,28 @@ describe("portable renderer preparing behavior", () => {
     h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "app-shell.js"));
     await h.handlers.get("quota:ready-ack")?.({ viewMode: "dashboard" }); await flush();
     expect(h.document.getElementById("qs-api-cost").textContent).toContain("Preparing data");
-    await h.handlers.get("quota:ready-ack")?.({ viewMode: "dashboard" }); await flush();
-    expect(h.calls.filter((call) => call === "analytics:summary").length).toBeGreaterThan(1);
+    expect(h.timers.pendingCount()).toBe(1);
+    h.timers.advanceBy(1_000); await flush();
+    expect(h.invocations.filter(({ channel, args }) => channel === "analytics:summary" && (args[0] as any)?.costWindow === "30d")).toHaveLength(2);
     expect(h.document.getElementById("qs-api-cost").textContent).toBe("$5");
+    expect(h.timers.pendingCount()).toBe(0);
   });
 
   it("retries models after preparing and renders valid days", async () => {
-    const h = rendererHarness({ "models:get": [preparing, { days: [], benchmarks: {}, benchmarksAsOf: "", benchmarkIndexes: {}, pricing: {}, minModelTokenSharePct: 0 }] });
+    const h = rendererHarness({ "models:get": [preparing, preparing, { days: [], benchmarks: {}, benchmarksAsOf: "", benchmarkIndexes: {}, pricing: {}, minModelTokenSharePct: 0 }] });
     h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "tabs", "models-calc.js")); h.run(path.join(renderer, "tabs", "models.js"));
     await h.QB.renderModels();
     expect(h.document.getElementById("models-content").innerHTML).toContain("Preparing data");
+    expect(h.timers.pendingCount()).toBe(1);
     await h.QB.renderModels();
     expect(h.calls.filter((call) => call === "models:get")).toHaveLength(2);
+    expect(h.timers.pendingCount()).toBe(1);
+    h.timers.advanceBy(1_000); await flush();
+    expect(h.calls.filter((call) => call === "models:get")).toHaveLength(3);
     expect(h.document.getElementById("models-content").innerHTML).toContain("MODEL DETAILS");
     await h.QB.renderModels();
-    expect(h.calls.filter((call) => call === "models:get")).toHaveLength(2);
+    expect(h.calls.filter((call) => call === "models:get")).toHaveLength(3);
+    expect(h.timers.pendingCount()).toBe(0);
   });
 
   it("retries analytics and window history after preparing", async () => {
@@ -45,14 +52,15 @@ describe("portable renderer preparing behavior", () => {
     h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "tabs", "analytics.js"));
     await h.QB.renderAnalytics();
     expect(h.document.getElementById("an-results").innerHTML).toContain("Preparing data");
-    await h.QB.renderAnalytics(); await flush();
+    expect(h.timers.pendingCount()).toBe(1);
+    h.timers.advanceBy(1_000); await flush();
     expect(h.calls.filter((call) => call === "analytics:get")).toHaveLength(2);
     expect(h.document.getElementById("an-results").innerHTML).toContain("USAGE BREAKDOWN");
     expect(h.document.getElementById("an-wh-note").textContent).toContain("Preparing data");
-    await h.QB.renderAnalytics();
-    expect(h.calls.filter((call) => call === "analytics:get")).toHaveLength(2);
-    h.QB.clearAnalyticsCache(); await h.QB.renderAnalytics(); await flush();
+    expect(h.timers.pendingCount()).toBe(1);
+    h.timers.advanceBy(2_000); await flush();
     expect(h.calls.filter((call) => call === "windowHistory:get")).toHaveLength(2);
+    expect(h.timers.pendingCount()).toBe(0);
   });
 
   it("retries window budget hydration after preparing", async () => {
@@ -62,8 +70,10 @@ describe("portable renderer preparing behavior", () => {
     const snapshots = [{ provider: "claude", status: "ok", windows: [{ name: "weekly", usedPercent: 10 }], windowBudget: { learning: false, windowsPerWeek: 2, usedWindows: .2, remainingWindows: 1.8 } }];
     h.QB.renderLive(snapshots); await flush();
     expect(h.document.getElementById("wb-forecast-claude").textContent).toContain("Preparing data");
-    h.QB.renderLive(snapshots); await flush();
+    expect(h.timers.pendingCount()).toBe(1);
+    h.timers.advanceBy(1_000); await flush();
     expect(h.calls.filter((call) => call === "windowBudget:get")).toHaveLength(2);
     expect(h.document.getElementById("wb-forecast-claude").innerHTML).toContain("No reliable forecast");
+    expect(h.timers.pendingCount()).toBe(0);
   });
 });

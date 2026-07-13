@@ -1,5 +1,5 @@
 import { parentPort } from "node:worker_threads";
-import type { Settings } from "../config/settings";
+import { defaultSettings, type Settings } from "../config/settings";
 import { generateUsageReport } from "../reports/reportService";
 import type { BackfillDayRecord } from "../reports/types";
 import {
@@ -29,16 +29,24 @@ import type { PortableUsageEvent } from "../portable/types";
 import { PortableUsageStore } from "../portable/usageStore";
 import { isIgnoredModel, normalizeModelName } from "../shared/modelNames";
 
+export interface AnalyticsWorkerSettings {
+  plans: Settings["plans"];
+  pricingOfflineMode: boolean;
+  minModelTokenSharePct: number;
+}
+
 interface AnalyticsBaseInput {
   periodStartMs: number;
   windowDays: number;
   since: string;
   until?: string;
-  settings: Settings;
+  settings: AnalyticsWorkerSettings;
   cacheHitRate: { claude: number; codex: number };
   eurUsdRates?: Record<string, number>;
   fxEstimated?: boolean;
   nowMs: number;
+  periodEndMs?: number;
+  timeZone?: string;
   usageRange?: PortableRange;
   quotaRange?: PortableRange;
 }
@@ -67,7 +75,7 @@ interface PortableRange { since: string; until: string }
 
 interface ModelsTaskInput {
   task: "models";
-  settings: Settings;
+  settings: AnalyticsWorkerSettings;
   usageRange?: PortableRange;
 }
 
@@ -114,6 +122,16 @@ export interface WindowHistoryData {
 
 type WorkerInput = AnalyticsTaskInput | ModelsTaskInput | WindowBudgetTaskInput | WindowHistoryTaskInput | PrewarmTaskInput;
 
+const sharedUsageStore = new PortableUsageStore();
+
+function getUsageStore(deps: AnalyticsWorkerDependencies): PortableUsageStore {
+  return deps.usageStore ?? sharedUsageStore;
+}
+
+function reportSettings(settings: AnalyticsWorkerSettings): Settings {
+  return { ...defaultSettings, ...settings };
+}
+
 // Kombiniert die 5h-Druckverteilung beider Anbieter für die "all"-Sicht: die
 // Fenster sind anbieterspezifisch (eigene Resets), daher werden die Bucket-
 // Zähler aufaddiert; `worst` ist die höhere Spitzen-Auslastung der beiden.
@@ -138,13 +156,13 @@ export async function runAnalyticsTask(
 ): Promise<AnalyticsSummary | AnalyticsData | ModelsData | WindowBudgetData | WindowHistoryData> {
   if (input.task === "prewarm") {
     await Promise.all([
-      (deps.usageStore ?? new PortableUsageStore()).read(input.usageRange),
+      getUsageStore(deps).read(input.usageRange),
       (deps.readQuotaSnapshots ?? readQuotaSnapshots)(getPortableQuotaDir(), input.quotaRange),
     ]);
     return { prewarmed: true } as unknown as AnalyticsSummary;
   }
   if (input.task === "models") {
-    return buildModelsData({ settings: input.settings, usageStore: deps.usageStore, usageEvents: deps.usageEvents, usageRange: input.usageRange });
+    return buildModelsData({ settings: reportSettings(input.settings), usageStore: getUsageStore(deps), usageEvents: deps.usageEvents, usageRange: input.usageRange });
   }
   if (input.task === "windowBudget") {
     return buildWindowBudgetData(input, deps);
@@ -162,43 +180,36 @@ export async function runAnalyticsTask(
     return buildPortableSummary(input, deps);
   }
 
-  const usageUntilMs = input.until
+  const usageUntilMs = input.periodEndMs ?? (input.until
     ? Date.parse(`${input.until}T23:59:59.999Z`)
-    : input.nowMs;
-  const rawUsageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(input.usageRange ?? {
+    : input.nowMs);
+  const rawUsageEvents = deps.usageEvents ?? await getUsageStore(deps).read(input.usageRange ?? {
     since: new Date(input.periodStartMs).toISOString(),
     until: new Date(usageUntilMs).toISOString(),
   });
   const rangedUsageEvents = rawUsageEvents.filter((event) => {
     const occurredAt = Date.parse(event.occurredAt);
     if (occurredAt < input.periodStartMs || occurredAt > usageUntilMs) return false;
-    const day = localDayKey(event.occurredAt);
-    return day >= input.since && (!input.until || day <= input.until);
+    return true;
   }).filter((event) => !isIgnoredModel(event.model))
     .map((event) => ({ ...event, model: normalizeModelName(event.model) }));
-  const claudeEntriesAll = toClaudeEntries(rangedUsageEvents);
-  const codexEventsAll = toCodexEvents(rangedUsageEvents);
+  const activityUsageEvents = rangedUsageEvents.filter((event) => event.source !== "legacy-reconciliation");
+  const claudeEntriesAll = toClaudeEntries(activityUsageEvents);
+  const codexEventsAll = toCodexEvents(activityUsageEvents);
 
-  // Die Reader begrenzen nur nach unten (periodStart). Bei einem Enddatum in der
-  // Vergangenheit (eigene Auswahl) müssen die entry-basierten Statistiken
-  // (Sessions, Heatmap, 5h-Peak, …) zusätzlich nach oben auf `until` begrenzt
-  // werden — sonst zählen sie Aktivität nach dem gewählten Zeitraum mit.
-  const untilKey = input.until;
-  const claudeEntries = untilKey
-    ? claudeEntriesAll.filter(e => localDayKey(e.timestamp) <= untilKey)
-    : claudeEntriesAll;
-  const codexEvents = untilKey
-    ? codexEventsAll.filter(e => localDayKey(e.timestamp) <= untilKey)
-    : codexEventsAll;
+  // The exact instant range above is authoritative. A second host-local day
+  // filter would incorrectly drop late-evening events from another timezone.
+  const claudeEntries = claudeEntriesAll;
+  const codexEvents = codexEventsAll;
 
   const [claudeReport, codexReport] = await Promise.all([
     generateUsageReport(
-      { type: "daily", provider: "claude", since: input.since, until: input.until, order: "asc", breakdown: true },
-      { settings: input.settings, usageEvents: rangedUsageEvents },
+      { type: "daily", provider: "claude", since: input.since, until: input.until, timezone: input.timeZone, order: "asc", breakdown: true },
+      { settings: reportSettings(input.settings), usageEvents: rangedUsageEvents },
     ),
     generateUsageReport(
-      { type: "daily", provider: "codex", since: input.since, until: input.until, order: "asc", breakdown: true },
-      { settings: input.settings, usageEvents: rangedUsageEvents },
+      { type: "daily", provider: "codex", since: input.since, until: input.until, timezone: input.timeZone, order: "asc", breakdown: true },
+      { settings: reportSettings(input.settings), usageEvents: rangedUsageEvents },
     ),
   ]);
 
@@ -294,9 +305,7 @@ export async function runAnalyticsTask(
   );
 
   const sinceMs = input.periodStartMs;
-  const untilMs = input.until
-    ? new Date(`${input.until}T00:00:00`).getTime() + 24 * 3600 * 1000
-    : input.nowMs;
+  const untilMs = input.periodEndMs ?? input.nowMs;
   const quotaSnapshots = await (deps.readQuotaSnapshots ?? readQuotaSnapshots)(getPortableQuotaDir(), input.quotaRange ?? {
     since: new Date(input.periodStartMs).toISOString(),
     until: new Date(untilMs).toISOString(),
@@ -339,7 +348,7 @@ async function buildPortableSummary(
   input: AnalyticsSummaryTaskInput,
   deps: AnalyticsWorkerDependencies,
 ): Promise<AnalyticsSummary> {
-  const rawUsageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(input.usageRange ?? {
+  const rawUsageEvents = deps.usageEvents ?? await getUsageStore(deps).read(input.usageRange ?? {
     since: new Date(input.periodStartMs).toISOString(),
     until: new Date(input.periodEndMs).toISOString(),
   });
@@ -350,14 +359,15 @@ async function buildPortableSummary(
   const [claudeReport, codexReport] = await Promise.all([
     generateUsageReport(
       { type: "daily", provider: "claude", since: input.since, until: input.until, order: "asc", breakdown: true },
-      { settings: input.settings, usageEvents },
+      { settings: reportSettings(input.settings), usageEvents },
     ),
     generateUsageReport(
       { type: "daily", provider: "codex", since: input.since, until: input.until, order: "asc", breakdown: true },
-      { settings: input.settings, usageEvents },
+      { settings: reportSettings(input.settings), usageEvents },
     ),
   ]);
-  const claudeEntries = toClaudeEntries(usageEvents).filter((entry) => entryWithinSummaryRange(entry, input));
+  const activityUsageEvents = usageEvents.filter((event) => event.source !== "legacy-reconciliation");
+  const claudeEntries = toClaudeEntries(activityUsageEvents).filter((entry) => entryWithinSummaryRange(entry, input));
   const activeDays = computeActiveDays(claudeReport.rows, codexReport.rows);
   const sparkline7d = buildSparkline7d(claudeReport.rows, codexReport.rows);
   const topModels = buildTopModels(claudeReport.rows, codexReport.rows, 5);
@@ -404,7 +414,7 @@ const WEEK_MS = 7 * DAY_MS;
 
 async function buildWindowBudgetData(input: WindowBudgetTaskInput, deps: AnalyticsWorkerDependencies): Promise<WindowBudgetData> {
   const now = new Date(input.nowMs);
-  const usageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(input.usageRange ?? {
+  const usageEvents = deps.usageEvents ?? await getUsageStore(deps).read(input.usageRange ?? {
     since: new Date(input.nowMs - 28 * DAY_MS).toISOString(),
     until: now.toISOString(),
   });

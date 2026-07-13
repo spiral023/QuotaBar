@@ -117,12 +117,14 @@ QB.prefetchAnalytics = function prefetchAnalytics() {
   const { from, to } = _presetDates('30d');
   const key = `${from}:${to}`;
   if (_cache.has(key)) return;
-  QB.ipc.invoke('analytics:get', { since: from, until: to })
+  QB.ipc.invoke('analytics:get', { since: from, until: to, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })
     .then(data => { if (!QB.isPortableDataPreparing(data)) _cache.set(key, data); })
     .catch(e => console.error('analytics prefetch failed', e));
 };
 
 QB.clearAnalyticsCache = function clearAnalyticsCache() {
+  QB.clearPortableDataRetry('analytics');
+  QB.clearPortableDataRetry('window-history');
   _cache.clear();
   _hourlyBuckets = null;
   _whData = null; // Plan-/Settings-Änderung → Fenster-Historie neu laden
@@ -298,12 +300,14 @@ async function _loadAndRender() {
     const key = _rangeKey();
     let data = _cache.get(key);
     if (!data) {
-      data = await QB.ipc.invoke('analytics:get', { since: _from, until: _to });
+      data = await QB.ipc.invoke('analytics:get', { since: _from, until: _to, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
       if (QB.isPortableDataPreparing(data)) {
         _cache.delete(key);
         results.innerHTML = '<div class="empty"><span>Preparing data…</span></div>';
+        QB.schedulePortableDataRetry('analytics', () => _loadAndRender());
         return;
       }
+      QB.clearPortableDataRetry('analytics');
       _cache.set(key, data);
     }
     _hourlyBuckets = null; // Datumsbereich geändert → Stunden-Cache invalidieren
@@ -1208,8 +1212,10 @@ async function _renderWindowHistory() {
         _whData = null;
         const note = document.getElementById('an-wh-note');
         if (note) { note.hidden = false; note.textContent = 'Preparing data…'; }
+        QB.schedulePortableDataRetry('window-history', () => _renderWindowHistory());
         return;
       }
+      QB.clearPortableDataRetry('window-history');
     } catch (e) {
       if (token !== _whGen) return;
       console.error('windowHistory:get failed', e);
