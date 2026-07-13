@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readClaudeTokensForPeriod } from "../src/pricing/jsonl-reader";
+import { readClaudeTokensForPeriod, readClaudeUsageEntriesForPeriod } from "../src/pricing/jsonl-reader";
 
 const tmpDir = path.join(os.tmpdir(), `quotabar-test-${process.pid}`);
 
@@ -16,6 +16,30 @@ async function writeJsonl(dir: string, filename: string, entries: unknown[]): Pr
 }
 
 describe("readClaudeTokensForPeriod", () => {
+  it.each([
+    ["C:\\Users\\person\\src\\QuotaBar", "QuotaBar"],
+    ["/home/person/src/quota-bar", "quota-bar"],
+  ])("uses only the basename of cwd as projectName (%s)", async (cwd, expected) => {
+    await writeJsonl(path.join(tmpDir, "legacy-project"), "session.jsonl", [{
+      timestamp: "2026-05-10T10:00:00.000Z",
+      cwd,
+      message: { model: "claude-sonnet-4-6", usage: { input_tokens: 1, output_tokens: 2 } },
+    }]);
+
+    const [entry] = await readClaudeUsageEntriesForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(entry.projectName).toBe(expected);
+    expect(entry.projectName).not.toContain("person");
+  });
+
+  it("falls back to the existing project label when cwd is unavailable", async () => {
+    await writeJsonl(path.join(tmpDir, "legacy-project"), "session.jsonl", [{
+      timestamp: "2026-05-10T10:00:00.000Z",
+      message: { model: "claude-sonnet-4-6", usage: { input_tokens: 1, output_tokens: 2 } },
+    }]);
+    const [entry] = await readClaudeUsageEntriesForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(entry.projectName).toBe("legacy-project");
+  });
+
   it("returns zeros when directory does not exist", async () => {
     const result = await readClaudeTokensForPeriod("/nonexistent/path/xyz", new Date("2026-05-01"));
     expect(result).toEqual({

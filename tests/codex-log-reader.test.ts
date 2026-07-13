@@ -63,6 +63,23 @@ function makeTokenCountTotalOnly(
 }
 
 describe("readCodexTokensForPeriod", () => {
+  it("reuses basename-only project names from session and turn metadata", async () => {
+    await writeJsonl(path.join(tmpDir, "2026/05/18"), "session.jsonl", [
+      { timestamp: "2026-05-18T09:59:00.000Z", type: "session_meta", payload: { cwd: "C:\\Users\\person\\src\\FirstProject" } },
+      makeTokenCountWithLast("2026-05-18T10:00:01.000Z", {
+        input_tokens: 10, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: 11,
+      }),
+      { timestamp: "2026-05-18T10:00:02.000Z", type: "turn_context", payload: { model: "gpt-5.2-codex", cwd: "/home/person/src/SecondProject" } },
+      makeTokenCountWithLast("2026-05-18T10:00:03.000Z", {
+        input_tokens: 20, cached_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0, total_tokens: 22,
+      }),
+    ]);
+
+    const events = await readCodexTokensForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(events.map((event) => event.projectName)).toEqual(["FirstProject", "SecondProject"]);
+    expect(JSON.stringify(events.map((event) => event.projectName))).not.toContain("person");
+  });
+
   it("returns empty array when sessions dir does not exist", async () => {
     const result = await readCodexTokensForPeriod("/nonexistent/xyz", new Date("2026-05-01"));
     expect(result).toEqual([]);

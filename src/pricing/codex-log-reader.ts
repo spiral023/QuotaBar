@@ -10,6 +10,7 @@ export interface CodexTokenEvent {
   isFallback: boolean;
   session: string;
   directory: string;
+  projectName?: string;
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
@@ -74,6 +75,7 @@ async function parseCodexJsonlFile(
 ): Promise<CodexTokenEvent[]> {
   const events: CodexTokenEvent[] = [];
   let currentModel: string | null = null;
+  let currentProjectName: string | null = null;
   let previousTotals = zeroTotals();
 
   try {
@@ -91,9 +93,11 @@ async function parseCodexJsonlFile(
         continue;
       }
 
-      if (entry.type === "turn_context") {
-        const model = asRecord(entry.payload)?.model;
+      if (entry.type === "session_meta" || entry.type === "turn_context") {
+        const payload = asRecord(entry.payload);
+        const model = payload?.model;
         if (typeof model === "string" && model) currentModel = model;
+        currentProjectName = basenameAnySeparator(payload?.cwd) ?? currentProjectName;
         continue;
       }
 
@@ -139,6 +143,7 @@ async function parseCodexJsonlFile(
         isFallback: model === "gpt-5",
         session: path.basename(filePath, ".jsonl"),
         directory: path.relative(sessionsDir, path.dirname(filePath)) || ".",
+        ...(currentProjectName ? { projectName: currentProjectName } : {}),
         inputTokens: delta.input_tokens,
         cachedInputTokens: Math.min(delta.cached_input_tokens, delta.input_tokens),
         outputTokens: delta.output_tokens,
@@ -151,6 +156,12 @@ async function parseCodexJsonlFile(
   }
 
   return events;
+}
+
+function basenameAnySeparator(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const parts = value.split(/[\\/]+/).filter(Boolean);
+  return parts.at(-1) ?? null;
 }
 
 function resolveModel(info: Record<string, unknown>, currentModel: string | null): string {

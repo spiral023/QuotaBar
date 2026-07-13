@@ -27,6 +27,7 @@ export interface ClaudeUsageEntry extends ModelTokens {
   timestamp: string;
   model: string;
   project: string;
+  projectName?: string;
   session: string;
   costUSD?: number;
 }
@@ -194,12 +195,15 @@ function processEntry(
   const parts = relative.split(/[\\/]/).filter(Boolean);
   const fileBase = path.basename(filePath, ".jsonl");
   const cost = positiveNumber(entry.costUSD);
+  const project = parts[0] ?? "unknown";
+  const projectName = basenameAnySeparator(entry.cwd) ?? (project !== "unknown" ? project : "Unknown project");
 
   return {
     provider: "claude",
     timestamp: ts,
     model,
-    project: parts[0] ?? "unknown",
+    project,
+    projectName,
     session: typeof entry.sessionId === "string" ? entry.sessionId : fileBase,
     inputTokens: input,
     outputTokens: output,
@@ -208,6 +212,12 @@ function processEntry(
     ...(msgId ? { messageId: msgId } : {}),
     ...(cost > 0 ? { costUSD: cost } : {}),
   };
+}
+
+function basenameAnySeparator(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const parts = value.split(/[\\/]+/).filter(Boolean);
+  return parts.at(-1) ?? null;
 }
 
 function positiveNumber(value: unknown): number {
