@@ -134,7 +134,7 @@ describe("ZIP path validation before content access", () => {
 
     expect(() => validateZipEntryMetadata([
       entry("manifest.json"),
-      entry("usage/events/link", 1, { madeBy: 3 << 8, attributes: 0o120777 << 16 }),
+      entry("usage/events/link", 1, { madeBy: 3 << 8, attributes: (0o120777 << 16) >>> 0 }),
     ])).toThrow("Unsupported archive entry type");
   });
 
@@ -147,6 +147,15 @@ describe("ZIP path validation before content access", () => {
       .toThrow("Unsupported archive entry metadata");
     expect(() => validateZipEntryMetadata([entry("manifest.json", 1, { madeBy: -1 })]))
       .toThrow("Unsupported archive entry metadata");
+  });
+
+  it("requires ZIP attributes to be unsigned safe 32-bit integers", () => {
+    for (const attributes of [-0x8000_0000, 1.5, 0x1_0000_0000]) {
+      expect(() => validateZipEntryMetadata([entry("manifest.json", 1, { attributes })]))
+        .toThrow("Unsupported archive entry metadata");
+    }
+    expect(() => validateZipEntryMetadata([entry("manifest.json", 1, { attributes: 0x20 })]))
+      .not.toThrow();
   });
 });
 
@@ -206,6 +215,25 @@ describe("portable archive manifest", () => {
     } catch (error) {
       expect(String(error)).not.toContain("secret archive contents");
     }
+  });
+
+  it.each([
+    "2026-02-30T10:00:00.000Z",
+    "2026-07-13T10:00:00",
+    "2026-07-13T12:00:00.000+02:00",
+    "2026-07-13T10:00:00Z",
+    "2026-07-13T10:00:00.0Z",
+  ])("rejects noncanonical manifest creation time %s", (createdAt) => {
+    expect(() => parseArchiveManifest(JSON.stringify({ ...manifest([]), createdAt })))
+      .toThrow("Invalid archive manifest");
+    expect(() => createArchiveManifest([], { quotaBarVersion: "1.5.0", createdAt }))
+      .toThrow("Invalid archive manifest metadata");
+  });
+
+  it("emits an exact canonical UTC timestamp when creation time is omitted", () => {
+    const createdAt = createArchiveManifest([], { quotaBarVersion: "1.5.0" }).createdAt;
+    expect(createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(new Date(Date.parse(createdAt)).toISOString()).toBe(createdAt);
   });
 
   it("requires manifest entries exactly once with no missing or unmanifested files", () => {
@@ -271,10 +299,36 @@ describe("cross-user settings sanitization", () => {
       ...defaultSettings,
       unknown: { sourcePath: "C:\\Users\\Alice\\secret" },
       proxy: { ...defaultSettings.proxy, sourcePath: "C:\\Users\\Alice\\proxy" },
+      notifications: {
+        ...defaultSettings.notifications,
+        rules: {
+          ...defaultSettings.notifications.rules,
+          confirmedReset: {
+            ...defaultSettings.notifications.rules.confirmedReset,
+            enabled: false,
+            cooldownMinutes: 77,
+            sourcePath: "C:\\Users\\Alice\\provider.log",
+            authToken: "not-portable",
+          },
+          criticalUsage: {
+            ...defaultSettings.notifications.rules.criticalUsage,
+            thresholdPercent: 91,
+            sourcePath: "C:\\Users\\Alice\\private",
+          },
+        },
+      },
     };
     const result = sanitizeImportedSettings(imported, "C:\\Users\\Bob") as unknown as Record<string, unknown>;
 
     expect(result).not.toHaveProperty("unknown");
     expect(result.proxy).not.toHaveProperty("sourcePath");
+    expect(result).not.toHaveProperty("notifications.rules.confirmedReset.sourcePath");
+    expect(result).not.toHaveProperty("notifications.rules.confirmedReset.authToken");
+    expect(result).not.toHaveProperty("notifications.rules.criticalUsage.sourcePath");
+    expect(result).toHaveProperty("notifications.rules.confirmedReset", {
+      enabled: false,
+      cooldownMinutes: 77,
+    });
+    expect(result).toHaveProperty("notifications.rules.criticalUsage.thresholdPercent", 91);
   });
 });

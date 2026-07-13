@@ -286,12 +286,125 @@ export function verifyArchiveEntryBytes(entry: ArchiveManifestEntry, data: Uint8
 /** Removes all machine-bound and unknown settings while preserving normalized portable preferences. */
 export function sanitizeImportedSettings(imported: unknown, _targetHome: string): Settings {
   const raw = isRecord(imported) ? imported : {};
-  return normalizeSettings({
+  const normalized = normalizeSettings({
     ...defaultSettings,
     ...raw,
     claudeRoots: [],
     codexHomes: [],
   } as unknown as Settings);
+  const rules = normalized.notifications.rules;
+  return {
+    pollIntervalSeconds: normalized.pollIntervalSeconds,
+    providerTimeoutMs: normalized.providerTimeoutMs,
+    providerOrder: [...normalized.providerOrder],
+    claudeRoots: [],
+    codexHomes: [],
+    plans: normalized.plans.map((plan) => ({
+      id: plan.id,
+      provider: plan.provider,
+      name: plan.name,
+      amount: plan.amount,
+      currency: plan.currency,
+      startsAt: plan.startsAt,
+      endsAt: plan.endsAt,
+    })),
+    pricingOfflineMode: normalized.pricingOfflineMode,
+    anonymizeAccounts: normalized.anonymizeAccounts,
+    costWindow: normalized.costWindow,
+    viewMode: normalized.viewMode,
+    insightsPanelOpen: normalized.insightsPanelOpen,
+    pinned: normalized.pinned,
+    minModelTokenSharePct: normalized.minModelTokenSharePct,
+    debugLog: { enabled: normalized.debugLog.enabled },
+    proxy: { mode: normalized.proxy.mode, url: normalized.proxy.url },
+    notifications: {
+      enabled: normalized.notifications.enabled,
+      quietHours: {
+        enabled: normalized.notifications.quietHours.enabled,
+        start: normalized.notifications.quietHours.start,
+        end: normalized.notifications.quietHours.end,
+      },
+      minimumGapMinutes: normalized.notifications.minimumGapMinutes,
+      rules: {
+        confirmedReset: copyRuleBase(rules.confirmedReset),
+        unexpectedReset: {
+          ...copyRuleBase(rules.unexpectedReset),
+          minPreviousPercent: rules.unexpectedReset.minPreviousPercent,
+          maxNextPercent: rules.unexpectedReset.maxNextPercent,
+        },
+        resetSoon: {
+          ...copyRuleBase(rules.resetSoon),
+          minutesBeforeReset: rules.resetSoon.minutesBeforeReset,
+        },
+        highUsage: {
+          ...copyRuleBase(rules.highUsage),
+          thresholdPercent: rules.highUsage.thresholdPercent,
+        },
+        criticalUsage: {
+          ...copyRuleBase(rules.criticalUsage),
+          thresholdPercent: rules.criticalUsage.thresholdPercent,
+        },
+        projectedDepletion: {
+          ...copyRuleBase(rules.projectedDepletion),
+          minEarlyMinutes: rules.projectedDepletion.minEarlyMinutes,
+        },
+        farAhead: {
+          ...copyRuleBase(rules.farAhead),
+          minDeltaPercent: rules.farAhead.minDeltaPercent,
+        },
+        farBehind: {
+          ...copyRuleBase(rules.farBehind),
+          minDeltaPercent: rules.farBehind.minDeltaPercent,
+        },
+        freshQuotaWorkWindow: {
+          ...copyRuleBase(rules.freshQuotaWorkWindow),
+          maxUsedPercent: rules.freshQuotaWorkWindow.maxUsedPercent,
+        },
+        quotaIdleAfterReset: {
+          ...copyRuleBase(rules.quotaIdleAfterReset),
+          minutesAfterReset: rules.quotaIdleAfterReset.minutesAfterReset,
+          maxUsedPercent: rules.quotaIdleAfterReset.maxUsedPercent,
+        },
+        weeklyReserveOpportunity: {
+          ...copyRuleBase(rules.weeklyReserveOpportunity),
+          maxUsedPercent: rules.weeklyReserveOpportunity.maxUsedPercent,
+          hoursBeforeReset: rules.weeklyReserveOpportunity.hoursBeforeReset,
+        },
+        rolling5hOutputSpike: {
+          ...copyRuleBase(rules.rolling5hOutputSpike),
+          baseline: rules.rolling5hOutputSpike.baseline,
+        },
+        rolling5hProxyLimit: {
+          ...copyRuleBase(rules.rolling5hProxyLimit),
+          thresholdPercent: rules.rolling5hProxyLimit.thresholdPercent,
+          customOutputTokenLimit: rules.rolling5hProxyLimit.customOutputTokenLimit,
+        },
+        burnRateSpike: {
+          ...copyRuleBase(rules.burnRateSpike),
+          factor: rules.burnRateSpike.factor,
+        },
+        cacheHitDrop: {
+          ...copyRuleBase(rules.cacheHitDrop),
+          claudeThresholdPercent: rules.cacheHitDrop.claudeThresholdPercent,
+          codexThresholdPercent: rules.cacheHitDrop.codexThresholdPercent,
+        },
+        expensiveModelShare: {
+          ...copyRuleBase(rules.expensiveModelShare),
+          thresholdPercent: rules.expensiveModelShare.thresholdPercent,
+        },
+        roiMilestone: {
+          ...copyRuleBase(rules.roiMilestone),
+          milestones: [...rules.roiMilestone.milestones],
+        },
+        providerDataHealth: {
+          ...copyRuleBase(rules.providerDataHealth),
+          staleMinutes: rules.providerDataHealth.staleMinutes,
+          notifyRecovered: rules.providerDataHealth.notifyRecovered,
+        },
+        missingPlan: copyRuleBase(rules.missingPlan),
+      },
+    },
+  };
 }
 
 function validateEntrySizes(entry: ArchiveEntryMetadata): void {
@@ -310,9 +423,7 @@ function validateEntrySizes(entry: ArchiveEntryMetadata): void {
   if (!isUnsignedInteger(entry.flags, 0xffff)
     || !isUnsignedInteger(entry.method, 0xffff)
     || !isUnsignedInteger(entry.madeBy, 0xffff)
-    || !Number.isInteger(entry.attributes)
-    || entry.attributes < -0x8000_0000
-    || entry.attributes > 0xffff_ffff
+    || !isUnsignedInteger(entry.attributes, 0xffff_ffff)
     || ![0, 8].includes(entry.method)) {
     throw new Error("Unsupported archive entry metadata");
   }
@@ -372,9 +483,11 @@ function hasControlCharacter(value: string): boolean {
 }
 
 function isIsoDate(value: unknown): value is string {
-  return typeof value === "string"
-    && /^\d{4}-\d{2}-\d{2}T/.test(value)
-    && Number.isFinite(Date.parse(value));
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+    return false;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -383,6 +496,13 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function copyRuleBase(rule: { enabled: boolean; cooldownMinutes: number }): {
+  enabled: boolean;
+  cooldownMinutes: number;
+} {
+  return { enabled: rule.enabled, cooldownMinutes: rule.cooldownMinutes };
 }
 
 function hasExactKeys(value: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
