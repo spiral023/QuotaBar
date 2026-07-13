@@ -47,6 +47,22 @@ function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
   return analyticsWorker.request(data);
 }
 
+export function createAnalyticsSummaryRequest(
+  settings: Settings,
+  costWindow: CostWindow,
+  cacheHitRate: AnalyticsSummary["cacheHitRate"],
+): Record<string, unknown> {
+  const workerWindow = resolveAnalyticsWindow(costWindow);
+  return {
+    task: "summary",
+    periodStartMs: workerWindow.periodStartMs,
+    windowDays: workerWindow.windowDays,
+    since: workerWindow.since,
+    settings: { ...settings, costWindow },
+    cacheHitRate,
+  };
+}
+
 async function loadRuntimeSettings(): Promise<Settings> {
   return mergeSettingsWithAgentRoots(await loadSettings());
 }
@@ -164,23 +180,14 @@ export class DetailsWindowController {
 
   private computeSummary(settings: Settings, costWindow: CostWindow): Promise<AnalyticsSummary> {
     const runtimeSettings = mergeSettingsWithAgentRoots(settings);
-    const workerWindow = resolveAnalyticsWindow(costWindow);
     const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
     const cacheKey = `summary:${costWindow}`;
-    const pathContext = { claudeRoots: runtimeSettings.claudeRoots ?? [], codexHomes: runtimeSettings.codexHomes ?? [] };
 
     return this.analyticsSummaryCache.get(cacheKey, async () => {
       const startedAtMs = Date.now();
-      const summary = await runAnalyticsWorker({
-        task: "summary",
-        claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
-        codexSessionsDirs:  getCodexSessionsDirs(pathContext),
-        periodStartMs: workerWindow.periodStartMs,
-        windowDays: workerWindow.windowDays,
-        since: workerWindow.since,
-        settings: { ...runtimeSettings, costWindow },
-        cacheHitRate,
-      }) as AnalyticsSummary;
+      const summary = await runAnalyticsWorker(
+        createAnalyticsSummaryRequest(runtimeSettings, costWindow, cacheHitRate),
+      ) as AnalyticsSummary;
       const durationMs = Math.max(0, Date.now() - startedAtMs);
       if (this.quickStatsLoadMetric.record(durationMs)) {
         log.info(`Quick Stats initial load completed in ${formatSeconds(durationMs)}`);
@@ -189,15 +196,7 @@ export class DetailsWindowController {
     });
   }
 
-  /**
-   * Spawnt den Analytics-Worker und parst die JSONL-/Codex-Historie in dessen
-   * FileParseCache, bevor der Nutzer das Dashboard öffnet. Die erste
-   * analytics:summary-Anfrage blockiert auf einem Kaltstart sonst ~15-20 s auf
-   * Worker-Boot + Vollparse — das Vorwärmen verlagert diese Kosten weg vom
-   * Öffnen-Pfad. Das hier memoizierte Ergebnis wird ggf. vom ersten Live-Refresh
-   * verworfen, doch der modulglobale FileParseCache im Worker überlebt das, sodass
-   * die spätere echte Anfrage die Dateien nur noch neu statt parst.
-   */
+  /** Warms the worker and portable summary store before the dashboard opens. */
   prewarmAnalytics(): void {
     void loadRuntimeSettings()
       .then(settings => this.computeSummary(settings, settings.costWindow))

@@ -55,7 +55,21 @@ function equivalentFixtures(): {
   codexEvents: CodexTokenEvent[];
 } {
   const legacy = legacyFixtures();
-  const usageEvents = [...fromClaudeEntries(legacy.claude), ...fromCodexEvents(legacy.codex)];
+  const usageEvents = [...fromClaudeEntries(legacy.claude), ...fromCodexEvents(legacy.codex)].map((event) => {
+    if (event.provider !== "codex") return event;
+    const inputCostUSD = event.inputTokens * 2e-6;
+    const outputCostUSD = event.outputTokens * 4e-6;
+    const cacheReadCostUSD = event.cacheReadTokens * 1e-6;
+    return {
+      ...event,
+      costUSD: inputCostUSD + outputCostUSD + cacheReadCostUSD,
+      inputCostUSD,
+      outputCostUSD,
+      cacheCreationCostUSD: 0,
+      cacheReadCostUSD,
+      pricingVersion: "fixture-standard",
+    };
+  });
   return {
     usageEvents,
     claudeEntries: toClaudeEntries(usageEvents),
@@ -119,6 +133,9 @@ describe("portable usage reports", () => {
     const readCodexEvents = vi.fn(async (): Promise<CodexTokenEvent[]> => {
       throw new Error("Codex provider history must not be read");
     });
+    const readCodexSpeedTier = vi.fn(async () => {
+      throw new Error("Codex provider config must not be read");
+    });
 
     const report = await generateUsageReport({ type: "daily", timezone: "UTC" }, {
       usageEvents: fixtures.usageEvents,
@@ -127,34 +144,44 @@ describe("portable usage reports", () => {
       codexConfigPaths: [],
       readClaudeEntries,
       readCodexEvents,
+      readCodexSpeedTier,
       pricingResolver: pricingResolver("reader-isolation"),
     });
 
     expect(report.rows).toHaveLength(4);
     expect(readClaudeEntries).not.toHaveBeenCalled();
     expect(readCodexEvents).not.toHaveBeenCalled();
+    expect(readCodexSpeedTier).not.toHaveBeenCalled();
   });
 
   it("preserves Codex auto speed-tier cost parity", async () => {
     const fixtures = equivalentFixtures();
-    const configPath = path.join(tmpRoot, "codex", "config.toml");
-    await fs.mkdir(path.dirname(configPath), { recursive: true });
-    await fs.writeFile(configPath, 'service_tier = "fast"\n', "utf8");
+    const fastEvents = fixtures.usageEvents.map((event) => event.provider === "codex" ? {
+      ...event,
+      costUSD: (event.costUSD ?? 0) * 2,
+      inputCostUSD: (event.inputCostUSD ?? 0) * 2,
+      outputCostUSD: (event.outputCostUSD ?? 0) * 2,
+      cacheCreationCostUSD: (event.cacheCreationCostUSD ?? 0) * 2,
+      cacheReadCostUSD: (event.cacheReadCostUSD ?? 0) * 2,
+      pricingVersion: "fixture-fast",
+    } : event);
     const request: ReportRequest = { provider: "codex", type: "daily", timezone: "UTC", codexSpeed: "auto" };
     const resolver = pricingResolver("speed-tier");
+    const readCodexSpeedTier = vi.fn(async () => "fast" as const);
 
     const legacy = await generateUsageReport({ ...request, source: "legacy" }, {
       codexEvents: fixtures.codexEvents,
-      codexConfigPaths: [configPath],
+      readCodexSpeedTier,
       pricingResolver: resolver,
     });
     const portable = await generateUsageReport(request, {
-      usageEvents: fixtures.usageEvents,
-      codexConfigPaths: [configPath],
+      usageEvents: fastEvents,
+      readCodexSpeedTier,
       pricingResolver: resolver,
     });
 
     expect(portable.totals.costUSD).toBe(legacy.totals.costUSD);
+    expect(readCodexSpeedTier).toHaveBeenCalledOnce();
   });
 
   it("bounds store reads to the requested range and hides neutral reconciliation markers", async () => {

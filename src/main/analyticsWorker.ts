@@ -26,9 +26,12 @@ import { resetsAtChanged } from "../usage/windowRatio";
 import { getPortableQuotaDir } from "../config/paths";
 import { readQuotaSnapshots } from "../portable/quotaStore";
 import type { SnapshotEvent } from "./debugEvents";
+import { toClaudeEntries } from "../portable/eventAdapters";
+import type { PortableUsageEvent } from "../portable/types";
+import { PortableUsageStore } from "../portable/usageStore";
+import type { ClaudeUsageEntry } from "../pricing/jsonl-reader";
 
-interface AnalyticsTaskInput {
-  task: "get" | "summary";
+interface AnalyticsBaseInput {
   claudeProjectsDirs: string[];
   codexSessionsDirs: string[];
   periodStartMs: number;
@@ -41,6 +44,24 @@ interface AnalyticsTaskInput {
   fxEstimated?: boolean;
   logDir: string;   // NEW: snapshot debug logs for fivePct
   nowMs: number;    // NEW: upper bound when `until` is absent
+}
+
+interface AnalyticsGetTaskInput extends AnalyticsBaseInput {
+  task: "get";
+}
+
+export interface AnalyticsSummaryTaskInput extends Omit<AnalyticsBaseInput, "claudeProjectsDirs" | "codexSessionsDirs" | "logDir" | "nowMs"> {
+  task: "summary";
+  nowMs?: number;
+}
+
+type AnalyticsTaskInput = AnalyticsGetTaskInput | AnalyticsSummaryTaskInput;
+
+export interface AnalyticsWorkerDependencies {
+  usageEvents?: PortableUsageEvent[];
+  usageStore?: PortableUsageStore;
+  readClaudeEntries?: typeof readClaudeUsageEntriesForPeriod;
+  readCodexEvents?: typeof readCodexTokensForPeriod;
 }
 
 interface ModelsTaskInput {
@@ -106,7 +127,10 @@ function combinePressure(a: PressureDist, b: PressureDist): PressureDist {
   };
 }
 
-async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData | ModelsData | WindowBudgetData | WindowHistoryData> {
+export async function runAnalyticsTask(
+  input: WorkerInput,
+  deps: AnalyticsWorkerDependencies = {},
+): Promise<AnalyticsSummary | AnalyticsData | ModelsData | WindowBudgetData | WindowHistoryData> {
   if (input.task === "models") {
     return buildModelsData({ settings: input.settings });
   }
@@ -121,11 +145,15 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     return { entries: buildWindowHistory(observations, input.nowMs) };
   }
 
+  if (input.task === "summary") {
+    return buildPortableSummary(input, deps);
+  }
+
   const periodStart = new Date(input.periodStartMs);
 
   const [claudeEntriesAll, codexEventsAll] = await Promise.all([
-    readClaudeUsageEntriesForPeriod(input.claudeProjectsDirs, periodStart),
-    readCodexTokensForPeriod(input.codexSessionsDirs, periodStart),
+    (deps.readClaudeEntries ?? readClaudeUsageEntriesForPeriod)(input.claudeProjectsDirs, periodStart),
+    (deps.readCodexEvents ?? readCodexTokensForPeriod)(input.codexSessionsDirs, periodStart),
   ]);
 
   // Die Reader begrenzen nur nach unten (periodStart). Bei einem Enddatum in der
@@ -181,17 +209,6 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     codex:    codexPeriodSub   > 0 ? codexCost   / codexPeriodSub   : 0,
     combined: combinedPeriodSub > 0 ? (claudeCost + codexCost) / combinedPeriodSub : 0,
   };
-
-  if (input.task === "summary") {
-    const result: AnalyticsSummary = {
-      apiCostUSD:          { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },
-      subscriptionCostUSD: { claude: claudePeriodSub, codex: codexPeriodSub, total: combinedPeriodSub },
-      roiFactor,
-      activeDays, avgSessionMinutes, cacheHitRate, sparkline7d, topModels,
-      windowDays,
-    };
-    return result;
-  }
 
   const dailyBuckets      = buildDailyBuckets(claudeReport.rows, codexReport.rows, input.since, input.until ?? input.since);
   for (const b of dailyBuckets) {
@@ -293,6 +310,74 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     planChanges,
   };
   return result;
+}
+
+async function buildPortableSummary(
+  input: AnalyticsSummaryTaskInput,
+  deps: AnalyticsWorkerDependencies,
+): Promise<AnalyticsSummary> {
+  const usageEvents = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(
+    portableSummaryRange(input.since, input.until),
+  );
+  const [claudeReport, codexReport] = await Promise.all([
+    generateUsageReport(
+      { type: "daily", provider: "claude", since: input.since, until: input.until, order: "asc", breakdown: true },
+      { settings: input.settings, usageEvents },
+    ),
+    generateUsageReport(
+      { type: "daily", provider: "codex", since: input.since, until: input.until, order: "asc", breakdown: true },
+      { settings: input.settings, usageEvents },
+    ),
+  ]);
+  const claudeEntries = toClaudeEntries(usageEvents).filter((entry) => entryWithinSummaryRange(entry, input));
+  const activeDays = computeActiveDays(claudeReport.rows, codexReport.rows);
+  const sparkline7d = buildSparkline7d(claudeReport.rows, codexReport.rows);
+  const topModels = buildTopModels(claudeReport.rows, codexReport.rows, 5);
+  const avgSessionMinutes = computeAvgSessionMinutes(claudeEntries);
+  const claudeCost = claudeReport.totals.costUSD;
+  const codexCost = codexReport.totals.costUSD;
+  const fx = makeFxLookup(input.eurUsdRates ?? {}, input.fxEstimated ?? false);
+  const untilDay = input.until ?? localDayKey(new Date(input.nowMs ?? Date.now()).toISOString());
+  const claudePeriodSub = periodSubCostUSD(input.settings.plans, "claude", input.since, untilDay, fx);
+  const codexPeriodSub = periodSubCostUSD(input.settings.plans, "codex", input.since, untilDay, fx);
+  const combinedPeriodSub = claudePeriodSub + codexPeriodSub;
+  let windowDays = input.windowDays;
+  if (windowDays === 0) {
+    const buckets = [...claudeReport.rows, ...codexReport.rows].map((row) => row.bucket).sort();
+    const nowMs = input.nowMs ?? Date.now();
+    windowDays = buckets.length > 0
+      ? Math.ceil((nowMs - new Date(buckets[0]).getTime()) / (24 * 3600 * 1000)) + 1
+      : 30;
+  }
+  return {
+    apiCostUSD: { claude: claudeCost, codex: codexCost, total: claudeCost + codexCost },
+    subscriptionCostUSD: { claude: claudePeriodSub, codex: codexPeriodSub, total: combinedPeriodSub },
+    roiFactor: {
+      claude: claudePeriodSub > 0 ? claudeCost / claudePeriodSub : 0,
+      codex: codexPeriodSub > 0 ? codexCost / codexPeriodSub : 0,
+      combined: combinedPeriodSub > 0 ? (claudeCost + codexCost) / combinedPeriodSub : 0,
+    },
+    activeDays,
+    avgSessionMinutes,
+    cacheHitRate: input.cacheHitRate,
+    sparkline7d,
+    topModels,
+    windowDays,
+  };
+}
+
+function entryWithinSummaryRange(entry: ClaudeUsageEntry, input: AnalyticsSummaryTaskInput): boolean {
+  const day = localDayKey(entry.timestamp);
+  return day >= input.since && (!input.until || day <= input.until);
+}
+
+function portableSummaryRange(since: string, until?: string): { since: string; until?: string } {
+  const sinceDate = new Date(`${since}T00:00:00.000Z`);
+  sinceDate.setUTCDate(sinceDate.getUTCDate() - 1);
+  if (!until) return { since: sinceDate.toISOString() };
+  const untilDate = new Date(`${until}T23:59:59.999Z`);
+  untilDate.setUTCDate(untilDate.getUTCDate() + 1);
+  return { since: sinceDate.toISOString(), until: untilDate.toISOString() };
 }
 
 const DAY_MS = 24 * 3600 * 1000;
@@ -463,7 +548,7 @@ export function quotaSnapshotsToHistoryObservations(snapshots: readonly Snapshot
 // requests (unchanged files are re-stat'ed, not re-parsed).
 async function handleRequest(request: WorkerInput & { id: number }): Promise<void> {
   try {
-    const result = await run(request);
+    const result = await runAnalyticsTask(request);
     parentPort!.postMessage({ id: request.id, ok: true, result });
   } catch (err) {
     parentPort!.postMessage({ id: request.id, ok: false, error: String(err) });

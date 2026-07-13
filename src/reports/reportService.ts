@@ -30,6 +30,7 @@ export interface ReportDeps {
   usageStore?: PortableUsageStore;
   readClaudeEntries?: typeof readClaudeUsageEntriesForPeriod;
   readCodexEvents?: typeof readCodexTokensForPeriod;
+  readCodexSpeedTier?: typeof readCodexSpeedTierFromPaths;
 }
 
 const ZERO_TOTALS: ReportTotals = {
@@ -98,9 +99,13 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
         start,
       );
     const speed = normalized.codexSpeed === "auto"
-      ? await readCodexSpeedTierFromPaths(deps.codexConfigPaths ?? getCodexConfigPaths(pathContext))
+      ? normalized.source === "legacy"
+        ? await (deps.readCodexSpeedTier ?? readCodexSpeedTierFromPaths)(
+          deps.codexConfigPaths ?? getCodexConfigPaths(pathContext),
+        )
+        : "standard"
       : normalized.codexSpeed;
-    rows.push(...(await buildCodexRows(events, normalized, pricingResolver, speed)));
+    rows.push(...(await buildCodexRows(events, normalized, pricingResolver, speed, normalized.source === "portable")));
   }
 
   const sorted = rows
@@ -161,6 +166,7 @@ async function buildCodexRows(
   request: ReturnType<typeof normalizeRequest>,
   pricingResolver: HistoricalPricingResolver,
   speed: "standard" | "fast",
+  useStoredCosts: boolean,
 ): Promise<ReportRow[]> {
   const filtered = request.project
     ? events.filter((event) => event.directory.includes(request.project!) || event.session.includes(request.project!))
@@ -182,7 +188,7 @@ async function buildCodexRows(
   const rows: ReportRow[] = [];
   for (const [key, list] of buckets) {
     const [bucket, directory] = key.split("\0");
-    const breakdowns = await costCodexBreakdowns(list, pricingResolver, speed);
+    const breakdowns = await costCodexBreakdowns(list, pricingResolver, speed, useStoredCosts);
     const totals = sumBreakdowns(breakdowns);
     const lastActivity = list.map((entry) => entry.timestamp).sort().at(-1);
     rows.push({
@@ -328,7 +334,12 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, pr
   return { totals: sumBreakdowns(breakdowns), breakdowns };
 }
 
-async function costCodexBreakdowns(events: CodexTokenEvent[], pricingResolver: HistoricalPricingResolver, speed: "standard" | "fast"): Promise<ModelBreakdown[]> {
+async function costCodexBreakdowns(
+  events: CodexTokenEvent[],
+  pricingResolver: HistoricalPricingResolver,
+  speed: "standard" | "fast",
+  useStoredCosts: boolean,
+): Promise<ModelBreakdown[]> {
   const byModel = new Map<string, CodexTokenEvent[]>();
   for (const event of events) {
     const list = byModel.get(event.model) ?? [];
@@ -346,7 +357,24 @@ async function costCodexBreakdowns(events: CodexTokenEvent[], pricingResolver: H
       totalTokens: acc.totalTokens + event.totalTokens,
       costUSD: 0,
     }), { ...ZERO_TOTALS });
-    const c = await calculateCodexApiCostBreakdown(list, pricingResolver, speed);
+    const c = useStoredCosts
+      ? list.reduce((acc, event) => {
+        const supplied = [event.inputCostUSD, event.outputCostUSD, event.cacheCreationCostUSD, event.cacheReadCostUSD]
+          .some((value) => value !== undefined);
+        const inputCostUSD = event.inputCostUSD ?? 0;
+        const outputCostUSD = event.outputCostUSD ?? 0;
+        const cacheCreationCostUSD = event.cacheCreationCostUSD ?? 0;
+        const cacheReadCostUSD = event.cacheReadCostUSD ?? 0;
+        const componentTotal = inputCostUSD + outputCostUSD + cacheCreationCostUSD + cacheReadCostUSD;
+        const authoritativeTotal = event.costUSD ?? componentTotal;
+        return {
+          inputCostUSD: acc.inputCostUSD + inputCostUSD,
+          outputCostUSD: acc.outputCostUSD + outputCostUSD + (supplied ? authoritativeTotal - componentTotal : authoritativeTotal),
+          cacheCreationCostUSD: acc.cacheCreationCostUSD + cacheCreationCostUSD,
+          cacheReadCostUSD: acc.cacheReadCostUSD + cacheReadCostUSD,
+        };
+      }, { ...ZERO_BREAKDOWN })
+      : await calculateCodexApiCostBreakdown(list, pricingResolver, speed);
     return {
       model,
       ...totals,

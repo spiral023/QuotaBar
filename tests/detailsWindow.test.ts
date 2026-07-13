@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultSettings } from "../src/config/settings";
 
 // Mock Electron — DetailsWindowController calls ipcMain.on and may use other
 // Electron APIs at import/construction time. Provide just enough surface to
@@ -27,7 +28,7 @@ vi.mock("electron", () => {
 });
 
 import { DebugRecorder } from "../src/main/debugRecorder";
-import { DetailsWindowController } from "../src/main/detailsWindow";
+import { createAnalyticsSummaryRequest, DetailsWindowController } from "../src/main/detailsWindow";
 import { ipcMain, shell } from "electron";
 
 let tmpDir: string;
@@ -52,6 +53,19 @@ describe("DetailsWindowController dashboard.refreshRequested", () => {
     const content = await fs.readFile(path.join(tmpDir, files[0]), "utf8");
     const events = content.trim().split("\n").map((l) => JSON.parse(l));
     expect(events.some((e) => e.kind === "dashboard.refreshRequested")).toBe(true);
+  });
+});
+
+describe("analytics summary worker request", () => {
+  it("does not include provider history directories", () => {
+    const request = createAnalyticsSummaryRequest({
+      ...defaultSettings,
+      claudeRoots: ["must-not-resolve"],
+      codexHomes: ["must-not-resolve"],
+    }, "30d", { claude: 0, codex: 0 });
+
+    expect(request).not.toHaveProperty("claudeProjectsDirs");
+    expect(request).not.toHaveProperty("codexSessionsDirs");
   });
 });
 
