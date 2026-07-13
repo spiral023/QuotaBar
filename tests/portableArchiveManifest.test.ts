@@ -187,6 +187,45 @@ describe("ZIP metadata limits", () => {
   });
 });
 
+describe("ZIP general-purpose flags", () => {
+  it.each([
+    { method: 0, flags: 0x0000 },
+    { method: 0, flags: 0x0008 },
+    { method: 0, flags: 0x0800 },
+    { method: 0, flags: 0x0808 },
+    { method: 8, flags: 0x0000 },
+    { method: 8, flags: 0x0002 },
+    { method: 8, flags: 0x0004 },
+    { method: 8, flags: 0x0006 },
+    { method: 8, flags: 0x080e },
+  ])("allows flags $flags for compression method $method", ({ method, flags }) => {
+    expect(() => validateZipEntryMetadata([entry("manifest.json", 1, { method, flags })]))
+      .not.toThrow();
+  });
+
+  it.each([
+    { method: 0, flags: 0x0002 },
+    { method: 0, flags: 0x0004 },
+    { method: 0, flags: 0x0006 },
+    { method: 0, flags: 0x0001 },
+    { method: 8, flags: 0x0001 },
+    { method: 8, flags: 0x0010 },
+    { method: 8, flags: 0x0020 },
+    { method: 8, flags: 0x0040 },
+    { method: 8, flags: 0x0080 },
+    { method: 8, flags: 0x1000 },
+    { method: 8, flags: 0x2000 },
+    { method: 8, flags: 0x4000 },
+    { method: 8, flags: 0x8000 },
+    { method: 8, flags: -1 },
+    { method: 8, flags: 1.5 },
+    { method: 8, flags: 0x1_0000 },
+  ])("rejects flags $flags for compression method $method", ({ method, flags }) => {
+    expect(() => validateZipEntryMetadata([entry("manifest.json", 1, { method, flags })]))
+      .toThrow("Unsupported archive entry metadata");
+  });
+});
+
 describe("portable archive manifest", () => {
   it("creates stable versioned entries with byte sizes and SHA-256 checksums", () => {
     const data = Buffer.from("portable statistics", "utf8");

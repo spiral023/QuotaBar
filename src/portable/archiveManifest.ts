@@ -9,6 +9,8 @@ export const MAX_ARCHIVE_FILE_SIZE = 64 * 1024 * 1024;
 export const MAX_ARCHIVE_TOTAL_SIZE = 1024 * 1024 * 1024;
 
 const MAX_COMPRESSION_RATIO = 1_000;
+const COMMON_ZIP_FLAGS = 0x0008 | 0x0800;
+const DEFLATE_OPTION_FLAGS = 0x0002 | 0x0004;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
@@ -427,7 +429,8 @@ function validateEntrySizes(entry: ArchiveEntryMetadata): void {
     || ![0, 8].includes(entry.method)) {
     throw new Error("Unsupported archive entry metadata");
   }
-  if ((entry.flags & 1) !== 0) {
+  const supportedFlags = COMMON_ZIP_FLAGS | (entry.method === 8 ? DEFLATE_OPTION_FLAGS : 0);
+  if ((entry.flags & ~supportedFlags) !== 0) {
     throw new Error("Unsupported archive entry metadata");
   }
 }
