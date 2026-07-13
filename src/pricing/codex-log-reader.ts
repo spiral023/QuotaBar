@@ -17,6 +17,14 @@ export interface CodexTokenEvent {
   outputTokens: number;
   reasoningOutputTokens: number;
   totalTokens: number;
+  costUSD?: number;
+  inputCostUSD?: number;
+  outputCostUSD?: number;
+  cacheCreationCostUSD?: number;
+  cacheReadCostUSD?: number;
+  pricingVersion?: string;
+  portableEventId?: string;
+  portableSessionKey?: string;
 }
 
 type TokenTotals = {
@@ -98,7 +106,9 @@ async function parseCodexJsonlFile(
         const payload = asRecord(entry.payload);
         const model = payload?.model;
         if (typeof model === "string" && model) currentModel = model;
-        currentProjectName = basenameAnySeparator(payload?.cwd) ?? currentProjectName;
+        if (payload && Object.prototype.hasOwnProperty.call(payload, "cwd")) {
+          currentProjectName = basenameAnySeparator(payload.cwd) ?? null;
+        }
         continue;
       }
 

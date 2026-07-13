@@ -1,10 +1,10 @@
 import type { CodexTokenEvent } from "../pricing/codex-log-reader";
 import type { ClaudeUsageEntry } from "../pricing/jsonl-reader";
-import { basenameAnySeparator } from "../shared/projectName";
+import { basenameAnySeparator, plainClaudeProjectName } from "../shared/projectName";
 import { eventId, sessionKey } from "./eventIdentity";
 import { PORTABLE_STORE_VERSION, type PortableProvider, type PortableUsageEvent } from "./types";
 
-export const PORTABLE_USAGE_EVENT_KEYS: string[] = [
+export const PORTABLE_USAGE_EVENT_KEYS = Object.freeze([
   "schemaVersion",
   "id",
   "provider",
@@ -25,22 +25,34 @@ export const PORTABLE_USAGE_EVENT_KEYS: string[] = [
   "cacheCreationCostUSD",
   "cacheReadCostUSD",
   "pricingVersion",
-];
+] as const satisfies readonly (keyof PortableUsageEvent)[]);
 
 export function fromClaudeEntries(entries: readonly ClaudeUsageEntry[]): PortableUsageEvent[] {
   const ordinals = new Map<string, number>();
   return entries.map((entry) => {
     const occurredAt = normalizeTimestamp(entry.timestamp, "Claude");
-    const ordinal = nextOrdinal(ordinals, "claude", occurredAt, entry.model, entry.session);
-    const projectName = basenameAnySeparator(entry.projectName ?? entry.project) ?? "Unknown project";
+    const statisticalSession = canonicalStatisticalSession(entry.session, [
+      entry.inputTokens,
+      entry.outputTokens,
+      entry.cacheCreationTokens,
+      entry.cacheReadTokens,
+      entry.costUSD,
+      entry.inputCostUSD,
+      entry.outputCostUSD,
+      entry.cacheCreationCostUSD,
+      entry.cacheReadCostUSD,
+      entry.pricingVersion,
+    ]);
+    const ordinal = nextOrdinal(ordinals, "claude", occurredAt, entry.model, statisticalSession);
+    const projectName = basenameAnySeparator(entry.projectName) ?? plainClaudeProjectName(entry.project) ?? "Unknown project";
     return {
       schemaVersion: PORTABLE_STORE_VERSION,
-      id: eventId({ provider: "claude", occurredAt, model: entry.model, session: entry.session, ordinal }),
+      id: entry.portableEventId ?? eventId({ provider: "claude", occurredAt, model: entry.model, session: statisticalSession, ordinal }),
       provider: "claude",
       occurredAt,
       model: entry.model,
       projectName,
-      sessionKey: sessionKey("claude", entry.session),
+      sessionKey: entry.portableSessionKey ?? sessionKey("claude", entry.session),
       source: "claude-log",
       synthetic: false,
       inputTokens: entry.inputTokens,
@@ -49,6 +61,11 @@ export function fromClaudeEntries(entries: readonly ClaudeUsageEntry[]): Portabl
       cacheReadTokens: entry.cacheReadTokens,
       reasoningOutputTokens: 0,
       ...(entry.costUSD !== undefined ? { costUSD: entry.costUSD } : {}),
+      ...(entry.inputCostUSD !== undefined ? { inputCostUSD: entry.inputCostUSD } : {}),
+      ...(entry.outputCostUSD !== undefined ? { outputCostUSD: entry.outputCostUSD } : {}),
+      ...(entry.cacheCreationCostUSD !== undefined ? { cacheCreationCostUSD: entry.cacheCreationCostUSD } : {}),
+      ...(entry.cacheReadCostUSD !== undefined ? { cacheReadCostUSD: entry.cacheReadCostUSD } : {}),
+      ...(entry.pricingVersion !== undefined ? { pricingVersion: entry.pricingVersion } : {}),
     };
   });
 }
@@ -56,17 +73,32 @@ export function fromClaudeEntries(entries: readonly ClaudeUsageEntry[]): Portabl
 export function fromCodexEvents(events: readonly CodexTokenEvent[]): PortableUsageEvent[] {
   const ordinals = new Map<string, number>();
   return events.map((entry) => {
+    requireValidCodexTokens(entry);
     const occurredAt = normalizeTimestamp(entry.timestamp, "Codex");
-    const ordinal = nextOrdinal(ordinals, "codex", occurredAt, entry.model, entry.session);
+    const statisticalSession = canonicalStatisticalSession(entry.session, [
+      entry.inputTokens,
+      entry.cachedInputTokens,
+      entry.outputTokens,
+      entry.reasoningOutputTokens,
+      entry.totalTokens,
+      entry.isFallback,
+      entry.costUSD,
+      entry.inputCostUSD,
+      entry.outputCostUSD,
+      entry.cacheCreationCostUSD,
+      entry.cacheReadCostUSD,
+      entry.pricingVersion,
+    ]);
+    const ordinal = nextOrdinal(ordinals, "codex", occurredAt, entry.model, statisticalSession);
     const projectName = basenameAnySeparator(entry.projectName);
     return {
       schemaVersion: PORTABLE_STORE_VERSION,
-      id: eventId({ provider: "codex", occurredAt, model: entry.model, session: entry.session, ordinal }),
+      id: entry.portableEventId ?? eventId({ provider: "codex", occurredAt, model: entry.model, session: statisticalSession, ordinal }),
       provider: "codex",
       occurredAt,
       model: entry.model,
       ...(projectName ? { projectName } : {}),
-      sessionKey: sessionKey("codex", entry.session),
+      sessionKey: entry.portableSessionKey ?? sessionKey("codex", entry.session),
       source: "codex-log",
       synthetic: false,
       inputTokens: Math.max(entry.inputTokens - entry.cachedInputTokens, 0),
@@ -74,6 +106,12 @@ export function fromCodexEvents(events: readonly CodexTokenEvent[]): PortableUsa
       cacheCreationTokens: 0,
       cacheReadTokens: entry.cachedInputTokens,
       reasoningOutputTokens: entry.reasoningOutputTokens,
+      ...(entry.costUSD !== undefined ? { costUSD: entry.costUSD } : {}),
+      ...(entry.inputCostUSD !== undefined ? { inputCostUSD: entry.inputCostUSD } : {}),
+      ...(entry.outputCostUSD !== undefined ? { outputCostUSD: entry.outputCostUSD } : {}),
+      ...(entry.cacheCreationCostUSD !== undefined ? { cacheCreationCostUSD: entry.cacheCreationCostUSD } : {}),
+      ...(entry.cacheReadCostUSD !== undefined ? { cacheReadCostUSD: entry.cacheReadCostUSD } : {}),
+      ...(entry.pricingVersion !== undefined ? { pricingVersion: entry.pricingVersion } : {}),
     };
   });
 }
@@ -83,6 +121,13 @@ export function toClaudeEntries(events: readonly PortableUsageEvent[]): ClaudeUs
     .filter((event) => event.provider === "claude")
     .map((event) => {
       const projectName = basenameAnySeparator(event.projectName);
+      const componentCost = sumFiniteCosts([
+        event.inputCostUSD,
+        event.outputCostUSD,
+        event.cacheCreationCostUSD,
+        event.cacheReadCostUSD,
+      ]);
+      const costUSD = event.costUSD ?? componentCost;
       return {
         provider: "claude",
         timestamp: event.occurredAt,
@@ -94,7 +139,14 @@ export function toClaudeEntries(events: readonly PortableUsageEvent[]): ClaudeUs
         outputTokens: event.outputTokens,
         cacheCreationTokens: event.cacheCreationTokens,
         cacheReadTokens: event.cacheReadTokens,
-        ...(event.costUSD !== undefined ? { costUSD: event.costUSD } : {}),
+        ...(costUSD !== undefined ? { costUSD } : {}),
+        ...(event.inputCostUSD !== undefined ? { inputCostUSD: event.inputCostUSD } : {}),
+        ...(event.outputCostUSD !== undefined ? { outputCostUSD: event.outputCostUSD } : {}),
+        ...(event.cacheCreationCostUSD !== undefined ? { cacheCreationCostUSD: event.cacheCreationCostUSD } : {}),
+        ...(event.cacheReadCostUSD !== undefined ? { cacheReadCostUSD: event.cacheReadCostUSD } : {}),
+        ...(event.pricingVersion !== undefined ? { pricingVersion: event.pricingVersion } : {}),
+        portableEventId: event.id,
+        portableSessionKey: event.sessionKey,
       };
     });
 }
@@ -117,14 +169,60 @@ export function toCodexEvents(events: readonly PortableUsageEvent[]): CodexToken
         outputTokens: event.outputTokens,
         reasoningOutputTokens: event.reasoningOutputTokens,
         totalTokens: inputTokens + event.outputTokens,
+        ...(event.costUSD !== undefined ? { costUSD: event.costUSD } : {}),
+        ...(event.inputCostUSD !== undefined ? { inputCostUSD: event.inputCostUSD } : {}),
+        ...(event.outputCostUSD !== undefined ? { outputCostUSD: event.outputCostUSD } : {}),
+        ...(event.cacheCreationCostUSD !== undefined ? { cacheCreationCostUSD: event.cacheCreationCostUSD } : {}),
+        ...(event.cacheReadCostUSD !== undefined ? { cacheReadCostUSD: event.cacheReadCostUSD } : {}),
+        ...(event.pricingVersion !== undefined ? { pricingVersion: event.pricingVersion } : {}),
+        portableEventId: event.id,
+        portableSessionKey: event.sessionKey,
       };
     });
 }
 
 function normalizeTimestamp(value: string, provider: "Claude" | "Codex"): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!match) throw new Error(`Invalid ${provider} timestamp`);
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offset = zone === "Z" ? null : zone.slice(1).split(":").map(Number);
+  const daysInMonth = daysForMonth(year, month);
+  const invalidOffset = offset && (offset[0] > 14 || offset[1] > 59 || (offset[0] === 14 && offset[1] !== 0));
+  if (day < 1 || day > daysInMonth || hour > 23 || minute > 59 || second > 59 || invalidOffset) {
+    throw new Error(`Invalid ${provider} timestamp`);
+  }
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) throw new Error(`Invalid ${provider} timestamp`);
   return date.toISOString();
+}
+
+function daysForMonth(year: number, month: number): number {
+  if (month < 1 || month > 12) return 0;
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+function canonicalStatisticalSession(rawSession: string, statistics: readonly unknown[]): string {
+  // eventId retains its public API; JSON framing scopes ordinals to an unambiguous statistical identity.
+  return JSON.stringify(["provider-session", rawSession, "statistics", statistics.map((value) => value ?? null)]);
+}
+
+function requireValidCodexTokens(entry: CodexTokenEvent): void {
+  const values = [entry.inputTokens, entry.cachedInputTokens, entry.outputTokens, entry.reasoningOutputTokens, entry.totalTokens];
+  if (values.some((value) => !Number.isFinite(value) || value < 0) || entry.cachedInputTokens > entry.inputTokens) {
+    throw new Error("Invalid Codex token counts");
+  }
+}
+
+function sumFiniteCosts(costs: readonly (number | undefined)[]): number | undefined {
+  const defined = costs.filter((cost): cost is number => cost !== undefined && Number.isFinite(cost));
+  return defined.length > 0 ? defined.reduce((sum, cost) => sum + cost, 0) : undefined;
 }
 
 function nextOrdinal(

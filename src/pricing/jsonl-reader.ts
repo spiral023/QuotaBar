@@ -31,6 +31,13 @@ export interface ClaudeUsageEntry extends ModelTokens {
   projectName?: string;
   session: string;
   costUSD?: number;
+  inputCostUSD?: number;
+  outputCostUSD?: number;
+  cacheCreationCostUSD?: number;
+  cacheReadCostUSD?: number;
+  pricingVersion?: string;
+  portableEventId?: string;
+  portableSessionKey?: string;
 }
 
 interface ParsedClaudeUsageEntry extends ClaudeUsageEntry {

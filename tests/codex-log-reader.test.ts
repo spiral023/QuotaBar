@@ -80,6 +80,26 @@ describe("readCodexTokensForPeriod", () => {
     expect(JSON.stringify(events.map((event) => event.projectName))).not.toContain("person");
   });
 
+  it("clears projectName when present cwd metadata is invalid", async () => {
+    await writeJsonl(path.join(tmpDir, "2026/05/18"), "clear-project.jsonl", [
+      { type: "session_meta", payload: { cwd: "/home/alice/FirstProject" } },
+      makeTokenCountWithLast("2026-05-18T10:00:01.000Z", {
+        input_tokens: 10, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: 11,
+      }),
+      { type: "turn_context", payload: { model: "gpt-5.2-codex", cwd: ".." } },
+      makeTokenCountWithLast("2026-05-18T10:00:02.000Z", {
+        input_tokens: 20, cached_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0, total_tokens: 22,
+      }),
+      { type: "turn_context", payload: { model: "gpt-5.2-codex" } },
+      makeTokenCountWithLast("2026-05-18T10:00:03.000Z", {
+        input_tokens: 30, cached_input_tokens: 0, output_tokens: 3, reasoning_output_tokens: 0, total_tokens: 33,
+      }),
+    ]);
+
+    const events = await readCodexTokensForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(events.map((event) => event.projectName)).toEqual(["FirstProject", undefined, undefined]);
+  });
+
   it("returns empty array when sessions dir does not exist", async () => {
     const result = await readCodexTokensForPeriod("/nonexistent/xyz", new Date("2026-05-01"));
     expect(result).toEqual([]);
