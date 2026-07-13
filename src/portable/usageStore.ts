@@ -140,6 +140,67 @@ export class PortableUsageStore {
     });
   }
 
+  async reconcile(events: readonly PortableUsageEvent[]): Promise<{ inserted: number; updated: number; existing: number }> {
+    return this.exclusive(async () => {
+      await this.prepareStore();
+      // Readers may emit the same immutable source ID more than once; the last source occurrence is authoritative.
+      const incomingById = new Map<string, PortableUsageEvent>();
+      for (const item of events) {
+        const sanitized = requirePortableEvent(item);
+        incomingById.set(sanitized.id, sanitized);
+      }
+
+      const snapshots = await this.scanPartitions({ acceptMisplaced: false });
+      const storedByMonth = snapshotsToMaps(snapshots);
+      const storedById = new Map<string, PortableUsageEvent>();
+      for (const snapshot of snapshots) {
+        for (const item of snapshot.events) {
+          if (!storedById.has(item.id)) storedById.set(item.id, item);
+        }
+      }
+
+      const affected = new Set<string>();
+      let inserted = 0;
+      let updated = 0;
+      let existing = 0;
+      for (const item of incomingById.values()) {
+        const stored = storedById.get(item.id);
+        if (!stored) {
+          inserted += 1;
+        } else if (canonicalSerialize(stored) === canonicalSerialize(item)) {
+          existing += 1;
+          continue;
+        } else {
+          updated += 1;
+          for (const [month, partition] of storedByMonth) {
+            if (partition.delete(item.id)) affected.add(month);
+          }
+        }
+
+        const month = monthKey(new Date(item.occurredAt));
+        const partition = storedByMonth.get(month) ?? new Map<string, PortableUsageEvent>();
+        partition.set(item.id, item);
+        storedByMonth.set(month, partition);
+        affected.add(month);
+      }
+
+      const writes = new Map<string, string>();
+      const removals: string[] = [];
+      for (const month of [...affected].sort()) {
+        const partition = storedByMonth.get(month);
+        if (!partition || partition.size === 0) {
+          removals.push(this.partitionPath(month));
+          storedByMonth.delete(month);
+        } else {
+          writes.set(this.partitionPath(month), serializeEvents(partition.values()));
+        }
+      }
+      writes.set(this.metadataPath(), `${JSON.stringify(buildMetadata(storedByMonth), null, 2)}\n`);
+      await this.commitTransaction(writes, removals);
+      return { inserted, updated, existing };
+    });
+  }
+
   rebuildMetadata(): Promise<PortableStoreMetadata> {
     return this.exclusive(async () => {
       await this.prepareStore();

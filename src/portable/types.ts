@@ -35,7 +35,15 @@ export interface PortableStoreMetadata {
 
 export interface PortableIngestState {
   schemaVersion: PortableStoreVersion;
-  sources: Record<string, { size: number; mtimeMs: number; processedAt: string }>;
+  sources: Record<string, {
+    size: number;
+    mtimeMs: number;
+    processedAt: string;
+    provider?: PortableProvider;
+    path?: string;
+    eventIds?: string[];
+    active?: boolean;
+  }>;
 }
 
 export interface PortableMigrationState {

@@ -103,6 +103,51 @@ describe("PortableUsageStore", () => {
     expect(await readdir(path.join(rootDir, "events"))).toEqual(["2026-07.jsonl"]);
   });
 
+  it("reconciles corrected payloads in place and counts unchanged IDs as existing", async () => {
+    const original = event("corrected", "2026-07-02T00:00:00.000Z");
+    const corrected = event("corrected", "2026-07-02T00:00:00.000Z", {
+      inputTokens: 999,
+      costUSD: 4.2,
+      pricingVersion: "corrected-v2",
+    });
+    const unchanged = event("unchanged", "2026-07-03T00:00:00.000Z");
+    await store.upsert([original, unchanged]);
+
+    expect(await store.reconcile([corrected, unchanged])).toEqual({
+      inserted: 0,
+      updated: 1,
+      existing: 1,
+    });
+    expect((await store.read()).find(({ id }) => id === "corrected")).toEqual(corrected);
+  });
+
+  it("moves a corrected ID to its canonical month without deleting absent IDs", async () => {
+    const retained = event("retained", "2026-07-01T00:00:00.000Z");
+    await store.upsert([
+      retained,
+      event("month-move", "2026-07-31T23:00:00.000Z"),
+    ]);
+
+    expect(await store.reconcile([
+      event("month-move", "2026-08-01T01:00:00.000Z"),
+    ])).toEqual({ inserted: 0, updated: 1, existing: 0 });
+
+    expect((await store.read()).map(({ id, occurredAt }) => [id, occurredAt])).toEqual([
+      ["retained", "2026-07-01T00:00:00.000Z"],
+      ["month-move", "2026-08-01T01:00:00.000Z"],
+    ]);
+    expect((await readFile(path.join(rootDir, "events", "2026-07.jsonl"), "utf8"))).not.toContain("month-move");
+    expect(await readdir(path.join(rootDir, "events"))).toEqual(["2026-07.jsonl", "2026-08.jsonl"]);
+  });
+
+  it("uses the last incoming occurrence as the deterministic correction for a repeated ID", async () => {
+    const first = event("repeated", "2026-07-02T00:00:00.000Z", { inputTokens: 1 });
+    const last = event("repeated", "2026-07-02T00:00:00.000Z", { inputTokens: 2 });
+
+    expect(await store.reconcile([first, last])).toEqual({ inserted: 1, updated: 0, existing: 0 });
+    expect((await store.read())[0]).toEqual(last);
+  });
+
   it("serializes concurrent upserts across store instances without losing events", async () => {
     const first = new PortableUsageStore(rootDir);
     const second = new PortableUsageStore(path.join(rootDir, "."));
