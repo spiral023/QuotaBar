@@ -18,11 +18,14 @@ import { dailySubCostUSD, periodSubCostUSD, planChangePoints, type PlanChangePoi
 import { makeFxLookup } from "../pricing/fx-fetcher";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
 import { buildWeeklyProfile, computeWeeklyForecast, type WeeklyForecastResult } from "./weeklyForecast";
-import { readWeeklySeriesForProviders, withBudgetMarkers, type WindowBudgetSeries } from "./windowBudgetSeries";
-import { readWindowHistoryObservations } from "./windowHistoryReader";
-import { buildWindowHistory, buildFiveHourPressure, type WindowHistoryEntry, type PressureDist } from "../usage/windowHistory";
+import { insertBreaks, withBudgetMarkers, type WeeklySeriesRequest, type WindowBudgetSeries } from "./windowBudgetSeries";
+import { buildWindowHistory, buildFiveHourPressure, type HistoryObservation, type WindowHistoryEntry, type PressureDist } from "../usage/windowHistory";
 import type { UsagePace } from "../usage/usagePace";
-import type { CurrentWindowUsage } from "../usage/windowBudgetRollup";
+import { buildCurrentWindowUsage, type CurrentWindowObservation, type CurrentWindowUsage } from "../usage/windowBudgetRollup";
+import { resetsAtChanged } from "../usage/windowRatio";
+import { getPortableQuotaDir } from "../config/paths";
+import { readQuotaSnapshots } from "../portable/quotaStore";
+import type { SnapshotEvent } from "./debugEvents";
 
 interface AnalyticsTaskInput {
   task: "get" | "summary";
@@ -111,7 +114,10 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     return buildWindowBudgetData(input);
   }
   if (input.task === "windowHistory") {
-    const observations = await readWindowHistoryObservations(input.logDir);
+    const snapshots = await readQuotaSnapshots(getPortableQuotaDir(), {
+      until: new Date(input.nowMs).toISOString(),
+    });
+    const observations = toHistoryObservations(snapshots);
     return { entries: buildWindowHistory(observations, input.nowMs) };
   }
 
@@ -247,11 +253,15 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     buildTopActiveDays(allActivity, allRows, 5),
   );
 
-  const pressureObs = await readWindowHistoryObservations(input.logDir);
   const sinceMs = input.periodStartMs;
   const untilMs = input.until
     ? new Date(`${input.until}T00:00:00`).getTime() + 24 * 3600 * 1000
     : input.nowMs;
+  const quotaSnapshots = await readQuotaSnapshots(getPortableQuotaDir(), {
+    since: new Date(input.periodStartMs).toISOString(),
+    until: new Date(untilMs).toISOString(),
+  });
+  const pressureObs = toHistoryObservations(quotaSnapshots);
   const claudePressure = buildFiveHourPressure(pressureObs, sinceMs, untilMs, "claude");
   const codexPressure  = buildFiveHourPressure(pressureObs, sinceMs, untilMs, "codex");
   const fiveHourPressure = byProvider(claudePressure, codexPressure, combinePressure(claudePressure, codexPressure));
@@ -296,10 +306,12 @@ async function buildWindowBudgetData(input: WindowBudgetTaskInput): Promise<Wind
     const resetMs = p.weeklyResetsAt ? new Date(p.weeklyResetsAt).getTime() : null;
     return resetMs !== null && !Number.isNaN(resetMs) ? resetMs - WEEK_MS : input.nowMs - WEEK_MS;
   });
-  // Alle Provider-Serien in einem einzigen Log-Durchlauf lesen, statt die
-  // Dateien pro Provider erneut zu parsen.
-  const seriesList = await readWeeklySeriesForProviders(
-    input.logDir,
+  const quotaSnapshots = await readQuotaSnapshots(getPortableQuotaDir(), {
+    since: new Date(Math.min(...windowStarts)).toISOString(),
+    until: new Date(input.nowMs).toISOString(),
+  });
+  const seriesList = buildWeeklySeriesForProviders(
+    quotaSnapshots,
     input.providers.map((p, i) => ({
       provider: p.provider,
       windowStartMs: windowStarts[i],
@@ -336,6 +348,114 @@ async function buildWindowBudgetData(input: WindowBudgetTaskInput): Promise<Wind
     };
   }
   return { perProvider };
+}
+
+const FIVE_HOUR_RESET_DROP_PCT = 15;
+const WEEKLY_SPIKE_DELTA_PCT = 20;
+
+interface PortableSeriesState {
+  buckets: Map<number, number>;
+  resets: string[];
+  observations: CurrentWindowObservation[];
+  previousFivePct: number | null;
+  previousFiveResetsAt: string | null;
+}
+
+function buildWeeklySeriesForProviders(
+  snapshots: readonly SnapshotEvent[],
+  requests: readonly WeeklySeriesRequest[],
+  nowMs: number,
+  bucketMinutes: number,
+): WindowBudgetSeries[] {
+  const bucketMs = bucketMinutes * 60_000;
+  const states: PortableSeriesState[] = requests.map(() => ({
+    buckets: new Map<number, number>(),
+    resets: [],
+    observations: [],
+    previousFivePct: null,
+    previousFiveResetsAt: null,
+  }));
+  for (const snapshot of snapshots) {
+    if (snapshot.status !== "ok") continue;
+    const timestampMs = Date.parse(snapshot.fetchedAt);
+    if (timestampMs > nowMs) continue;
+    const weekly = snapshot.windows.find((window) => window.name === "weekly");
+    const fiveHour = snapshot.windows.find((window) => window.name === "fiveHour");
+    for (let index = 0; index < requests.length; index += 1) {
+      const request = requests[index];
+      if (snapshot.provider !== request.provider || timestampMs < request.windowStartMs) continue;
+      if (typeof request.planType === "string" && snapshot.planType !== request.planType) continue;
+      const state = states[index];
+      if (typeof weekly?.usedPercent === "number") {
+        state.buckets.set(Math.floor(timestampMs / bucketMs) * bucketMs, weekly.usedPercent);
+      }
+      if (typeof fiveHour?.usedPercent === "number" && typeof weekly?.usedPercent === "number") {
+        state.observations.push({
+          ts: snapshot.fetchedAt,
+          fivePct: fiveHour.usedPercent,
+          fiveResetsAt: fiveHour.resetsAt ?? null,
+          weeklyPct: weekly.usedPercent,
+          weeklyResetsAt: weekly.resetsAt ?? null,
+        });
+      }
+      if (typeof fiveHour?.usedPercent === "number") {
+        const resetsAt = fiveHour.resetsAt ?? null;
+        if (resetsAtChanged(state.previousFiveResetsAt, resetsAt)
+          && state.previousFivePct !== null && fiveHour.usedPercent < state.previousFivePct) {
+          state.resets.push(snapshot.fetchedAt);
+        } else if (state.previousFivePct !== null
+          && fiveHour.usedPercent < state.previousFivePct - FIVE_HOUR_RESET_DROP_PCT) {
+          state.resets.push(snapshot.fetchedAt);
+        }
+        state.previousFivePct = fiveHour.usedPercent;
+        state.previousFiveResetsAt = resetsAt;
+      }
+    }
+  }
+  return states.map((state, index) => {
+    const request = requests[index];
+    const points = removePortableSpikes([...state.buckets.entries()]
+      .sort((left, right) => left[0] - right[0])
+      .map(([timestamp, weeklyPct]) => ({ t: new Date(timestamp).toISOString(), weeklyPct })));
+    const currentUsage = typeof request.windowsPerWeek === "number"
+      && typeof request.currentWeeklyPct === "number"
+      ? buildCurrentWindowUsage(state.observations, request.windowsPerWeek, request.currentWeeklyPct)
+      : undefined;
+    return {
+      points: insertBreaks(points),
+      fiveHourResets: state.resets,
+      ...(currentUsage ? { currentUsage } : {}),
+    };
+  });
+}
+
+function removePortableSpikes(points: WindowBudgetSeries["points"]): WindowBudgetSeries["points"] {
+  if (points.length < 2) return points;
+  return points.filter((point, index) => {
+    if (point.weeklyPct === null) return true;
+    const left = index > 0 ? points[index - 1].weeklyPct : null;
+    const right = index < points.length - 1 ? points[index + 1].weeklyPct : null;
+    const aboveLeft = left === null || point.weeklyPct - left > WEEKLY_SPIKE_DELTA_PCT;
+    const aboveRight = right === null || point.weeklyPct - right > WEEKLY_SPIKE_DELTA_PCT;
+    return !(aboveLeft && aboveRight);
+  });
+}
+
+function toHistoryObservations(snapshots: readonly SnapshotEvent[]): HistoryObservation[] {
+  return snapshots.flatMap((snapshot) => {
+    if (snapshot.status !== "ok") return [];
+    const fiveHour = snapshot.windows.find((window) => window.name === "fiveHour");
+    const weekly = snapshot.windows.find((window) => window.name === "weekly");
+    if (typeof fiveHour?.usedPercent !== "number" || typeof weekly?.usedPercent !== "number") return [];
+    return [{
+      provider: snapshot.provider,
+      ts: snapshot.fetchedAt,
+      fivePct: fiveHour.usedPercent,
+      fiveResetsAt: fiveHour.resetsAt ?? null,
+      weeklyPct: weekly.usedPercent,
+      weeklyResetsAt: weekly.resetsAt ?? null,
+    }];
+  });
 }
 
 // Long-lived worker: requests arrive as messages and are answered by id, so

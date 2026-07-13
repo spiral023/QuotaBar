@@ -18,9 +18,10 @@ import { NotificationService, RELEASES_URL } from "./notifications";
 import { collectSystemData, formatSystemPathDiagnostics, formatWslDiscoveryDiagnostics } from "./systemData";
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { DebugRecorder } from "./debugRecorder";
+import { snapshotEvent } from "./debugEvents";
 import { runBackfill, BACKFILL_REPAIR_VERSION } from "./debugBackfill";
 import { getRepairedVersion, setRepairedVersion } from "./backfillManifest";
-import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath } from "../config/paths";
+import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
 import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
 import { BonusResetTracker } from "../usage/bonusReset";
@@ -30,6 +31,7 @@ import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
 import { loadCachedSnapshots, markSnapshotsFromCache, saveCachedSnapshots } from "../usage/snapshotCache";
 import { registerLifecycleEvents } from "./lifecycleEvents";
+import { appendQuotaSnapshots } from "../portable/quotaStore";
 
 interface CliOptions {
   debug: boolean;
@@ -228,6 +230,9 @@ if (!app.requestSingleInstanceLock()) {
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
         detailsWindow.notifyUpdate(snapshots);
+        void appendQuotaSnapshots(getPortableQuotaDir(), snapshots.map(snapshotEvent)).catch(() => {
+          log.warn("Portable quota snapshot save failed");
+        });
         void saveCachedSnapshots(usageSnapshotCachePath, snapshots).catch((err: unknown) => {
           log.warn(`Usage snapshot cache save failed: ${err instanceof Error ? err.message : String(err)}`);
         });
