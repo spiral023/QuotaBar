@@ -42,23 +42,40 @@ export async function appendQuotaSnapshots(root: string, snapshots: readonly Sna
   if (sanitized.length === 0) return;
   await exclusive(root, async () => {
     await recoverPending(root);
-    const current = await readPartitions(root);
-    const unique = new Map<string, SnapshotEvent>();
-    for (const item of current) unique.set(identity(item), item);
-    for (const item of sanitized) {
-      if (!unique.has(identity(item))) unique.set(identity(item), item);
-    }
-
-    const partitions = new Map<string, SnapshotEvent[]>();
-    for (const item of [...unique.values()].sort(compareSnapshots)) {
-      const month = monthKey(item.fetchedAt);
-      const partition = partitions.get(month) ?? [];
-      partition.push(item);
-      partitions.set(month, partition);
+    const incomingByMonth = groupByMonth(sanitized);
+    const misplacedByMonth = new Map<string, SnapshotEvent[]>();
+    const currentByMonth = new Map<string, SnapshotEvent[]>();
+    const originalByMonth = new Map<string, string | undefined>();
+    const pending = [...incomingByMonth.keys()];
+    const processed = new Set<string>();
+    while (pending.length > 0) {
+      const month = pending.shift()!;
+      if (processed.has(month)) continue;
+      processed.add(month);
+      const partition = await readPartition(root, month);
+      originalByMonth.set(month, partition.contents);
+      for (const item of partition.snapshots) {
+        const canonicalMonth = monthKey(item.fetchedAt);
+        if (canonicalMonth === month) {
+          const current = currentByMonth.get(month) ?? [];
+          current.push(item);
+          currentByMonth.set(month, current);
+        } else {
+          const misplaced = misplacedByMonth.get(canonicalMonth) ?? [];
+          misplaced.push(item);
+          misplacedByMonth.set(canonicalMonth, misplaced);
+          pending.push(canonicalMonth);
+        }
+      }
     }
     const writes = new Map<string, string>();
-    for (const [month, items] of partitions) {
-      writes.set(partitionPath(root, month), `${items.map((item) => JSON.stringify(item)).join("\n")}\n`);
+    for (const month of [...processed].sort()) {
+      const unique = new Map<string, SnapshotEvent>();
+      mergeInto(unique, misplacedByMonth.get(month) ?? []);
+      mergeInto(unique, currentByMonth.get(month) ?? []);
+      mergeInto(unique, incomingByMonth.get(month) ?? []);
+      const contents = serializeSnapshots([...unique.values()]);
+      if (contents !== originalByMonth.get(month)) writes.set(partitionPath(root, month), contents);
     }
     await commit(root, writes);
   });
@@ -80,8 +97,10 @@ export async function readQuotaSnapshots(
     for (const item of snapshots.sort(compareSnapshots)) {
       const timestamp = Date.parse(item.fetchedAt);
       if ((bounds.since === undefined || timestamp >= bounds.since)
-        && (bounds.until === undefined || timestamp <= bounds.until)
-        && !unique.has(identity(item))) unique.set(identity(item), item);
+        && (bounds.until === undefined || timestamp <= bounds.until)) {
+        const key = identity(item);
+        unique.set(key, unique.has(key) ? mergeSnapshots(unique.get(key)!, item) : item);
+      }
     }
     return [...unique.values()].map(cloneSnapshot);
   });
@@ -136,7 +155,31 @@ async function readPartitions(root: string, include: (month: string) => boolean 
   return result;
 }
 
+async function readPartition(root: string, month: string): Promise<{ contents?: string; snapshots: SnapshotEvent[] }> {
+  const filePath = partitionPath(root, month);
+  try {
+    const info = await fs.lstat(filePath);
+    if (!info.isFile()) return { snapshots: [] };
+  } catch (error) {
+    if (isMissing(error)) return { snapshots: [] };
+    throw error;
+  }
+  const contents = await fs.readFile(filePath, "utf8");
+  const snapshots: SnapshotEvent[] = [];
+  for (const line of contents.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const item = sanitizeQuotaSnapshot(JSON.parse(line));
+      if (item) snapshots.push(item);
+    } catch {
+      // Invalid lines are discarded when an affected partition is rewritten.
+    }
+  }
+  return { contents, snapshots };
+}
+
 async function commit(root: string, writes: ReadonlyMap<string, string>): Promise<void> {
+  if (writes.size === 0) return;
   const entries: TransactionEntry[] = [];
   const staged: string[] = [];
   const transaction: PendingTransaction = { schemaVersion: 1, transactionId: randomUUID(), entries };
@@ -180,22 +223,27 @@ async function recoverPending(root: string): Promise<void> {
 
 async function rollForward(root: string, transaction: PendingTransaction): Promise<void> {
   validateTransaction(root, transaction);
+  const prepared: Array<{ entry: TransactionEntry; target: string; temporary: string; staged: boolean }> = [];
   for (const entry of transaction.entries) {
     const target = path.resolve(root, entry.target);
     const temporary = path.resolve(root, entry.temporary);
     try {
       const staged = await fs.readFile(temporary);
       if (hash(staged) !== entry.sha256) throw new Error("Portable quota transaction checksum mismatch");
-      await renameWithRetry(temporary, target);
+      prepared.push({ entry, target, temporary, staged: true });
     } catch (error) {
       if (!isMissing(error)) throw error;
       const committed = await fs.readFile(target).catch(() => undefined);
       if (!committed || hash(committed) !== entry.sha256) {
         throw new Error("Portable quota transaction cannot be recovered safely", { cause: error });
       }
+      prepared.push({ entry, target, temporary, staged: false });
     }
-    const committed = await fs.readFile(target);
-    if (hash(committed) !== entry.sha256) throw new Error("Portable quota transaction checksum mismatch");
+  }
+  for (const item of prepared) {
+    if (item.staged) await renameWithRetry(item.temporary, item.target);
+    const committed = await fs.readFile(item.target);
+    if (hash(committed) !== item.entry.sha256) throw new Error("Portable quota transaction checksum mismatch");
   }
   try {
     const current = parseTransaction(JSON.parse(await fs.readFile(transactionPath(root), "utf8")));
@@ -243,7 +291,7 @@ function sanitizeQuotaSnapshot(value: unknown): SnapshotEvent | undefined {
     provider: item.provider,
     status: item.status as UsageStatus,
     windows: windows as UsageWindow[],
-    fetchedAt: item.fetchedAt,
+    fetchedAt: new Date(item.fetchedAt).toISOString(),
   };
   if (item.planType !== undefined) {
     if (!isNonEmptyString(item.planType)) return undefined;
@@ -262,18 +310,22 @@ function sanitizeWindow(value: unknown): UsageWindow | undefined {
   const item = value as Record<string, unknown>;
   if (typeof item.name !== "string" || !WINDOW_NAMES.has(item.name as UsageWindow["name"])) return undefined;
   const result: UsageWindow = { name: item.name as UsageWindow["name"] };
-  for (const field of ["usedPercent", "remainingPercent", "windowSeconds"] as const) {
+  for (const field of ["usedPercent", "remainingPercent"] as const) {
     if (item[field] !== undefined) {
-      if (!isNonNegativeFinite(item[field])) return undefined;
+      if (!isPercentage(item[field])) return undefined;
       result[field] = item[field];
     }
   }
+  if (item.windowSeconds !== undefined) {
+    if (!isSafeNonNegativeInteger(item.windowSeconds)) return undefined;
+    result.windowSeconds = item.windowSeconds;
+  }
   if (item.burnRatePctPerHour !== undefined) {
-    if (item.burnRatePctPerHour !== null && !isNonNegativeFinite(item.burnRatePctPerHour)) return undefined;
+    if (item.burnRatePctPerHour !== null && !isBoundedNonNegative(item.burnRatePctPerHour)) return undefined;
     result.burnRatePctPerHour = item.burnRatePctPerHour;
   }
   if (item.safetyGapSeconds !== undefined) {
-    if (item.safetyGapSeconds !== null && !isFiniteNumber(item.safetyGapSeconds)) return undefined;
+    if (item.safetyGapSeconds !== null && !isBoundedNonNegative(item.safetyGapSeconds)) return undefined;
     result.safetyGapSeconds = item.safetyGapSeconds;
   }
   if (item.resetsAt !== undefined) {
@@ -299,9 +351,9 @@ function sanitizePace(value: unknown): UsagePace | undefined {
   if (!value || typeof value !== "object") return undefined;
   const item = value as Record<string, unknown>;
   if (typeof item.stage !== "string" || !PACE_STAGES.has(item.stage as UsagePace["stage"])
-    || !isFiniteNumber(item.deltaPercent) || !isNonNegativeFinite(item.expectedUsedPercent)
-    || !isNonNegativeFinite(item.actualUsedPercent)
-    || (item.etaSeconds !== null && !isNonNegativeFinite(item.etaSeconds))
+    || !isBoundedDelta(item.deltaPercent) || !isPercentage(item.expectedUsedPercent)
+    || !isPercentage(item.actualUsedPercent)
+    || (item.etaSeconds !== null && !isBoundedNonNegative(item.etaSeconds))
     || typeof item.willLastToReset !== "boolean") return undefined;
   return {
     stage: item.stage as UsagePace["stage"],
@@ -316,8 +368,8 @@ function sanitizePace(value: unknown): UsagePace | undefined {
 function sanitizeCost(value: unknown): CostFactorResult | undefined {
   if (!value || typeof value !== "object") return undefined;
   const item = value as Record<string, unknown>;
-  if (!isNonNegativeFinite(item.apiCostUSD) || !isNonNegativeFinite(item.subscriptionCostUSD)
-    || (item.factor !== null && !isNonNegativeFinite(item.factor))
+  if (!isBoundedNonNegative(item.apiCostUSD) || !isBoundedNonNegative(item.subscriptionCostUSD)
+    || (item.factor !== null && !isBoundedNonNegative(item.factor))
     || typeof item.isEstimate !== "boolean" || !isNonEmptyString(item.label)) return undefined;
   const result: CostFactorResult = {
     apiCostUSD: item.apiCostUSD,
@@ -331,7 +383,7 @@ function sanitizeCost(value: unknown): CostFactorResult | undefined {
     result.windowLabel = item.windowLabel;
   }
   if (item.windowDays !== undefined) {
-    if (!isNonNegativeFinite(item.windowDays)) return undefined;
+    if (!isSafeNonNegativeInteger(item.windowDays)) return undefined;
     result.windowDays = item.windowDays;
   }
   if (item.calculationMode !== undefined) {
@@ -367,7 +419,7 @@ function parseBoundary(value: string, endOfDay: boolean): number | null {
 function parseTransaction(value: unknown): PendingTransaction {
   if (!value || typeof value !== "object") throw new Error("invalid transaction");
   const item = value as Record<string, unknown>;
-  if (item.schemaVersion !== 1 || typeof item.transactionId !== "string" || !Array.isArray(item.entries)) {
+  if (item.schemaVersion !== 1 || !isUuid(item.transactionId) || !Array.isArray(item.entries)) {
     throw new Error("invalid transaction");
   }
   const entries = item.entries.map((entry): TransactionEntry => {
@@ -404,6 +456,56 @@ function identity(item: SnapshotEvent): string {
   return `${item.provider}\0${item.fetchedAt}`;
 }
 
+function mergeSnapshots(existing: SnapshotEvent, incoming: SnapshotEvent): SnapshotEvent {
+  const windows = existing.windows.map((window) => ({ ...window }));
+  const indexByName = new Map(windows.map((window, index) => [window.name, index]));
+  for (const window of incoming.windows) {
+    const index = indexByName.get(window.name);
+    if (index === undefined) {
+      indexByName.set(window.name, windows.length);
+      windows.push({ ...window });
+    } else {
+      windows[index] = { ...windows[index], ...window };
+    }
+  }
+  return {
+    kind: "snapshot",
+    provider: incoming.provider,
+    status: incoming.status,
+    ...(incoming.planType !== undefined
+      ? { planType: incoming.planType }
+      : existing.planType !== undefined ? { planType: existing.planType } : {}),
+    windows,
+    ...(incoming.cost !== undefined
+      ? { cost: { ...incoming.cost } }
+      : existing.cost !== undefined ? { cost: { ...existing.cost } } : {}),
+    fetchedAt: incoming.fetchedAt,
+  };
+}
+
+function mergeInto(target: Map<string, SnapshotEvent>, snapshots: readonly SnapshotEvent[]): void {
+  for (const item of snapshots) {
+    const key = identity(item);
+    target.set(key, target.has(key) ? mergeSnapshots(target.get(key)!, item) : item);
+  }
+}
+
+function groupByMonth(snapshots: readonly SnapshotEvent[]): Map<string, SnapshotEvent[]> {
+  const grouped = new Map<string, SnapshotEvent[]>();
+  for (const item of snapshots) {
+    const month = monthKey(item.fetchedAt);
+    const current = grouped.get(month) ?? [];
+    current.push(item);
+    grouped.set(month, current);
+  }
+  return grouped;
+}
+
+function serializeSnapshots(snapshots: readonly SnapshotEvent[]): string {
+  if (snapshots.length === 0) return "";
+  return `${[...snapshots].sort(compareSnapshots).map((item) => JSON.stringify(item)).join("\n")}\n`;
+}
+
 function compareSnapshots(left: SnapshotEvent, right: SnapshotEvent): number {
   return Date.parse(left.fetchedAt) - Date.parse(right.fetchedAt) || left.provider.localeCompare(right.provider);
 }
@@ -434,6 +536,11 @@ function transactionPath(root: string): string {
 function validMonth(month: string): boolean {
   const number = Number(month.slice(5));
   return number >= 1 && number <= 12;
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function isIsoTimestamp(value: unknown): value is string {
@@ -470,6 +577,22 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isNonNegativeFinite(value: unknown): value is number {
   return isFiniteNumber(value) && value >= 0;
+}
+
+function isPercentage(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0 && value <= 100;
+}
+
+function isBoundedDelta(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= -100 && value <= 100;
+}
+
+function isBoundedNonNegative(value: unknown): value is number {
+  return isNonNegativeFinite(value) && value <= Number.MAX_SAFE_INTEGER;
+}
+
+function isSafeNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function hash(value: string | Uint8Array): string {

@@ -117,7 +117,7 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     const snapshots = await readQuotaSnapshots(getPortableQuotaDir(), {
       until: new Date(input.nowMs).toISOString(),
     });
-    const observations = toHistoryObservations(snapshots);
+    const observations = quotaSnapshotsToHistoryObservations(snapshots);
     return { entries: buildWindowHistory(observations, input.nowMs) };
   }
 
@@ -261,7 +261,7 @@ async function run(input: WorkerInput): Promise<AnalyticsSummary | AnalyticsData
     since: new Date(input.periodStartMs).toISOString(),
     until: new Date(untilMs).toISOString(),
   });
-  const pressureObs = toHistoryObservations(quotaSnapshots);
+  const pressureObs = quotaSnapshotsToHistoryObservations(quotaSnapshots);
   const claudePressure = buildFiveHourPressure(pressureObs, sinceMs, untilMs, "claude");
   const codexPressure  = buildFiveHourPressure(pressureObs, sinceMs, untilMs, "codex");
   const fiveHourPressure = byProvider(claudePressure, codexPressure, combinePressure(claudePressure, codexPressure));
@@ -441,7 +441,7 @@ function removePortableSpikes(points: WindowBudgetSeries["points"]): WindowBudge
   });
 }
 
-function toHistoryObservations(snapshots: readonly SnapshotEvent[]): HistoryObservation[] {
+export function quotaSnapshotsToHistoryObservations(snapshots: readonly SnapshotEvent[]): HistoryObservation[] {
   return snapshots.flatMap((snapshot) => {
     if (snapshot.status !== "ok") return [];
     const fiveHour = snapshot.windows.find((window) => window.name === "fiveHour");
@@ -470,6 +470,8 @@ async function handleRequest(request: WorkerInput & { id: number }): Promise<voi
   }
 }
 
-parentPort!.on("message", (request: WorkerInput & { id: number }) => {
-  void handleRequest(request);
-});
+if (parentPort) {
+  parentPort.on("message", (request: WorkerInput & { id: number }) => {
+    void handleRequest(request);
+  });
+}
