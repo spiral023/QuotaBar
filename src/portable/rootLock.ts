@@ -22,14 +22,39 @@ interface HeldLock {
   owner: LockOwner;
   heartbeat: ReturnType<typeof setInterval>;
   heartbeatWork: Promise<void>;
+  firstHeartbeatError?: unknown;
+  runtime: RootLockRuntime;
+}
+
+export type RootLockFileSystem = Pick<
+  typeof fs,
+  "lstat" | "mkdir" | "readFile" | "readdir" | "rename" | "rmdir" | "unlink" | "writeFile"
+>;
+
+export interface PortableRootLockDependencies {
+  fileSystem?: RootLockFileSystem;
+  isPidAlive?: (pid: number) => boolean;
+  now?: () => number;
+  wait?: (milliseconds: number) => Promise<void>;
+}
+
+interface RootLockRuntime {
+  fileSystem: RootLockFileSystem;
+  isPidAlive: (pid: number) => boolean;
+  now: () => number;
+  wait: (milliseconds: number) => Promise<void>;
 }
 
 /**
  * Coordinates QuotaBar store operations across processes on one machine and one local filesystem.
  * The app-owned root directory is trusted. This is API-level crash recovery, not power-loss durability.
  */
-export async function withPortableRootLock<T>(rootDir: string, operation: () => Promise<T>): Promise<T> {
-  const held = await acquire(rootDir);
+export async function withPortableRootLock<T>(
+  rootDir: string,
+  operation: () => Promise<T>,
+  dependencies: PortableRootLockDependencies = {},
+): Promise<T> {
+  const held = await acquire(rootDir, createRuntime(dependencies));
   let result!: T;
   let operationFailed = false;
   let operationError: unknown;
@@ -42,25 +67,29 @@ export async function withPortableRootLock<T>(rootDir: string, operation: () => 
   try {
     await release(held);
   } catch (error) {
-    if (!operationFailed) throw error;
+    const releaseError = attachDiagnosticCause(error, held.firstHeartbeatError);
+    if (!operationFailed) {
+      throw new Error("Portable store operation committed but lock cleanup failed", { cause: error });
+    }
+    operationError = attachDiagnosticCause(operationError, releaseError);
   }
-  if (operationFailed) throw operationError;
+  if (operationFailed) throw attachDiagnosticCause(operationError, held.firstHeartbeatError);
   return result;
 }
 
-async function acquire(rootDir: string): Promise<HeldLock> {
-  await fs.mkdir(rootDir, { recursive: true });
+async function acquire(rootDir: string, runtime: RootLockRuntime): Promise<HeldLock> {
+  await runtime.fileSystem.mkdir(rootDir, { recursive: true });
   const directory = path.join(rootDir, LOCK_DIRECTORY);
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = runtime.now() + LOCK_WAIT_MS;
   while (true) {
-    const owner = newOwner();
+    const owner = newOwner(runtime);
     try {
-      await fs.mkdir(directory);
+      await runtime.fileSystem.mkdir(directory);
       const ownerPath = path.join(directory, OWNER_FILE);
       try {
-        await writeOwner(ownerPath, owner);
+        await writeOwner(ownerPath, owner, runtime);
       } catch (error) {
-        await removeOwnedDirectory(directory, owner.token);
+        await removeOwnedDirectory(directory, owner.token, runtime);
         throw error;
       }
       const held: HeldLock = {
@@ -69,85 +98,90 @@ async function acquire(rootDir: string): Promise<HeldLock> {
         owner,
         heartbeat: undefined as unknown as ReturnType<typeof setInterval>,
         heartbeatWork: Promise.resolve(),
+        runtime,
       };
       held.heartbeat = setInterval(() => {
         held.heartbeatWork = held.heartbeatWork.then(async () => {
-          const current = await readOwner(held.ownerPath);
+          const current = await readOwner(held.ownerPath, runtime);
           if (!current || current.token !== held.owner.token) return;
-          held.owner = { ...held.owner, heartbeatAt: new Date().toISOString() };
-          await writeOwner(held.ownerPath, held.owner);
-        }).catch(() => undefined);
+          held.owner = { ...held.owner, heartbeatAt: new Date(runtime.now()).toISOString() };
+          await writeOwner(held.ownerPath, held.owner, runtime);
+        }).catch((error: unknown) => {
+          held.firstHeartbeatError ??= error;
+        });
       }, HEARTBEAT_INTERVAL_MS);
       held.heartbeat.unref();
       return held;
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
-      await reclaimIfAbandoned(directory);
-      if (Date.now() >= deadline) throw new Error("Timed out waiting for portable store lock", { cause: error });
-      await delay(RETRY_MS);
+      await reclaimIfAbandoned(directory, runtime);
+      if (runtime.now() >= deadline) throw new Error("Timed out waiting for portable store lock", { cause: error });
+      await runtime.wait(RETRY_MS);
     }
   }
 }
 
 async function release(held: HeldLock): Promise<void> {
+  const { runtime } = held;
   clearInterval(held.heartbeat);
   await held.heartbeatWork.catch(() => undefined);
-  const current = await readOwner(held.ownerPath);
-  if (!current || current.token !== held.owner.token) return;
+  const current = await readOwner(held.ownerPath, runtime);
+  if (!current || current.token !== held.owner.token) {
+    throw new Error("Portable store lock ownership changed before release");
+  }
   const released = `${held.directory}.released.${held.owner.token}`;
   try {
-    await replaceWithRetry(held.directory, released);
+    await replaceWithRetry(held.directory, released, runtime);
   } catch (error) {
     if (isMissing(error)) return;
     throw error;
   }
-  await removeKnownLockDirectory(released).catch(() => undefined);
+  await removeKnownLockDirectory(released, runtime).catch(() => undefined);
 }
 
-async function reclaimIfAbandoned(directory: string): Promise<void> {
+async function reclaimIfAbandoned(directory: string, runtime: RootLockRuntime): Promise<void> {
   const ownerPath = path.join(directory, OWNER_FILE);
-  const owner = await readOwner(ownerPath);
+  const owner = await readOwner(ownerPath, runtime);
   if (owner) {
-    const heartbeat = Date.parse(owner.heartbeatAt);
-    if (isPidAlive(owner.pid) && Number.isFinite(heartbeat) && Date.now() - heartbeat <= STALE_HEARTBEAT_MS) return;
-    const confirmed = await readOwner(ownerPath);
+    if (runtime.isPidAlive(owner.pid)) return;
+    const confirmed = await readOwner(ownerPath, runtime);
     if (!confirmed || confirmed.token !== owner.token || confirmed.heartbeatAt !== owner.heartbeatAt) return;
   } else {
     let info;
     try {
       try {
-        info = await fs.lstat(ownerPath);
+        info = await runtime.fileSystem.lstat(ownerPath);
       } catch (error) {
         if (!isMissing(error)) throw error;
-        info = await fs.lstat(directory);
+        info = await runtime.fileSystem.lstat(directory);
       }
     } catch (error) {
       if (isMissing(error)) return;
       throw error;
     }
-    if (Date.now() - info.mtimeMs <= STALE_HEARTBEAT_MS) return;
-    if (await readOwner(ownerPath)) return;
+    if (runtime.now() - info.mtimeMs <= STALE_HEARTBEAT_MS) return;
+    if (await readOwner(ownerPath, runtime)) return;
   }
 
   const abandoned = `${directory}.abandoned.${randomUUID()}`;
   try {
-    await fs.rename(directory, abandoned);
+    await runtime.fileSystem.rename(directory, abandoned);
   } catch (error) {
     if (isMissing(error) || (error as NodeJS.ErrnoException)?.code === "EACCES"
       || (error as NodeJS.ErrnoException)?.code === "EPERM") return;
     throw error;
   }
-  await removeKnownLockDirectory(abandoned);
+  await removeKnownLockDirectory(abandoned, runtime);
 }
 
-async function writeOwner(ownerPath: string, owner: LockOwner): Promise<void> {
+async function writeOwner(ownerPath: string, owner: LockOwner, runtime: RootLockRuntime): Promise<void> {
   const temporary = path.join(path.dirname(ownerPath), `owner.${owner.token}.tmp`);
   try {
-    await fs.writeFile(temporary, `${JSON.stringify(owner)}\n`, { encoding: "utf8", flag: "wx" });
-    await replaceWithRetry(temporary, ownerPath);
+    await runtime.fileSystem.writeFile(temporary, `${JSON.stringify(owner)}\n`, { encoding: "utf8", flag: "wx" });
+    await replaceWithRetry(temporary, ownerPath, runtime);
   } catch (error) {
     try {
-      await fs.unlink(temporary);
+      await runtime.fileSystem.unlink(temporary);
     } catch {
       // Preserve the primary lock write failure.
     }
@@ -155,22 +189,22 @@ async function writeOwner(ownerPath: string, owner: LockOwner): Promise<void> {
   }
 }
 
-async function replaceWithRetry(from: string, to: string): Promise<void> {
+async function replaceWithRetry(from: string, to: string, runtime: RootLockRuntime): Promise<void> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      await fs.rename(from, to);
+      await runtime.fileSystem.rename(from, to);
       return;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code;
       if ((code !== "EPERM" && code !== "EACCES") || attempt >= 2) throw error;
-      await delay(10 * (attempt + 1));
+      await runtime.wait(10 * (attempt + 1));
     }
   }
 }
 
-async function readOwner(ownerPath: string): Promise<LockOwner | undefined> {
+async function readOwner(ownerPath: string, runtime: RootLockRuntime): Promise<LockOwner | undefined> {
   try {
-    const parsed: unknown = JSON.parse(await fs.readFile(ownerPath, "utf8"));
+    const parsed: unknown = JSON.parse(await runtime.fileSystem.readFile(ownerPath, "utf8"));
     if (!parsed || typeof parsed !== "object") return undefined;
     const owner = parsed as Record<string, unknown>;
     if (typeof owner.token !== "string" || !Number.isSafeInteger(owner.pid) || (owner.pid as number) <= 0
@@ -188,17 +222,17 @@ async function readOwner(ownerPath: string): Promise<LockOwner | undefined> {
   }
 }
 
-async function removeOwnedDirectory(directory: string, token: string): Promise<void> {
+async function removeOwnedDirectory(directory: string, token: string, runtime: RootLockRuntime): Promise<void> {
   const ownerPath = path.join(directory, OWNER_FILE);
-  const owner = await readOwner(ownerPath);
+  const owner = await readOwner(ownerPath, runtime);
   if (owner && owner.token !== token) return;
-  await removeKnownLockDirectory(directory);
+  await removeKnownLockDirectory(directory, runtime);
 }
 
-async function removeKnownLockDirectory(directory: string): Promise<void> {
+async function removeKnownLockDirectory(directory: string, runtime: RootLockRuntime): Promise<void> {
   let entries;
   try {
-    entries = await fs.readdir(directory, { withFileTypes: true });
+    entries = await runtime.fileSystem.readdir(directory, { withFileTypes: true });
   } catch (error) {
     if (isMissing(error)) return;
     throw error;
@@ -206,22 +240,39 @@ async function removeKnownLockDirectory(directory: string): Promise<void> {
   for (const entry of entries) {
     if (!entry.isFile() || (entry.name !== OWNER_FILE && !/^owner\.[0-9a-f-]+\.tmp$/i.test(entry.name))) return;
   }
-  for (const entry of entries) await fs.unlink(path.join(directory, entry.name));
-  await fs.rmdir(directory);
+  for (const entry of entries) await runtime.fileSystem.unlink(path.join(directory, entry.name));
+  await runtime.fileSystem.rmdir(directory);
 }
 
-function newOwner(): LockOwner {
-  const now = new Date().toISOString();
+function newOwner(runtime: RootLockRuntime): LockOwner {
+  const now = new Date(runtime.now()).toISOString();
   return { token: randomUUID(), pid: process.pid, createdAt: now, heartbeatAt: now };
 }
 
-function isPidAlive(pid: number): boolean {
+function checkPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException)?.code !== "ESRCH";
   }
+}
+
+function createRuntime(dependencies: PortableRootLockDependencies): RootLockRuntime {
+  return {
+    fileSystem: dependencies.fileSystem ?? fs,
+    isPidAlive: dependencies.isPidAlive ?? checkPidAlive,
+    now: dependencies.now ?? (() => Date.now()),
+    wait: dependencies.wait ?? delay,
+  };
+}
+
+function attachDiagnosticCause(error: unknown, diagnostic: unknown): unknown {
+  if (diagnostic === undefined || !(error instanceof Error)) return error;
+  if (error.cause === undefined) {
+    Object.defineProperty(error, "cause", { configurable: true, value: diagnostic });
+  }
+  return error;
 }
 
 function isMissing(error: unknown): boolean {
