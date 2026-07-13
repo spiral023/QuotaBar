@@ -35,7 +35,7 @@ export function fromClaudeEntries(entries: readonly ClaudeUsageEntry[]): Portabl
     const provenance = reverseProvenance.get(entry);
     const occurredAt = normalizeTimestamp(entry.timestamp, "Claude");
     const identitySession = providerIdentitySession(entry.session, entry.sourceEventId);
-    const ordinal = nextOrdinal(ordinals, "claude", occurredAt, entry.model, identitySession);
+    const ordinal = entry.sourceEventId ? 0 : nextOrdinal(ordinals, "claude", occurredAt, entry.model, identitySession);
     const projectName = basenameAnySeparator(entry.projectName) ?? plainClaudeProjectName(entry.project) ?? "Unknown project";
     return {
       schemaVersion: PORTABLE_STORE_VERSION,
@@ -69,7 +69,7 @@ export function fromCodexEvents(events: readonly CodexTokenEvent[]): PortableUsa
     const provenance = reverseProvenance.get(entry);
     const occurredAt = normalizeTimestamp(entry.timestamp, "Codex");
     const identitySession = providerIdentitySession(entry.session, entry.sourceEventId);
-    const ordinal = nextOrdinal(ordinals, "codex", occurredAt, entry.model, identitySession);
+    const ordinal = entry.sourceEventId ? 0 : nextOrdinal(ordinals, "codex", occurredAt, entry.model, identitySession);
     const projectName = basenameAnySeparator(entry.projectName);
     return {
       schemaVersion: PORTABLE_STORE_VERSION,

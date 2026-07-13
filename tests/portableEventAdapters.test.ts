@@ -243,6 +243,23 @@ describe("portable event adapters", () => {
     expect(fromClaudeEntries([before])[0].id).toBe(fromClaudeEntries([after])[0].id);
   });
 
+  it("deduplicates repeated Codex provider source identities regardless of payload changes", () => {
+    const events = fromCodexEvents([
+      codex({ sourceEventId: "codex-source", inputTokens: 10, cachedInputTokens: 2, outputTokens: 3, totalTokens: 13 }),
+      codex({ sourceEventId: "codex-source", inputTokens: 99, cachedInputTokens: 20, outputTokens: 40, totalTokens: 139 }),
+    ]);
+    expect(events[0].id).toBe(events[1].id);
+  });
+
+  it("keeps distinct Codex provider source identities distinct and order-stable", () => {
+    const a = codex({ sourceEventId: "codex-source-a" });
+    const b = codex({ sourceEventId: "codex-source-b" });
+    const forward = fromCodexEvents([a, b]);
+    const reversed = fromCodexEvents([b, a]);
+    expect(forward[0].id).not.toBe(forward[1].id);
+    expect([forward[0].id, forward[1].id]).toEqual([reversed[1].id, reversed[0].id]);
+  });
+
   it("uses deterministic coarse ordinals when provider source IDs are unavailable", () => {
     const entries = [claude({ inputTokens: 1 }), claude({ inputTokens: 2 })];
     expect(fromClaudeEntries(entries).map((event) => event.id)).toEqual(fromClaudeEntries(entries).map((event) => event.id));
