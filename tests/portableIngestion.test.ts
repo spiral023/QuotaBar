@@ -164,7 +164,7 @@ describe("portable usage ingestion", () => {
     expect(stateText).not.toContain(secret);
   });
 
-  it("does not alter the old state bytes when store reconciliation fails", async () => {
+  it("sanitizes store reconciliation failures without altering the old state bytes", async () => {
     const ref = await claudeRef(rootDir, "source.jsonl", "first");
     const options = { store, statePath, claudeRefs: [ref], codexRefs: [], readClaude: async () => [claude()] };
     await ingestPortableUsage(options);
@@ -172,11 +172,27 @@ describe("portable usage ingestion", () => {
     await writeFile(ref.file, "changed", "utf8");
     const failingStore = {
       async reconcile(): Promise<never> {
-        throw new Error("database failure secret-payload");
+        throw new Error("database failure secret-payload token=abc auth=def cookie=ghi JWT=Bearer.value");
       },
     };
 
-    await expect(ingestPortableUsage({ ...options, store: failingStore })).rejects.toThrow("database failure secret-payload");
+    let thrown: unknown;
+    try {
+      await ingestPortableUsage({ ...options, store: failingStore });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe("Portable usage reconciliation failed");
+    expect(thrown).not.toHaveProperty("cause");
+    const serialized = JSON.stringify({
+      message: (thrown as Error).message,
+      cause: (thrown as Error & { cause?: unknown }).cause,
+      value: String(thrown),
+    }).toLowerCase();
+    for (const sensitive of ["database failure", "secret", "token", "auth", "cookie", "jwt", "bearer"]) {
+      expect(serialized).not.toContain(sensitive);
+    }
     expect(await readFile(statePath)).toEqual(oldState);
   });
 

@@ -143,7 +143,12 @@ async function ingestExclusive(
     return { scanned: knownSources.length, changed, inserted: 0, updated: 0, existing: 0, errors };
   }
 
-  const reconciled = await store.reconcile(incoming);
+  let reconciled: ReconcileResult;
+  try {
+    reconciled = await store.reconcile(incoming);
+  } catch {
+    throw new Error("Portable usage reconciliation failed");
+  }
   const nextState: PortableIngestState = { schemaVersion: PORTABLE_STORE_VERSION, sources: nextSources };
   await writeStateAtomic(statePath, nextState);
   return { scanned: knownSources.length, changed, ...reconciled, errors };
