@@ -112,6 +112,88 @@ describe("portable usage ingestion", () => {
     expect(await store.read()).toHaveLength(1);
   });
 
+  it("repairs already ingested cost-less events once without changing their IDs", async () => {
+    const ref = await claudeRef(rootDir, "cost-repair.jsonl", "fixture");
+    const raw = claude({ costUSD: undefined });
+    const readClaude = vi.fn(async () => [raw]);
+    const base = { store, statePath, claudeRefs: [ref], codexRefs: [], readClaude };
+    await ingestPortableUsage(base);
+    const [before] = await store.read();
+    readClaude.mockClear();
+    const enrichCosts = vi.fn(async (events: readonly import("../src/portable/types").PortableUsageEvent[]) =>
+      events.map((event) => ({
+        ...event,
+        costUSD: 1.25,
+        inputCostUSD: 0.25,
+        outputCostUSD: 1,
+        cacheCreationCostUSD: 0,
+        cacheReadCostUSD: 0,
+        pricingVersion: "litellm:test",
+      })));
+
+    const repaired = await ingestPortableUsage({ ...base, enrichCosts });
+    const [after] = await store.read();
+
+    expect(repaired).toMatchObject({ changed: 0, inserted: 0, updated: 1 });
+    expect(readClaude).not.toHaveBeenCalled();
+    expect(enrichCosts).toHaveBeenCalledOnce();
+    expect(after).toMatchObject({ id: before.id, costUSD: 1.25, pricingVersion: "litellm:test" });
+
+    readClaude.mockClear();
+    enrichCosts.mockClear();
+    expect(await ingestPortableUsage({ ...base, enrichCosts })).toMatchObject({ changed: 0, updated: 0 });
+    expect(readClaude).not.toHaveBeenCalled();
+    expect(enrichCosts).not.toHaveBeenCalled();
+  });
+
+  it("retries cost enrichment failures without committing the repair marker", async () => {
+    const ref = await claudeRef(rootDir, "cost-retry.jsonl", "fixture");
+    const readClaude = vi.fn(async () => [claude({ costUSD: undefined })]);
+    const enrichCosts = vi.fn()
+      .mockRejectedValueOnce(new Error("Bearer private-pricing-error"))
+      .mockImplementation(async (events) => events);
+    const options = { store, statePath, claudeRefs: [ref], codexRefs: [], readClaude, enrichCosts };
+
+    const failed = await ingestPortableUsage(options);
+    const retried = await ingestPortableUsage(options);
+
+    expect(failed.errors).toEqual([{ provider: "claude", path: ref.file, message: "cost_failed" }]);
+    expect(JSON.stringify(failed)).not.toContain("private-pricing-error");
+    expect(retried).toMatchObject({ changed: 1, inserted: 1, errors: [] });
+    expect(readClaude).toHaveBeenCalledTimes(2);
+  });
+
+  it("commits successfully enriched sources while leaving a failed source retryable", async () => {
+    const failedRef = await claudeRef(rootDir, "a-cost-failed.jsonl", "failed");
+    const validRef = await claudeRef(rootDir, "b-cost-valid.jsonl", "valid");
+    const readClaude = async ([ref]: SourceFileRef[]) => [claude({
+      sourceEventId: ref.file === failedRef.file ? "failed-cost" : "valid-cost",
+      model: ref.file === failedRef.file ? "failed-model" : "valid-model",
+      costUSD: undefined,
+    })];
+    const enrichCosts = async (events: readonly import("../src/portable/types").PortableUsageEvent[]) => {
+      if (events[0]?.model === "failed-model") throw new Error("private pricing failure");
+      return events.map((event) => ({
+        ...event,
+        costUSD: 1,
+        inputCostUSD: 1,
+        outputCostUSD: 0,
+        cacheCreationCostUSD: 0,
+        cacheReadCostUSD: 0,
+        pricingVersion: "litellm:test",
+      }));
+    };
+
+    const result = await ingestPortableUsage({
+      store, statePath, claudeRefs: [failedRef, validRef], codexRefs: [], readClaude, enrichCosts,
+    });
+
+    expect(result).toMatchObject({ inserted: 1 });
+    expect(result.errors).toEqual([{ provider: "claude", path: failedRef.file, message: "cost_failed" }]);
+    expect(await store.read()).toHaveLength(1);
+    expect(JSON.parse(await readFile(statePath, "utf8"))).not.toHaveProperty("costEnrichmentVersion");
+  });
+
   it("reprocesses only a changed source, updates corrected IDs, and appends new IDs", async () => {
     const firstRef = await claudeRef(rootDir, "a.jsonl", "a");
     const unchangedRef = await claudeRef(rootDir, "b.jsonl", "b");

@@ -4,6 +4,9 @@ import { configureAppIdentity, ensureWindowsNotificationShortcut, detectAppVaria
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { createProviderRegistry } from "../providers/providerRegistry";
 import { PricingEngine } from "../pricing/subscription-factor";
+import { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
+import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
+import { readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
 import { RefreshLoop } from "../usage/refreshLoop";
 import { UsageStore } from "../usage/usageStore";
 import { applyStartupFlag } from "./autostart";
@@ -20,7 +23,7 @@ import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAge
 import { DebugRecorder } from "./debugRecorder";
 import { snapshotEvent } from "./debugEvents";
 import { createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, readLegacyQuotaSnapshots, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
-import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath } from "../config/paths";
+import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
 import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
 import { BonusResetTracker } from "../usage/bonusReset";
@@ -31,6 +34,7 @@ import { registerLifecycleEvents } from "./lifecycleEvents";
 import { appendQuotaSnapshots } from "../portable/quotaStore";
 import { PortableUsageStore } from "../portable/usageStore";
 import { ingestPortableUsage } from "../portable/ingestion";
+import { enrichPortableEventCosts } from "../portable/costEnrichment";
 import { beginMigrationRefresh, beginMigrationRefreshRecovery, markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData, readCompleteMigrationRevision } from "../portable/migration";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
 import { loadInitialStartupState } from "./pendingImportStartup";
@@ -147,17 +151,20 @@ if (!app.requestSingleInstanceLock()) {
       const bonusTracker = new BonusResetTracker(await loadBonusStateFile(bonusStatePath));
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder, windowRatioTracker, bonusTracker);
       const portableUsageStore = new PortableUsageStore(getPortableUsageDir());
+      const portablePricingResolver = new HistoricalPricingResolver(new LiteLLMFetcher(runtimeSettings.pricingOfflineMode));
       const ingestPortableSources = async () => {
         const currentSettings = mergeSettingsWithAgentRoots(await loadSettings());
         const pathContext = {
           claudeRoots: currentSettings.claudeRoots ?? [],
           codexHomes: currentSettings.codexHomes ?? [],
         };
+        const codexSpeed = await readCodexSpeedTierFromPaths(getCodexConfigPaths(pathContext));
         return await ingestPortableUsage({
           store: portableUsageStore,
           statePath: getPortableIngestStatePath(),
           claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
           codexSessionsDirs: getCodexSessionsDirs(pathContext),
+          enrichCosts: (events) => enrichPortableEventCosts(events, portablePricingResolver, codexSpeed),
         });
       };
       const tray = new TrayController(providers, refreshLoop, async () => {

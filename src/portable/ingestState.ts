@@ -44,8 +44,13 @@ export function portableIngestSourceKey(provider: PortableProvider, sourcePath: 
 function parseState(value: unknown): ParsedPortableIngestState {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid state");
   const fields = value as Record<string, unknown>;
-  if (!hasExactKeys(fields, ["schemaVersion", "sources"])
+  const stateKeys = fields.costEnrichmentVersion === undefined
+    ? ["schemaVersion", "sources"]
+    : ["schemaVersion", "costEnrichmentVersion", "sources"];
+  if (!hasExactKeys(fields, stateKeys)
     || fields.schemaVersion !== PORTABLE_STORE_VERSION
+    || (fields.costEnrichmentVersion !== undefined
+      && (!Number.isSafeInteger(fields.costEnrichmentVersion) || (fields.costEnrichmentVersion as number) < 1))
     || !fields.sources || typeof fields.sources !== "object" || Array.isArray(fields.sources)) {
     throw new Error("invalid state");
   }
@@ -89,7 +94,16 @@ function parseState(value: unknown): ParsedPortableIngestState {
       active: current.active,
     };
   }
-  return { state: { schemaVersion: PORTABLE_STORE_VERSION, sources }, migrated };
+  return {
+    state: {
+      schemaVersion: PORTABLE_STORE_VERSION,
+      ...(fields.costEnrichmentVersion !== undefined
+        ? { costEnrichmentVersion: fields.costEnrichmentVersion as number }
+        : {}),
+      sources,
+    },
+    migrated,
+  };
 }
 
 function isSimpleLegacySource(source: Record<string, unknown>): source is {

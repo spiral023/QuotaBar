@@ -18,6 +18,7 @@ import {
   type SourceFileRef,
 } from "../pricing/jsonl-reader";
 import { fromClaudeEntries, fromCodexEvents } from "./eventAdapters";
+import { PORTABLE_COST_ENRICHMENT_VERSION } from "./costEnrichment";
 import {
   isCurrentIngestSourceState,
   parsePortableIngestStateForLoad,
@@ -29,13 +30,14 @@ import { PORTABLE_STORE_VERSION, type PortableIngestState, type PortableProvider
 import { PortableUsageStore } from "./usageStore";
 
 type ReconcileResult = { inserted: number; updated: number; existing: number };
-type SourceErrorCode = "listing_failed" | "stat_failed" | "read_failed" | "adapter_failed";
+type SourceErrorCode = "listing_failed" | "stat_failed" | "read_failed" | "adapter_failed" | "cost_failed";
 type IngestError = { provider: PortableProvider; path: string; message: SourceErrorCode };
 type IngestDiagnostic = { code: "state_recovered"; path: string };
 type IngestionStore = {
   getIngestStatePath(): string;
   recoverPending(): Promise<void>;
   reconcileWithIngestState(events: readonly PortableUsageEvent[], state: PortableIngestState): Promise<ReconcileResult>;
+  read?(): Promise<PortableUsageEvent[]>;
 };
 
 export interface PortableSourceFingerprint {
@@ -56,6 +58,7 @@ export interface IngestPortableUsageOptions {
   readClaude?: (refs: SourceFileRef[]) => Promise<ClaudeUsageEntry[]>;
   readCodex?: (refs: CodexSourceFileRef[]) => Promise<CodexTokenEvent[]>;
   statSource?: (sourcePath: string) => Promise<PortableSourceFingerprint>;
+  enrichCosts?: (events: readonly PortableUsageEvent[]) => Promise<PortableUsageEvent[]>;
 }
 
 export interface IngestPortableUsageResult extends ReconcileResult {
@@ -160,6 +163,20 @@ async function ingestExclusive(
   const sourceByKey = new Map(knownSources.map((source) => [source.key, source]));
   const currentKeys = new Set(sourceByKey.keys());
   const unavailableKeys = new Set<string>();
+  let repairedEvents: PortableUsageEvent[] = [];
+  const enrichCosts = options.enrichCosts;
+  const costRepairRequired = enrichCosts !== undefined
+    && previousState.costEnrichmentVersion !== PORTABLE_COST_ENRICHMENT_VERSION;
+  if (costRepairRequired && store.read) {
+    let stored: PortableUsageEvent[];
+    try {
+      stored = await store.read();
+      const candidates = stored.filter((event) => event.source !== "legacy-reconciliation" && !hasCompleteCost(event));
+      repairedEvents = candidates.length > 0 ? await enrichCosts(candidates) : [];
+    } catch {
+      throw new Error("Portable cost enrichment failed");
+    }
+  }
 
   let activityChanged = loaded.rewriteRequired;
   for (const [key, source] of Object.entries(nextSources)) {
@@ -202,7 +219,7 @@ async function ingestExclusive(
   const batches = new Map<string, PortableUsageEvent[]>();
   const failedKeys = new Set<string>();
   for (const key of changedKeys) {
-    await readSource(sourceByKey.get(key) as KnownSource, readClaude, readCodex, batches, failedKeys, errors);
+    await readSource(sourceByKey.get(key) as KnownSource, readClaude, readCodex, options.enrichCosts, batches, failedKeys, errors);
   }
 
   const collisionOwners = new Set<string>();
@@ -221,7 +238,7 @@ async function ingestExclusive(
   }
   for (const ownerKey of [...collisionOwners].sort(compareText)) {
     if (!batches.has(ownerKey) && sourceByKey.has(ownerKey)) {
-      await readSource(sourceByKey.get(ownerKey) as KnownSource, readClaude, readCodex, batches, failedKeys, errors);
+      await readSource(sourceByKey.get(ownerKey) as KnownSource, readClaude, readCodex, options.enrichCosts, batches, failedKeys, errors);
     }
   }
 
@@ -236,7 +253,7 @@ async function ingestExclusive(
   for (const [id, ownerKey] of winningOwnerById) {
     if (unavailableKeys.has(ownerKey)) protectedIds.add(id);
   }
-  const incoming: PortableUsageEvent[] = [];
+  const incoming: PortableUsageEvent[] = [...repairedEvents];
   let successfulChanged = 0;
   // Sources are normalized above by provider then canonical path. Later sources are authoritative for shared IDs,
   // both on the initial ingest and when collision owners are reread after an incremental change.
@@ -263,11 +280,23 @@ async function ingestExclusive(
     }
   }
 
-  if (successfulChanged === 0 && incoming.length === 0 && !activityChanged) {
+  const costRepairCompleted = costRepairRequired && errors.length === 0;
+  if (successfulChanged === 0 && incoming.length === 0 && !activityChanged && !costRepairCompleted) {
     return emptyResult(knownSources.length, changed, errors, loaded.diagnostics);
   }
 
-  const nextState: PortableIngestState = { schemaVersion: PORTABLE_STORE_VERSION, sources: nextSources };
+  const nextCostEnrichmentVersion = options.enrichCosts
+    ? costRepairCompleted
+      ? PORTABLE_COST_ENRICHMENT_VERSION
+      : previousState.costEnrichmentVersion
+    : previousState.costEnrichmentVersion;
+  const nextState: PortableIngestState = {
+    schemaVersion: PORTABLE_STORE_VERSION,
+    ...(nextCostEnrichmentVersion !== undefined
+      ? { costEnrichmentVersion: nextCostEnrichmentVersion }
+      : {}),
+    sources: nextSources,
+  };
   let reconciled: ReconcileResult;
   try {
     reconciled = await store.reconcileWithIngestState(incoming, nextState);
@@ -289,6 +318,7 @@ async function readSource(
   source: KnownSource,
   readClaude: (refs: SourceFileRef[]) => Promise<ClaudeUsageEntry[]>,
   readCodex: (refs: CodexSourceFileRef[]) => Promise<CodexTokenEvent[]>,
+  enrichCosts: ((events: readonly PortableUsageEvent[]) => Promise<PortableUsageEvent[]>) | undefined,
   batches: Map<string, PortableUsageEvent[]>,
   failedKeys: Set<string>,
   errors: IngestError[],
@@ -304,14 +334,24 @@ async function readSource(
     return;
   }
   try {
-    const events = source.provider === "claude"
+    const normalized = source.provider === "claude"
       ? fromClaudeEntries(providerEvents as ClaudeUsageEntry[])
       : fromCodexEvents(providerEvents as CodexTokenEvent[]);
+    const events = enrichCosts ? await enrichCosts(normalized) : normalized;
     batches.set(source.key, events);
   } catch {
     failedKeys.add(source.key);
-    errors.push({ provider: source.provider, path: source.path, message: "adapter_failed" });
+    errors.push({ provider: source.provider, path: source.path, message: enrichCosts ? "cost_failed" : "adapter_failed" });
   }
+}
+
+function hasCompleteCost(event: PortableUsageEvent): boolean {
+  return event.costUSD !== undefined
+    && event.inputCostUSD !== undefined
+    && event.outputCostUSD !== undefined
+    && event.cacheCreationCostUSD !== undefined
+    && event.cacheReadCostUSD !== undefined
+    && event.pricingVersion !== undefined;
 }
 
 async function collectKnownSources(

@@ -37,6 +37,13 @@ describe("portable startup preparation", () => {
     expect(prewarm).toBeGreaterThan(preparation);
   });
 
+  it("prices provider events before committing them to the portable store", async () => {
+    const source = await readFile(path.resolve("src/main/main.ts"), "utf8");
+    expect(source).toContain("new HistoricalPricingResolver(new LiteLLMFetcher(runtimeSettings.pricingOfflineMode))");
+    expect(source).toContain("readCodexSpeedTierFromPaths(getCodexConfigPaths(pathContext))");
+    expect(source).toContain("enrichCosts: (events) => enrichPortableEventCosts(events, portablePricingResolver, codexSpeed)");
+  });
+
   it("replaces the delayed Backfill job with startup, source-change and manual ingestion triggers", async () => {
     const source = await readFile(path.resolve("src/main/main.ts"), "utf8");
     const lifecycleSource = await readFile(path.resolve("src/main/debugBackfill.ts"), "utf8");
