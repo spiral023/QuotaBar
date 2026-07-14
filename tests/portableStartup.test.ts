@@ -55,13 +55,20 @@ describe("portable startup preparation", () => {
     const source = await readFile(path.resolve("src/main/main.ts"), "utf8");
     const moduleLifecycle = source.indexOf("let portableIngestionLifecycle");
     const whenReady = source.indexOf("app.whenReady()");
+    const shutdownDrain = source.indexOf("const drainShutdown");
     const beforeQuit = source.indexOf('app.on("before-quit"');
-    const stop = source.indexOf("portableIngestionLifecycle?.stop()", beforeQuit);
-    const flush = source.indexOf("recorder.flush()", beforeQuit);
+    const stop = source.indexOf("await lifecycle?.stop()", shutdownDrain);
+    const notificationFlush = source.indexOf("notificationService.flush()", shutdownDrain);
+    const flush = source.indexOf("recorder.flush()", shutdownDrain);
     expect(moduleLifecycle).toBeGreaterThan(-1);
     expect(moduleLifecycle).toBeLessThan(whenReady);
-    expect(stop).toBeGreaterThan(beforeQuit);
-    expect(stop).toBeLessThan(flush);
+    expect(shutdownDrain).toBeGreaterThan(whenReady);
+    expect(shutdownDrain).toBeLessThan(beforeQuit);
+    expect(stop).toBeGreaterThan(shutdownDrain);
+    expect(stop).toBeLessThan(notificationFlush);
+    expect(notificationFlush).toBeLessThan(flush);
+    expect(source.indexOf("shutdownStarted = true", beforeQuit)).toBeGreaterThan(beforeQuit);
+    expect(source.indexOf("drainShutdown()", beforeQuit)).toBeGreaterThan(beforeQuit);
   });
 
   it("orders ingestion, legacy reconciliation, quota migration, completion and prewarm", async () => {

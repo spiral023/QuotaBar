@@ -82,6 +82,12 @@ export interface ArchiveBackupDependencies {
   afterSnapshot?: () => Promise<void>;
   beforeVerification?: () => Promise<void>;
   forceZip64Format?: boolean;
+  onWriterPolicy?: (policy: BackupWriterPolicy) => void;
+}
+
+export interface BackupWriterPolicy {
+  maximumArchiveBytes: number | undefined;
+  forceZip64Format: boolean;
 }
 
 interface SafeFile {
@@ -488,12 +494,18 @@ async function createFullBackupUnlocked(
     const files = await snapshotAppFiles(appDir);
     await dependencies.afterSnapshot?.();
     await fs.mkdir(path.dirname(backupZip), { recursive: true });
+    const selectedPolicy = privateBackupWriterPolicy(files);
+    const writerPolicy = {
+      ...selectedPolicy,
+      forceZip64Format: dependencies.forceZip64Format ?? selectedPolicy.forceZip64Format,
+    };
+    dependencies.onWriterPolicy?.(writerPolicy);
     await writeStreamingZip(
       partialPath,
       files,
       undefined,
-      MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE,
-      dependencies.forceZip64Format ?? false,
+      writerPolicy.maximumArchiveBytes,
+      writerPolicy.forceZip64Format,
     );
     await dependencies.beforeVerification?.();
     await verifySnapshotFiles(files);
@@ -1179,7 +1191,7 @@ async function writeStreamingZip(
   destination: string,
   files: readonly SnapshotFile[],
   manifest?: Buffer,
-  maximumArchiveBytes = MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE,
+  maximumArchiveBytes: number | undefined = MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE,
   forceZip64Format = false,
   compressFiles = true,
 ): Promise<void> {
@@ -1188,16 +1200,33 @@ async function writeStreamingZip(
     zip.addFile(file.absolutePath, file.path, { compress: compressFiles, forceZip64Format: forceZip64Format || file.size > 0xffff_ffff });
   }
   if (manifest) zip.addBuffer(manifest, "manifest.json", { compress: true });
-  const limiter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      outputBytes += chunk.byteLength;
-      callback(outputBytes > maximumArchiveBytes ? new Error("Archive output exceeds the size limit") : undefined, chunk);
-    },
-  });
   let outputBytes = 0;
-  const writing = pipeline(zip.outputStream, limiter, createWriteStream(destination, { flags: "wx", mode: 0o600 }));
+  const destinationStream = createWriteStream(destination, { flags: "wx", mode: 0o600 });
+  const writing = maximumArchiveBytes === undefined
+    ? pipeline(zip.outputStream, destinationStream)
+    : pipeline(zip.outputStream, new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        outputBytes += chunk.byteLength;
+        callback(outputBytes > maximumArchiveBytes ? new Error("Archive output exceeds the size limit") : undefined, chunk);
+      },
+    }), destinationStream);
   zip.end({ forceZip64Format, comment: "" });
   await writing;
+}
+
+export function privateBackupWriterPolicy(
+  files: readonly Pick<SnapshotFile, "size">[],
+): BackupWriterPolicy {
+  let totalSize = 0;
+  let forceZip64Format = files.length >= 0xffff;
+  for (const file of files) {
+    if (!Number.isSafeInteger(file.size) || file.size < 0) throw new Error("Invalid private backup source size");
+    if (file.size >= 0xffff_ffff) forceZip64Format = true;
+    if (totalSize > Number.MAX_SAFE_INTEGER - file.size) throw new Error("Invalid private backup total size");
+    totalSize += file.size;
+  }
+  if (totalSize >= 0xffff_ffff) forceZip64Format = true;
+  return { maximumArchiveBytes: undefined, forceZip64Format };
 }
 
 async function snapshotAppFiles(appDir: string): Promise<SnapshotFile[]> {

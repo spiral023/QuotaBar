@@ -9,14 +9,16 @@ const MAX_BYTES = 1_000_000;
 export class NotificationLog {
   private readonly path: string;
   private pendingWrite: Promise<void> = Promise.resolve();
+  private writeFailed = false;
 
   constructor(filePath = getNotificationLogPath()) {
     this.path = filePath;
     this.append(JSON.stringify({ t: localISOString(new Date()), evt: "start" }));
   }
 
-  flush(): Promise<void> {
-    return this.pendingWrite;
+  async flush(): Promise<void> {
+    await this.pendingWrite;
+    if (this.writeFailed) throw new Error("Notification log persistence failed");
   }
 
   write(event: NotificationEvent): void {
@@ -69,6 +71,6 @@ export class NotificationLog {
         existing = lines.slice(lines.length - keep).join("\n") + "\n";
       }
       return `${existing}${line}\n`;
-    })).catch(() => undefined);
+    })).catch(() => { this.writeFailed = true; });
   }
 }

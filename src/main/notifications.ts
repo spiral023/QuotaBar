@@ -31,6 +31,11 @@ export interface NotificationActionHandlers {
   openReleasesPage: () => void;
 }
 
+export interface NotificationServiceDependencies {
+  notificationLog?: NotificationLog;
+  statePath?: string;
+}
+
 /** GitHub releases page used for manual downloads (ZIP/Portable builds). */
 export const RELEASES_URL = "https://github.com/spiral023/QuotaBar/releases/latest";
 
@@ -43,21 +48,25 @@ export class NotificationService {
   private readonly engine  = new NotificationEngine();
   private readonly state   = new NotificationStateStore();
   readonly history         = new NotificationHistory();
-  private readonly notifLog = new NotificationLog();
+  private readonly notifLog: NotificationLog;
+  private readonly statePath: string;
 
   private previous: UsageSnapshot[] = [];
   private settings: NotificationSettings;
   private actionHandlers: NotificationActionHandlers | null = null;
   private pendingStateWrite: Promise<void> = Promise.resolve();
+  private stateWriteFailed = false;
 
-  constructor(settings: NotificationSettings) {
+  constructor(settings: NotificationSettings, dependencies: NotificationServiceDependencies = {}) {
     this.settings = settings;
+    this.notifLog = dependencies.notificationLog ?? new NotificationLog();
+    this.statePath = dependencies.statePath ?? getNotificationStatePath();
     this.loadPersistedState();
   }
 
   private loadPersistedState(): void {
     try {
-      const raw = fsSync.readFileSync(getNotificationStatePath(), "utf8");
+      const raw = fsSync.readFileSync(this.statePath, "utf8");
       const parsed = JSON.parse(raw) as PersistedNotificationState;
       this.state.loadPersisted(parsed);
     } catch {
@@ -70,8 +79,13 @@ export class NotificationService {
   private savePersistedState(): void {
     const serialized = this.state.serialize();
     this.pendingStateWrite = this.pendingStateWrite
-      .then(() => saveNotificationStateFile(getNotificationStatePath(), serialized))
-      .catch(() => undefined);
+      .then(() => saveNotificationStateFile(this.statePath, serialized))
+      .catch(() => { this.stateWriteFailed = true; });
+  }
+
+  async flush(): Promise<void> {
+    await Promise.all([this.pendingStateWrite, this.notifLog.flush()]);
+    if (this.stateWriteFailed) throw new Error("Notification state persistence failed");
   }
 
   updateSettings(settings: NotificationSettings): void {

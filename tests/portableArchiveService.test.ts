@@ -19,6 +19,7 @@ import {
   applyPendingImport,
   createFullBackup,
   exportPortableData,
+  privateBackupWriterPolicy,
   stagePortableImport,
 } from "../src/portable/archiveService";
 import { preflightPortableZip } from "../src/portable/streamingZip";
@@ -932,5 +933,26 @@ describe("portable archive service", () => {
     expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe(original);
     expect(await readFile(path.join(external, "marker.txt"), "utf8")).toBe("external-must-survive");
     expect(await readFile(path.join(displaced, "settings.json"), "utf8")).toBe(original);
+  });
+
+  it("does not pass the portable archive cap to the private backup writer", async () => {
+    const root = await tempRoot();
+    const appDir = path.join(root, ".quotabar-win");
+    const backupPath = path.join(root, "QuotaBar Backups", "uncapped-private.zip");
+    await put(appDir, "settings.json", "private-backup");
+    const policies: Array<{ maximumArchiveBytes?: number; forceZip64Format: boolean }> = [];
+
+    await createFullBackup(appDir, backupPath, {
+      onWriterPolicy: (policy) => { policies.push(policy); },
+    });
+
+    expect(policies).toEqual([{ maximumArchiveBytes: undefined, forceZip64Format: false }]);
+  });
+
+  it("selects ZIP64 for a synthetic private snapshot above four GiB without allocating it", () => {
+    expect(privateBackupWriterPolicy([{ size: 0x1_0000_0000, path: "huge.bin" }])).toEqual({
+      maximumArchiveBytes: undefined,
+      forceZip64Format: true,
+    });
   });
 });

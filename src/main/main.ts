@@ -15,6 +15,7 @@ import { DetailsWindowController } from "./detailsWindow";
 import { openOnboardingWindow } from "./onboardingWindow";
 import { initializeUpdater, setUpdateReadyCallback, setUpdateManualCallback, quitAndInstall } from "./updater";
 import { NotificationService, RELEASES_URL } from "./notifications";
+import { createShutdownDrain } from "./shutdown";
 import { collectSystemData, formatSystemPathDiagnostics, formatWslDiscoveryDiagnostics } from "./systemData";
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { DebugRecorder } from "./debugRecorder";
@@ -330,15 +331,26 @@ if (!app.requestSingleInstanceLock()) {
           }
         },
       });
-      let flushed = false;
+      const drainShutdown = createShutdownDrain({
+        stopIngestion: async () => {
+          const lifecycle = portableIngestionLifecycle;
+          portableIngestionLifecycle = undefined;
+          await lifecycle?.stop();
+        },
+        flushNotifications: () => notificationService.flush(),
+        flushRecorder: () => recorder.flush(),
+        warn: (message) => log.warn(message),
+      });
+      let shutdownStarted = false;
+      let shutdownFinished = false;
       app.on("before-quit", (event) => {
-        if (flushed) return;
+        if (shutdownFinished) return;
         event.preventDefault();
-        const ingestionStopped = portableIngestionLifecycle?.stop() ?? Promise.resolve();
-        portableIngestionLifecycle = undefined;
+        if (shutdownStarted) return;
+        shutdownStarted = true;
         recorder.write({ kind: "app.exit", reason: "user-quit" });
-        void ingestionStopped.then(() => recorder.flush()).finally(() => {
-          flushed = true;
+        void drainShutdown().finally(() => {
+          shutdownFinished = true;
           app.quit();
         });
       });
