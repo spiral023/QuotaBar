@@ -8,8 +8,15 @@ const archiveMocks = vi.hoisted(() => ({
   exportPortableData: vi.fn(),
   stagePortableImport: vi.fn(),
 }));
+const logMocks = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
 
 vi.mock("../src/portable/archiveService", () => archiveMocks);
+vi.mock("../src/main/logging", () => ({ log: logMocks }));
 
 // Mock Electron — DetailsWindowController calls ipcMain.on and may use other
 // Electron APIs at import/construction time. Provide just enough surface to
@@ -347,6 +354,24 @@ describe("DetailsWindowController system IPC", () => {
     );
   });
 
+  it("returns a stable sanitized export failure and releases the archive operation", async () => {
+    vi.mocked(dialog.showSaveDialog)
+      .mockResolvedValueOnce({ canceled: false, filePath: "C:\\Exports\\QuotaBar.zip" })
+      .mockResolvedValueOnce({ canceled: true, filePath: "" });
+    archiveMocks.exportPortableData.mockRejectedValueOnce(new Error("secret-token C:\\private\\archive.zip"));
+    new DetailsWindowController(() => null);
+
+    await expect(findIpcHandler("system:export-portable-data")({})).resolves.toEqual({
+      ok: false,
+      error: "portable_export_failed",
+      message: "Portable data export failed.",
+    });
+    await expect(findIpcHandler("system:export-portable-data")({})).resolves.toEqual({ ok: false, cancelled: true });
+    expect(dialog.showSaveDialog).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(logMocks.warn.mock.calls)).toContain("Portable data export failed.");
+    expect(JSON.stringify(logMocks.warn.mock.calls)).not.toMatch(/secret-token|private|archive\.zip/);
+  });
+
   it("stages an import, returns its verified backup, then restarts after the response flushes", async () => {
     vi.useFakeTimers();
     try {
@@ -374,6 +399,11 @@ describe("DetailsWindowController system IPC", () => {
         expect.stringMatching(/\.quotabar-win$/),
         expect.any(String),
       );
+      expect(dialog.showOpenDialog).toHaveBeenCalledWith({
+        title: "Import portable data",
+        filters: [{ name: "ZIP archives", extensions: ["zip"] }],
+        properties: ["openFile"],
+      });
       expect(app.relaunch).not.toHaveBeenCalled();
       expect(app.exit).not.toHaveBeenCalled();
 
@@ -386,6 +416,24 @@ describe("DetailsWindowController system IPC", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("returns a stable sanitized import failure and releases the archive operation", async () => {
+    vi.mocked(dialog.showOpenDialog)
+      .mockResolvedValueOnce({ canceled: false, filePaths: ["C:\\Imports\\QuotaBar.zip"] })
+      .mockResolvedValueOnce({ canceled: true, filePaths: [] });
+    archiveMocks.stagePortableImport.mockRejectedValueOnce(new Error("jwt-secret C:\\private\\import.zip"));
+    new DetailsWindowController(() => null);
+
+    await expect(findIpcHandler("system:import-portable-data")({})).resolves.toEqual({
+      ok: false,
+      error: "portable_import_failed",
+      message: "Portable data import failed.",
+    });
+    await expect(findIpcHandler("system:import-portable-data")({})).resolves.toEqual({ ok: false, cancelled: true });
+    expect(dialog.showOpenDialog).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(logMocks.warn.mock.calls)).toContain("Portable data import failed.");
+    expect(JSON.stringify(logMocks.warn.mock.calls)).not.toMatch(/jwt-secret|private|import\.zip/);
   });
 
   it("allows only one portable archive operation at a time", async () => {

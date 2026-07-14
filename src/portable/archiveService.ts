@@ -59,6 +59,15 @@ export interface AppliedImportResult {
   totalBytes: number;
 }
 
+export type PortableImportRollbackOutcome = "completed" | "pending-recovery" | "not-attempted";
+
+export class PortableImportApplyError extends Error {
+  constructor(public readonly rollbackOutcome: PortableImportRollbackOutcome) {
+    super("Portable data apply failed");
+    this.name = "PortableImportApplyError";
+  }
+}
+
 export interface ArchiveApplyDependencies {
   rename?: typeof fs.rename;
   removeTree?: (directory: string) => Promise<void>;
@@ -298,7 +307,9 @@ export async function applyPendingImport(
   const rename = dependencies.rename ?? fs.rename;
   const removeTree = dependencies.removeTree ?? removeOwnedTree;
   const unlinkPending = dependencies.unlinkPending ?? fs.unlink;
-  return genericFailure("Portable data apply failed", () => withArchiveLocks(appDir, async () => {
+  let applyStarted = false;
+  try {
+    return await withArchiveLocks(appDir, async () => {
     const pendingPath = path.join(appDir, PENDING_FILE);
     let raw: Buffer;
     try {
@@ -322,6 +333,7 @@ export async function applyPendingImport(
       const stagingDir = safeSibling(parent, pending.stagingDirectory, `.${path.basename(appDir)}.portable-import-`);
       const rollbackDir = safeSibling(parent, pending.rollbackDirectory, `.${path.basename(appDir)}.portable-import-`);
       if (pending.phase === "committed") {
+        applyStarted = true;
         await verifyCommittedLive(appDir, pending.stagedEntries);
         await removeTree(rollbackDir);
         await removeTree(stagingDir);
@@ -339,15 +351,20 @@ export async function applyPendingImport(
       verifyFreshIngestState(ingest.data);
       await ensureOwnedDirectory(rollbackDir);
       await updatePendingPhase(appDir, pendingPath, pending, "applying", dependencies.pendingWriteCheckpoint);
+      applyStarted = true;
       try {
         for (const relativePath of pending.replacePaths) {
           const imported = stagedByPath.get(relativePath);
           await applyOnePath(appDir, stagingDir, rollbackDir, relativePath, imported, rename);
         }
       } catch {
-        await rollbackAll(appDir, stagingDir, rollbackDir, pending.replacePaths, stagedByPath, rename);
-        await updatePendingPhase(appDir, pendingPath, pending, "prepared", dependencies.pendingWriteCheckpoint);
-        throw new Error("apply");
+        try {
+          await rollbackAll(appDir, stagingDir, rollbackDir, pending.replacePaths, stagedByPath, rename);
+          await updatePendingPhase(appDir, pendingPath, pending, "prepared", dependencies.pendingWriteCheckpoint);
+        } catch {
+          throw new PortableImportApplyError("pending-recovery");
+        }
+        throw new PortableImportApplyError("completed");
       }
       await verifyCommittedLive(appDir, pending.stagedEntries);
       await updatePendingPhase(appDir, pendingPath, pending, "committed", dependencies.pendingWriteCheckpoint);
@@ -359,10 +376,15 @@ export async function applyPendingImport(
         fileCount: pending.manifest.entries.length,
         totalBytes: pending.manifest.entries.reduce((sum, entry) => sum + entry.size, 0),
       };
-    } catch {
-      throw new Error("Portable data apply failed");
+    } catch (error) {
+      if (error instanceof PortableImportApplyError) throw error;
+      throw new PortableImportApplyError(applyStarted ? "pending-recovery" : "not-attempted");
     }
-  }));
+    });
+  } catch (error) {
+    if (error instanceof PortableImportApplyError) throw error;
+    throw new PortableImportApplyError(applyStarted ? "pending-recovery" : "not-attempted");
+  }
 }
 
 async function verifyReferencedBackup(appDir: string, pending: PendingImport): Promise<void> {

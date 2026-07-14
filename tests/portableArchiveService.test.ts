@@ -303,7 +303,10 @@ describe("portable archive service", () => {
       return fsPromises.rename(from, to);
     };
 
-    await expect(applyPendingImport(target, { rename })).rejects.toThrow("Portable data apply failed");
+    await expect(applyPendingImport(target, { rename })).rejects.toMatchObject({
+      message: "Portable data apply failed",
+      rollbackOutcome: "completed",
+    });
     expect(injected).toBe(true);
     expect(await readFile(path.join(target, "usage/events/old.jsonl"), "utf8")).toBe("old-data\n");
     await expect(access(path.join(target, "usage/events/new.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -356,7 +359,10 @@ describe("portable archive service", () => {
         return fsPromises.rename(from, to);
       };
 
-      await expect(applyPendingImport(target, { rename })).rejects.toThrow("Portable data apply failed");
+      await expect(applyPendingImport(target, { rename })).rejects.toMatchObject({
+        message: "Portable data apply failed",
+        rollbackOutcome: "not-attempted",
+      });
       expect(renames).toBe(0);
       expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe("{\"costWindow\":\"7d\"}");
     }
@@ -628,7 +634,10 @@ describe("portable archive service", () => {
       return fsPromises.rename(from, to);
     };
 
-    await expect(applyPendingImport(target, { rename })).rejects.toThrow("Portable data apply failed");
+    await expect(applyPendingImport(target, { rename })).rejects.toMatchObject({
+      message: "Portable data apply failed",
+      rollbackOutcome: "pending-recovery",
+    });
     await expect(access(pendingPath)).resolves.toBeUndefined();
     await expect(access(stagingDir)).resolves.toBeUndefined();
     expect(await readFile(path.join(rollbackDir, "settings.json"), "utf8")).toBe("original-settings\n");
@@ -680,7 +689,10 @@ describe("portable archive service", () => {
         if (crashAt === "pending") throw new Error("simulated pending unlink crash");
       };
 
-      await expect(applyPendingImport(target, { removeTree, unlinkPending })).rejects.toThrow("Portable data apply failed");
+      await expect(applyPendingImport(target, { removeTree, unlinkPending })).rejects.toMatchObject({
+        message: "Portable data apply failed",
+        rollbackOutcome: "pending-recovery",
+      });
       expect(cleanupCalls).toBeGreaterThan(0);
       if (crashAt === "pending") expect(unlinkCalls).toBe(1);
       await expect(applyPendingImport(target)).resolves.toMatchObject({ applied: crashAt !== "pending" });
