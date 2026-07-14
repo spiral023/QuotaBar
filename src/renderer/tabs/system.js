@@ -13,6 +13,7 @@ window.QB = window.QB || {};
   let _codexSuggestions = null;
   let _loading = null;
   let _rootSaveBusy = false;
+  let _transferBusy = false;
   let _animated = false;
 
   let _update = null;
@@ -219,10 +220,17 @@ window.QB = window.QB || {};
             <div class="sys-panel">
               <div class="sys-section-head">
                 <span class="sys-section-title">QuotaBar</span>
-                <div style="display:flex;align-items:center;gap:6px">
+                <div class="sys-transfer-actions">
                   <span class="sys-section-count">${fmtBytes(report.app.totals.totalBytes)}</span>
+                  <button class="sys-action secondary" id="sys-export-portable-data"
+                    title="Export portable statistics and settings">
+                    Export data
+                  </button>
+                  <button class="sys-action secondary" id="sys-import-portable-data"
+                    title="Import portable statistics and settings">
+                    Import data
+                  </button>
                   <button class="sys-action secondary" id="sys-delete-toggle"
-                    style="min-height:26px;padding:0 8px;font-size:9.5px;gap:5px"
                     title="Delete QuotaBar data">
                     ${trashIcon()} Delete
                   </button>
@@ -232,6 +240,19 @@ window.QB = window.QB || {};
                 ${report.app.paths.map((item) => pathRow(item, 'QuotaBar')).join('')}
               </div>
               <div class="sys-note">Explorer only opens folders from this list. Non-existent paths remain locked.</div>
+              <div class="sys-transfer-result" id="sys-transfer-result" role="status" aria-live="polite"></div>
+              <div class="sys-transfer-panel" id="sys-import-portable-panel">
+                <div class="sys-del-warn">
+                  ${warnIcon()} Import replaces portable statistics and settings.
+                </div>
+                <div class="sys-transfer-copy">
+                  A backup is created automatically. QuotaBar restarts after a successful import.
+                </div>
+                <div class="sys-del-footer">
+                  <button class="sys-action secondary" id="sys-import-portable-cancel">Cancel</button>
+                  <button class="sys-action" id="sys-import-portable-confirm">Confirm import</button>
+                </div>
+              </div>
               <div class="sys-delete-panel" id="sys-delete-panel">
                 <div id="sys-del-step-select">
                   <div class="sys-delete-title">Select data</div>
@@ -252,6 +273,37 @@ window.QB = window.QB || {};
       </div>`;
     _animated = true;
     bindEvents(wrap);
+  }
+
+  function setTransferBusy(wrap, busy) {
+    _transferBusy = busy;
+    [
+      '#sys-export-portable-data',
+      '#sys-import-portable-data',
+      '#sys-delete-toggle',
+      '#sys-import-portable-confirm',
+      '#sys-delete-confirm',
+      '#sys-del-execute',
+    ].forEach((selector) => {
+      const button = wrap.querySelector(selector);
+      if (!button) return;
+      if (selector === '#sys-delete-confirm' && !busy) {
+        updateDeleteConfirmBtn(wrap);
+        return;
+      }
+      button.disabled = busy;
+    });
+  }
+
+  function setTransferResult(wrap, text, isError = false) {
+    const resultEl = wrap.querySelector('#sys-transfer-result');
+    if (!resultEl) return;
+    resultEl.textContent = text;
+    resultEl.classList.toggle('error', isError);
+  }
+
+  function transferError(result, fallback) {
+    return typeof result?.message === 'string' && result.message.trim() ? result.message : fallback;
   }
 
   function bindEvents(wrap) {
@@ -281,6 +333,62 @@ window.QB = window.QB || {};
         const target = btn.dataset.openPath;
         if (target) void openPath(target);
       });
+    });
+
+    const importPanel = wrap.querySelector('#sys-import-portable-panel');
+
+    wrap.querySelector('#sys-export-portable-data')?.addEventListener('click', async () => {
+      if (_transferBusy) return;
+      setTransferBusy(wrap, true);
+      setTransferResult(wrap, 'Preparing archive…');
+      try {
+        const result = await QB.ipc.invoke('system:export-portable-data');
+        if (result?.ok) {
+          setTransferResult(wrap, `Exported to ${result.path}`);
+        } else if (result?.cancelled) {
+          setTransferResult(wrap, 'Export cancelled.');
+        } else {
+          setTransferResult(wrap, transferError(result, 'Export failed.'), true);
+        }
+      } catch (e) {
+        console.error('system:export-portable-data failed', e);
+        setTransferResult(wrap, 'Export failed.', true);
+      } finally {
+        setTransferBusy(wrap, false);
+      }
+    });
+
+    wrap.querySelector('#sys-import-portable-data')?.addEventListener('click', () => {
+      if (_transferBusy) return;
+      importPanel.classList.add('open');
+    });
+
+    wrap.querySelector('#sys-import-portable-cancel')?.addEventListener('click', () => {
+      if (_transferBusy) return;
+      importPanel.classList.remove('open');
+      setTransferResult(wrap, 'Import cancelled.');
+    });
+
+    wrap.querySelector('#sys-import-portable-confirm')?.addEventListener('click', async () => {
+      if (_transferBusy) return;
+      setTransferBusy(wrap, true);
+      setTransferResult(wrap, 'Validating and backing up…');
+      try {
+        const result = await QB.importPortableData(async (success) => {
+          setTransferResult(wrap, `Backup created at ${success.backupPath}`);
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        });
+        if (!result?.ok && result?.cancelled) {
+          setTransferResult(wrap, 'Import cancelled.');
+        } else if (!result?.ok) {
+          setTransferResult(wrap, transferError(result, 'Import failed.'), true);
+        }
+      } catch (e) {
+        console.error('system:import-portable-data failed', e);
+        setTransferResult(wrap, 'Import failed.', true);
+      } finally {
+        setTransferBusy(wrap, false);
+      }
     });
 
     // Delete panel
@@ -325,9 +433,9 @@ window.QB = window.QB || {};
       stepConfirm.style.display = '';
 
       wrap.querySelector('#sys-del-back')?.addEventListener('click', showSelectStep);
-      wrap.querySelector('#sys-del-execute')?.addEventListener('click', async (event) => {
-        const btn = event.currentTarget;
-        btn.disabled = true;
+      wrap.querySelector('#sys-del-execute')?.addEventListener('click', async () => {
+        if (_transferBusy) return;
+        setTransferBusy(wrap, true);
         wrap.querySelector('#sys-del-back').disabled = true;
         const resultEl = wrap.querySelector('#sys-del-result2');
         const groupIds = groups.map((g) => g.id);
@@ -344,19 +452,20 @@ window.QB = window.QB || {};
             }, 1200);
           } else {
             if (resultEl) { resultEl.textContent = 'Error deleting'; resultEl.classList.add('error'); }
-            btn.disabled = false;
             wrap.querySelector('#sys-del-back').disabled = false;
           }
         } catch (e) {
           console.error('system:delete-app-data failed', e);
           if (resultEl) { resultEl.textContent = 'Error deleting'; resultEl.classList.add('error'); }
-          btn.disabled = false;
           wrap.querySelector('#sys-del-back').disabled = false;
+        } finally {
+          setTransferBusy(wrap, false);
         }
       });
     }
 
     wrap.querySelector('#sys-delete-toggle')?.addEventListener('click', () => {
+      if (_transferBusy) return;
       const wasOpen = deletePanel.classList.contains('open');
       deletePanel.classList.toggle('open');
       if (!wasOpen) showSelectStep();
