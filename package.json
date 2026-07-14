@@ -1,7 +1,7 @@
 {
   "name": "quotabar",
   "productName": "QuotaBar",
-  "version": "1.5.0",
+  "version": "2.0.0",
   "description": "QuotaBar - Electron tray app for AI coding quota usage",
   "main": "dist/main/main.js",
   "type": "commonjs",

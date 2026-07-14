@@ -35,7 +35,7 @@ import {
   type StreamingPortablePreflight,
 } from "./streamingZip";
 
-const QUOTABAR_VERSION = "1.5.0";
+const QUOTABAR_VERSION = "2.0.0";
 const ARCHIVE_LOCK_DIR = ".portable-store.lock";
 const TRANSIENT_LOCK_DIRS = new Set([ARCHIVE_LOCK_DIR, ".portable-ingestion.lock", ".portable-migration.lock"]);
 const PENDING_FILE = ".portable-import.pending.json";
