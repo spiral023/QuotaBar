@@ -9,6 +9,7 @@ import {
   formatWslDiscoveryDiagnostics,
   formatWslSuggestionDiagnostics,
 } from "../src/main/systemData";
+import { PortableUsageStore } from "../src/portable/usageStore";
 
 let tmpDir: string;
 let homeDir: string;
@@ -158,6 +159,87 @@ describe("collectSystemData", () => {
     expect(report.categories.find((c) => c.id === "cache")?.fileCount).toBe(2);
     expect(report.categories.find((c) => c.id === "logs")?.fileCount).toBe(2);
     expect(report.categories.find((c) => c.id === "config")?.fileCount).toBe(1);
+  });
+
+  it("lists only the known portable QuotaBar paths", async () => {
+    await writeFile(path.join(appConfigDir, "usage", "events", "2026-07.jsonl"), "{}\n");
+    await writeFile(path.join(appConfigDir, "quota", "2026-07.jsonl"), "{}\n");
+    await writeFile(path.join(appConfigDir, "usage", "migration-state.json"), JSON.stringify({
+      status: "running",
+      privateDetail: "must-not-leave-the-file",
+    }));
+    await writeFile(path.join(appConfigDir, "pending-import.json"), "{}\n");
+    const unrelatedDir = path.join(tmpDir, "unrelated");
+    await writeFile(path.join(unrelatedDir, "private.txt"), "must-not-be-scanned");
+
+    const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
+    const portablePaths = report.app.paths.filter((item) => item.id.startsWith("app-portable-"));
+
+    expect(portablePaths.map(({ label, path: itemPath }) => [label, itemPath])).toEqual([
+      ["Usage Store", path.join(appConfigDir, "usage")],
+      ["Quota Snapshots", path.join(appConfigDir, "quota")],
+      ["Migration State", path.join(appConfigDir, "usage", "migration-state.json")],
+      ["Pending Import", path.join(appConfigDir, "pending-import.json")],
+    ]);
+    expect(report.totals.fileCount).toBe(5);
+    expect(JSON.stringify(report)).not.toContain(unrelatedDir);
+    expect(JSON.stringify(report)).not.toContain("must-not-be-scanned");
+  });
+
+  it.each(["pending", "running", "complete", "failed"] as const)(
+    "returns only the sanitized %s migration status",
+    async (status) => {
+      await writeFile(path.join(appConfigDir, "usage", "migration-state.json"), JSON.stringify({
+        status,
+        privateDetail: `hidden-${status}`,
+      }));
+
+      const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
+
+      expect(report.app.portableMigrationStatus).toBe(status);
+      expect(JSON.stringify(report)).not.toContain(`hidden-${status}`);
+    },
+  );
+
+  it("does not return an unrecognized migration status", async () => {
+    await writeFile(path.join(appConfigDir, "usage", "migration-state.json"), JSON.stringify({
+      status: "unexpected",
+      privateDetail: "hidden-invalid-state",
+    }));
+
+    const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
+
+    expect(report.app.portableMigrationStatus).toBeNull();
+    expect(report.app.portableDataReady).toBe(false);
+    expect(JSON.stringify(report)).not.toContain("unexpected");
+    expect(JSON.stringify(report)).not.toContain("hidden-invalid-state");
+  });
+
+  it("reports portable data ready only when the complete state matches the usage-store revision", async () => {
+    const usageDir = path.join(appConfigDir, "usage");
+    const store = new PortableUsageStore(usageDir);
+    const revision = await store.getRevision();
+    await writeFile(path.join(usageDir, "migration-state.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      status: "complete",
+      usageMigrationVersion: 1,
+      storeRevision: revision,
+      updatedAt: "2026-07-14T00:00:00.000Z",
+    })}\n`);
+
+    const ready = await collectSystemData({ homeDir, appConfigDir, env: {} });
+    expect(ready.app.portableDataReady).toBe(true);
+
+    await writeFile(path.join(usageDir, "migration-state.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      status: "complete",
+      usageMigrationVersion: 1,
+      storeRevision: "0".repeat(64),
+      updatedAt: "2026-07-14T00:01:00.000Z",
+    })}\n`);
+    const stale = await collectSystemData({ homeDir, appConfigDir, env: {} });
+    expect(stale.app.portableMigrationStatus).toBe("complete");
+    expect(stale.app.portableDataReady).toBe(false);
   });
 
   it("includes the QuotaBar distribution variant in app system data", async () => {

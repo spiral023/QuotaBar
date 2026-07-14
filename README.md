@@ -168,15 +168,15 @@ Claude and Codex quota windows are fetched through unofficial provider endpoints
 
 ## Data Lifecycle
 
-Providers (Claude, Codex) write raw usage logs locally and **delete them after a while** (Claude: 30 days by default). QuotaBar reads those logs once, aggregates each day into its own **permanent backfill store** (`%APPDATA%\quotabar-win\debug\<date>.backfill.jsonl`), and serves the dashboard from there. A day that has been aggregated survives even after the provider deletes the original log.
+Providers (Claude, Codex) write raw usage logs locally and **delete them after a while** (Claude: 30 days by default). QuotaBar treats those files as ingestion-only sources: it incrementally converts new or changed records into the portable usage store under `%USERPROFILE%\.quotabar-win\usage\`. Dashboard, History, Models, Analytics, and Reports read the portable store, not the provider logs. An ingested event survives after the provider removes its original log.
 
 ```mermaid
 flowchart TD
   start([QuotaBar starts / hourly tick]) --> scan[Scan provider logs<br/>Claude + Codex JSONL]
   scan --> diff{File new or changed<br/>since last run?}
-  diff -->|no| keep[Keep existing days]
-  diff -->|yes| agg[Aggregate affected days]
-  agg --> store[(Permanent backfill store<br/>1 record per day)]
+  diff -->|no| keep[Keep stored events]
+  diff -->|yes| ingest[Sanitize and ingest events]
+  ingest --> store[(Portable usage store<br/>immutable events)]
   keep --> store
   store --> ui[Dashboard · History · Models · Reports]
   gc[/Provider garbage collection<br/>deletes logs older than retention/]
@@ -188,16 +188,24 @@ What this means in practice:
 
 | Scenario | What happens |
 | --- | --- |
-| **First start** | QuotaBar imports everything the provider *still has on disk*. With Claude's 30-day default, that's only the last ~30 days — anything older was already deleted by the provider and **cannot be recovered**. |
-| **Daily use** | On each start/tick QuotaBar checks only new or changed log files and writes any missing days into the permanent store. Cheap and incremental. |
-| **A few days without QuotaBar** | On the next start, backfill automatically catches up **all missed days** — as long as the provider hasn't deleted those logs yet (i.e. you're back within the retention window). |
-| **Provider deletes old logs (GC)** | Days already aggregated into the backfill store stay intact. Only days that were *never* aggregated — because QuotaBar didn't run during the whole retention window — are lost for good. |
+| **First start** | QuotaBar ingests everything the provider *still has on disk*. With Claude's 30-day default, that may be only the last ~30 days — anything older was already deleted by the provider and **cannot be recovered**. |
+| **Daily use** | On each start and source change, QuotaBar checks only known provider roots and ingests new or changed events. |
+| **A few days without QuotaBar** | On the next start, ingestion catches up **all missed events** as long as the provider has not deleted those logs. |
+| **Provider deletes old logs (GC)** | Events already in the portable store remain intact. Events never ingested during the provider's retention window are lost. |
 
-> **Takeaway:** Run QuotaBar regularly and history grows permanently. The only way to lose data is leaving QuotaBar off longer than the provider's retention window. Raising `cleanupPeriodDays` widens that safety margin.
+> **Takeaway:** Run QuotaBar regularly so provider logs are ingested before they expire. Raising `cleanupPeriodDays` widens that safety margin.
+
+### Portable export and restore
+
+Open **System → QuotaBar** and choose **Export data** to create a portable ZIP. The archive contains portable statistics, quota snapshots, machine-independent settings, notification state, and the manifest required to verify every entry. It never contains provider logs, `auth.json`, `.credentials.json`, application logs, caches, backups, or the source machine's ingestion paths.
+
+Choose **Import data**, select the ZIP, review the replacement warning, and confirm. Import is a replacement, not a merge: the archive's portable statistics and settings replace the corresponding local data. Before anything is replaced, QuotaBar creates and verifies a full timestamped backup in `%USERPROFILE%\QuotaBar Backups\`, then restarts to apply the staged import. To restore a previous state, import that backup ZIP through the same System action.
+
+Archives are portable across Windows accounts. On import, saved Claude and Codex roots from the source account are removed; QuotaBar discovers only the target account's known provider paths. For example, importing an archive created by Alice while signed in as Bob does not keep `C:\Users\Alice` as an active root.
 
 ## History Tab
 
-The History tab shows per-period cost and token breakdowns served from the permanent backfill store.
+The History tab shows per-period cost and token breakdowns served from the portable usage store.
 
 | Capability | Details |
 | --- | --- |
@@ -253,7 +261,7 @@ All fired notifications are stored in the **Notifications** tab history with tim
 
 QuotaBar reads local JSONL logs, fetches current model pricing from LiteLLM when online, and calculates API-equivalent costs in USD.
 
-For historical API cost pricing, QuotaBar keeps compact local price epochs per model. Each event uses the latest locally observed epoch at or before its timestamp. Claude events with source `costUSD`, and values already stored in the permanent backfill, remain authoritative. On older installations with no eligible local epoch, QuotaBar uses the current price for compatibility.
+For historical API cost pricing, QuotaBar keeps compact local price epochs per model. Each event uses the latest locally observed epoch at or before its timestamp. Claude events with source `costUSD`, and values already stored in the portable usage store, remain authoritative. On older installations with no eligible local epoch, QuotaBar uses the current price for compatibility.
 
 ```text
 subscription factor = API cost (USD) / (subscription cost (USD) × window_days / 30)
@@ -327,6 +335,7 @@ renderer/tabs/
 | Credential scope | Credentials are read only from known provider paths |
 | Log safety | Tokens, cookies, authorization headers, and JWTs are redacted before logging |
 | Disk access | QuotaBar does not scan the disk for auth files |
+| Portable archives | Provider credentials, provider logs, machine-specific ingestion paths, app logs, caches, and backups are excluded |
 | Provider isolation | Unofficial endpoints are kept inside provider/auth modules and handled defensively |
 
 ## Release & Auto-Update

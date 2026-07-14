@@ -5,7 +5,7 @@ import { flush, rendererHarness } from "./helpers/rendererHarness";
 const script = fs.readFileSync("src/renderer/tabs/system.js", "utf8");
 const styles = fs.readFileSync("src/renderer/styles.css", "utf8");
 
-function systemReport() {
+function systemReport(portable: { status?: string | null; ready?: boolean } = {}) {
   return {
     generatedAt: "2026-07-14T00:00:00.000Z",
     scanDurationMs: 4,
@@ -17,6 +17,8 @@ function systemReport() {
       totals: { fileCount: 0, totalBytes: 0, lastModifiedAt: null },
       paths: [],
       variant: { label: "Development" },
+      portableMigrationStatus: portable.status ?? null,
+      portableDataReady: portable.ready ?? false,
     },
   };
 }
@@ -40,6 +42,27 @@ function byId(h: ReturnType<typeof transferHarness>, id: string) {
 }
 
 describe("System portable data transfer controls", () => {
+  it.each([
+    [{ status: "complete", ready: true }, "Portable data: Ready"],
+    [{ status: "pending", ready: false }, "Portable data: Preparing"],
+    [{ status: "running", ready: false }, "Portable data: Preparing"],
+    [{ status: "failed", ready: false }, "Portable data: Needs attention"],
+    [{ status: "complete", ready: false }, "Portable data: Needs attention"],
+  ])("renders the safe portable readiness label for %j", async (portable, expected) => {
+    const h = rendererHarness({
+      "system:get": [systemReport(portable)],
+      "update:get-state": [null],
+      "dataSources:get": [{}],
+      "settings:get": [{}],
+    });
+    h.run("src/renderer/tabs/system.js");
+
+    await h.QB.renderSystem();
+
+    expect(byId(h, "sys-portable-status")).toBeTruthy();
+    expect(byId(h, "system-content").innerHTML).toContain(`id="sys-portable-status">${expected}</span>`);
+  });
+
   it("renders stable, accessible English export and import controls beside data deletion", () => {
     expect(script).toContain('id="sys-export-portable-data"');
     expect(script).toContain('id="sys-import-portable-data"');

@@ -291,18 +291,20 @@ Transient API artifacts (e.g. brief utilisation spikes) are filtered by cross-ch
 
 ---
 
-## Debug log and backfill
+## Portable usage store and debug logs
 
 QuotaBar optionally writes structured logs to `%USERPROFILE%\.quotabar-win\debug\`:
 
 | File | Content |
 |---|---|
 | `YYYY-MM-DD.jsonl` | Live events: app start, refresh cycles, snapshots |
-| `YYYY-MM-DD.backfill.jsonl` | Historical token events derived from provider JSONL files |
+| `YYYY-MM-DD.backfill.jsonl` | Legacy daily aggregates retained as a migration input during the compatibility release |
 
-The backfill runs once on app start and skips days for which the file already exists. It can be forced via the tray menu ("Regenerate Debug Backfill").
+Provider JSONL files and legacy backfill records are ingestion-only inputs. QuotaBar sanitizes and stores usage events under `%USERPROFILE%\.quotabar-win\usage\events\`, stores quota observations under `%USERPROFILE%\.quotabar-win\quota\`, and serves calculation views from those portable stores. The migration state is exposed to the System tab only as `pending`, `running`, `complete`, or `failed`; its file contents are never included in System data.
 
-Backfill records written at `BACKFILL_REPAIR_VERSION 2` or later include per-token-type cost breakdowns (`inputCostUSD`, `outputCostUSD`, `cacheCreationCostUSD`, `cacheReadCostUSD`). Records written by an older version have these fields set to `0` and are updated the next time a full backfill repair runs.
+Portable exports include the sanitized usage store, quota snapshots, machine-independent settings, notification state, and a checksum manifest. The privacy boundary explicitly excludes raw provider logs, `auth.json`, `.credentials.json`, machine-specific ingestion state, application logs, caches, and backups.
+
+An import replaces the portable statistics and settings covered by the archive; it does not merge them with the target account's data. QuotaBar first writes a verified timestamped full backup to `%USERPROFILE%\QuotaBar Backups\`. Importing between different Windows usernames clears saved provider roots from the source and lets the target discover its own known paths, so a source path such as `C:\Users\Alice` does not remain active for Bob. Use **System → QuotaBar → Import data** to select either an exported archive or an automatic backup, confirm the replacement, and let QuotaBar restart to apply it.
 
 ---
 
@@ -329,4 +331,7 @@ Backfill records written at `BACKFILL_REPAIR_VERSION 2` or later include per-tok
 | QuotaBar settings | `%USERPROFILE%\.quotabar-win\settings.json` |
 | QuotaBar log | `%USERPROFILE%\.quotabar-win\quotabar.log` |
 | Debug log | `%USERPROFILE%\.quotabar-win\debug\` |
+| Portable usage store | `%USERPROFILE%\.quotabar-win\usage\` |
+| Portable quota snapshots | `%USERPROFILE%\.quotabar-win\quota\` |
+| Automatic import backups | `%USERPROFILE%\QuotaBar Backups\` |
 | Window-ratio state | `%USERPROFILE%\.quotabar-win\window-ratio.json` |

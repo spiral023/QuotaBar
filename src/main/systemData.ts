@@ -17,6 +17,8 @@ import {
   getLiteLLMModelPricesPath,
 } from "../config/paths";
 import type { AppVariantInfo } from "./appIdentity";
+import { parseMigrationState } from "../portable/migration";
+import { PortableUsageStore } from "../portable/usageStore";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,6 +26,7 @@ export type SystemAgentStatus = "connected" | "detected" | "not_found";
 export type SystemPathKind = "file" | "folder";
 export type SystemPathSource = "env" | "settings" | "wsl" | "default";
 export type SystemDataCategoryId = "logs" | "credentials" | "config" | "cache";
+export type PortableMigrationStatus = "pending" | "running" | "complete" | "failed";
 
 export interface SystemDataContext {
   homeDir?: string;
@@ -79,6 +82,8 @@ export interface SystemDataCategory {
 export interface SystemAppData {
   name: "QuotaBar";
   variant: AppVariantInfo;
+  portableMigrationStatus: PortableMigrationStatus | null;
+  portableDataReady: boolean;
   paths: SystemDataPath[];
   totals: SystemDataTotals;
 }
@@ -166,9 +171,13 @@ export async function collectSystemData(context: SystemDataContext = {}): Promis
       totals: sumPaths(paths),
     };
   }));
+  const appDir = resolveAppConfigDir(context);
+  const portableState = await readPortableDataState(appDir);
   const app = {
     name: "QuotaBar" as const,
     variant: context.appVariant ?? { id: "development" as const, label: "Development" },
+    portableMigrationStatus: portableState.status,
+    portableDataReady: portableState.ready,
     paths: await scanSpecs(buildAppSpecs(context)),
     totals: emptyTotals(),
   };
@@ -523,7 +532,7 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
 }
 
 function buildAppSpecs(context: SystemDataContext): PathSpec[] {
-  const appDir = context.appConfigDir ?? path.join(context.homeDir ?? getHomeDir(), ".quotabar-win");
+  const appDir = resolveAppConfigDir(context);
   return [
     { id: "app-settings",          label: "Settings",          category: "config", kind: "file",   path: path.join(appDir, "settings.json") },
     { id: "app-log",               label: "App Log",           category: "logs",   kind: "file",   path: path.join(appDir, "quotabar.log") },
@@ -538,7 +547,49 @@ function buildAppSpecs(context: SystemDataContext): PathSpec[] {
     { id: "app-bonus-state",       label: "Bonus State",       category: "cache",  kind: "file",   path: path.join(appDir, "bonus-state.json") },
     { id: "app-notification-state",label: "Notification State",category: "cache",  kind: "file",   path: path.join(appDir, "notification-state.json") },
     { id: "app-debug",             label: "Debug Logs",        category: "logs",   kind: "folder", path: path.join(appDir, "debug") },
+    { id: "app-portable-usage",    label: "Usage Store",       category: "cache",  kind: "folder", path: path.join(appDir, "usage") },
+    { id: "app-portable-quota",    label: "Quota Snapshots",   category: "cache",  kind: "folder", path: path.join(appDir, "quota") },
+    { id: "app-portable-migration", label: "Migration State",  category: "config", kind: "file",   path: path.join(appDir, "usage", "migration-state.json") },
+    { id: "app-portable-pending-import", label: "Pending Import", category: "config", kind: "file", path: path.join(appDir, "pending-import.json") },
   ];
+}
+
+function resolveAppConfigDir(context: SystemDataContext): string {
+  return context.appConfigDir ?? path.join(context.homeDir ?? getHomeDir(), ".quotabar-win");
+}
+
+async function readPortableDataState(
+  appDir: string,
+): Promise<{ status: PortableMigrationStatus | null; ready: boolean }> {
+  const statePath = path.join(appDir, "usage", "migration-state.json");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await fs.readFile(statePath, "utf8"));
+  } catch {
+    return { status: null, ready: false };
+  }
+  if (!isRecord(parsed) || !isPortableMigrationStatus(parsed.status)) {
+    return { status: null, ready: false };
+  }
+  const status = parsed.status;
+  if (status !== "complete") return { status, ready: false };
+
+  try {
+    const state = parseMigrationState(parsed).state;
+    if (state?.status !== "complete" || !state.storeRevision) return { status, ready: false };
+    const revision = await new PortableUsageStore(path.join(appDir, "usage")).getRevision();
+    return { status, ready: revision === state.storeRevision };
+  } catch {
+    return { status, ready: false };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPortableMigrationStatus(value: unknown): value is PortableMigrationStatus {
+  return value === "pending" || value === "running" || value === "complete" || value === "failed";
 }
 
 function getLiteLLMModelPricesPathForContext(context: SystemDataContext, appDir: string): string {

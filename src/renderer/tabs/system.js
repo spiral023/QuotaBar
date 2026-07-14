@@ -162,6 +162,8 @@ window.QB = window.QB || {};
       report.app.totals.lastModifiedAt,
     ]);
 
+    const portableStatus = portableDataStatusLabel(report.app);
+
     wrap.innerHTML = `
       <div class="${_animated ? '' : 'sys-stagger'}">
         ${updatePanelHtml(_update, report.app?.variant)}
@@ -226,6 +228,7 @@ window.QB = window.QB || {};
               <div class="sys-section-head">
                 <span class="sys-section-title">QuotaBar</span>
                 <div class="sys-transfer-actions">
+                  <span class="sys-section-count" id="sys-portable-status">${portableStatus}</span>
                   <span class="sys-section-count">${fmtBytes(report.app.totals.totalBytes)}</span>
                   <button class="sys-action secondary" id="sys-export-portable-data"
                     title="Export portable statistics and settings">
@@ -281,6 +284,16 @@ window.QB = window.QB || {};
       </div>`;
     _animated = true;
     bindEvents(wrap);
+  }
+
+  function portableDataStatusLabel(app) {
+    if (app?.portableMigrationStatus === 'complete' && app?.portableDataReady === true) {
+      return 'Portable data: Ready';
+    }
+    if (app?.portableMigrationStatus === 'pending' || app?.portableMigrationStatus === 'running') {
+      return 'Portable data: Preparing';
+    }
+    return 'Portable data: Needs attention';
   }
 
   function activeSystemWrap(fallback) {
