@@ -988,11 +988,19 @@ describe("portable archive service", () => {
     await exportPortableData(source, archivePath);
     const entryOrder: string[] = [];
     let maximumChunk = 0;
+    let activeValidationPayloads = 0;
+    let maximumActiveValidationPayloads = 0;
+    const validationOrder: string[] = [];
 
     await stagePortableImport(archivePath, target, targetHome, {
       onStreamChunk: (entryPath, bytes) => {
         if (entryOrder.at(-1) !== entryPath) entryOrder.push(entryPath);
         maximumChunk = Math.max(maximumChunk, bytes);
+      },
+      onContentValidation: (entryPath, phase) => {
+        validationOrder.push(`${phase}:${entryPath}`);
+        activeValidationPayloads += phase === "start" ? 1 : -1;
+        maximumActiveValidationPayloads = Math.max(maximumActiveValidationPayloads, activeValidationPayloads);
       },
     });
 
@@ -1000,6 +1008,14 @@ describe("portable archive service", () => {
     expect(entryOrder).toHaveLength(2);
     expect(maximumChunk).toBeGreaterThan(0);
     expect(maximumChunk).toBeLessThan(2 * 1024 * 1024);
+    expect(maximumActiveValidationPayloads).toBe(1);
+    expect(activeValidationPayloads).toBe(0);
+    expect(validationOrder).toEqual([
+      "start:quota/snapshots/2026-08.jsonl",
+      "end:quota/snapshots/2026-08.jsonl",
+      "start:usage/events/2026-07.jsonl",
+      "end:usage/events/2026-07.jsonl",
+    ]);
   });
 
   it("rolls back when a staged file is swapped during its rename", async () => {

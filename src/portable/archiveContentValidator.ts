@@ -1,7 +1,7 @@
 import { sanitizeImportedSettings } from "./archiveManifest";
 import { parseMigrationState } from "./migration";
 import { validateQuotaSnapshotForArchive } from "./quotaStore";
-import type { PortableStoreMetadata, PortableUsageEvent } from "./types";
+import type { PortableStoreMetadata } from "./types";
 import { PORTABLE_STORE_VERSION } from "./types";
 import { validatePortableEventForArchive } from "./usageStore";
 import { isWindowHistoryFile } from "../usage/windowHistoryStore";
@@ -18,85 +18,110 @@ const QUOTA_PARTITION = /^quota\/snapshots\/(\d{4}-\d{2})\.jsonl$/;
 
 /** Validates every portable payload without mutating either source or destination. */
 export function validatePortableArchiveContents(files: readonly PortableContentFile[]): void {
-  try {
-    validatePortableArchiveContentsUnsafe(files);
-  } catch {
-    fail();
-  }
+  const validator = new PortableArchiveContentValidator();
+  for (const file of files) validator.add(file);
+  validator.finish();
 }
 
-function validatePortableArchiveContentsUnsafe(files: readonly PortableContentFile[]): void {
-  const eventsByMonth = new Map<string, PortableUsageEvent[]>();
-  const eventIds = new Set<string>();
-  let metadata: PortableStoreMetadata | undefined;
+interface UsageAggregate {
+  eventCount: number;
+  firstAt: string;
+  lastAt: string;
+}
 
-  for (const file of files) {
-    const usage = USAGE_PARTITION.exec(file.path);
-    if (usage) {
-      const events = parseJsonLines(file.data, validatePortableEventForArchive);
-      for (const event of events) {
-        if (event.occurredAt.slice(0, 7) !== usage[1] || eventIds.has(event.id)) fail();
-        eventIds.add(event.id);
+/** Incremental validator retaining only IDs and bounded per-partition aggregates. */
+export class PortableArchiveContentValidator {
+  private readonly usageByMonth = new Map<string, UsageAggregate>();
+  private readonly eventIds = new Set<string>();
+  private metadata: PortableStoreMetadata | undefined;
+
+  add(file: PortableContentFile): void {
+    try {
+      const usage = USAGE_PARTITION.exec(file.path);
+      if (usage) {
+        if (this.usageByMonth.has(usage[1])) fail();
+        let aggregate: UsageAggregate | undefined;
+        forEachJsonLine(file.data, (value) => {
+          const event = validatePortableEventForArchive(value);
+          if (event.occurredAt.slice(0, 7) !== usage[1] || this.eventIds.has(event.id)) fail();
+          this.eventIds.add(event.id);
+          aggregate = aggregate
+            ? {
+              eventCount: aggregate.eventCount + 1,
+              firstAt: event.occurredAt < aggregate.firstAt ? event.occurredAt : aggregate.firstAt,
+              lastAt: event.occurredAt > aggregate.lastAt ? event.occurredAt : aggregate.lastAt,
+            }
+            : { eventCount: 1, firstAt: event.occurredAt, lastAt: event.occurredAt };
+        });
+        if (!aggregate) fail();
+        this.usageByMonth.set(usage[1], aggregate);
+        return;
       }
-      eventsByMonth.set(usage[1], events);
-      continue;
-    }
-    const quota = QUOTA_PARTITION.exec(file.path);
-    if (quota) {
-      const snapshots = parseJsonLines(file.data, validateQuotaSnapshotForArchive);
-      if (snapshots.some((snapshot) => snapshot.fetchedAt.slice(0, 7) !== quota[1])) fail();
-      continue;
-    }
-    switch (file.path) {
-      case "usage/store-metadata.json":
-        metadata = parseStoreMetadata(parseJson(file.data));
-        break;
-      case "usage/migration-state.json": {
-        const parsed = parseMigrationState(parseJson(file.data));
-        if (!parsed.state || parsed.rewriteRequired) fail();
-        break;
+      const quota = QUOTA_PARTITION.exec(file.path);
+      if (quota) {
+        forEachJsonLine(file.data, (value) => {
+          const snapshot = validateQuotaSnapshotForArchive(value);
+          if (snapshot.fetchedAt.slice(0, 7) !== quota[1]) fail();
+        });
+        return;
       }
-      case "settings.json": {
-        const value = parseJson(file.data);
-        if (!isRecord(value)) fail();
-        const sanitized = sanitizeImportedSettings(value, "");
-        if (canonicalJson(value) !== canonicalJson(sanitized)) fail();
-        break;
+      switch (file.path) {
+        case "usage/store-metadata.json":
+          if (this.metadata) fail();
+          this.metadata = parseStoreMetadata(parseJson(file.data));
+          break;
+        case "usage/migration-state.json": {
+          const parsed = parseMigrationState(parseJson(file.data));
+          if (!parsed.state || parsed.rewriteRequired) fail();
+          break;
+        }
+        case "settings.json": {
+          const value = parseJson(file.data);
+          if (!isRecord(value)) fail();
+          const sanitized = sanitizeImportedSettings(value, "");
+          if (canonicalJson(value) !== canonicalJson(sanitized)) fail();
+          break;
+        }
+        case "window-history.json":
+          if (!isWindowHistoryFile(parseJson(file.data))) fail();
+          break;
+        case "window-ratio.json":
+          if (!isWindowRatioFile(parseJson(file.data))) fail();
+          break;
+        case "bonus-state.json":
+          if (!migrateBonusStateFile(parseJson(file.data))) fail();
+          break;
+        case "notification-state.json":
+          validateNotificationState(parseJson(file.data));
+          break;
+        case "notifications.log":
+          forEachJsonLine(file.data, validateNotificationLogEntry);
+          break;
+        default:
+          fail();
       }
-      case "window-history.json":
-        if (!isWindowHistoryFile(parseJson(file.data))) fail();
-        break;
-      case "window-ratio.json":
-        if (!isWindowRatioFile(parseJson(file.data))) fail();
-        break;
-      case "bonus-state.json":
-        if (!migrateBonusStateFile(parseJson(file.data))) fail();
-        break;
-      case "notification-state.json":
-        validateNotificationState(parseJson(file.data));
-        break;
-      case "notifications.log":
-        parseJsonLines(file.data, validateNotificationLogEntry);
-        break;
-      default:
-        // The path allowlist is intentionally broader for forward-compatible
-        // manifest parsing; format v1 accepts only the schemas implemented here.
-        fail();
+    } catch {
+      fail();
     }
   }
 
-  if (eventsByMonth.size > 0) {
-    if (metadata) {
-      if (Object.keys(metadata.partitions).length !== eventsByMonth.size) fail();
-      for (const [month, events] of eventsByMonth) {
-        const expected = metadata.partitions[month];
-        const ordered = [...events].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id));
-        if (!expected || expected.eventCount !== ordered.length
-          || expected.firstAt !== ordered[0]?.occurredAt || expected.lastAt !== ordered.at(-1)?.occurredAt) fail();
+  finish(): void {
+    try {
+      if (this.usageByMonth.size > 0) {
+        if (this.metadata) {
+          if (Object.keys(this.metadata.partitions).length !== this.usageByMonth.size) fail();
+          for (const [month, aggregate] of this.usageByMonth) {
+            const expected = this.metadata.partitions[month];
+            if (!expected || expected.eventCount !== aggregate.eventCount
+              || expected.firstAt !== aggregate.firstAt || expected.lastAt !== aggregate.lastAt) fail();
+          }
+        }
+      } else if (this.metadata && Object.keys(this.metadata.partitions).length > 0) {
+        fail();
       }
+    } catch {
+      fail();
     }
-  } else if (metadata && Object.keys(metadata.partitions).length > 0) {
-    fail();
   }
 }
 
@@ -137,14 +162,12 @@ function validateNotificationLogEntry(value: unknown): unknown {
   return value;
 }
 
-function parseJsonLines<T>(bytes: Uint8Array, validate: (value: unknown) => T): T[] {
+function forEachJsonLine(bytes: Uint8Array, visit: (value: unknown) => unknown): void {
   const text = decodeUtf8(bytes);
-  const result: T[] = [];
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
-    result.push(validate(parseJsonText(line)));
+    visit(parseJsonText(line));
   }
-  return result;
 }
 
 function parseJson(bytes: Uint8Array): unknown {

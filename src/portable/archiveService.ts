@@ -26,7 +26,7 @@ import {
   type ArchiveManifest,
   type ArchiveManifestEntry,
 } from "./archiveManifest";
-import { validatePortableArchiveContents } from "./archiveContentValidator";
+import { PortableArchiveContentValidator } from "./archiveContentValidator";
 import { withNamedPortableRootLock, withPortableRootLock } from "./rootLock";
 import { PORTABLE_STORE_VERSION } from "./types";
 import {
@@ -82,6 +82,7 @@ export interface ArchiveImportDependencies {
   openZip?: (zipPath: string) => Pick<AdmZip, "getEntries">;
   skipSourceIdentity?: boolean;
   onStreamChunk?: (entryPath: string, bytes: number) => void;
+  onContentValidation?: (entryPath: string, phase: "start" | "end") => void;
 }
 
 export interface ArchiveExportDependencies {
@@ -216,7 +217,7 @@ export async function stagePortableImport(
       })));
     if (sourceIdentity) await assertFileIdentity(zipPath, sourceIdentity);
     try {
-      await validatePreparedPortableContents(stagedFiles);
+      await validatePreparedPortableContents(stagedFiles, dependencies.onContentValidation);
       return await withArchiveLocks(appDir, async () => {
     let stagingDir: string | undefined;
     try {
@@ -304,10 +305,21 @@ export async function stagePortableImport(
   });
 }
 
-async function validatePreparedPortableContents(files: readonly PreparedPortableFile[]): Promise<void> {
-  const materialized: SafeFile[] = [];
-  for (const file of files) materialized.push({ path: file.path, data: await preparedFileData(file) });
-  validatePortableArchiveContents(materialized);
+async function validatePreparedPortableContents(
+  files: readonly PreparedPortableFile[],
+  onValidation?: (entryPath: string, phase: "start" | "end") => void,
+): Promise<void> {
+  const validator = new PortableArchiveContentValidator();
+  for (const file of files) {
+    onValidation?.(file.path, "start");
+    try {
+      const data = await preparedFileData(file);
+      validator.add({ path: file.path, data });
+    } finally {
+      onValidation?.(file.path, "end");
+    }
+  }
+  validator.finish();
 }
 
 export async function applyPendingImport(
