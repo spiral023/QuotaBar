@@ -97,6 +97,19 @@ describe("portable cost enrichment", () => {
       + (priced.cacheCreationCostUSD ?? 0) + (priced.cacheReadCostUSD ?? 0)).toBeCloseTo(19);
   });
 
+  it("assigns a positive authoritative total to output when pricing has no usable component rates", async () => {
+    const source = event({ costUSD: 19 });
+    const [priced] = await enrichPortableEventCosts([source], resolver({}), "standard");
+
+    expect(priced).toMatchObject({
+      costUSD: 19,
+      inputCostUSD: 0,
+      outputCostUSD: 19,
+      cacheCreationCostUSD: 0,
+      cacheReadCostUSD: 0,
+    });
+  });
+
   it("groups more than 120k events into one historical lookup per model", async () => {
     const pricing = resolver({ input_cost_per_token: 1 });
     const events = Array.from({ length: 120_001 }, (_, index) => event({

@@ -58,7 +58,7 @@ export async function enrichPortableEventCosts(
           }, price.pricing);
       const components = event.costUSD === undefined
         ? calculated
-        : scaleBreakdownTo(calculated, event.costUSD);
+        : authoritativeComponents(calculated, event.costUSD);
       result[index] = {
         ...event,
         costUSD: event.costUSD ?? sumBreakdown(components),
@@ -70,6 +70,18 @@ export async function enrichPortableEventCosts(
     }
   }));
   return result;
+}
+
+function authoritativeComponents(calculated: CostBreakdown, costUSD: number): CostBreakdown {
+  if (costUSD > 0 && sumBreakdown(calculated) === 0) {
+    return {
+      inputCostUSD: 0,
+      outputCostUSD: costUSD,
+      cacheCreationCostUSD: 0,
+      cacheReadCostUSD: 0,
+    };
+  }
+  return scaleBreakdownTo(calculated, costUSD);
 }
 
 function hasCompleteStoredCost(event: PortableUsageEvent): boolean {

@@ -146,6 +146,102 @@ describe("portable usage ingestion", () => {
     expect(enrichCosts).not.toHaveBeenCalled();
   });
 
+  it("keeps unresolved existing events retryable until every provider event has complete costs", async () => {
+    const ref = await claudeRef(rootDir, "unknown-existing.jsonl", "fixture");
+    const readClaude = vi.fn(async () => [claude({ costUSD: undefined })]);
+    const base = { store, statePath, claudeRefs: [ref], codexRefs: [], readClaude };
+    await ingestPortableUsage(base);
+    const enrichCosts = vi.fn(async (events: readonly import("../src/portable/types").PortableUsageEvent[]) => events);
+
+    await ingestPortableUsage({ ...base, enrichCosts });
+    await ingestPortableUsage({ ...base, enrichCosts });
+
+    expect(enrichCosts).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(await readFile(statePath, "utf8"))).not.toHaveProperty("costEnrichmentVersion");
+  });
+
+  it("does not mark repair complete when enrichment drops an existing provider event", async () => {
+    const ref = await claudeRef(rootDir, "dropped-existing.jsonl", "fixture");
+    const base = {
+      store, statePath, claudeRefs: [ref], codexRefs: [],
+      readClaude: async () => [claude({ costUSD: undefined })],
+    };
+    await ingestPortableUsage(base);
+
+    await ingestPortableUsage({ ...base, enrichCosts: async () => [] });
+
+    expect(JSON.parse(await readFile(statePath, "utf8"))).not.toHaveProperty("costEnrichmentVersion");
+    expect(await store.read()).toHaveLength(1);
+  });
+
+  it("invalidates the repair marker and retries an unresolved source added later", async () => {
+    const known = await claudeRef(rootDir, "known.jsonl", "known");
+    const added = await claudeRef(rootDir, "added.jsonl", "added");
+    const readClaude = vi.fn(async ([ref]: SourceFileRef[]) => [claude({
+      sourceEventId: ref.file === known.file ? "known" : "added",
+      model: ref.file === known.file ? "known-model" : "unknown-model",
+      costUSD: undefined,
+    })]);
+    const enrichCosts = vi.fn(async (events: readonly import("../src/portable/types").PortableUsageEvent[]) =>
+      events.map((item) => item.model === "unknown-model" ? item : {
+        ...item,
+        costUSD: 1,
+        inputCostUSD: 1,
+        outputCostUSD: 0,
+        cacheCreationCostUSD: 0,
+        cacheReadCostUSD: 0,
+        pricingVersion: "litellm:test",
+      }));
+
+    await ingestPortableUsage({ store, statePath, claudeRefs: [known], codexRefs: [], readClaude, enrichCosts });
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toHaveProperty("costEnrichmentVersion", 1);
+
+    await ingestPortableUsage({ store, statePath, claudeRefs: [known, added], codexRefs: [], readClaude, enrichCosts });
+    expect(JSON.parse(await readFile(statePath, "utf8"))).not.toHaveProperty("costEnrichmentVersion");
+    readClaude.mockClear();
+    await ingestPortableUsage({ store, statePath, claudeRefs: [known, added], codexRefs: [], readClaude, enrichCosts });
+    expect(readClaude.mock.calls.some(([refs]) => refs[0].file === added.file)).toBe(true);
+  });
+
+  it("fails closed without modifying a future cost enrichment state", async () => {
+    const future = `${JSON.stringify({ schemaVersion: 1, costEnrichmentVersion: 2, sources: {} }, null, 2)}\n`;
+    await writeFile(statePath, future, "utf8");
+    const recoverPending = vi.fn(async () => undefined);
+    const futureStore = {
+      getIngestStatePath: () => statePath,
+      recoverPending,
+      read: () => store.read(),
+      reconcileWithIngestState: vi.fn(async () => ({ inserted: 0, updated: 0, existing: 0 })),
+    };
+    const readClaude = vi.fn(async () => [claude()]);
+    const enrichCosts = vi.fn(async (events) => events);
+
+    await expect(ingestPortableUsage({
+      store: futureStore, statePath, claudeRefs: [], codexRefs: [], readClaude, enrichCosts,
+    })).rejects.toThrow("Portable cost enrichment version is newer than supported");
+
+    expect(await readFile(statePath, "utf8")).toBe(future);
+    expect(readClaude).not.toHaveBeenCalled();
+    expect(enrichCosts).not.toHaveBeenCalled();
+    expect(recoverPending).not.toHaveBeenCalled();
+    expect(await store.read()).toEqual([]);
+  });
+
+  it("rejects cost enrichment when the store cannot read existing events", async () => {
+    const unreadableStore = {
+      getIngestStatePath: () => statePath,
+      recoverPending: vi.fn(async () => undefined),
+      reconcileWithIngestState: vi.fn(async () => ({ inserted: 0, updated: 0, existing: 0 })),
+    };
+    const enrichCosts = vi.fn(async (events) => events);
+
+    await expect(ingestPortableUsage({
+      store: unreadableStore, statePath, claudeRefs: [], codexRefs: [], enrichCosts,
+    })).rejects.toThrow("Portable cost enrichment requires a readable store");
+    expect(unreadableStore.recoverPending).not.toHaveBeenCalled();
+    expect(unreadableStore.reconcileWithIngestState).not.toHaveBeenCalled();
+  });
+
   it("retries cost enrichment failures without committing the repair marker", async () => {
     const ref = await claudeRef(rootDir, "cost-retry.jsonl", "fixture");
     const readClaude = vi.fn(async () => [claude({ costUSD: undefined })]);

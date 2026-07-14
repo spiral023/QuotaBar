@@ -100,6 +100,9 @@ const MAX_CORRUPT_STATE_FILES = 3;
 
 export function ingestPortableUsage(options: IngestPortableUsageOptions = {}): Promise<IngestPortableUsageResult> {
   const store = options.store ?? getDefaultStore();
+  if (options.enrichCosts && !store.read) {
+    return Promise.reject(new Error("Portable cost enrichment requires a readable store"));
+  }
   let storeStatePath: string;
   try {
     storeStatePath = path.resolve(store.getIngestStatePath());
@@ -125,6 +128,7 @@ async function runWithIngestionLock(
   store: IngestionStore,
   statePath: string,
 ): Promise<IngestPortableUsageResult> {
+  if (options.enrichCosts) await assertSupportedCostEnrichmentState(statePath);
   try {
     return await withNamedPortableRootLock(path.dirname(statePath), ".portable-ingestion.lock", async () => {
       try {
@@ -157,6 +161,11 @@ async function ingestExclusive(
   }
   const loaded = await readStateRecovering(statePath);
   const previousState = loaded.state;
+  if (options.enrichCosts
+    && previousState.costEnrichmentVersion !== undefined
+    && previousState.costEnrichmentVersion > PORTABLE_COST_ENRICHMENT_VERSION) {
+    throw new Error("Portable cost enrichment version is newer than supported");
+  }
   const nextSources = cloneSources(previousState.sources);
   const discovery = await collectKnownSources(options, errors);
   const knownSources = discovery.sources;
@@ -164,6 +173,7 @@ async function ingestExclusive(
   const currentKeys = new Set(sourceByKey.keys());
   const unavailableKeys = new Set<string>();
   let repairedEvents: PortableUsageEvent[] = [];
+  let repairedCostsComplete = true;
   const enrichCosts = options.enrichCosts;
   const costRepairRequired = enrichCosts !== undefined
     && previousState.costEnrichmentVersion !== PORTABLE_COST_ENRICHMENT_VERSION;
@@ -173,6 +183,8 @@ async function ingestExclusive(
       stored = await store.read();
       const candidates = stored.filter((event) => event.source !== "legacy-reconciliation" && !hasCompleteCost(event));
       repairedEvents = candidates.length > 0 ? await enrichCosts(candidates) : [];
+      repairedCostsComplete = preservesEventIdentity(candidates, repairedEvents)
+        && repairedEvents.every(hasCompleteCost);
     } catch {
       throw new Error("Portable cost enrichment failed");
     }
@@ -241,6 +253,12 @@ async function ingestExclusive(
       await readSource(sourceByKey.get(ownerKey) as KnownSource, readClaude, readCodex, options.enrichCosts, batches, failedKeys, errors);
     }
   }
+  const unresolvedCostKeys = new Set<string>();
+  if (enrichCosts) {
+    for (const [sourceKey, events] of batches) {
+      if (events.some((event) => !hasCompleteCost(event))) unresolvedCostKeys.add(sourceKey);
+    }
+  }
 
   const protectedIds = new Set<string>();
   for (const key of failedKeys) {
@@ -264,7 +282,7 @@ async function ingestExclusive(
     const wasChanged = changedKeys.includes(source.key);
     const intersectsProtected = events.some(({ id }) => protectedIds.has(id));
     if (wasChanged && !intersectsProtected) successfulChanged += 1;
-    if (!intersectsProtected) {
+    if (!intersectsProtected && !unresolvedCostKeys.has(source.key)) {
       const fingerprint = fingerprints.get(source.key);
       if (fingerprint) {
         removeLegacySource(nextSources, source);
@@ -280,15 +298,18 @@ async function ingestExclusive(
     }
   }
 
-  const costRepairCompleted = costRepairRequired && errors.length === 0;
+  const allObservedCostsComplete = repairedCostsComplete && unresolvedCostKeys.size === 0;
+  const costRepairCompleted = costRepairRequired && errors.length === 0 && allObservedCostsComplete;
   if (successfulChanged === 0 && incoming.length === 0 && !activityChanged && !costRepairCompleted) {
     return emptyResult(knownSources.length, changed, errors, loaded.diagnostics);
   }
 
-  const nextCostEnrichmentVersion = options.enrichCosts
-    ? costRepairCompleted
-      ? PORTABLE_COST_ENRICHMENT_VERSION
-      : previousState.costEnrichmentVersion
+  const nextCostEnrichmentVersion = enrichCosts
+    ? !allObservedCostsComplete
+      ? undefined
+      : costRepairCompleted
+        ? PORTABLE_COST_ENRICHMENT_VERSION
+        : previousState.costEnrichmentVersion
     : previousState.costEnrichmentVersion;
   const nextState: PortableIngestState = {
     schemaVersion: PORTABLE_STORE_VERSION,
@@ -338,6 +359,7 @@ async function readSource(
       ? fromClaudeEntries(providerEvents as ClaudeUsageEntry[])
       : fromCodexEvents(providerEvents as CodexTokenEvent[]);
     const events = enrichCosts ? await enrichCosts(normalized) : normalized;
+    if (enrichCosts && !preservesEventIdentity(normalized, events)) throw new Error("invalid cost enrichment");
     batches.set(source.key, events);
   } catch {
     failedKeys.add(source.key);
@@ -352,6 +374,30 @@ function hasCompleteCost(event: PortableUsageEvent): boolean {
     && event.cacheCreationCostUSD !== undefined
     && event.cacheReadCostUSD !== undefined
     && event.pricingVersion !== undefined;
+}
+
+function preservesEventIdentity(
+  input: readonly PortableUsageEvent[],
+  output: readonly PortableUsageEvent[],
+): boolean {
+  if (input.length !== output.length) return false;
+  const inputIds = new Set(input.map(({ id }) => id));
+  return output.every(({ id }) => inputIds.delete(id)) && inputIds.size === 0;
+}
+
+async function assertSupportedCostEnrichmentState(statePath: string): Promise<void> {
+  try {
+    const parsed = parsePortableIngestStateForLoad(JSON.parse(await nodeFs.readFile(statePath, "utf8"))).state;
+    if (parsed.costEnrichmentVersion !== undefined
+      && parsed.costEnrichmentVersion > PORTABLE_COST_ENRICHMENT_VERSION) {
+      throw new Error("Portable cost enrichment version is newer than supported");
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === "Portable cost enrichment version is newer than supported") {
+      throw error;
+    }
+    // Missing, corrupt, or interrupted state is handled under the normal ingestion lock.
+  }
 }
 
 async function collectKnownSources(
