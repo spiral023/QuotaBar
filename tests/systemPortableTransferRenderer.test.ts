@@ -33,6 +33,12 @@ function transferHarness(extraResponses: Record<string, unknown[]>) {
   return h;
 }
 
+function byId(h: ReturnType<typeof transferHarness>, id: string) {
+  const element = h.document.getElementById(id);
+  if (!element) throw new Error(`Missing test element #${id}`);
+  return element;
+}
+
 describe("System portable data transfer controls", () => {
   it("renders stable, accessible English export and import controls beside data deletion", () => {
     expect(script).toContain('id="sys-export-portable-data"');
@@ -139,5 +145,159 @@ describe("System portable data transfer controls", () => {
       "system:import-portable-data",
       "system:confirm-portable-import-restart",
     ]);
+  });
+
+  it("acknowledges restart through a bounded fallback when animation frames never fire", async () => {
+    const h = transferHarness({
+      "system:import-portable-data": [{
+        ok: true,
+        restartScheduled: true,
+        backupPath: "C:\\Backups\\hidden-window.zip",
+      }],
+      "system:confirm-portable-import-restart": [{ ok: true }],
+    });
+    (h.context as Record<string, unknown>).requestAnimationFrame = () => 1;
+    await h.QB.renderSystem();
+
+    void byId(h, "sys-import-portable-confirm").emit("click");
+    await flush();
+
+    expect(byId(h, "sys-transfer-result").textContent).toContain("C:\\Backups\\hidden-window.zip");
+    expect(h.calls.at(-1)).toBe("system:import-portable-data");
+
+    h.timers.advanceBy(250);
+    await flush();
+
+    expect(h.calls.slice(-2)).toEqual([
+      "system:import-portable-data",
+      "system:confirm-portable-import-restart",
+    ]);
+  });
+
+  it("keeps successful deletion disabled until the scheduled rerender", async () => {
+    const h = transferHarness({
+      "system:delete-app-data": [{ ok: true, deleted: ["cache.json"] }],
+    });
+    await h.QB.renderSystem();
+
+    const row = h.document.querySelectorAll(".sys-delete-row")[0];
+    await row.emit("click");
+    await byId(h, "sys-delete-confirm").emit("click");
+    const execute = byId(h, "sys-del-execute");
+
+    await execute.emit("click");
+    await execute.emit("click");
+
+    expect(execute.disabled).toBe(true);
+    expect(h.calls.filter((channel) => channel === "system:delete-app-data")).toHaveLength(1);
+  });
+
+  it("keeps staged import recovery visible and retries rejected restart confirmation", async () => {
+    const h = transferHarness({
+      "system:import-portable-data": [{
+        ok: true,
+        restartScheduled: true,
+        backupPath: "C:\\Backups\\recovery.zip",
+      }],
+      "system:confirm-portable-import-restart": [
+        { ok: false, message: "No portable import restart is pending." },
+        { ok: true },
+      ],
+    });
+    (h.context as Record<string, unknown>).requestAnimationFrame = (callback: () => void) => { callback(); return 1; };
+    await h.QB.renderSystem();
+
+    await byId(h, "sys-import-portable-confirm").emit("click");
+
+    expect(byId(h, "sys-transfer-result").textContent).toContain("Import is ready");
+    expect(byId(h, "sys-transfer-result").textContent).toContain("C:\\Backups\\recovery.zip");
+    expect(byId(h, "sys-import-restart-retry").hidden).toBe(false);
+
+    await byId(h, "sys-import-restart-retry").emit("click");
+
+    expect(h.calls.filter((channel) => channel === "system:confirm-portable-import-restart")).toHaveLength(2);
+    expect(byId(h, "sys-transfer-result").textContent).toBe("Restarting QuotaBar…");
+  });
+
+  it("sanitizes thrown restart errors while retaining staged recovery", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const h = transferHarness({
+      "system:import-portable-data": [{
+        ok: true,
+        restartScheduled: true,
+        backupPath: "C:\\Backups\\safe.zip",
+      }],
+      "system:confirm-portable-import-restart": [() => { throw new Error("raw secret detail"); }],
+    });
+    (h.context as Record<string, unknown>).requestAnimationFrame = (callback: () => void) => { callback(); return 1; };
+    await h.QB.renderSystem();
+
+    await byId(h, "sys-import-portable-confirm").emit("click");
+
+    expect(byId(h, "sys-transfer-result").textContent).toContain("Import is ready");
+    expect(byId(h, "sys-transfer-result").textContent).not.toContain("raw secret detail");
+    expect(errorLog).toHaveBeenCalledWith("system:import-portable-data failed");
+    errorLog.mockRestore();
+  });
+
+  it("treats Import and Delete as exclusive accessible disclosures with focus return", async () => {
+    const h = transferHarness({});
+    await h.QB.renderSystem();
+    const importToggle = byId(h, "sys-import-portable-data");
+    const deleteToggle = byId(h, "sys-delete-toggle");
+    const importPanel = byId(h, "sys-import-portable-panel");
+    const deletePanel = byId(h, "sys-delete-panel");
+
+    expect(importPanel.hidden).toBe(true);
+    expect(deletePanel.hidden).toBe(true);
+    expect(importToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(deleteToggle.getAttribute("aria-expanded")).toBe("false");
+
+    await importToggle.emit("click");
+    expect(importPanel.hidden).toBe(false);
+    expect(deletePanel.hidden).toBe(true);
+    expect(h.document.activeElement).toBe(byId(h, "sys-import-portable-confirm"));
+
+    await deleteToggle.emit("click");
+    expect(importPanel.hidden).toBe(true);
+    expect(deletePanel.hidden).toBe(false);
+    expect(importToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(deleteToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(h.document.activeElement).toBe(byId(h, "sys-delete-cancel"));
+
+    await byId(h, "sys-delete-cancel").emit("click");
+    expect(deletePanel.hidden).toBe(true);
+    expect(h.document.activeElement).toBe(deleteToggle);
+  });
+
+  it("disables disclosure cancel and back controls so they cannot overwrite active export status", async () => {
+    let finishExport!: (result: unknown) => void;
+    const pendingExport = new Promise((resolve) => { finishExport = resolve; });
+    const h = transferHarness({ "system:export-portable-data": [pendingExport] });
+    await h.QB.renderSystem();
+
+    await byId(h, "sys-delete-toggle").emit("click");
+    await h.document.querySelectorAll(".sys-delete-row")[0].emit("click");
+    await byId(h, "sys-delete-confirm").emit("click");
+    await byId(h, "sys-import-portable-data").emit("click");
+
+    const exportClick = byId(h, "sys-export-portable-data").emit("click");
+    await flush();
+
+    for (const id of [
+      "sys-import-portable-cancel",
+      "sys-import-portable-confirm",
+      "sys-import-restart-retry",
+      "sys-delete-cancel",
+      "sys-del-back",
+      "sys-del-execute",
+    ]) {
+      expect(byId(h, id).disabled).toBe(true);
+    }
+    await byId(h, "sys-import-portable-cancel").emit("click");
+    expect(byId(h, "sys-transfer-result").textContent).toBe("Preparing archive…");
+
+    finishExport({ ok: false, cancelled: true });
+    await exportClick;
   });
 });
