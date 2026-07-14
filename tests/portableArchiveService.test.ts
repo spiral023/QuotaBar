@@ -770,6 +770,45 @@ describe("portable archive service", () => {
     await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("remembers a corrupted brand-new file while resuming rolling-back cleanup", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "source", ".quotabar-win");
+    const targetHome = path.join(root, "target-new-file-rollback");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "new-file-rollback.zip");
+    const originalSettings = "{\"costWindow\":\"30d\"}\n";
+    await put(source, "settings.json", "{\"costWindow\":\"7d\"}\n");
+    await put(source, "usage/events/new.jsonl", "new-data\n");
+    await put(target, "settings.json", originalSettings);
+    await exportPortableData(source, archivePath);
+    await stagePortableImport(archivePath, target, targetHome);
+    const pendingPath = path.join(target, ".portable-import.pending.json");
+    const rename: typeof fsPromises.rename = async (from, to) => {
+      await fsPromises.rename(from, to);
+      if (String(to).endsWith(path.join("usage", "events", "new.jsonl"))) {
+        await writeFile(path.join(target, "usage/events/new.jsonl"), "corrupt-new-file\n");
+      }
+    };
+    let completedPhaseRenames = 0;
+    const pendingWriteCheckpoint = async (checkpoint: import("../src/portable/archiveService").PendingWriteCheckpoint) => {
+      if (checkpoint === "after-rename") completedPhaseRenames += 1;
+      if (checkpoint === "before-temp-write" && completedPhaseRenames === 2) {
+        throw new Error("crash before aborted phase write");
+      }
+    };
+
+    await expect(applyPendingImport(target, { rename, pendingWriteCheckpoint })).rejects.toMatchObject({
+      rollbackOutcome: "pending-recovery",
+    });
+    expect(JSON.parse(await readFile(pendingPath, "utf8"))).toMatchObject({ phase: "rolling-back" });
+    expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe(originalSettings);
+    await expect(access(path.join(target, "usage/events/new.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    await expect(applyPendingImport(target)).resolves.toEqual({ applied: false, fileCount: 0, totalBytes: 0 });
+    await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(path.join(target, "usage/events/new.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("stages, verifies, and applies with a private backup file larger than 64 MiB", async () => {
     const root = await tempRoot();
     const source = path.join(root, "source", ".quotabar-win");

@@ -880,11 +880,11 @@ async function rollbackAll(
       const liveExists = await safeRegularFileExists(livePath);
       const stagedExists = await safeRegularFileExists(stagedPath);
       const rollbackExists = await safeRegularFileExists(rollbackPath);
+      const corruptMarkerExists = Boolean(imported && !stagedExists
+        && await hasCorruptStagedMarker(stagingDir, relativePath));
+      if (corruptMarkerExists) retryable = false;
       if (imported && liveExists && !stagedExists) {
-        if (!rollbackExists && await hasCorruptStagedMarker(stagingDir, relativePath)) {
-          retryable = false;
-          continue;
-        }
+        if (!rollbackExists && corruptMarkerExists) continue;
         await ensureSafeParents(stagingDir, relativePath);
         let importedMatches = false;
         try {

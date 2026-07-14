@@ -22,7 +22,8 @@ window.QB = window.QB || {};
     if (!result?.ok || !result.restartScheduled) return result;
     if (typeof processSuccess !== 'function') throw new Error('Portable import success handler is required');
     await processSuccess(result);
-    await QB.ipc.invoke('system:confirm-portable-import-restart');
+    const confirmation = await QB.ipc.invoke('system:confirm-portable-import-restart');
+    if (!confirmation?.ok) throw new Error('Portable import restart confirmation failed');
     return result;
   };
 

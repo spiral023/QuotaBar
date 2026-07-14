@@ -51,4 +51,24 @@ describe("system renderer portable import workflow", () => {
 
     expect(h.calls).toEqual(["system:import-portable-data"]);
   });
+
+  it("does not report import success when restart confirmation is rejected", async () => {
+    const h = rendererHarness({
+      "system:import-portable-data": [{ ok: true, restartScheduled: true }],
+      "system:confirm-portable-import-restart": [{
+        ok: false,
+        error: "portable_import_restart_not_pending",
+        message: "No portable import restart is pending.",
+      }],
+    });
+    h.run("src/renderer/tabs/system.js");
+
+    await expect(h.QB.importPortableData(vi.fn())).rejects.toThrow(
+      "Portable import restart confirmation failed",
+    );
+    expect(h.calls).toEqual([
+      "system:import-portable-data",
+      "system:confirm-portable-import-restart",
+    ]);
+  });
 });
