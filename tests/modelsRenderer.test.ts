@@ -46,4 +46,12 @@ describe("models renderer", () => {
     expect(script).toContain('<button type="button" class="mod-methodology-link" id="mod-methodology-link"');
     expect(script).not.toContain('<a href="#" id="mod-methodology-link"');
   });
+
+  it("renders preparing responses without caching them as models data", () => {
+    const script = fs.readFileSync(MODELS_TAB, "utf8");
+    expect(script).toContain("QB.isPortableDataPreparing(d)");
+    expect(script).toContain("Preparing data");
+    expect(script).toMatch(/isPortableDataPreparing\(d\)[\s\S]{0,180}_dataPromise = null/);
+    expect(script).not.toMatch(/_data = d; _stale = false; return d;[\s\S]{0,80}isPortableDataPreparing/);
+  });
 });

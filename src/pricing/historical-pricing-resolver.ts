@@ -9,6 +9,11 @@ export interface ModelPricingLookup {
   getModelPricing(modelName: string): Promise<ModelPricing | null>;
 }
 
+export interface VersionedModelPricing {
+  pricing: ModelPricing;
+  pricingVersion: string;
+}
+
 export interface HistoricalPricingResolverOptions {
   historyPath?: string;
   now?: () => Date;
@@ -81,8 +86,16 @@ export class HistoricalPricingResolver implements ModelPricingLookup {
   }
 
   async getModelPricing(modelName: string, eventTimestamp?: Date | string | number): Promise<ModelPricing | null> {
+    const [resolved] = await this.getModelPricingBatch(modelName, [eventTimestamp]);
+    return resolved?.pricing ?? null;
+  }
+
+  async getModelPricingBatch(
+    modelName: string,
+    eventTimestamps: readonly (Date | string | number | undefined)[],
+  ): Promise<(VersionedModelPricing | null)[]> {
     const currentPricing = await this.pricingLookup.getModelPricing(modelName);
-    if (!currentPricing) return null;
+    if (!currentPricing) return eventTimestamps.map(() => null);
 
     return withHistoryLock(this.historyPath, async () => {
       let history = historyCache.get(this.historyPath);
@@ -101,10 +114,15 @@ export class HistoricalPricingResolver implements ModelPricingLookup {
         await this.storage.write(this.historyPath, JSON.stringify(history, null, 2));
       }
 
-      const eventTime = toTimestamp(eventTimestamp);
-      if (eventTime == null) return pricing;
-      const historical = latestEpochAtOrBefore(epochs, eventTime);
-      return historical?.pricing ?? currentPricing;
+      return eventTimestamps.map((eventTimestamp) => {
+        const eventTime = toTimestamp(eventTimestamp);
+        const historical = eventTime == null ? undefined : latestEpochAtOrBefore(epochs, eventTime);
+        const resolvedPricing = normalizePricing(historical?.pricing ?? currentPricing);
+        return {
+          pricing: resolvedPricing,
+          pricingVersion: `litellm:${pricingChecksum(resolvedPricing)}`,
+        };
+      });
     });
   }
 }

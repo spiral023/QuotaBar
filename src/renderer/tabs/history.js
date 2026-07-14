@@ -22,8 +22,14 @@ QB.renderHistory = async function renderHistory() {
   if (!container) return;
 
   if (!_initialized) {
+    const minDate = await _fetchMinDate();
+    if (QB.isPortableDataPreparing(minDate)) {
+      container.innerHTML = '<div class="empty"><span>Preparing data…</span></div>';
+      QB.schedulePortableDataRetry('history', () => QB.renderHistory());
+      return;
+    }
+    _minDate = minDate;
     _initialized = true;
-    _minDate = await _fetchMinDate();
     _buildControls(container);
     await _loadAndRender();
   }
@@ -32,12 +38,12 @@ QB.renderHistory = async function renderHistory() {
 async function _fetchMinDate() {
   try {
     const report = await QB.ipc.invoke('reports:get', {
-      source:   'backfill',
       type:     'daily',
       order:    'asc',
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       breakdown: false,
     });
+    if (QB.isPortableDataPreparing(report)) return report;
     return report.rows?.[0]?.bucket ?? null;
   } catch {
     return null;
@@ -204,7 +210,6 @@ async function _loadAndRender() {
   try {
     const isHourly = agg === 'hourly';
     const report = await QB.ipc.invoke('reports:get', {
-      source:    isHourly ? 'live' : 'backfill',
       type:      agg,
       provider:  prov === 'all' ? undefined : prov,
       since:     from || undefined,
@@ -215,6 +220,13 @@ async function _loadAndRender() {
       ...(isHourly ? { limit: 168 } : {}),
     });
 
+    if (QB.isPortableDataPreparing(report)) {
+      results.innerHTML = '<div class="empty"><span>Preparing data…</span></div>';
+      QB.schedulePortableDataRetry('history', () => _loadAndRender());
+      return;
+    }
+
+    QB.clearPortableDataRetry('history');
     _renderResults(report, agg);
   } catch (e) {
     console.error('history:get failed', e);

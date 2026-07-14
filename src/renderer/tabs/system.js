@@ -13,9 +13,24 @@ window.QB = window.QB || {};
   let _codexSuggestions = null;
   let _loading = null;
   let _rootSaveBusy = false;
+  let _transferBusy = false;
+  let _stagedPortableImport = null;
+  let _portableRestartFailed = false;
+  let _deleteRefreshBlocked = false;
+  let _systemWrap = null;
   let _animated = false;
 
   let _update = null;
+
+  QB.importPortableData = async function importPortableData(processSuccess) {
+    const result = await QB.ipc.invoke('system:import-portable-data');
+    if (!result?.ok || !result.restartScheduled) return result;
+    if (typeof processSuccess !== 'function') throw new Error('Portable import success handler is required');
+    await processSuccess(result);
+    const confirmation = await QB.ipc.invoke('system:confirm-portable-import-restart');
+    if (!confirmation?.ok) throw new Error('Portable import restart confirmation failed');
+    return result;
+  };
 
   async function loadUpdateState(force) {
     try {
@@ -138,6 +153,7 @@ window.QB = window.QB || {};
   }
 
   function renderUI(wrap, report) {
+    _systemWrap = wrap;
     const connected = report.agents.filter((agent) => agent.status === 'connected').length;
     const detected = report.agents.filter((agent) => agent.status !== 'not_found').length;
     const lastModified = newestDate([
@@ -145,6 +161,8 @@ window.QB = window.QB || {};
       ...report.agents.map((agent) => agent.totals.lastModifiedAt),
       report.app.totals.lastModifiedAt,
     ]);
+
+    const portableStatus = portableDataStatusLabel(report.app);
 
     wrap.innerHTML = `
       <div class="${_animated ? '' : 'sys-stagger'}">
@@ -209,11 +227,21 @@ window.QB = window.QB || {};
             <div class="sys-panel">
               <div class="sys-section-head">
                 <span class="sys-section-title">QuotaBar</span>
-                <div style="display:flex;align-items:center;gap:6px">
+                <div class="sys-transfer-actions">
+                  <span class="sys-section-count" id="sys-portable-status">${portableStatus}</span>
                   <span class="sys-section-count">${fmtBytes(report.app.totals.totalBytes)}</span>
+                  <button class="sys-action secondary" id="sys-export-portable-data"
+                    title="Export portable statistics and settings">
+                    Export data
+                  </button>
+                  <button class="sys-action secondary" id="sys-import-portable-data"
+                    title="Import portable statistics and settings"
+                    aria-expanded="false" aria-controls="sys-import-portable-panel">
+                    Import data
+                  </button>
                   <button class="sys-action secondary" id="sys-delete-toggle"
-                    style="min-height:26px;padding:0 8px;font-size:9.5px;gap:5px"
-                    title="Delete QuotaBar data">
+                    title="Delete QuotaBar data"
+                    aria-expanded="false" aria-controls="sys-delete-panel">
                     ${trashIcon()} Delete
                   </button>
                 </div>
@@ -222,7 +250,21 @@ window.QB = window.QB || {};
                 ${report.app.paths.map((item) => pathRow(item, 'QuotaBar')).join('')}
               </div>
               <div class="sys-note">Explorer only opens folders from this list. Non-existent paths remain locked.</div>
-              <div class="sys-delete-panel" id="sys-delete-panel">
+              <div class="sys-transfer-result" id="sys-transfer-result" role="status" aria-live="polite"></div>
+              <div class="sys-transfer-panel" id="sys-import-portable-panel" hidden>
+                <div class="sys-del-warn">
+                  ${warnIcon()} Import replaces portable statistics and settings.
+                </div>
+                <div class="sys-transfer-copy">
+                  A backup is created automatically. QuotaBar restarts after a successful import.
+                </div>
+                <div class="sys-del-footer">
+                  <button class="sys-action secondary" id="sys-import-portable-cancel">Cancel</button>
+                  <button class="sys-action secondary" id="sys-import-restart-retry" hidden>Retry restart</button>
+                  <button class="sys-action" id="sys-import-portable-confirm">Confirm import</button>
+                </div>
+              </div>
+              <div class="sys-delete-panel" id="sys-delete-panel" hidden>
                 <div id="sys-del-step-select">
                   <div class="sys-delete-title">Select data</div>
                   ${DELETE_GROUPS.map((g) => deleteGroupRow(g, report.app.paths)).join('')}
@@ -234,7 +276,7 @@ window.QB = window.QB || {};
                       style="min-height:28px;padding:0 10px;font-size:9.5px">Delete now</button>
                   </div>
                 </div>
-                <div id="sys-del-step-confirm" style="display:none"></div>
+                <div id="sys-del-step-confirm" hidden></div>
               </div>
             </div>
           </div>
@@ -242,6 +284,114 @@ window.QB = window.QB || {};
       </div>`;
     _animated = true;
     bindEvents(wrap);
+  }
+
+  function portableDataStatusLabel(app) {
+    if (app?.portableMigrationStatus === 'complete' && app?.portableDataReady === true) {
+      return 'Portable data: Ready';
+    }
+    if (app?.portableMigrationStatus === 'pending' || app?.portableMigrationStatus === 'running') {
+      return 'Portable data: Preparing';
+    }
+    return 'Portable data: Needs attention';
+  }
+
+  function activeSystemWrap(fallback) {
+    return _systemWrap?.isConnected ? _systemWrap : fallback;
+  }
+
+  function setTransferBusy(wrap, busy) {
+    _transferBusy = busy;
+    [
+      '#sys-export-portable-data',
+      '#sys-import-portable-data',
+      '#sys-delete-toggle',
+      '#sys-import-portable-cancel',
+      '#sys-import-portable-confirm',
+      '#sys-import-restart-retry',
+      '#sys-delete-cancel',
+      '#sys-delete-confirm',
+      '#sys-del-back',
+      '#sys-del-execute',
+    ].forEach((selector) => {
+      const button = wrap.querySelector(selector);
+      if (!button) return;
+      const deleteBlocked = _deleteRefreshBlocked && [
+        '#sys-delete-toggle',
+        '#sys-delete-confirm',
+        '#sys-del-execute',
+      ].includes(selector);
+      if (selector === '#sys-delete-confirm' && !busy && !deleteBlocked) {
+        updateDeleteConfirmBtn(wrap);
+        return;
+      }
+      button.disabled = busy || deleteBlocked;
+    });
+    const importButton = wrap.querySelector('#sys-import-portable-data');
+    if (importButton) importButton.disabled = busy || Boolean(_stagedPortableImport);
+  }
+
+  function setTransferResult(wrap, text, isError = false) {
+    const resultEl = wrap.querySelector('#sys-transfer-result');
+    if (!resultEl) return;
+    resultEl.textContent = text;
+    resultEl.classList.toggle('error', isError);
+  }
+
+  function transferError(result, fallback) {
+    return typeof result?.message === 'string' && result.message.trim() ? result.message : fallback;
+  }
+
+  function waitForTransferResultPaint() {
+    return new Promise((resolve) => {
+      let complete = false;
+      const finish = () => {
+        if (complete) return;
+        complete = true;
+        clearTimeout(fallback);
+        resolve();
+      };
+      const fallback = setTimeout(finish, 180);
+      if (typeof requestAnimationFrame !== 'function') return;
+      requestAnimationFrame(() => requestAnimationFrame(finish));
+    });
+  }
+
+  function setDisclosure(panel, toggle, open, focusTarget, returnFocus = false) {
+    panel.hidden = !open;
+    panel.classList.toggle('open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    if (open) focusTarget?.focus();
+    else if (returnFocus) toggle.focus();
+  }
+
+  function applyStagedImportState(wrap, focusRetry = false) {
+    if (!_stagedPortableImport) return;
+    const panel = wrap.querySelector('#sys-import-portable-panel');
+    const toggle = wrap.querySelector('#sys-import-portable-data');
+    const retry = wrap.querySelector('#sys-import-restart-retry');
+    const cancel = wrap.querySelector('#sys-import-portable-cancel');
+    const confirm = wrap.querySelector('#sys-import-portable-confirm');
+    if (!panel || !toggle || !retry) return;
+    if (retry) retry.hidden = false;
+    if (cancel) cancel.hidden = true;
+    if (confirm) confirm.hidden = true;
+    setDisclosure(panel, toggle, true, null);
+    if (_portableRestartFailed) {
+      setTransferResult(
+        wrap,
+        `Import is ready. Backup created at ${_stagedPortableImport.backupPath}. Restart confirmation failed. Retry restart.`,
+        true,
+      );
+    } else {
+      setTransferResult(wrap, `Backup created at ${_stagedPortableImport.backupPath}`);
+    }
+    if (focusRetry && !_transferBusy) retry.focus();
+  }
+
+  function showStagedImportRecovery(wrap, focusRetry = false) {
+    _portableRestartFailed = true;
+    applyStagedImportState(wrap, focusRetry);
   }
 
   function bindEvents(wrap) {
@@ -252,6 +402,7 @@ window.QB = window.QB || {};
       try {
         const [report] = await Promise.all([loadData(true), loadDataSources()]);
         await loadSystemSettings();
+        _deleteRefreshBlocked = false;
         renderUI(wrap, report);
       } catch (e) {
         console.error('system refresh failed', e);
@@ -273,14 +424,119 @@ window.QB = window.QB || {};
       });
     });
 
-    // Delete panel
+    const importPanel = wrap.querySelector('#sys-import-portable-panel');
+    const importToggle = wrap.querySelector('#sys-import-portable-data');
     const deletePanel = wrap.querySelector('#sys-delete-panel');
+    const deleteToggle = wrap.querySelector('#sys-delete-toggle');
+
+    function showImport(open, returnFocus = false) {
+      setDisclosure(importPanel, importToggle, open, wrap.querySelector('#sys-import-portable-confirm'), returnFocus);
+    }
+
+    function showDelete(open, returnFocus = false) {
+      setDisclosure(deletePanel, deleteToggle, open, wrap.querySelector('#sys-delete-cancel'), returnFocus);
+    }
+
+    wrap.querySelector('#sys-export-portable-data')?.addEventListener('click', async () => {
+      if (_transferBusy) return;
+      setTransferBusy(wrap, true);
+      setTransferResult(wrap, 'Preparing archive…');
+      try {
+        const result = await QB.ipc.invoke('system:export-portable-data');
+        const liveWrap = activeSystemWrap(wrap);
+        if (result?.ok) {
+          setTransferResult(liveWrap, `Exported to ${result.path}`);
+        } else if (result?.cancelled) {
+          setTransferResult(liveWrap, 'Export cancelled.');
+        } else {
+          setTransferResult(liveWrap, transferError(result, 'Export failed.'), true);
+        }
+      } catch {
+        console.error('system:export-portable-data failed');
+        setTransferResult(activeSystemWrap(wrap), 'Export failed.', true);
+      } finally {
+        setTransferBusy(activeSystemWrap(wrap), false);
+      }
+    });
+
+    importToggle?.addEventListener('click', () => {
+      if (_transferBusy) return;
+      const open = importPanel.hidden;
+      if (open) showDelete(false);
+      showImport(open, !open);
+    });
+
+    wrap.querySelector('#sys-import-portable-cancel')?.addEventListener('click', () => {
+      if (_transferBusy) return;
+      showImport(false, true);
+      setTransferResult(wrap, 'Import cancelled.');
+    });
+
+    wrap.querySelector('#sys-import-portable-confirm')?.addEventListener('click', async () => {
+      if (_transferBusy) return;
+      _stagedPortableImport = null;
+      _portableRestartFailed = false;
+      const retry = wrap.querySelector('#sys-import-restart-retry');
+      if (retry) retry.hidden = true;
+      setTransferBusy(wrap, true);
+      setTransferResult(wrap, 'Validating and backing up…');
+      let restartFailed = false;
+      try {
+        const result = await QB.importPortableData(async (success) => {
+          _stagedPortableImport = success;
+          _portableRestartFailed = false;
+          applyStagedImportState(activeSystemWrap(wrap));
+          await waitForTransferResultPaint();
+        });
+        const liveWrap = activeSystemWrap(wrap);
+        if (!result?.ok && result?.cancelled) {
+          setTransferResult(liveWrap, 'Import cancelled.');
+        } else if (!result?.ok) {
+          setTransferResult(liveWrap, transferError(result, 'Import failed.'), true);
+        }
+      } catch {
+        console.error('system:import-portable-data failed');
+        if (_stagedPortableImport) {
+          restartFailed = true;
+          showStagedImportRecovery(activeSystemWrap(wrap));
+        } else {
+          setTransferResult(activeSystemWrap(wrap), 'Import failed.', true);
+        }
+      } finally {
+        setTransferBusy(activeSystemWrap(wrap), false);
+      }
+      if (restartFailed) applyStagedImportState(activeSystemWrap(wrap), true);
+    });
+
+    wrap.querySelector('#sys-import-restart-retry')?.addEventListener('click', async () => {
+      if (_transferBusy || !_stagedPortableImport) return;
+      setTransferBusy(wrap, true);
+      setTransferResult(wrap, 'Restarting QuotaBar…');
+      _portableRestartFailed = false;
+      let failed = false;
+      try {
+        const confirmation = await QB.ipc.invoke('system:confirm-portable-import-restart');
+        if (!confirmation?.ok) throw new Error('Portable import restart confirmation failed');
+        const retry = activeSystemWrap(wrap).querySelector('#sys-import-restart-retry');
+        if (retry) retry.hidden = true;
+      } catch {
+        console.error('system:confirm-portable-import-restart failed');
+        failed = true;
+        showStagedImportRecovery(activeSystemWrap(wrap));
+      } finally {
+        setTransferBusy(activeSystemWrap(wrap), false);
+      }
+      if (failed) applyStagedImportState(activeSystemWrap(wrap), true);
+    });
+
+    // Delete panel
     const stepSelect = wrap.querySelector('#sys-del-step-select');
     const stepConfirm = wrap.querySelector('#sys-del-step-confirm');
 
-    function showSelectStep() {
-      stepSelect.style.display = '';
-      stepConfirm.style.display = 'none';
+    function showSelectStep(focusBack = false) {
+      stepSelect.hidden = false;
+      stepConfirm.hidden = true;
+      if (focusBack) wrap.querySelector('#sys-delete-confirm')?.focus();
     }
 
     function showConfirmStep() {
@@ -311,57 +567,79 @@ window.QB = window.QB || {};
           </button>
         </div>`;
 
-      stepSelect.style.display = 'none';
-      stepConfirm.style.display = '';
+      stepSelect.hidden = true;
+      stepConfirm.hidden = false;
 
-      wrap.querySelector('#sys-del-back')?.addEventListener('click', showSelectStep);
-      wrap.querySelector('#sys-del-execute')?.addEventListener('click', async (event) => {
-        const btn = event.currentTarget;
-        btn.disabled = true;
+      wrap.querySelector('#sys-del-back')?.addEventListener('click', () => {
+        if (_transferBusy) return;
+        showSelectStep(true);
+      });
+      wrap.querySelector('#sys-del-execute')?.focus();
+      wrap.querySelector('#sys-del-execute')?.addEventListener('click', async () => {
+        if (_transferBusy) return;
+        setTransferBusy(wrap, true);
         wrap.querySelector('#sys-del-back').disabled = true;
         const resultEl = wrap.querySelector('#sys-del-result2');
         const groupIds = groups.map((g) => g.id);
+        let deletionSucceeded = false;
         try {
           const result = await QB.ipc.invoke('system:delete-app-data', groupIds);
           if (result?.ok) {
+            deletionSucceeded = true;
             if (resultEl) resultEl.textContent = `${result.deleted.length} file(s) deleted`;
             _data = null;
             setTimeout(async () => {
               try {
                 const report = await loadData(true);
-                renderUI(wrap, report);
-              } catch (e) { console.error('system refresh after delete failed', e); }
+                _transferBusy = false;
+                _deleteRefreshBlocked = false;
+                renderUI(activeSystemWrap(wrap), report);
+              } catch {
+                console.error('system refresh after delete failed');
+                _transferBusy = false;
+                _deleteRefreshBlocked = true;
+                const liveWrap = activeSystemWrap(wrap);
+                setTransferBusy(liveWrap, false);
+                setTransferResult(liveWrap, 'Data was deleted, but the System view could not refresh. Select Scan before deleting again.', true);
+              }
             }, 1200);
           } else {
             if (resultEl) { resultEl.textContent = 'Error deleting'; resultEl.classList.add('error'); }
-            btn.disabled = false;
             wrap.querySelector('#sys-del-back').disabled = false;
           }
-        } catch (e) {
-          console.error('system:delete-app-data failed', e);
+        } catch {
+          console.error('system:delete-app-data failed');
           if (resultEl) { resultEl.textContent = 'Error deleting'; resultEl.classList.add('error'); }
-          btn.disabled = false;
           wrap.querySelector('#sys-del-back').disabled = false;
+        } finally {
+          if (!deletionSucceeded) setTransferBusy(wrap, false);
         }
       });
     }
 
-    wrap.querySelector('#sys-delete-toggle')?.addEventListener('click', () => {
-      const wasOpen = deletePanel.classList.contains('open');
-      deletePanel.classList.toggle('open');
-      if (!wasOpen) showSelectStep();
+    deleteToggle?.addEventListener('click', () => {
+      if (_transferBusy || _deleteRefreshBlocked) return;
+      const open = deletePanel.hidden;
+      if (open) {
+        showImport(false);
+        showSelectStep();
+      }
+      showDelete(open, !open);
     });
     wrap.querySelector('#sys-delete-cancel')?.addEventListener('click', () => {
-      deletePanel.classList.remove('open');
+      if (_transferBusy) return;
+      showDelete(false, true);
       showSelectStep();
     });
     wrap.querySelectorAll('.sys-delete-row').forEach((row) => {
       row.addEventListener('click', () => {
+        if (_transferBusy || _deleteRefreshBlocked) return;
         row.classList.toggle('selected');
         updateDeleteConfirmBtn(wrap);
       });
     });
     wrap.querySelector('#sys-delete-confirm')?.addEventListener('click', () => {
+      if (_transferBusy || _deleteRefreshBlocked) return;
       showConfirmStep();
     });
 
@@ -393,6 +671,8 @@ window.QB = window.QB || {};
 
     bindClaudeRootEvents(wrap);
     bindCodexRootEvents(wrap);
+    setTransferBusy(wrap, _transferBusy);
+    if (_stagedPortableImport) applyStagedImportState(wrap, _portableRestartFailed && !_transferBusy);
   }
 
   function bindClaudeRootEvents(wrap) {

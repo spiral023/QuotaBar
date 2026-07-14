@@ -17,6 +17,7 @@ import {
   getLiteLLMModelPricesPath,
 } from "../config/paths";
 import type { AppVariantInfo } from "./appIdentity";
+import { parseMigrationState } from "../portable/migration";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,6 +25,7 @@ export type SystemAgentStatus = "connected" | "detected" | "not_found";
 export type SystemPathKind = "file" | "folder";
 export type SystemPathSource = "env" | "settings" | "wsl" | "default";
 export type SystemDataCategoryId = "logs" | "credentials" | "config" | "cache";
+export type PortableMigrationStatus = "pending" | "running" | "complete" | "failed";
 
 export interface SystemDataContext {
   homeDir?: string;
@@ -79,6 +81,8 @@ export interface SystemDataCategory {
 export interface SystemAppData {
   name: "QuotaBar";
   variant: AppVariantInfo;
+  portableMigrationStatus: PortableMigrationStatus | null;
+  portableDataReady: boolean;
   paths: SystemDataPath[];
   totals: SystemDataTotals;
 }
@@ -141,7 +145,11 @@ interface PathSpec {
   kind: SystemPathKind;
   path: string;
   source?: SystemPathSource;
+  boundaryRoot?: string;
+  excludedPaths?: string[];
 }
+
+const MAX_MIGRATION_STATE_BYTES = 64 * 1024;
 
 const CATEGORY_LABELS: Record<SystemDataCategoryId, string> = {
   logs: "Logs & Sessions",
@@ -166,9 +174,13 @@ export async function collectSystemData(context: SystemDataContext = {}): Promis
       totals: sumPaths(paths),
     };
   }));
+  const appDir = resolveAppConfigDir(context);
+  const portableState = await readPortableDataState(appDir);
   const app = {
     name: "QuotaBar" as const,
     variant: context.appVariant ?? { id: "development" as const, label: "Development" },
+    portableMigrationStatus: portableState.status,
+    portableDataReady: portableState.ready,
     paths: await scanSpecs(buildAppSpecs(context)),
     totals: emptyTotals(),
   };
@@ -523,8 +535,9 @@ function buildAgentSpecs(context: SystemDataContext): Array<{
 }
 
 function buildAppSpecs(context: SystemDataContext): PathSpec[] {
-  const appDir = context.appConfigDir ?? path.join(context.homeDir ?? getHomeDir(), ".quotabar-win");
-  return [
+  const appDir = resolveAppConfigDir(context);
+  const migrationPath = path.join(appDir, "usage", "migration-state.json");
+  const specs: PathSpec[] = [
     { id: "app-settings",          label: "Settings",          category: "config", kind: "file",   path: path.join(appDir, "settings.json") },
     { id: "app-log",               label: "App Log",           category: "logs",   kind: "file",   path: path.join(appDir, "quotabar.log") },
     { id: "app-notification-log",  label: "Notification Log",  category: "logs",   kind: "file",   path: path.join(appDir, "notifications.log") },
@@ -538,7 +551,46 @@ function buildAppSpecs(context: SystemDataContext): PathSpec[] {
     { id: "app-bonus-state",       label: "Bonus State",       category: "cache",  kind: "file",   path: path.join(appDir, "bonus-state.json") },
     { id: "app-notification-state",label: "Notification State",category: "cache",  kind: "file",   path: path.join(appDir, "notification-state.json") },
     { id: "app-debug",             label: "Debug Logs",        category: "logs",   kind: "folder", path: path.join(appDir, "debug") },
+    { id: "app-portable-usage",    label: "Usage Store",       category: "cache",  kind: "folder", path: path.join(appDir, "usage"), excludedPaths: [migrationPath] },
+    { id: "app-portable-quota",    label: "Quota Snapshots",   category: "cache",  kind: "folder", path: path.join(appDir, "quota") },
+    { id: "app-portable-migration", label: "Migration State",  category: "config", kind: "file",   path: migrationPath },
+    { id: "app-portable-pending-import", label: "Pending Import", category: "config", kind: "file", path: path.join(appDir, "pending-import.json") },
   ];
+  return specs.map((spec) => ({ ...spec, boundaryRoot: appDir }));
+}
+
+function resolveAppConfigDir(context: SystemDataContext): string {
+  return context.appConfigDir ?? path.join(context.homeDir ?? getHomeDir(), ".quotabar-win");
+}
+
+async function readPortableDataState(
+  appDir: string,
+): Promise<{ status: PortableMigrationStatus | null; ready: boolean }> {
+  const statePath = path.join(appDir, "usage", "migration-state.json");
+  try {
+    if (!await isSafePathWithinRoot(statePath, appDir)) return { status: null, ready: false };
+    const before = await fs.lstat(statePath);
+    if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_MIGRATION_STATE_BYTES) {
+      return { status: null, ready: false };
+    }
+    const raw = await fs.readFile(statePath, "utf8");
+    const after = await fs.lstat(statePath);
+    if (!sameFileSnapshot(before, after) || !after.isFile() || after.isSymbolicLink()) {
+      return { status: null, ready: false };
+    }
+    const state = parseMigrationState(JSON.parse(raw)).state;
+    if (!state) return { status: null, ready: false };
+    return { status: state.status, ready: state.status === "complete" };
+  } catch {
+    return { status: null, ready: false };
+  }
+}
+
+function sameFileSnapshot(left: import("node:fs").Stats, right: import("node:fs").Stats): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs;
 }
 
 function getLiteLLMModelPricesPathForContext(context: SystemDataContext, appDir: string): string {
@@ -552,11 +604,18 @@ async function scanSpecs(specs: PathSpec[]): Promise<SystemDataPath[]> {
 }
 
 async function scanSpec(spec: PathSpec): Promise<SystemDataPath> {
-  const stats = spec.kind === "folder"
-    ? await scanFolder(spec.path)
+  const { boundaryRoot, excludedPaths, ...reportedSpec } = spec;
+  if (boundaryRoot && !await isSafePathWithinRoot(spec.path, boundaryRoot)) {
+    return missingSystemPath(reportedSpec);
+  }
+  let stats = spec.kind === "folder"
+    ? await scanFolder(spec.path, excludedPaths)
     : await scanFile(spec.path);
+  if (boundaryRoot && !await isSafePathWithinRoot(spec.path, boundaryRoot)) {
+    stats = { exists: false, ...emptyTotals() };
+  }
   return {
-    ...spec,
+    ...reportedSpec,
     path: path.resolve(spec.path),
     exists: stats.exists,
     fileCount: stats.fileCount,
@@ -566,10 +625,20 @@ async function scanSpec(spec: PathSpec): Promise<SystemDataPath> {
   };
 }
 
+function missingSystemPath(spec: Omit<PathSpec, "boundaryRoot" | "excludedPaths">): SystemDataPath {
+  return {
+    ...spec,
+    path: path.resolve(spec.path),
+    exists: false,
+    ...emptyTotals(),
+    openPath: null,
+  };
+}
+
 async function scanFile(filePath: string): Promise<SystemDataTotals & { exists: boolean }> {
   try {
-    const stat = await fs.stat(filePath);
-    if (!stat.isFile()) return { exists: false, ...emptyTotals() };
+    const stat = await fs.lstat(filePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) return { exists: false, ...emptyTotals() };
     return {
       exists: true,
       fileCount: 1,
@@ -597,18 +666,21 @@ async function existsAsDirectory(folderPath: string): Promise<boolean> {
   }
 }
 
-async function scanFolder(folderPath: string): Promise<SystemDataTotals & { exists: boolean }> {
+async function scanFolder(
+  folderPath: string,
+  excludedPaths: readonly string[] = [],
+): Promise<SystemDataTotals & { exists: boolean }> {
   try {
-    const stat = await fs.stat(folderPath);
-    if (!stat.isDirectory()) return { exists: false, ...emptyTotals() };
+    const stat = await fs.lstat(folderPath);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return { exists: false, ...emptyTotals() };
   } catch {
     return { exists: false, ...emptyTotals() };
   }
-  const totals = await scanFolderContents(folderPath);
+  const totals = await scanFolderContents(folderPath, new Set(excludedPaths.map(pathKey)));
   return { exists: true, ...totals };
 }
 
-async function scanFolderContents(folderPath: string): Promise<SystemDataTotals> {
+async function scanFolderContents(folderPath: string, excludedPaths: ReadonlySet<string>): Promise<SystemDataTotals> {
   const totals = emptyTotals();
   let entries: Array<import("node:fs").Dirent>;
   try {
@@ -619,21 +691,45 @@ async function scanFolderContents(folderPath: string): Promise<SystemDataTotals>
 
   for (const entry of entries) {
     const entryPath = path.join(folderPath, entry.name);
-    if (entry.isDirectory()) {
-      addTotals(totals, await scanFolderContents(entryPath));
+    if (excludedPaths.has(pathKey(entryPath))) continue;
+    let stat: import("node:fs").Stats;
+    try {
+      stat = await fs.lstat(entryPath);
+    } catch {
       continue;
     }
-    if (!entry.isFile()) continue;
-    try {
-      const stat = await fs.stat(entryPath);
-      totals.fileCount += 1;
-      totals.totalBytes += stat.size;
-      totals.lastModifiedAt = maxIso(totals.lastModifiedAt, stat.mtime.toISOString());
-    } catch {
-      // Ignore files that disappear while scanning.
+    if (stat.isSymbolicLink()) continue;
+    if (stat.isDirectory()) {
+      addTotals(totals, await scanFolderContents(entryPath, excludedPaths));
+      continue;
     }
+    if (!stat.isFile()) continue;
+    totals.fileCount += 1;
+    totals.totalBytes += stat.size;
+    totals.lastModifiedAt = maxIso(totals.lastModifiedAt, stat.mtime.toISOString());
   }
   return totals;
+}
+
+async function isSafePathWithinRoot(targetPath: string, rootPath: string): Promise<boolean> {
+  const root = path.resolve(rootPath);
+  const target = path.resolve(targetPath);
+  const relative = path.relative(root, target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return false;
+  const segments = relative ? relative.split(path.sep).filter(Boolean) : [];
+  let current = root;
+  for (let index = -1; index < segments.length; index += 1) {
+    if (index >= 0) current = path.join(current, segments[index]);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) return false;
+      if (index < segments.length - 1 && !stat.isDirectory()) return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return true;
+      return false;
+    }
+  }
+  return true;
 }
 
 function resolveAgentStatus(paths: SystemDataPath[]): SystemAgentStatus {

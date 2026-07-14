@@ -314,7 +314,20 @@ async function hydrateWindowBudgets(snapshots, gen) {
   try {
     if (!_wbDataPromise) _wbDataPromise = QB.ipc.invoke('windowBudget:get');
     const data = await _wbDataPromise;
-    if (gen !== _wbGeneration) return; // ein neuerer Render-Zyklus hat das DOM bereits ersetzt
+    if (gen !== _wbGeneration) return;
+    if (QB.isPortableDataPreparing(data)) {
+      _wbDataPromise = null;
+      for (const snap of wanted) {
+        const forecast = document.getElementById(`wb-forecast-${snap.provider}`);
+        if (forecast) forecast.textContent = 'Preparing data…';
+      }
+      QB.schedulePortableDataRetry('window-budget', () => {
+        if (gen !== _wbGeneration) return;
+        return hydrateWindowBudgets(snapshots, gen);
+      });
+      return;
+    }
+    QB.clearPortableDataRetry('window-budget');
     for (const snap of wanted) {
       const d = data.perProvider?.[snap.provider];
       const fcEl = document.getElementById(`wb-forecast-${snap.provider}`);
@@ -506,6 +519,9 @@ QB.toggleWindowBudget = function toggleWindowBudget(id, _provider) {
 
 QB.renderLive = function renderLive(snapshots) {
   const el = document.getElementById('content');
+  const wbGen = ++_wbGeneration;
+  QB.clearPortableDataRetry('window-budget');
+  _wbDataPromise = null;
   if (_detachProviderDrag) { _detachProviderDrag(); _detachProviderDrag = null; }
   stopCd();
   _countdowns = [];
@@ -534,8 +550,6 @@ QB.renderLive = function renderLive(snapshots) {
       },
     });
   }
-  _wbDataPromise = null; // neue Snapshots → Budget-Daten neu laden
-  const wbGen = ++_wbGeneration;
   void hydrateWindowBudgets(orderedSnapshots, wbGen);
   startCd();
 };

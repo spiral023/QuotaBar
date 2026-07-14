@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { FileParseCache } from "./file-parse-cache";
+import { basenameAnySeparator, plainClaudeProjectName } from "../shared/projectName";
 
 export interface ModelTokens {
   inputTokens: number;
@@ -27,8 +28,15 @@ export interface ClaudeUsageEntry extends ModelTokens {
   timestamp: string;
   model: string;
   project: string;
+  projectName?: string;
   session: string;
   costUSD?: number;
+  inputCostUSD?: number;
+  outputCostUSD?: number;
+  cacheCreationCostUSD?: number;
+  cacheReadCostUSD?: number;
+  pricingVersion?: string;
+  sourceEventId?: string;
 }
 
 interface ParsedClaudeUsageEntry extends ClaudeUsageEntry {
@@ -85,15 +93,52 @@ export async function listClaudeSourceFiles(projectsDir: string | string[]): Pro
   return refs;
 }
 
+export interface StrictClaudeReaderDependencies {
+  createReadStream?: (filePath: string, options: { encoding: BufferEncoding }) => NodeJS.ReadableStream;
+}
+
+/** Strict ingestion listing: configured directory I/O errors propagate. */
+export async function listClaudeSourceFilesStrict(projectsDir: string | string[]): Promise<SourceFileRef[]> {
+  const dirs = Array.isArray(projectsDir) ? projectsDir : [projectsDir];
+  const refs: SourceFileRef[] = [];
+  for (const dir of dirs) {
+    const entries = (await fs.readdir(dir, { recursive: true })) as string[];
+    for (const entry of entries) {
+      if (entry.endsWith(".jsonl")) refs.push({ file: path.join(dir, entry), baseDir: dir });
+    }
+  }
+  return refs;
+}
+
 /**
  * Parses the given source files with messageId de-duplication.
  * billingStart filter is applied BEFORE dedup — same order as readClaudeEntriesFromDir.
  */
 export async function readClaudeUsageEntriesFromFiles(refs: SourceFileRef[], billingStart?: Date): Promise<ClaudeUsageEntry[]> {
+  return readClaudeEntries(refs, billingStart, false);
+}
+
+/** Strict ingestion reader: outer stream errors propagate and failed parses are not cached. */
+export async function readClaudeUsageEntriesFromFilesStrict(
+  refs: SourceFileRef[],
+  billingStart?: Date,
+  dependencies: StrictClaudeReaderDependencies = {},
+): Promise<ClaudeUsageEntry[]> {
+  return readClaudeEntries(refs, billingStart, true, dependencies);
+}
+
+async function readClaudeEntries(
+  refs: SourceFileRef[],
+  billingStart: Date | undefined,
+  strict: boolean,
+  dependencies: StrictClaudeReaderDependencies = {},
+): Promise<ClaudeUsageEntry[]> {
   const result: ClaudeUsageEntry[] = [];
   const seenMessageIds = new Set<string>();
   for (const ref of refs) {
-    const parsed = await claudeFileCache.get(ref.file, () => processJsonlFile(ref.file, ref.baseDir));
+    const parsed = strict
+      ? await processJsonlFile(ref.file, ref.baseDir, true, dependencies)
+      : await claudeFileCache.get(ref.file, () => processJsonlFile(ref.file, ref.baseDir));
     for (const entry of parsed) {
       if (billingStart && new Date(entry.timestamp) < billingStart) continue;
       if (entry.messageId) {
@@ -140,11 +185,13 @@ export function aggregateClaudeEntries(entries: ClaudeUsageEntry[]): AggregatedT
 async function processJsonlFile(
   filePath: string,
   projectsDir: string,
+  strict = false,
+  dependencies: StrictClaudeReaderDependencies = {},
 ): Promise<ParsedClaudeUsageEntry[]> {
   const result: ParsedClaudeUsageEntry[] = [];
   try {
     const rl = createInterface({
-      input: createReadStream(filePath, { encoding: "utf8" }),
+      input: (dependencies.createReadStream ?? createReadStream)(filePath, { encoding: "utf8" }),
       crlfDelay: Infinity,
     });
     for await (const line of rl) {
@@ -158,7 +205,8 @@ async function processJsonlFile(
         // skip invalid lines
       }
     }
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     // file not found or read error — return what was collected so far
   }
   return result;
@@ -194,17 +242,21 @@ function processEntry(
   const parts = relative.split(/[\\/]/).filter(Boolean);
   const fileBase = path.basename(filePath, ".jsonl");
   const cost = positiveNumber(entry.costUSD);
+  const project = parts[0] ?? "unknown";
+  const projectName = basenameAnySeparator(entry.cwd) ?? plainClaudeProjectName(project);
 
   return {
     provider: "claude",
     timestamp: ts,
     model,
-    project: parts[0] ?? "unknown",
+    project,
+    ...(projectName ? { projectName } : {}),
     session: typeof entry.sessionId === "string" ? entry.sessionId : fileBase,
     inputTokens: input,
     outputTokens: output,
     cacheCreationTokens: cacheCreate,
     cacheReadTokens: cacheRead,
+    ...(msgId ? { sourceEventId: msgId } : {}),
     ...(msgId ? { messageId: msgId } : {}),
     ...(cost > 0 ? { costUSD: cost } : {}),
   };

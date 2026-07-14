@@ -2,14 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Settings } from "../config/settings";
 import { defaultSettings } from "../config/settings";
-import { getDebugLogDir } from "../config/paths";
-import { readBackfillDayRecords } from "../reports/backfill-reader";
-import type { BackfillDayRecord } from "../reports/types";
-import type { ClaudeUsageEntry } from "../pricing/jsonl-reader";
-import type { CodexTokenEvent } from "../pricing/codex-log-reader";
-import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { normalizeModelName, isIgnoredModel } from "../shared/modelNames";
-import { generateUsageReport } from "../reports/reportService";
+import { PortableUsageStore } from "../portable/usageStore";
+import type { PortableUsageEvent } from "../portable/types";
+import { isNeutralInternalMarker } from "../portable/eventAdapters";
 
 export interface ModelDay {
   date: string; // YYYY-MM-DD (UTC)
@@ -56,10 +52,9 @@ export interface ModelsData {
 
 export interface ModelsDataDeps {
   settings?: Settings;
-  backfillRecords?: BackfillDayRecord[];
-  backfillLogDir?: string;
-  claudeEntries?: ClaudeUsageEntry[];
-  codexEvents?: CodexTokenEvent[];
+  usageEvents?: PortableUsageEvent[];
+  usageStore?: PortableUsageStore;
+  usageRange?: { since: string; until: string };
   benchmarksFile?: string;
 }
 
@@ -68,34 +63,34 @@ const DEFAULT_BENCHMARKS_FILE = path.join(__dirname, "..", "..", "src", "config"
 
 export async function buildModelsData(deps: ModelsDataDeps = {}): Promise<ModelsData> {
   const settings = deps.settings ?? defaultSettings;
-  const records = deps.backfillRecords
-    ?? await readBackfillDayRecords(deps.backfillLogDir ?? getDebugLogDir());
+  const usageRange = deps.usageRange ?? {
+    since: "1970-01-01T00:00:00.000Z",
+    until: new Date().toISOString(),
+  };
+  const events = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(usageRange);
 
   const dayMap = new Map<string, ModelDay>();
-  for (const r of records) {
-    for (const [rawModel, pm] of Object.entries(r.perModel)) {
-      addDay(dayMap, r.date, r.provider, rawModel, {
-        inputTokens: pm.inputTokens,
-        outputTokens: pm.outputTokens,
-        cacheCreationTokens: pm.cacheCreationTokens,
-        cacheReadTokens: pm.cacheReadTokens,
-        totalTokens: pm.totalTokens,
-        costUSD: pm.costUSD,
-        inputCostUSD: pm.inputCostUSD ?? 0,
-        outputCostUSD: pm.outputCostUSD ?? 0,
-        cacheCreationCostUSD: pm.cacheCreationCostUSD ?? 0,
-        cacheReadCostUSD: pm.cacheReadCostUSD ?? 0,
-      });
-    }
+  for (const event of events) {
+    if (isNeutralInternalMarker(event)) continue;
+    addDay(dayMap, event.occurredAt.slice(0, 10), event.provider, event.model, {
+      inputTokens: event.inputTokens,
+      outputTokens: event.outputTokens,
+      cacheCreationTokens: event.cacheCreationTokens,
+      cacheReadTokens: event.cacheReadTokens,
+      totalTokens: event.inputTokens + event.outputTokens + event.cacheCreationTokens + event.cacheReadTokens,
+      costUSD: storedCost(event),
+      inputCostUSD: event.inputCostUSD ?? 0,
+      outputCostUSD: event.outputCostUSD ?? 0,
+      cacheCreationCostUSD: event.cacheCreationCostUSD ?? 0,
+      cacheReadCostUSD: event.cacheReadCostUSD ?? 0,
+    });
   }
-
-  await mergeLiveTail(dayMap, records, settings, deps);
 
   const days = Array.from(dayMap.values())
     .sort((a, b) => a.date.localeCompare(b.date) || a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
 
   const { benchmarks, benchmarksAsOf, benchmarkIndexes } = await readBenchmarks(deps.benchmarksFile ?? DEFAULT_BENCHMARKS_FILE);
-  const pricing = await collectPricing(days, settings);
+  const pricing = collectPricing(events);
 
   return {
     days, benchmarks, benchmarksAsOf, benchmarkIndexes, pricing,
@@ -133,51 +128,9 @@ function addDay(
   }
 }
 
-async function mergeLiveTail(
-  dayMap: Map<string, ModelDay>,
-  records: BackfillDayRecord[],
-  settings: Settings,
-  deps: ModelsDataDeps,
-): Promise<void> {
-  for (const provider of ["claude", "codex"] as const) {
-    const lastBackfillDate = records
-      .filter(r => r.provider === provider)
-      .reduce<string | undefined>((max, r) => (!max || r.date > max ? r.date : max), undefined);
-
-    const report = await generateUsageReport(
-      {
-        provider,
-        type: "daily",
-        timezone: "UTC",
-        order: "asc",
-        breakdown: true,
-        ...(lastBackfillDate ? { since: lastBackfillDate } : {}),
-      },
-      {
-        settings,
-        ...(deps.claudeEntries ? { claudeEntries: deps.claudeEntries } : {}),
-        ...(deps.codexEvents ? { codexEvents: deps.codexEvents } : {}),
-      },
-    );
-
-    for (const row of report.rows) {
-      if (lastBackfillDate && row.bucket <= lastBackfillDate) continue;
-      for (const b of row.modelBreakdowns ?? []) {
-        addDay(dayMap, row.bucket, provider, b.model, {
-          inputTokens: b.inputTokens,
-          outputTokens: b.outputTokens,
-          cacheCreationTokens: b.cacheCreationTokens,
-          cacheReadTokens: b.cacheReadTokens,
-          totalTokens: b.totalTokens,
-          costUSD: b.costUSD,
-          inputCostUSD: b.inputCostUSD ?? 0,
-          outputCostUSD: b.outputCostUSD ?? 0,
-          cacheCreationCostUSD: b.cacheCreationCostUSD ?? 0,
-          cacheReadCostUSD: b.cacheReadCostUSD ?? 0,
-        });
-      }
-    }
-  }
+function storedCost(event: PortableUsageEvent): number {
+  return event.costUSD ?? (event.inputCostUSD ?? 0) + (event.outputCostUSD ?? 0)
+    + (event.cacheCreationCostUSD ?? 0) + (event.cacheReadCostUSD ?? 0);
 }
 
 async function readBenchmarks(file: string): Promise<{
@@ -231,18 +184,28 @@ async function readBenchmarks(file: string): Promise<{
   }
 }
 
-async function collectPricing(days: ModelDay[], settings: Settings): Promise<Record<string, ModelPricingRate>> {
-  const fetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
+function collectPricing(events: readonly PortableUsageEvent[]): Record<string, ModelPricingRate> {
   const result: Record<string, ModelPricingRate> = {};
-  const models = [...new Set(days.map(d => d.model))];
-  const pricings = await Promise.all(models.map(m => fetcher.getModelPricing(m)));
-  models.forEach((model, i) => {
-    const p = pricings[i];
-    if (!p || typeof p.input_cost_per_token !== "number") return;
+  const models = [...new Set(events
+    .filter((event) => !isNeutralInternalMarker(event) && !isIgnoredModel(event.model))
+    .map((event) => normalizeModelName(event.model)))];
+  for (const model of models) {
+    const rows = events.filter((event) => normalizeModelName(event.model) === model);
+    const inputTokenRows = rows.filter((event) => event.inputTokens > 0);
+    const cacheTokenRows = rows.filter((event) => event.cacheReadTokens > 0);
+    if (inputTokenRows.some((event) => event.inputCostUSD === undefined)
+      || cacheTokenRows.some((event) => event.cacheReadCostUSD === undefined)) continue;
+    const inputRows = inputTokenRows.filter((event) => event.inputCostUSD !== undefined);
+    const cacheRows = cacheTokenRows.filter((event) => event.cacheReadCostUSD !== undefined);
+    const inputTokens = inputRows.reduce((sum, event) => sum + event.inputTokens, 0);
+    const cacheReadTokens = cacheRows.reduce((sum, event) => sum + event.cacheReadTokens, 0);
+    if (inputTokens === 0) continue;
     result[model] = {
-      inputPerMTok: p.input_cost_per_token * 1e6,
-      cacheReadPerMTok: (p.cache_read_input_token_cost ?? 0) * 1e6,
+      inputPerMTok: inputRows.reduce((sum, event) => sum + (event.inputCostUSD ?? 0), 0) / inputTokens * 1e6,
+      cacheReadPerMTok: cacheReadTokens > 0
+        ? cacheRows.reduce((sum, event) => sum + (event.cacheReadCostUSD ?? 0), 0) / cacheReadTokens * 1e6
+        : 0,
     };
-  });
+  }
   return result;
 }

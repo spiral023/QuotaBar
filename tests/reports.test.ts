@@ -6,6 +6,7 @@ import { defaultSettings } from "../src/config/settings";
 import type { ModelPricing } from "../src/pricing/cost-calculator";
 import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests } from "../src/pricing/historical-pricing-resolver";
 import { generateUsageReport } from "../src/reports/reportService";
+import type { ReportRequest } from "../src/reports/types";
 
 const tmpRoot = path.join(os.tmpdir(), `quotabar-reports-${process.pid}`);
 
@@ -37,6 +38,28 @@ async function createHistoricalResolver(
 }
 
 describe("usage reports", () => {
+  it("keeps deprecated live and backfill source behavior explicit", async () => {
+    const live: ReportRequest = { provider: "claude", type: "daily", timezone: "UTC", source: "live" };
+    const backfill: ReportRequest = { provider: "claude", type: "daily", timezone: "UTC", source: "backfill" };
+    const claudeEntries = [{
+      provider: "claude" as const, timestamp: "2026-05-18T10:00:00.000Z", model: "claude-test",
+      project: "project", session: "session", inputTokens: 1, outputTokens: 1,
+      cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 1,
+    }];
+    const backfillRecords = [{
+      date: "2026-05-18", provider: "claude" as const, inputTokens: 1, outputTokens: 1,
+      cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 2, costUSD: 99,
+      sessionCount: 1, models: ["claude-test"], perModel: {},
+    }];
+
+    const liveReport = await generateUsageReport(live, { claudeEntries, backfillRecords });
+    const backfillReport = await generateUsageReport(backfill, { claudeEntries, backfillRecords });
+
+    expect(liveReport.totals.costUSD).toBe(1);
+    expect(liveReport.request.source).toBe("live");
+    expect(backfillReport.totals.costUSD).toBe(99);
+    expect(backfillReport.request.source).toBe("backfill");
+  });
   it("uses the event-time Claude price while preserving source costs in auto mode", async () => {
     const model = "historical-claude";
     const resolver = await createHistoricalResolver(path.join(tmpRoot, "report-prices.json"), model);
@@ -48,6 +71,7 @@ describe("usage reports", () => {
 
     const report = await generateUsageReport({
       provider: "claude", type: "daily", timezone: "UTC", order: "asc", costMode: "auto",
+      source: "legacy",
     }, { claudeEntries: entries, pricingResolver: resolver });
 
     expect(report.rows.map((row) => [row.bucket, row.costUSD])).toEqual([
@@ -68,10 +92,10 @@ describe("usage reports", () => {
     const source = { provider: "claude" as const, timestamp: "2026-06-02T12:00:00.000Z", model: "provider-priced", project: "project", session: "source", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 7 };
     const missing = { provider: "claude" as const, timestamp: "2026-06-02T13:00:00.000Z", model: "display-only", project: "project", session: "missing", inputTokens: 0, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0 };
 
-    const auto = await generateUsageReport({ provider: "claude", type: "daily", timezone: "UTC", costMode: "auto" }, {
+    const auto = await generateUsageReport({ provider: "claude", type: "daily", timezone: "UTC", costMode: "auto", source: "legacy" }, {
       claudeEntries: [source], pricingResolver: resolver,
     });
-    const display = await generateUsageReport({ provider: "claude", type: "daily", timezone: "UTC", costMode: "display", breakdown: true }, {
+    const display = await generateUsageReport({ provider: "claude", type: "daily", timezone: "UTC", costMode: "display", breakdown: true, source: "legacy" }, {
       claudeEntries: [source, missing], pricingResolver: resolver,
     });
 
@@ -111,6 +135,7 @@ describe("usage reports", () => {
       costMode: "auto",
       order: "asc",
       breakdown: true,
+      source: "legacy",
     }, {
       settings: { ...defaultSettings, pricingOfflineMode: true },
       claudeProjectsDirs: [claudeRoot],
@@ -147,6 +172,7 @@ describe("usage reports", () => {
       timezone: "UTC",
       costMode: "auto",
       order: "asc",
+      source: "legacy",
     }, {
       settings: { ...defaultSettings, pricingOfflineMode: true },
       claudeProjectsDirs: [claudeRoot],
@@ -182,6 +208,7 @@ describe("usage reports", () => {
       timezone: "UTC",
       codexSpeed: "standard",
       order: "asc",
+      source: "legacy",
     }, {
       settings: { ...defaultSettings, pricingOfflineMode: true },
       claudeProjectsDirs: [],
@@ -220,6 +247,7 @@ describe("usage reports", () => {
       project: "keep",
       costMode: "auto",
       timezone: "UTC",
+      source: "legacy",
     }, {
       settings: { ...defaultSettings, pricingOfflineMode: true },
       claudeProjectsDirs: [claudeRoot],
@@ -244,7 +272,7 @@ describe("usage reports", () => {
       codexSessionsDirs: [],
       codexConfigPaths: [],
     };
-    const base = { provider: "claude" as const, type: "daily" as const, timezone: "UTC", order: "asc" as const };
+    const base = { provider: "claude" as const, type: "daily" as const, timezone: "UTC", order: "asc" as const, source: "legacy" as const };
 
     const auto = await generateUsageReport({ ...base, costMode: "auto" }, deps);
     const calculate = await generateUsageReport({ ...base, costMode: "calculate" }, deps);
@@ -256,7 +284,7 @@ describe("usage reports", () => {
   });
 });
 
-describe("source: backfill", () => {
+describe("legacy backfill", () => {
   async function writeBackfill(dir: string, events: unknown[]): Promise<void> {
     await fs.mkdir(dir, { recursive: true });
     const lines = events.map((e) => JSON.stringify({ ts: new Date().toISOString(), ...e as object }));
@@ -285,7 +313,7 @@ describe("source: backfill", () => {
     const report = await generateUsageReport({
       provider: "claude", type: "daily",
       since: "2026-05-18", until: "2026-05-19",
-      timezone: "UTC", order: "asc", source: "backfill",
+      timezone: "UTC", order: "asc", source: "legacy",
     }, { backfillLogDir: logDir });
 
     expect(report.rows).toHaveLength(2);
@@ -307,7 +335,7 @@ describe("source: backfill", () => {
     const before = await fs.readFile(filePath, "utf8");
 
     const report = await generateUsageReport({
-      provider: "claude", type: "daily", timezone: "UTC", source: "backfill",
+      provider: "claude", type: "daily", timezone: "UTC", source: "legacy",
     }, { backfillLogDir: logDir });
 
     expect(report.rows[0].costUSD).toBe(0.05);
@@ -329,7 +357,7 @@ describe("source: backfill", () => {
 
     const report = await generateUsageReport({
       provider: "codex", type: "weekly",
-      timezone: "UTC", order: "asc", source: "backfill",
+      timezone: "UTC", order: "asc", source: "legacy",
     }, { backfillLogDir: logDir });
 
     expect(report.rows).toHaveLength(2);
@@ -337,7 +365,7 @@ describe("source: backfill", () => {
     expect(report.rows[1]).toMatchObject({ bucket: "2026-W22", costUSD: 3.0 });
   });
 
-  it("fällt auf live zurück wenn type=session und source=backfill", async () => {
+  it("uses legacy provider entries when backfill cannot represent sessions", async () => {
     const logDir = path.join(tmpRoot, "backfill-session-fallback");
     const claudeRoot = path.join(tmpRoot, "claude-fallback", "projects");
     await writeJsonl(path.join(claudeRoot, "proj", "session.jsonl"), [
@@ -345,10 +373,9 @@ describe("source: backfill", () => {
         message: { id: "m1", model: "claude-haiku-4-5", usage: { output_tokens: 100 } } },
     ]);
 
-    // source=backfill + type=session → muss live-Pfad nehmen
     const report = await generateUsageReport({
       provider: "claude", type: "session",
-      timezone: "UTC", source: "backfill",
+      timezone: "UTC", source: "legacy",
     }, {
       settings: { ...defaultSettings, pricingOfflineMode: true },
       claudeProjectsDirs: [claudeRoot],
@@ -357,7 +384,6 @@ describe("source: backfill", () => {
       backfillLogDir: logDir,
     });
 
-    // Live-Pfad liefert session-Zeilen (backfill kennt keine Sessions)
     expect(report.rows.length).toBeGreaterThan(0);
     expect(report.rows[0].session).toBeDefined();
   });
@@ -377,7 +403,7 @@ describe("source: backfill", () => {
 
     const report = await generateUsageReport({
       provider: "claude", type: "daily", timezone: "UTC",
-      source: "backfill", breakdown: true,
+      source: "legacy", breakdown: true,
     }, { backfillLogDir: logDir });
 
     expect(report.rows[0].modelBreakdowns).toHaveLength(2);

@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import path from "node:path";
+import { writeAppDataFile } from "../portable/appDataLock";
 import {
   BONUS_STATE_VERSION,
   emptyBonusStateFile,
@@ -17,8 +17,7 @@ export async function loadBonusStateFile(filePath: string): Promise<BonusStateFi
 }
 
 export async function saveBonusStateFile(filePath: string, file: BonusStateFile): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+  await writeAppDataFile(filePath, `${JSON.stringify(file, null, 2)}\n`);
 }
 
 /**
@@ -27,7 +26,7 @@ export async function saveBonusStateFile(filePath: string, file: BonusStateFile)
  * spike-anfälligen Erkennung gesetzt (vor dem utilization-Skalen-Fix) und sind
  * nicht mehr vertrauenswürdig. null = Datei unbrauchbar (→ leerer State).
  */
-function migrateBonusStateFile(value: unknown): BonusStateFile | null {
+export function migrateBonusStateFile(value: unknown): BonusStateFile | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
   if (r.version !== 1 && r.version !== 2) return null;

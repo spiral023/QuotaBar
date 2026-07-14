@@ -7,9 +7,12 @@ import { calculateCostBreakdown, sumBreakdown, ZERO_BREAKDOWN } from "../pricing
 import { readClaudeUsageEntriesForPeriod, type ClaudeUsageEntry } from "../pricing/jsonl-reader";
 import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
+import { toClaudeEntries, toCodexEvents } from "../portable/eventAdapters";
+import type { PortableUsageEvent } from "../portable/types";
+import { PortableUsageStore } from "../portable/usageStore";
 import { readBackfillDayRecords } from "./backfill-reader";
 import type { BackfillDayRecord, BackfillPerModelEntry } from "./types";
-import type { CostMode, ModelBreakdown, ReportRequest, ReportResult, ReportRow, ReportTotals } from "./types";
+import type { CostComponents, CostMode, ModelBreakdown, ReportRequest, ReportResult, ReportRow, ReportTotals } from "./types";
 
 export type { CostMode, CodexSpeed, ModelBreakdown, ReportRequest, ReportResult, ReportRow, ReportTotals, ReportType } from "./types";
 
@@ -23,6 +26,11 @@ export interface ReportDeps {
   backfillLogDir?: string;
   backfillRecords?: BackfillDayRecord[];
   pricingResolver?: HistoricalPricingResolver;
+  usageEvents?: PortableUsageEvent[];
+  usageStore?: PortableUsageStore;
+  readClaudeEntries?: typeof readClaudeUsageEntriesForPeriod;
+  readCodexEvents?: typeof readCodexTokensForPeriod;
+  readCodexSpeedTier?: typeof readCodexSpeedTierFromPaths;
 }
 
 const ZERO_TOTALS: ReportTotals = {
@@ -36,8 +44,10 @@ const ZERO_TOTALS: ReportTotals = {
 
 export async function generateUsageReport(request: ReportRequest, deps: ReportDeps = {}): Promise<ReportResult> {
   const normalized = normalizeRequest(request);
+  const sourceMode = normalizeSourceMode(normalized.source);
 
-  const useBackfill = normalized.source === "backfill"
+  const useBackfill = (sourceMode === "legacy-backfill"
+    || (sourceMode === "legacy-auto" && (deps.backfillRecords !== undefined || deps.backfillLogDir !== undefined)))
     && normalized.type !== "session"
     && !normalized.project
     && !normalized.instances;
@@ -68,17 +78,35 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
     codexHomes: settings.codexHomes ?? [],
   };
 
+  const portableEvents = sourceMode === "portable"
+    ? deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(portableReadRange(normalized.since, normalized.until))
+    : undefined;
+
   if (normalized.provider === "all" || normalized.provider === "claude") {
-    const entries = deps.claudeEntries ?? await readClaudeUsageEntriesForPeriod(deps.claudeProjectsDirs ?? getClaudeProjectsDirs(pathContext), start);
-    rows.push(...(await buildClaudeRows(entries, normalized, pricingResolver)));
+    const entries = portableEvents
+      ? toClaudeEntries(portableEvents)
+      : deps.claudeEntries ?? await (deps.readClaudeEntries ?? readClaudeUsageEntriesForPeriod)(
+        deps.claudeProjectsDirs ?? getClaudeProjectsDirs(pathContext),
+        start,
+      );
+    rows.push(...(await buildClaudeRows(entries, normalized, pricingResolver, sourceMode === "portable")));
   }
 
   if (normalized.provider === "all" || normalized.provider === "codex") {
-    const events = deps.codexEvents ?? await readCodexTokensForPeriod(deps.codexSessionsDirs ?? getCodexSessionsDirs(pathContext), start);
+    const events = portableEvents
+      ? toCodexEvents(portableEvents)
+      : deps.codexEvents ?? await (deps.readCodexEvents ?? readCodexTokensForPeriod)(
+        deps.codexSessionsDirs ?? getCodexSessionsDirs(pathContext),
+        start,
+      );
     const speed = normalized.codexSpeed === "auto"
-      ? await readCodexSpeedTierFromPaths(deps.codexConfigPaths ?? getCodexConfigPaths(pathContext))
+      ? sourceMode !== "portable"
+        ? await (deps.readCodexSpeedTier ?? readCodexSpeedTierFromPaths)(
+          deps.codexConfigPaths ?? getCodexConfigPaths(pathContext),
+        )
+        : "standard"
       : normalized.codexSpeed;
-    rows.push(...(await buildCodexRows(events, normalized, pricingResolver, speed)));
+    rows.push(...(await buildCodexRows(events, normalized, pricingResolver, speed, sourceMode === "portable")));
   }
 
   const sorted = rows
@@ -97,6 +125,7 @@ async function buildClaudeRows(
   entries: ClaudeUsageEntry[],
   request: ReturnType<typeof normalizeRequest>,
   pricingResolver: HistoricalPricingResolver,
+  useStoredCosts: boolean,
 ): Promise<ReportRow[]> {
   const filtered = request.project
     ? entries.filter((entry) => entry.project === request.project)
@@ -118,7 +147,7 @@ async function buildClaudeRows(
   const rows: ReportRow[] = [];
   for (const [key, list] of buckets) {
     const [bucket, project] = key.split("\0");
-    const costed = await costClaudeEntries(list, request.costMode, pricingResolver);
+    const costed = await costClaudeEntries(list, request.costMode, pricingResolver, useStoredCosts);
     const lastActivity = list.map((entry) => entry.timestamp).sort().at(-1);
     rows.push({
       bucket: request.type === "session" ? localDate(lastActivity ?? list[0].timestamp, request.timezone) : bucket,
@@ -139,6 +168,7 @@ async function buildCodexRows(
   request: ReturnType<typeof normalizeRequest>,
   pricingResolver: HistoricalPricingResolver,
   speed: "standard" | "fast",
+  useStoredCosts: boolean,
 ): Promise<ReportRow[]> {
   const filtered = request.project
     ? events.filter((event) => event.directory.includes(request.project!) || event.session.includes(request.project!))
@@ -160,7 +190,7 @@ async function buildCodexRows(
   const rows: ReportRow[] = [];
   for (const [key, list] of buckets) {
     const [bucket, directory] = key.split("\0");
-    const breakdowns = await costCodexBreakdowns(list, pricingResolver, speed);
+    const breakdowns = await costCodexBreakdowns(list, pricingResolver, speed, useStoredCosts);
     const totals = sumBreakdowns(breakdowns);
     const lastActivity = list.map((entry) => entry.timestamp).sort().at(-1);
     rows.push({
@@ -219,12 +249,13 @@ function buildRowsFromBackfill(
     for (const r of list) {
       r.models.forEach((m) => modelSet.add(m));
       for (const [model, pm] of Object.entries(r.perModel)) {
-        const acc = modelAgg.get(model) ?? { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 };
+        const acc = modelAgg.get(model) ?? { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, reasoningOutputTokens: 0, totalTokens: 0, costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 };
         modelAgg.set(model, {
           inputTokens: acc.inputTokens + pm.inputTokens,
           outputTokens: acc.outputTokens + pm.outputTokens,
           cacheCreationTokens: acc.cacheCreationTokens + pm.cacheCreationTokens,
           cacheReadTokens: acc.cacheReadTokens + pm.cacheReadTokens,
+          reasoningOutputTokens: acc.reasoningOutputTokens + pm.reasoningOutputTokens,
           totalTokens: acc.totalTokens + pm.totalTokens,
           costUSD: acc.costUSD + pm.costUSD,
           inputCostUSD: (acc.inputCostUSD ?? 0) + (pm.inputCostUSD ?? 0),
@@ -263,7 +294,12 @@ function buildRowsFromBackfill(
   return rows;
 }
 
-async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, pricingResolver: HistoricalPricingResolver): Promise<{ totals: ReportTotals; breakdowns: ModelBreakdown[] }> {
+async function costClaudeEntries(
+  entries: ClaudeUsageEntry[],
+  mode: CostMode,
+  pricingResolver: HistoricalPricingResolver,
+  useStoredCosts: boolean,
+): Promise<{ totals: ReportTotals; breakdowns: ModelBreakdown[] }> {
   const byModel = new Map<string, ClaudeUsageEntry[]>();
   for (const entry of entries) {
     const list = byModel.get(entry.model) ?? [];
@@ -276,6 +312,12 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, pr
     let costUSD = 0;
     let components = { ...ZERO_BREAKDOWN };
     for (const entry of list) {
+      if (useStoredCosts) {
+        const stored = reconcileStoredCost(entry);
+        costUSD += stored.costUSD;
+        components = addCostComponents(components, stored);
+        continue;
+      }
       const sourceCost = entry.costUSD;
       const useSourceCost = mode !== "calculate" && sourceCost !== undefined;
       if (useSourceCost) {
@@ -305,7 +347,12 @@ async function costClaudeEntries(entries: ClaudeUsageEntry[], mode: CostMode, pr
   return { totals: sumBreakdowns(breakdowns), breakdowns };
 }
 
-async function costCodexBreakdowns(events: CodexTokenEvent[], pricingResolver: HistoricalPricingResolver, speed: "standard" | "fast"): Promise<ModelBreakdown[]> {
+async function costCodexBreakdowns(
+  events: CodexTokenEvent[],
+  pricingResolver: HistoricalPricingResolver,
+  speed: "standard" | "fast",
+  useStoredCosts: boolean,
+): Promise<ModelBreakdown[]> {
   const byModel = new Map<string, CodexTokenEvent[]>();
   for (const event of events) {
     const list = byModel.get(event.model) ?? [];
@@ -323,11 +370,14 @@ async function costCodexBreakdowns(events: CodexTokenEvent[], pricingResolver: H
       totalTokens: acc.totalTokens + event.totalTokens,
       costUSD: 0,
     }), { ...ZERO_TOTALS });
-    const c = await calculateCodexApiCostBreakdown(list, pricingResolver, speed);
+    const storedCosts = useStoredCosts ? list.map(reconcileStoredCost) : undefined;
+    const c = storedCosts
+      ? storedCosts.reduce((acc, stored) => addCostComponents(acc, stored), { ...ZERO_BREAKDOWN })
+      : await calculateCodexApiCostBreakdown(list, pricingResolver, speed);
     return {
       model,
       ...totals,
-      costUSD: sumBreakdown(c),
+      costUSD: storedCosts ? storedCosts.reduce((sum, stored) => sum + stored.costUSD, 0) : sumBreakdown(c),
       ...c,
     };
   }));
@@ -347,9 +397,88 @@ function normalizeRequest(request: ReportRequest) {
     codexSpeed: request.codexSpeed ?? "auto",
     order: request.order ?? "desc",
     breakdown: Boolean(request.breakdown),
-    source: request.source ?? "live",
+    source: request.source ?? "portable",
     limit: request.limit ? Math.max(1, Math.floor(Number(request.limit))) : undefined,
   } as const;
+}
+
+type NormalizedSourceMode = "portable" | "legacy-auto" | "legacy-live" | "legacy-backfill";
+
+function normalizeSourceMode(source: ReportRequest["source"]): NormalizedSourceMode {
+  if (source === undefined || source === "portable") return "portable";
+  if (source === "live") return "legacy-live";
+  if (source === "backfill") return "legacy-backfill";
+  return "legacy-auto";
+}
+
+type StoredCost = ReturnType<typeof reconcileStoredCost>;
+
+function reconcileStoredCost(item: CostComponents & { costUSD?: number }): {
+  costUSD: number;
+  inputCostUSD: number;
+  outputCostUSD: number;
+  cacheCreationCostUSD: number;
+  cacheReadCostUSD: number;
+} {
+  const input = Math.max(0, item.inputCostUSD ?? 0);
+  const output = Math.max(0, item.outputCostUSD ?? 0);
+  const creation = Math.max(0, item.cacheCreationCostUSD ?? 0);
+  const read = Math.max(0, item.cacheReadCostUSD ?? 0);
+  const componentSum = input + output + creation + read;
+  const total = Math.max(0, item.costUSD ?? componentSum);
+  if (total === 0) {
+    return { costUSD: 0, ...ZERO_BREAKDOWN };
+  }
+  if (componentSum === 0) {
+    return { costUSD: total, ...ZERO_BREAKDOWN, outputCostUSD: total };
+  }
+  if (componentSum === total) {
+    return {
+      costUSD: total,
+      inputCostUSD: input,
+      outputCostUSD: output,
+      cacheCreationCostUSD: creation,
+      cacheReadCostUSD: read,
+    };
+  }
+  if (componentSum > total) {
+    const scale = total / componentSum;
+    const inputCostUSD = input * scale;
+    const outputCostUSD = output * scale;
+    const cacheCreationCostUSD = creation * scale;
+    const cacheReadCostUSD = Math.max(0, total - inputCostUSD - outputCostUSD - cacheCreationCostUSD);
+    return { costUSD: total, inputCostUSD, outputCostUSD, cacheCreationCostUSD, cacheReadCostUSD };
+  }
+  const inputCostUSD = input;
+  const cacheCreationCostUSD = creation;
+  const cacheReadCostUSD = read;
+  const outputCostUSD = Math.max(0, total - inputCostUSD - cacheCreationCostUSD - cacheReadCostUSD);
+  return { costUSD: total, inputCostUSD, outputCostUSD, cacheCreationCostUSD, cacheReadCostUSD };
+}
+
+function addCostComponents(
+  target: CostComponents & { inputCostUSD: number; outputCostUSD: number; cacheCreationCostUSD: number; cacheReadCostUSD: number },
+  source: StoredCost,
+) {
+  return {
+    inputCostUSD: target.inputCostUSD + source.inputCostUSD,
+    outputCostUSD: target.outputCostUSD + source.outputCostUSD,
+    cacheCreationCostUSD: target.cacheCreationCostUSD + source.cacheCreationCostUSD,
+    cacheReadCostUSD: target.cacheReadCostUSD + source.cacheReadCostUSD,
+  };
+}
+
+function portableReadRange(since?: string, until?: string): { since?: string; until?: string } {
+  return {
+    ...(since ? { since: shiftedUtcBoundary(since, -1, false) } : {}),
+    ...(until ? { until: shiftedUtcBoundary(until, 1, true) } : {}),
+  };
+}
+
+function shiftedUtcBoundary(day: string, days: number, endOfDay: boolean): string {
+  const date = new Date(`${day}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString();
 }
 
 function bucketFor(timestamp: string, type: string, timezone: string): string {
