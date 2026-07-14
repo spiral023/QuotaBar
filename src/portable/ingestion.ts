@@ -183,8 +183,8 @@ async function ingestExclusive(
       stored = await store.read();
       const candidates = stored.filter((event) => event.source !== "legacy-reconciliation" && !hasCompleteCost(event));
       repairedEvents = candidates.length > 0 ? await enrichCosts(candidates) : [];
-      repairedCostsComplete = preservesEventIdentity(candidates, repairedEvents)
-        && repairedEvents.every(hasCompleteCost);
+      if (!preservesCostOnlyChanges(candidates, repairedEvents)) throw new Error("invalid cost enrichment");
+      repairedCostsComplete = repairedEvents.every(hasCompleteCost);
     } catch {
       throw new Error("Portable cost enrichment failed");
     }
@@ -359,7 +359,7 @@ async function readSource(
       ? fromClaudeEntries(providerEvents as ClaudeUsageEntry[])
       : fromCodexEvents(providerEvents as CodexTokenEvent[]);
     const events = enrichCosts ? await enrichCosts(normalized) : normalized;
-    if (enrichCosts && !preservesEventIdentity(normalized, events)) throw new Error("invalid cost enrichment");
+    if (enrichCosts && !preservesCostOnlyChanges(normalized, events)) throw new Error("invalid cost enrichment");
     batches.set(source.key, events);
   } catch {
     failedKeys.add(source.key);
@@ -376,13 +376,38 @@ function hasCompleteCost(event: PortableUsageEvent): boolean {
     && event.pricingVersion !== undefined;
 }
 
-function preservesEventIdentity(
+const COST_ENRICHMENT_FIELDS = new Set([
+  "costUSD",
+  "inputCostUSD",
+  "outputCostUSD",
+  "cacheCreationCostUSD",
+  "cacheReadCostUSD",
+  "pricingVersion",
+]);
+
+function preservesCostOnlyChanges(
   input: readonly PortableUsageEvent[],
   output: readonly PortableUsageEvent[],
 ): boolean {
   if (input.length !== output.length) return false;
-  const inputIds = new Set(input.map(({ id }) => id));
-  return output.every(({ id }) => inputIds.delete(id)) && inputIds.size === 0;
+  return input.every((event, index) => immutableEventFingerprint(event) === immutableEventFingerprint(output[index]));
+}
+
+function immutableEventFingerprint(event: PortableUsageEvent): string {
+  const fields = Object.entries(event as unknown as Record<string, unknown>)
+    .filter(([key]) => !COST_ENRICHMENT_FIELDS.has(key))
+    .sort(([left], [right]) => left.localeCompare(right));
+  return canonicalValue(fields);
+}
+
+function canonicalValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalValue).join(",")}]`;
+  if (value && typeof value === "object") {
+    const fields = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${fields.map(([key, item]) => `${JSON.stringify(key)}:${canonicalValue(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
 }
 
 async function assertSupportedCostEnrichmentState(statePath: string): Promise<void> {

@@ -160,18 +160,21 @@ describe("portable usage ingestion", () => {
     expect(JSON.parse(await readFile(statePath, "utf8"))).not.toHaveProperty("costEnrichmentVersion");
   });
 
-  it("does not mark repair complete when enrichment drops an existing provider event", async () => {
+  it("aborts without mutation when enrichment drops an existing provider event", async () => {
     const ref = await claudeRef(rootDir, "dropped-existing.jsonl", "fixture");
     const base = {
       store, statePath, claudeRefs: [ref], codexRefs: [],
       readClaude: async () => [claude({ costUSD: undefined })],
     };
     await ingestPortableUsage(base);
+    const beforeState = await readFile(statePath, "utf8");
+    const beforeEvents = await store.read();
 
-    await ingestPortableUsage({ ...base, enrichCosts: async () => [] });
+    await expect(ingestPortableUsage({ ...base, enrichCosts: async () => [] }))
+      .rejects.toThrow("Portable cost enrichment failed");
 
-    expect(JSON.parse(await readFile(statePath, "utf8"))).not.toHaveProperty("costEnrichmentVersion");
-    expect(await store.read()).toHaveLength(1);
+    expect(await readFile(statePath, "utf8")).toBe(beforeState);
+    expect(await store.read()).toEqual(beforeEvents);
   });
 
   it("invalidates the repair marker and retries an unresolved source added later", async () => {
@@ -288,6 +291,63 @@ describe("portable usage ingestion", () => {
     expect(result.errors).toEqual([{ provider: "claude", path: failedRef.file, message: "cost_failed" }]);
     expect(await store.read()).toHaveLength(1);
     expect(JSON.parse(await readFile(statePath, "utf8"))).not.toHaveProperty("costEnrichmentVersion");
+  });
+
+  it("accepts duplicate provider source IDs when cost enrichment preserves each event position", async () => {
+    const ref = await claudeRef(rootDir, "duplicate-provider-id.jsonl", "fixture");
+    const readClaude = async () => [
+      claude({ sourceEventId: "duplicate-id", inputTokens: 10, costUSD: undefined }),
+      claude({ sourceEventId: "duplicate-id", inputTokens: 10, costUSD: undefined }),
+    ];
+    const enrichCosts = async (events: readonly import("../src/portable/types").PortableUsageEvent[]) =>
+      events.map((item) => ({
+        ...item,
+        costUSD: 1,
+        inputCostUSD: 1,
+        outputCostUSD: 0,
+        cacheCreationCostUSD: 0,
+        cacheReadCostUSD: 0,
+        pricingVersion: "litellm:test",
+      }));
+
+    const result = await ingestPortableUsage({
+      store, statePath, claudeRefs: [ref], codexRefs: [], readClaude, enrichCosts,
+    });
+
+    expect(result).toMatchObject({ inserted: 1, errors: [] });
+    expect(await store.read()).toEqual([expect.objectContaining({ costUSD: 1, pricingVersion: "litellm:test" })]);
+  });
+
+  it.each([
+    ["id", (item: import("../src/portable/types").PortableUsageEvent) => ({ ...item, id: "f".repeat(64) })],
+    ["model", (item: import("../src/portable/types").PortableUsageEvent) => ({ ...item, model: "tampered-model" })],
+    ["tokens", (item: import("../src/portable/types").PortableUsageEvent) => ({ ...item, inputTokens: item.inputTokens + 1 })],
+    ["project", (item: import("../src/portable/types").PortableUsageEvent) => ({ ...item, projectName: "tampered-project" })],
+  ])("rejects global cost repair that changes %s and leaves store and state unchanged", async (_field, mutate) => {
+    const ref = await claudeRef(rootDir, `tampered-${_field}.jsonl`, "fixture");
+    const base = {
+      store, statePath, claudeRefs: [ref], codexRefs: [],
+      readClaude: async () => [claude({ costUSD: undefined })],
+    };
+    await ingestPortableUsage(base);
+    const beforeState = await readFile(statePath, "utf8");
+    const beforeEvents = await store.read();
+    const enrichCosts = async (events: readonly import("../src/portable/types").PortableUsageEvent[]) =>
+      events.map((item) => ({
+        ...mutate(item),
+        costUSD: 1,
+        inputCostUSD: 1,
+        outputCostUSD: 0,
+        cacheCreationCostUSD: 0,
+        cacheReadCostUSD: 0,
+        pricingVersion: "litellm:test",
+      }));
+
+    await expect(ingestPortableUsage({ ...base, enrichCosts }))
+      .rejects.toThrow("Portable cost enrichment failed");
+
+    expect(await readFile(statePath, "utf8")).toBe(beforeState);
+    expect(await store.read()).toEqual(beforeEvents);
   });
 
   it("reprocesses only a changed source, updates corrected IDs, and appends new IDs", async () => {
