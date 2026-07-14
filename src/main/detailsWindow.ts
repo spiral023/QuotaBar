@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "path";
 import { Worker } from "node:worker_threads";
-import { app, BrowserWindow, ipcMain, screen, Tray, clipboard, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, Tray, clipboard, dialog, shell } from "electron";
 import { UsageSnapshot } from "../providers/types";
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { log } from "./logging";
@@ -9,7 +9,7 @@ import { generateUsageReport } from "../reports/reportService";
 import type { ReportRequest } from "../reports/types";
 import {
   getWindowHistoryPath, getPortableMigrationPath,
-  getAppConfigDir, getLogPath, getNotificationLogPath, getUsageSnapshotCachePath,
+  getAppConfigDir, getHomeDir, getLogPath, getNotificationLogPath, getUsageSnapshotCachePath,
   getFxCachePath, getLiteLLMModelPricesPath, getWindowRatioPath, getBonusStatePath, getNotificationStatePath,
 } from "../config/paths";
 import { loadWindowHistoryFile, saveWindowHistoryFile, mergeWindowHistory } from "../usage/windowHistoryStore";
@@ -37,6 +37,15 @@ import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAge
 import { mergeAndSaveSettings } from "./settingsSave";
 import { parseMigrationState } from "../portable/migration";
 import { PortableUsageStore } from "../portable/usageStore";
+import { exportPortableData, stagePortableImport } from "../portable/archiveService";
+
+let archiveOperation: "export" | "import" | null = null;
+
+const ARCHIVE_BUSY_RESULT = Object.freeze({
+  ok: false,
+  error: "archive_operation_in_progress",
+  message: "Another portable archive operation is already in progress.",
+});
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -593,6 +602,63 @@ export class DetailsWindowController {
         appVariant: detectAppVariant(),
         ...runtimeRootContext(),
       });
+    });
+
+    ipcMain.handle("system:export-portable-data", async () => {
+      if (archiveOperation !== null) return ARCHIVE_BUSY_RESULT;
+      archiveOperation = "export";
+      try {
+        const selected = await dialog.showSaveDialog({
+          title: "Export portable data",
+          defaultPath: path.join(getHomeDir(), "QuotaBar-portable-data.zip"),
+          filters: [{ name: "ZIP archives", extensions: ["zip"] }],
+          properties: ["showOverwriteConfirmation"],
+        });
+        if (selected.canceled || !selected.filePath) return { ok: false, cancelled: true };
+        const result = await exportPortableData(getAppConfigDir(), selected.filePath);
+        log.info(`Portable archive action=export destination=${result.path} files=${result.fileCount} bytes=${result.totalBytes}`);
+        return { ok: true, ...result };
+      } catch {
+        const message = "Portable data export failed.";
+        log.warn(`Portable archive action=export error=${message}`);
+        return { ok: false, error: "portable_export_failed", message };
+      } finally {
+        archiveOperation = null;
+      }
+    });
+
+    ipcMain.handle("system:import-portable-data", async () => {
+      if (archiveOperation !== null) return ARCHIVE_BUSY_RESULT;
+      archiveOperation = "import";
+      try {
+        const selected = await dialog.showOpenDialog({
+          title: "Import portable data",
+          filters: [{ name: "ZIP archives", extensions: ["zip"] }],
+          properties: ["openFile"],
+        });
+        const source = selected.filePaths[0];
+        if (selected.canceled || !source) return { ok: false, cancelled: true };
+        const result = await stagePortableImport(source, getAppConfigDir(), getHomeDir());
+        log.info(`Portable archive action=import destination=${getAppConfigDir()} files=${result.fileCount} bytes=${result.totalBytes}`);
+        const restartTimer = setTimeout(() => {
+          app.relaunch();
+          app.exit(0);
+        }, 100);
+        restartTimer.unref();
+        return {
+          ok: true,
+          backupPath: result.backupPath,
+          fileCount: result.fileCount,
+          totalBytes: result.totalBytes,
+          restartScheduled: true,
+        };
+      } catch {
+        const message = "Portable data import failed.";
+        log.warn(`Portable archive action=import error=${message}`);
+        return { ok: false, error: "portable_import_failed", message };
+      } finally {
+        archiveOperation = null;
+      }
     });
 
     ipcMain.handle("system:codex-homes:suggest", async () => {

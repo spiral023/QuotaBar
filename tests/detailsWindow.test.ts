@@ -4,6 +4,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings } from "../src/config/settings";
 
+const archiveMocks = vi.hoisted(() => ({
+  exportPortableData: vi.fn(),
+  stagePortableImport: vi.fn(),
+}));
+
+vi.mock("../src/portable/archiveService", () => archiveMocks);
+
 // Mock Electron — DetailsWindowController calls ipcMain.on and may use other
 // Electron APIs at import/construction time. Provide just enough surface to
 // allow construction without a running Electron runtime.
@@ -18,12 +25,18 @@ vi.mock("electron", () => {
       isPackaged: false,
       getVersion: vi.fn(() => "1.1.4"),
       getPath: vi.fn(),
+      relaunch: vi.fn(),
+      exit: vi.fn(),
     },
     BrowserWindow: class {},
     screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }) },
     Tray: class {},
     clipboard: { writeText: vi.fn() },
     shell: { openPath: vi.fn(), openExternal: vi.fn() },
+    dialog: {
+      showSaveDialog: vi.fn(),
+      showOpenDialog: vi.fn(),
+    },
   };
 });
 
@@ -34,7 +47,7 @@ import {
   DetailsWindowController,
   portableDataIsReady,
 } from "../src/main/detailsWindow";
-import { ipcMain, shell } from "electron";
+import { app, dialog, ipcMain, shell } from "electron";
 import { PortableUsageStore } from "../src/portable/usageStore";
 import { preparePortableData } from "../src/main/debugBackfill";
 import { markMigrationComplete, markMigrationFailed, markMigrationRunning } from "../src/portable/migration";
@@ -42,6 +55,7 @@ import { markMigrationComplete, markMigrationFailed, markMigrationRunning } from
 let tmpDir: string;
 
 beforeEach(async () => {
+  vi.clearAllMocks();
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "qb-dw-"));
 });
 afterEach(async () => {
@@ -286,6 +300,114 @@ describe("DetailsWindowController system IPC", () => {
     expect(channels).toContain("system:claude-roots:suggest");
     expect(channels).toContain("system:codex-homes:suggest");
     expect(channels).toContain("system:open-path");
+    expect(channels).toContain("system:export-portable-data");
+    expect(channels).toContain("system:import-portable-data");
+  });
+
+  it.each([
+    ["system:export-portable-data", "showSaveDialog"],
+    ["system:import-portable-data", "showOpenDialog"],
+  ] as const)("returns a stable cancellation result from %s", async (channel, dialogMethod) => {
+    if (dialogMethod === "showSaveDialog") {
+      vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: true, filePath: "" });
+    } else {
+      vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: true, filePaths: [] });
+    }
+    new DetailsWindowController(() => null);
+
+    const handler = findIpcHandler(channel);
+
+    await expect(handler({})).resolves.toEqual({ ok: false, cancelled: true });
+    expect(archiveMocks.exportPortableData).not.toHaveBeenCalled();
+    expect(archiveMocks.stagePortableImport).not.toHaveBeenCalled();
+  });
+
+  it("exports portable data to the selected zip", async () => {
+    vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: "C:\\Exports\\QuotaBar.zip" });
+    archiveMocks.exportPortableData.mockResolvedValue({
+      path: "C:\\Exports\\QuotaBar.zip",
+      fileCount: 4,
+      totalBytes: 128,
+    });
+    new DetailsWindowController(() => null);
+
+    await expect(findIpcHandler("system:export-portable-data")({})).resolves.toEqual({
+      ok: true,
+      path: "C:\\Exports\\QuotaBar.zip",
+      fileCount: 4,
+      totalBytes: 128,
+    });
+    expect(dialog.showSaveDialog).toHaveBeenCalledWith(expect.objectContaining({
+      defaultPath: expect.stringMatching(/\.zip$/),
+      filters: [{ name: "ZIP archives", extensions: ["zip"] }],
+    }));
+    expect(archiveMocks.exportPortableData).toHaveBeenCalledWith(
+      expect.stringMatching(/\.quotabar-win$/),
+      "C:\\Exports\\QuotaBar.zip",
+    );
+  });
+
+  it("stages an import, returns its verified backup, then restarts after the response flushes", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: ["C:\\Imports\\QuotaBar.zip"] });
+      archiveMocks.stagePortableImport.mockResolvedValue({
+        path: "C:\\Imports\\QuotaBar.zip",
+        backupPath: "C:\\QuotaBar Backups\\verified.zip",
+        pending: true,
+        fileCount: 3,
+        totalBytes: 96,
+      });
+      new DetailsWindowController(() => null);
+
+      const result = await findIpcHandler("system:import-portable-data")({});
+
+      expect(result).toEqual({
+        ok: true,
+        backupPath: "C:\\QuotaBar Backups\\verified.zip",
+        fileCount: 3,
+        totalBytes: 96,
+        restartScheduled: true,
+      });
+      expect(archiveMocks.stagePortableImport).toHaveBeenCalledWith(
+        "C:\\Imports\\QuotaBar.zip",
+        expect.stringMatching(/\.quotabar-win$/),
+        expect.any(String),
+      );
+      expect(app.relaunch).not.toHaveBeenCalled();
+      expect(app.exit).not.toHaveBeenCalled();
+
+      await vi.runAllTimersAsync();
+
+      expect(app.relaunch).toHaveBeenCalledOnce();
+      expect(app.exit).toHaveBeenCalledWith(0);
+      expect(vi.mocked(app.relaunch).mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(app.exit).mock.invocationCallOrder[0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("allows only one portable archive operation at a time", async () => {
+    let finishExport!: (value: { path: string; fileCount: number; totalBytes: number }) => void;
+    archiveMocks.exportPortableData.mockImplementation(() => new Promise((resolve) => { finishExport = resolve; }));
+    vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: "C:\\Exports\\QuotaBar.zip" });
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: ["C:\\Imports\\QuotaBar.zip"] });
+    new DetailsWindowController(() => null);
+
+    const exporting = findIpcHandler("system:export-portable-data")({});
+    await vi.waitFor(() => expect(archiveMocks.exportPortableData).toHaveBeenCalledOnce());
+
+    await expect(findIpcHandler("system:import-portable-data")({})).resolves.toEqual({
+      ok: false,
+      error: "archive_operation_in_progress",
+      message: "Another portable archive operation is already in progress.",
+    });
+    expect(dialog.showOpenDialog).not.toHaveBeenCalled();
+    expect(archiveMocks.stagePortableImport).not.toHaveBeenCalled();
+
+    finishExport({ path: "C:\\Exports\\QuotaBar.zip", fileCount: 1, totalBytes: 1 });
+    await exporting;
   });
 
   it("opens the Artificial Analysis methodology in the external browser", async () => {
@@ -316,3 +438,10 @@ describe("DetailsWindowController system IPC", () => {
     expect(shell.openExternal).toHaveBeenCalledWith("https://artificialanalysis.ai/methodology/coding-agents-benchmarking");
   });
 });
+
+function findIpcHandler(channel: string): (event: unknown) => Promise<unknown> {
+  const handler = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls
+    .findLast((call: unknown[]) => call[0] === channel)?.[1];
+  if (typeof handler !== "function") throw new Error(`Missing IPC handler: ${channel}`);
+  return handler as (event: unknown) => Promise<unknown>;
+}

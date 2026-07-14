@@ -21,7 +21,7 @@ import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAge
 import { DebugRecorder } from "./debugRecorder";
 import { snapshotEvent } from "./debugEvents";
 import { createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, readLegacyQuotaSnapshots, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
-import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath } from "../config/paths";
+import { getAppConfigDir, getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
 import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
 import { BonusResetTracker } from "../usage/bonusReset";
@@ -34,6 +34,7 @@ import { PortableUsageStore } from "../portable/usageStore";
 import { ingestPortableUsage } from "../portable/ingestion";
 import { beginMigrationRefresh, beginMigrationRefreshRecovery, markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData, readCompleteMigrationRevision } from "../portable/migration";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
+import { applyPendingImport } from "../portable/archiveService";
 
 interface CliOptions {
   debug: boolean;
@@ -85,6 +86,16 @@ if (!app.requestSingleInstanceLock()) {
         }
       }
       applyStartupFlag(cli.startupAction);
+
+      try {
+        const pendingImport = await applyPendingImport(getAppConfigDir());
+        if (pendingImport.applied) {
+          log.info(`Portable pending import applied files=${pendingImport.fileCount} bytes=${pendingImport.totalBytes}`);
+        }
+      } catch {
+        log.error("Portable pending import apply failed rollback=completed-or-pending-recovery error=Portable data apply failed");
+        throw new Error("Portable pending import apply failed");
+      }
 
       const firstRun = await isFirstRun();
       const settings = await loadSettings(cli.pollIntervalSeconds ? { pollIntervalSeconds: cli.pollIntervalSeconds } : {});
