@@ -83,6 +83,36 @@ describe("portable renderer preparing behavior", () => {
     expect(h.timers.pendingCount()).toBe(0);
   });
 
+  it("retries History initialization without rendering a preparing report", async () => {
+    const h = rendererHarness({ "reports:get": [preparing, { rows: [] }, { rows: [] }] });
+    h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "tabs", "history.js"));
+
+    await h.QB.renderHistory();
+
+    expect(h.document.getElementById("history-content").innerHTML).toContain("Preparing data");
+    expect(h.document.getElementById("hr-results")).toBeNull();
+    expect(h.timers.pendingCount()).toBe(1);
+    h.timers.advanceBy(1_000); await flush();
+    expect(h.calls.filter((call) => call === "reports:get")).toHaveLength(3);
+    expect(h.document.getElementById("hr-results").innerHTML).toContain("No backfill data");
+    expect(h.timers.pendingCount()).toBe(0);
+  });
+
+  it("retries a preparing History report without caching or rendering it", async () => {
+    const h = rendererHarness({ "reports:get": [{ rows: [] }, preparing, { rows: [] }] });
+    h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "tabs", "history.js"));
+
+    await h.QB.renderHistory();
+
+    expect(h.document.getElementById("hr-results").innerHTML).toContain("Preparing data");
+    expect(h.document.getElementById("hr-results").innerHTML).not.toContain("No backfill data");
+    expect(h.timers.pendingCount()).toBe(1);
+    h.timers.advanceBy(1_000); await flush();
+    expect(h.calls.filter((call) => call === "reports:get")).toHaveLength(3);
+    expect(h.document.getElementById("hr-results").innerHTML).toContain("No backfill data");
+    expect(h.timers.pendingCount()).toBe(0);
+  });
+
   it("retries window budget hydration after preparing", async () => {
     const valid = { perProvider: { claude: { forecast: { reason: "insufficient-data", primaryKind: "linear", confidence: "none", primaryLastsUntilReset: false, burnRateLastsUntilReset: null }, series: { points: [] }, hasSeriesData: false, currentUsage: null } } };
     const h = rendererHarness({ "windowBudget:get": [preparing, valid] });

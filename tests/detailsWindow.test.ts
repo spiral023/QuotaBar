@@ -54,7 +54,7 @@ import {
   DetailsWindowController,
   portableDataIsReady,
 } from "../src/main/detailsWindow";
-import { app, dialog, ipcMain, shell } from "electron";
+import { app, clipboard, dialog, ipcMain, shell } from "electron";
 import { PortableUsageStore } from "../src/portable/usageStore";
 import { preparePortableData } from "../src/main/debugBackfill";
 import { markMigrationComplete, markMigrationFailed, markMigrationRunning } from "../src/portable/migration";
@@ -116,10 +116,19 @@ describe("portable analytics readiness", () => {
     const calls = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls;
     const findHandler = (channel: string) => [...calls].reverse().find((call: unknown[]) => call[0] === channel)?.[1] as
       ((event: unknown, request?: unknown) => Promise<unknown>);
-    for (const channel of ["analytics:summary", "analytics:get", "models:get", "windowBudget:get", "windowHistory:get"]) {
+    for (const channel of [
+      "reports:get",
+      "reports:copy-json",
+      "analytics:summary",
+      "analytics:get",
+      "models:get",
+      "windowBudget:get",
+      "windowHistory:get",
+    ]) {
       await expect(findHandler(channel)({}, undefined)).resolves.toEqual({ portableDataPreparing: true });
     }
     expect(runWorker).not.toHaveBeenCalled();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
   });
 
   it("prewarms explicit bounded usage and quota ranges only when ready", async () => {

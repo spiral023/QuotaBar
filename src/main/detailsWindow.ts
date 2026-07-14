@@ -465,6 +465,7 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("reports:get", async (_, request: ReportRequest) => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadRuntimeSettings();
       const report = await generateUsageReport({ ...request, source: "portable" }, { settings });
       const sinceDay = request.since ?? report.rows[0]?.bucket?.slice(0, 10);
@@ -477,6 +478,7 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("reports:copy-json", async (_, request: ReportRequest) => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadRuntimeSettings();
       const report = await generateUsageReport({ ...request, source: "portable" }, { settings });
       clipboard.writeText(JSON.stringify(report, null, 2));
