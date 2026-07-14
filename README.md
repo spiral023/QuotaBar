@@ -199,9 +199,17 @@ What this means in practice:
 
 Open **System → QuotaBar** and choose **Export data** to create a portable ZIP. The archive contains portable statistics, quota snapshots, machine-independent settings, notification state, and the manifest required to verify every entry. It never contains provider logs, `auth.json`, `.credentials.json`, application logs, caches, backups, or the source machine's ingestion paths.
 
-Choose **Import data**, select the ZIP, review the replacement warning, and confirm. Import is a replacement, not a merge: the archive's portable statistics and settings replace the corresponding local data. Before anything is replaced, QuotaBar creates and verifies a full timestamped backup in `%USERPROFILE%\QuotaBar Backups\`, then restarts to apply the staged import. To restore a previous state, import that backup ZIP through the same System action.
+System Import accepts only ZIPs created by **Export data**. Choose **Import data**, select a portable export ZIP, review the replacement warning, and confirm. Import is a replacement, not a merge: the archive's portable statistics and settings replace the corresponding local data. Before anything is replaced, QuotaBar creates and verifies a full timestamped backup in `%USERPROFILE%\QuotaBar Backups\`, then restarts to apply the staged import.
 
-Archives are portable across Windows accounts. On import, saved Claude and Codex roots from the source account are removed; QuotaBar discovers only the target account's known provider paths. For example, importing an archive created by Alice while signed in as Bob does not keep `C:\Users\Alice` as an active root.
+The automatic file is a private full same-machine safety backup used by recovery, not a portable import archive. It can contain application logs, caches, and target-local paths, so do not share it or import it into another Windows account. To restore one manually:
+
+1. Fully quit QuotaBar, including its tray process.
+2. Separately preserve the current `%USERPROFILE%\.quotabar-win\` directory so the restore can be reversed.
+3. Extract the trusted automatic backup ZIP into a temporary directory.
+4. While QuotaBar remains stopped, replace the contents of `%USERPROFILE%\.quotabar-win\` with the extracted backup contents.
+5. Restart QuotaBar and verify the restored state.
+
+Portable export archives are portable across Windows accounts. On import, saved Claude and Codex roots from the source account are removed; QuotaBar discovers only the target account's known provider paths. For example, importing a portable export created by Alice while signed in as Bob does not keep `C:\Users\Alice` as an active root.
 
 ## History Tab
 

@@ -4,6 +4,9 @@ import { flush, rendererHarness } from "./helpers/rendererHarness";
 
 const script = fs.readFileSync("src/renderer/tabs/system.js", "utf8");
 const styles = fs.readFileSync("src/renderer/styles.css", "utf8");
+const readme = fs.readFileSync("README.md", "utf8");
+const calculationGuide = fs.readFileSync("docs/how-quotabar-calculates.md", "utf8");
+const testingGuide = fs.readFileSync("TESTING.md", "utf8");
 
 function systemReport(portable: { status?: string | null; ready?: boolean } = {}) {
   return {
@@ -42,6 +45,16 @@ function byId(h: ReturnType<typeof transferHarness>, id: string) {
 }
 
 describe("System portable data transfer controls", () => {
+  it("documents portable imports separately from private same-machine backups", () => {
+    expect(readme).toContain("System Import accepts only ZIPs created by **Export data**");
+    expect(readme).toContain("private full same-machine safety backup");
+    expect(readme).toContain("Fully quit QuotaBar");
+    expect(readme).not.toContain("import that backup ZIP through the same System action");
+    expect(calculationGuide).toContain("cannot be selected in System Import");
+    expect(calculationGuide).not.toContain("either an exported archive or an automatic backup");
+    expect(testingGuide).toContain("Never pass the automatic backup to System Import");
+  });
+
   it.each([
     [{ status: "complete", ready: true }, "Portable data: Ready"],
     [{ status: "pending", ready: false }, "Portable data: Preparing"],

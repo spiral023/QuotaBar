@@ -304,7 +304,9 @@ Provider JSONL files and legacy backfill records are ingestion-only inputs. Quot
 
 Portable exports include the sanitized usage store, quota snapshots, machine-independent settings, notification state, and a checksum manifest. The privacy boundary explicitly excludes raw provider logs, `auth.json`, `.credentials.json`, machine-specific ingestion state, application logs, caches, and backups.
 
-An import replaces the portable statistics and settings covered by the archive; it does not merge them with the target account's data. QuotaBar first writes a verified timestamped full backup to `%USERPROFILE%\QuotaBar Backups\`. Importing between different Windows usernames clears saved provider roots from the source and lets the target discover its own known paths, so a source path such as `C:\Users\Alice` does not remain active for Bob. Use **System → QuotaBar → Import data** to select either an exported archive or an automatic backup, confirm the replacement, and let QuotaBar restart to apply it.
+System Import accepts only portable ZIPs created by **Export data**. An import replaces the portable statistics and settings covered by that archive; it does not merge them with the target account's data. QuotaBar first writes a verified timestamped full backup to `%USERPROFILE%\QuotaBar Backups\`. Importing a portable export between different Windows usernames clears saved provider roots from the source and lets the target discover its own known paths, so a source path such as `C:\Users\Alice` does not remain active for Bob.
+
+The automatic backup is private, full, and intended for same-machine recovery. It has no portable manifest, can contain logs, caches, and target-local paths, and cannot be selected in System Import. Do not share it or use it for a cross-user import. To restore it, fully quit QuotaBar, preserve the current `%USERPROFILE%\.quotabar-win\` separately, extract the trusted backup into a temporary directory, replace the contents of `%USERPROFILE%\.quotabar-win\` while QuotaBar is stopped, and then restart QuotaBar.
 
 ---
 
