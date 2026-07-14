@@ -20,52 +20,76 @@ Renderer changes under `src/renderer/` must be checked in a real Electron window
 
 ### Isolated recipe
 
-All view IPC handlers are registered by `DetailsWindowController`. A minimal temporary entry point is sufficient—no tray, lock, or refresh loops.
+All view IPC handlers are registered by `DetailsWindowController`. A minimal temporary entry point is sufficient—no tray, lock, or refresh loops. The driver creates a disposable home first; the Electron entry point applies that home before importing any QuotaBar module.
 
 1. Create `verify-main.cjs` temporarily in the repository root:
 
 ```js
-const { app, BrowserWindow } = require('electron');
 const path = require('path');
+const { app } = require('electron');
+
+const fixtureRoot = process.env.QB_FIXTURE_ROOT;
+if (!fixtureRoot) throw new Error('QB_FIXTURE_ROOT is required');
+process.env.USERPROFILE = fixtureRoot;
+process.env.HOME = fixtureRoot;
+app.setPath('userData', path.join(fixtureRoot, 'electron-user-data'));
+
+// Import only after the fixture environment and Electron userData are isolated.
 const { DetailsWindowController } = require('./dist/main/detailsWindow.js');
 
-app.whenReady().then(async () => {
-  new DetailsWindowController(() => null, undefined);
-  const win = new BrowserWindow({
-    width: 900, height: 660, frame: false, backgroundColor: '#090c10',
-    webPreferences: { nodeIntegration: true, contextIsolation: false },
-  });
-  await win.loadFile(path.join(__dirname, 'src/renderer/index.html'));
+app.whenReady().then(() => {
+  global.verifyController = new DetailsWindowController(() => null, undefined);
+  global.verifyController.open(() => {});
 });
 ```
 
 2. Create `verify-drive.cjs` to control it through the existing `playwright-core` dependency:
 
 ```js
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { _electron } = require('playwright-core');
 
 // Editor and agent environments may set this. Electron must not run as plain Node.
 delete process.env.ELECTRON_RUN_AS_NODE;
 
 (async () => {
-  const electronApp = await _electron.launch({ args: ['verify-main.cjs'], cwd: __dirname });
-  const page = await electronApp.firstWindow();
-  await page.waitForLoadState('domcontentloaded');
+  const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'quotabar-renderer-'));
+  let electronApp;
+  try {
+    electronApp = await _electron.launch({
+      args: ['verify-main.cjs'],
+      cwd: __dirname,
+      env: {
+        ...process.env,
+        QB_FIXTURE_ROOT: fixtureRoot,
+        USERPROFILE: fixtureRoot,
+        HOME: fixtureRoot,
+      },
+    });
+    const page = await electronApp.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
 
-  await page.evaluate(() => {
-    document.body.classList.add('view-dashboard');
-    document.body.classList.remove('view-compact');
-  });
+    await page.evaluate(() => {
+      document.body.classList.add('view-dashboard');
+      document.body.classList.remove('view-compact');
+    });
 
-  await page.click('#tab-history');
-  await page.screenshot({ path: 'verify.png' });
+    await page.click('#tab-system');
+    await page.screenshot({ path: path.join(fixtureRoot, 'verify.png') });
 
-  await electronApp.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0].setSize(750, 660);
-  });
-
-  await electronApp.close();
-})();
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].setSize(750, 660);
+    });
+  } finally {
+    if (electronApp) await electronApp.close();
+    await fs.rm(fixtureRoot, { recursive: true, force: true });
+  }
+})().catch((error) => {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+});
 ```
 
 Run it with `node verify-drive.cjs`.

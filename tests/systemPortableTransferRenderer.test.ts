@@ -55,6 +55,21 @@ describe("System portable data transfer controls", () => {
     expect(testingGuide).toContain("Never pass the automatic backup to System Import");
   });
 
+  it("documents fixture isolation before any QuotaBar module is imported", () => {
+    const fixtureIndex = testingGuide.indexOf("const fixtureRoot");
+    const userProfileIndex = testingGuide.indexOf("process.env.USERPROFILE = fixtureRoot");
+    const userDataIndex = testingGuide.indexOf("app.setPath('userData'");
+    const moduleImportIndex = testingGuide.indexOf("require('./dist/main/detailsWindow.js')");
+
+    expect(fixtureIndex).toBeGreaterThanOrEqual(0);
+    expect(userProfileIndex).toBeGreaterThan(fixtureIndex);
+    expect(userDataIndex).toBeGreaterThan(userProfileIndex);
+    expect(moduleImportIndex).toBeGreaterThan(userDataIndex);
+    expect(testingGuide).toContain("QB_FIXTURE_ROOT: fixtureRoot");
+    expect(testingGuide).toContain("finally");
+    expect(testingGuide).toContain("await fs.rm(fixtureRoot, { recursive: true, force: true })");
+  });
+
   it.each([
     [{ status: "complete", ready: true }, "Portable data: Ready"],
     [{ status: "pending", ready: false }, "Portable data: Preparing"],

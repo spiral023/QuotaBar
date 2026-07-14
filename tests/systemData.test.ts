@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   collectSystemData,
   findOpenableSystemPath,
@@ -9,7 +9,6 @@ import {
   formatWslDiscoveryDiagnostics,
   formatWslSuggestionDiagnostics,
 } from "../src/main/systemData";
-import { PortableUsageStore } from "../src/portable/usageStore";
 
 let tmpDir: string;
 let homeDir: string;
@@ -162,12 +161,13 @@ describe("collectSystemData", () => {
   });
 
   it("lists only the known portable QuotaBar paths", async () => {
-    await writeFile(path.join(appConfigDir, "usage", "events", "2026-07.jsonl"), "{}\n");
-    await writeFile(path.join(appConfigDir, "quota", "2026-07.jsonl"), "{}\n");
-    await writeFile(path.join(appConfigDir, "usage", "migration-state.json"), JSON.stringify({
+    const migrationContents = JSON.stringify({
       status: "running",
       privateDetail: "must-not-leave-the-file",
-    }));
+    });
+    await writeFile(path.join(appConfigDir, "usage", "events", "2026-07.jsonl"), "{}\n");
+    await writeFile(path.join(appConfigDir, "quota", "2026-07.jsonl"), "{}\n");
+    await writeFile(path.join(appConfigDir, "usage", "migration-state.json"), migrationContents);
     await writeFile(path.join(appConfigDir, "pending-import.json"), "{}\n");
     const unrelatedDir = path.join(tmpDir, "unrelated");
     await writeFile(path.join(unrelatedDir, "private.txt"), "must-not-be-scanned");
@@ -181,7 +181,14 @@ describe("collectSystemData", () => {
       ["Migration State", path.join(appConfigDir, "usage", "migration-state.json")],
       ["Pending Import", path.join(appConfigDir, "pending-import.json")],
     ]);
-    expect(report.totals.fileCount).toBe(5);
+    expect(report.app.totals.fileCount).toBe(4);
+    expect(report.totals.fileCount).toBe(4);
+    expect(report.app.totals.totalBytes).toBe(Buffer.byteLength(migrationContents) + 9);
+    expect(report.totals.totalBytes).toBe(Buffer.byteLength(migrationContents) + 9);
+    expect(report.categories.find((item) => item.id === "cache")?.fileCount).toBe(2);
+    expect(report.categories.find((item) => item.id === "config")?.fileCount).toBe(2);
+    expect(report.categories.find((item) => item.id === "cache")?.totalBytes).toBe(6);
+    expect(report.categories.find((item) => item.id === "config")?.totalBytes).toBe(Buffer.byteLength(migrationContents) + 3);
     expect(JSON.stringify(report)).not.toContain(unrelatedDir);
     expect(JSON.stringify(report)).not.toContain("must-not-be-scanned");
   });
@@ -190,7 +197,12 @@ describe("collectSystemData", () => {
     "returns only the sanitized %s migration status",
     async (status) => {
       await writeFile(path.join(appConfigDir, "usage", "migration-state.json"), JSON.stringify({
+        schemaVersion: 1,
         status,
+        usageMigrationVersion: 1,
+        ...(status === "complete" ? { storeRevision: "a".repeat(64) } : {}),
+        ...(status === "failed" ? { lastError: "migration_completion_failed" } : {}),
+        updatedAt: "2026-07-14T00:00:00.000Z",
         privateDetail: `hidden-${status}`,
       }));
 
@@ -215,31 +227,90 @@ describe("collectSystemData", () => {
     expect(JSON.stringify(report)).not.toContain("hidden-invalid-state");
   });
 
-  it("reports portable data ready only when the complete state matches the usage-store revision", async () => {
+  it("rejects an oversized migration state before reading its contents", async () => {
+    const statePath = path.join(appConfigDir, "usage", "migration-state.json");
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(statePath, Buffer.alloc(64 * 1024 + 1, 0x78));
+    const readFile = vi.spyOn(fs, "readFile");
+
+    try {
+      const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
+
+      expect(report.app.portableMigrationStatus).toBeNull();
+      expect(report.app.portableDataReady).toBe(false);
+      expect(readFile.mock.calls.some(([filePath]) => path.resolve(String(filePath)) === path.resolve(statePath))).toBe(false);
+    } finally {
+      readFile.mockRestore();
+    }
+  });
+
+  it("derives readiness from validated migration state without reading or recovering the usage store", async () => {
     const usageDir = path.join(appConfigDir, "usage");
-    const store = new PortableUsageStore(usageDir);
-    const revision = await store.getRevision();
+    const transactionPath = path.join(usageDir, "pending-store-transaction.json");
+    const staleTempPath = path.join(
+      usageDir,
+      "store-metadata.json.1.1.00000000-0000-4000-8000-000000000001.tmp",
+    );
+    await writeFile(path.join(usageDir, "events", "2026-07.jsonl"), "not-json-and-must-not-be-read\n");
+    await writeFile(transactionPath, `${JSON.stringify({
+      schemaVersion: 1,
+      transactionId: "00000000-0000-4000-8000-000000000002",
+      entries: [],
+      remove: [],
+    })}\n`);
+    await writeFile(staleTempPath, "stale-but-owned-by-the-store");
+    await fs.utimes(staleTempPath, new Date("2000-01-01T00:00:00.000Z"), new Date("2000-01-01T00:00:00.000Z"));
     await writeFile(path.join(usageDir, "migration-state.json"), `${JSON.stringify({
       schemaVersion: 1,
       status: "complete",
       usageMigrationVersion: 1,
-      storeRevision: revision,
+      storeRevision: "a".repeat(64),
       updatedAt: "2026-07-14T00:00:00.000Z",
     })}\n`);
 
-    const ready = await collectSystemData({ homeDir, appConfigDir, env: {} });
-    expect(ready.app.portableDataReady).toBe(true);
+    const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
 
-    await writeFile(path.join(usageDir, "migration-state.json"), `${JSON.stringify({
-      schemaVersion: 1,
-      status: "complete",
-      usageMigrationVersion: 1,
-      storeRevision: "0".repeat(64),
-      updatedAt: "2026-07-14T00:01:00.000Z",
-    })}\n`);
-    const stale = await collectSystemData({ homeDir, appConfigDir, env: {} });
-    expect(stale.app.portableMigrationStatus).toBe("complete");
-    expect(stale.app.portableDataReady).toBe(false);
+    expect(report.app.portableMigrationStatus).toBe("complete");
+    expect(report.app.portableDataReady).toBe(true);
+    expect(await fs.readFile(transactionPath, "utf8")).toContain("00000000-0000-4000-8000-000000000002");
+    expect(await fs.readFile(staleTempPath, "utf8")).toBe("stale-but-owned-by-the-store");
+  });
+
+  it.each(["usage", "quota"])("does not traverse a linked portable %s root", async (rootName) => {
+    const externalRoot = path.join(tmpDir, `external-${rootName}`);
+    await writeFile(path.join(externalRoot, "private.txt"), `external-${rootName}-contents`);
+    if (rootName === "usage") {
+      await writeFile(path.join(externalRoot, "migration-state.json"), JSON.stringify({
+        status: "running",
+        privateDetail: "external-migration-contents",
+      }));
+    }
+    await fs.mkdir(appConfigDir, { recursive: true });
+    await fs.symlink(externalRoot, path.join(appConfigDir, rootName), "junction");
+
+    const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
+    const linkedPath = report.app.paths.find((item) => item.path === path.join(appConfigDir, rootName));
+
+    expect(linkedPath?.exists).toBe(false);
+    expect(linkedPath?.fileCount).toBe(0);
+    expect(JSON.stringify(report)).not.toContain(`external-${rootName}-contents`);
+    if (rootName === "usage") {
+      expect(report.app.portableMigrationStatus).toBeNull();
+      expect(JSON.stringify(report)).not.toContain("external-migration-contents");
+    }
+  });
+
+  it("does not traverse a linked QuotaBar app-data root", async () => {
+    const externalAppDir = path.join(tmpDir, "external-app");
+    await writeFile(path.join(externalAppDir, "settings.json"), "external-app-contents");
+    await writeFile(path.join(externalAppDir, "usage", "migration-state.json"), JSON.stringify({ status: "running" }));
+    await fs.symlink(externalAppDir, appConfigDir, "junction");
+
+    const report = await collectSystemData({ homeDir, appConfigDir, env: {} });
+
+    expect(report.app.paths.every((item) => !item.exists && item.fileCount === 0)).toBe(true);
+    expect(report.app.portableMigrationStatus).toBeNull();
+    expect(JSON.stringify(report)).not.toContain("external-app-contents");
   });
 
   it("includes the QuotaBar distribution variant in app system data", async () => {
