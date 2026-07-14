@@ -393,7 +393,9 @@ export function sanitizeImportedSettings(imported: unknown, _targetHome: string)
     pinned: normalized.pinned,
     minModelTokenSharePct: normalized.minModelTokenSharePct,
     debugLog: { enabled: normalized.debugLog.enabled },
-    proxy: { mode: normalized.proxy.mode, url: normalized.proxy.url },
+    // Proxy URLs can contain credentials and always describe the source machine's
+    // network. Portable archives intentionally restore the safe auto default.
+    proxy: { ...defaultSettings.proxy },
     notifications: {
       enabled: normalized.notifications.enabled,
       quietHours: {

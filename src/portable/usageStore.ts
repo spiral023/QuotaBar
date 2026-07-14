@@ -815,6 +815,36 @@ function sanitizePortableEvent(value: unknown): SanitizedResult {
   return { event };
 }
 
+/** Strict archive boundary: stored events must already be canonical and private. */
+export function validatePortableEventForArchive(value: unknown): PortableUsageEvent {
+  const event = requirePortableEvent(value);
+  const raw = value as Record<string, unknown>;
+  const optional = [
+    "projectName", "costUSD", "inputCostUSD", "outputCostUSD",
+    "cacheCreationCostUSD", "cacheReadCostUSD", "pricingVersion", "legacyTarget",
+  ].filter((key) => raw[key] !== undefined);
+  const required = [
+    "schemaVersion", "id", "provider", "occurredAt", "model", "sessionKey", "source", "synthetic",
+    "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "reasoningOutputTokens",
+  ];
+  if (!hasExactRecordKeys(raw, [...required, ...optional])
+    || !/^[a-f0-9]{64}$/.test(event.id)
+    || !/^[a-f0-9]{64}$/.test(event.sessionKey)
+    || event.occurredAt !== new Date(event.occurredAt).toISOString()
+    || (event.projectName !== undefined
+      && (!event.projectName.trim() || /[\\/\0\r\n]/.test(event.projectName)))
+    || (event.source === "legacy-reconciliation") !== event.synthetic) {
+    throw new Error("Invalid portable usage event");
+  }
+  return event;
+}
+
+function hasExactRecordKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value).sort();
+  const canonical = [...expected].sort();
+  return keys.length === canonical.length && keys.every((key, index) => key === canonical[index]);
+}
+
 function sanitizeLegacyTarget(value: unknown): PortableLegacyTarget | string {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return "legacyTarget must be an object";

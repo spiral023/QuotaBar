@@ -26,6 +26,7 @@ import {
   type ArchiveManifest,
   type ArchiveManifestEntry,
 } from "./archiveManifest";
+import { validatePortableArchiveContents } from "./archiveContentValidator";
 import { withNamedPortableRootLock, withPortableRootLock } from "./rootLock";
 import { PORTABLE_STORE_VERSION } from "./types";
 import {
@@ -114,7 +115,8 @@ interface PreparedPortableFile {
 
 interface SnapshotFile {
   path: string;
-  absolutePath: string;
+  absolutePath?: string;
+  data?: Buffer;
   size: number;
   sha256: string;
 }
@@ -154,8 +156,9 @@ export async function exportPortableData(
     await removeFileIfPresent(partialPath);
     try {
       await assertDestinationAvailable(destinationZip);
-      const files = (await snapshotAppFiles(appDir))
+      const sourceFiles = (await snapshotAppFiles(appDir))
         .filter((file) => isPortableArchivePath(file.path) && file.path !== "manifest.json");
+      const files = await sanitizePortableExportFiles(sourceFiles);
       const manifest = manifestFromSnapshots(files);
       await fs.mkdir(path.dirname(destinationZip), { recursive: true });
       await writeStreamingZip(
@@ -166,7 +169,7 @@ export async function exportPortableData(
         false,
         false,
       );
-      await verifySnapshotFiles(files);
+      await verifySnapshotFiles(sourceFiles);
       const verified = await preflightPortableZip(partialPath);
       await verified.cleanup();
       await fs.rename(partialPath, destinationZip);
@@ -213,6 +216,7 @@ export async function stagePortableImport(
       })));
     if (sourceIdentity) await assertFileIdentity(zipPath, sourceIdentity);
     try {
+      await validatePreparedPortableContents(stagedFiles);
       return await withArchiveLocks(appDir, async () => {
     let stagingDir: string | undefined;
     try {
@@ -298,6 +302,12 @@ export async function stagePortableImport(
       await streaming?.cleanup();
     }
   });
+}
+
+async function validatePreparedPortableContents(files: readonly PreparedPortableFile[]): Promise<void> {
+  const materialized: SafeFile[] = [];
+  for (const file of files) materialized.push({ path: file.path, data: await preparedFileData(file) });
+  validatePortableArchiveContents(materialized);
 }
 
 export async function applyPendingImport(
@@ -1295,7 +1305,9 @@ async function writeStreamingZip(
 ): Promise<void> {
   const zip = new YazlZipFile();
   for (const file of files) {
-    zip.addFile(file.absolutePath, file.path, { compress: compressFiles, forceZip64Format: forceZip64Format || file.size > 0xffff_ffff });
+    if (file.data) zip.addBuffer(file.data, file.path, { compress: compressFiles, forceZip64Format: forceZip64Format || file.size > 0xffff_ffff });
+    else if (file.absolutePath) zip.addFile(file.absolutePath, file.path, { compress: compressFiles, forceZip64Format: forceZip64Format || file.size > 0xffff_ffff });
+    else throw new Error("Invalid archive source");
   }
   if (manifest) zip.addBuffer(manifest, "manifest.json", { compress: true });
   let outputBytes = 0;
@@ -1362,11 +1374,33 @@ async function walkSnapshots(
 
 async function verifySnapshotFiles(files: readonly SnapshotFile[]): Promise<void> {
   for (const file of files) {
+    if (!file.absolutePath) continue;
     const identity = await fileIdentity(file.absolutePath);
     if (identity.size !== file.size || identity.sha256 !== file.sha256) {
       throw new Error("Application data changed during archive operation");
     }
   }
+}
+
+async function sanitizePortableExportFiles(files: readonly SnapshotFile[]): Promise<SnapshotFile[]> {
+  const result: SnapshotFile[] = [];
+  for (const file of files) {
+    if (file.path !== "settings.json") {
+      result.push(file);
+      continue;
+    }
+    if (!file.absolutePath) throw new Error("Invalid settings source");
+    const raw = await readStableFile(file.absolutePath, file.size);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw.toString("utf8"));
+    } catch {
+      throw new Error("Invalid settings source");
+    }
+    const data = Buffer.from(`${JSON.stringify(sanitizeImportedSettings(parsed, ""), null, 2)}\n`, "utf8");
+    result.push({ path: file.path, data, size: data.byteLength, sha256: sha256Bytes(data) });
+  }
+  return result;
 }
 
 async function readStableFile(filePath: string, expectedSize: number): Promise<Buffer> {

@@ -26,7 +26,7 @@ export async function saveBonusStateFile(filePath: string, file: BonusStateFile)
  * spike-anfälligen Erkennung gesetzt (vor dem utilization-Skalen-Fix) und sind
  * nicht mehr vertrauenswürdig. null = Datei unbrauchbar (→ leerer State).
  */
-function migrateBonusStateFile(value: unknown): BonusStateFile | null {
+export function migrateBonusStateFile(value: unknown): BonusStateFile | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
   if (r.version !== 1 && r.version !== 2) return null;

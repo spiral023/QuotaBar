@@ -1,5 +1,5 @@
 import AdmZip from "adm-zip";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
@@ -43,6 +43,37 @@ async function put(root: string, relativePath: string, data: string): Promise<vo
   await writeFile(target, data, "utf8");
 }
 
+function portableEventLine(seed: string, occurredAt: string): string {
+  const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+  return `${JSON.stringify({
+    schemaVersion: 1,
+    id: hash(`event:${seed}`),
+    provider: "claude",
+    occurredAt,
+    model: "claude-sonnet-4",
+    projectName: "QuotaBar",
+    sessionKey: hash(`session:${seed}`),
+    source: "claude-log",
+    synthetic: false,
+    inputTokens: 10,
+    outputTokens: 20,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    reasoningOutputTokens: 0,
+  })}\n`;
+}
+
+function portableQuotaLine(seed: string, fetchedAt: string, padding = ""): string {
+  return `${JSON.stringify({
+    kind: "snapshot",
+    provider: seed.includes("codex") ? "codex" : "claude",
+    status: "ok",
+    planType: `pro${padding}`,
+    windows: [],
+    fetchedAt,
+  })}\n`;
+}
+
 async function writeSyntheticZip(target: string, addEntries: (zip: YazlZipFile) => void): Promise<void> {
   const zip = new YazlZipFile();
   addEntries(zip);
@@ -77,6 +108,53 @@ function fakeZipEntry(
 }
 
 describe("portable archive service", () => {
+  it("removes proxy credentials and machine-bound proxy configuration from portable settings", async () => {
+    const root = await tempRoot();
+    const appDir = path.join(root, ".quotabar-win");
+    const archivePath = path.join(root, "portable.zip");
+    const credential = "portable-proxy-secret";
+    await put(appDir, "settings.json", JSON.stringify({
+      costWindow: "7d",
+      proxy: { mode: "manual", url: `http://user:${credential}@proxy.internal:8080` },
+    }));
+
+    await exportPortableData(appDir, archivePath);
+
+    const archiveBytes = await readFile(archivePath);
+    expect(archiveBytes.includes(Buffer.from(credential))).toBe(false);
+    const settings = JSON.parse(new AdmZip(archivePath).getEntry("settings.json")!.getData().toString("utf8"));
+    expect(settings.costWindow).toBe("7d");
+    expect(settings.proxy).toEqual({ mode: "auto", url: "" });
+  });
+
+  it("rejects a checksum-valid archive with an invalid usage event before creating backup or pending files", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "source", ".quotabar-win");
+    const targetHome = path.join(root, "target");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "malformed.zip");
+    await put(source, "settings.json", "{}");
+    await put(target, "settings.json", "{}");
+    await exportPortableData(source, archivePath);
+    const zip = new AdmZip(archivePath);
+    const invalid = Buffer.from(`${JSON.stringify({ schemaVersion: 1, id: "not-a-hash" })}\n`);
+    zip.addFile("usage/events/2026-07.jsonl", invalid);
+    const manifestEntry = zip.getEntry("manifest.json")!;
+    const manifest = JSON.parse(manifestEntry.getData().toString("utf8"));
+    manifest.entries.push({
+      path: "usage/events/2026-07.jsonl",
+      size: invalid.byteLength,
+      sha256: createHash("sha256").update(invalid).digest("hex"),
+    });
+    manifest.entries.sort((left: { path: string }, right: { path: string }) => left.path.localeCompare(right.path, "en"));
+    manifestEntry.setData(Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
+    zip.writeZip(archivePath);
+
+    await expect(stagePortableImport(archivePath, target, targetHome)).rejects.toThrow("Portable data import failed");
+    await expect(access(path.join(target, ".portable-import.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(path.join(targetHome, "QuotaBar Backups"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("exports only existing portable files with verified manifest checksums", async () => {
     const root = await tempRoot();
     const appDir = path.join(root, "Alice", ".quotabar-win");
@@ -171,15 +249,16 @@ describe("portable archive service", () => {
     const bobHome = path.join(root, "Bob");
     const bob = path.join(bobHome, ".quotabar-win");
     const portableZip = path.join(root, "alice.zip");
-    await put(alice, "usage/events/2026-07.jsonl", "alice-event\n");
-    await put(alice, "quota/2026-07.jsonl", "alice-quota\n");
+    const aliceEvent = portableEventLine("alice", "2026-07-01T00:00:00.000Z");
+    await put(alice, "usage/events/2026-07.jsonl", aliceEvent);
     await put(alice, "settings.json", JSON.stringify({
       claudeRoots: ["C:/Users/Alice/.claude"],
       codexHomes: ["C:/Users/Alice/.codex"],
       costWindow: "7d",
     }));
     await exportPortableData(alice, portableZip);
-    await put(bob, "usage/events/old.jsonl", "bob-old\n");
+    const bobEvent = portableEventLine("bob", "2026-06-01T00:00:00.000Z");
+    await put(bob, "usage/events/2026-06.jsonl", bobEvent);
     await put(bob, "usage/ingest-state.json", "bob-ingest");
     await put(bob, "quotabar.log", "keep-log");
     await put(bob, "debug/events.jsonl", "keep-debug");
@@ -190,13 +269,13 @@ describe("portable archive service", () => {
     expect(staged.pending).toBe(true);
     expect(path.dirname(staged.backupPath)).toBe(path.join(root, "Bob", "QuotaBar Backups"));
     expect(new AdmZip(staged.backupPath).getEntry("quotabar.log")!.getData().toString()).toBe("keep-log");
-    expect(await readFile(path.join(bob, "usage/events/old.jsonl"), "utf8")).toBe("bob-old\n");
+    expect(await readFile(path.join(bob, "usage/events/2026-06.jsonl"), "utf8")).toBe(bobEvent);
 
     const applied = await applyPendingImport(bob);
 
     expect(applied.applied).toBe(true);
-    expect(await readFile(path.join(bob, "usage/events/2026-07.jsonl"), "utf8")).toBe("alice-event\n");
-    await expect(readFile(path.join(bob, "usage/events/old.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path.join(bob, "usage/events/2026-07.jsonl"), "utf8")).toBe(aliceEvent);
+    await expect(readFile(path.join(bob, "usage/events/2026-06.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(JSON.parse(await readFile(path.join(bob, "usage/ingest-state.json"), "utf8"))).toEqual({
       schemaVersion: 1,
       sources: {},
@@ -287,16 +366,18 @@ describe("portable archive service", () => {
     const targetHome = path.join(root, "target");
     const target = path.join(targetHome, ".quotabar-win");
     const archivePath = path.join(root, "portable.zip");
-    await put(source, "usage/events/new.jsonl", "new-data\n");
+    const newData = portableEventLine("new", "2026-08-01T00:00:00.000Z");
+    const oldData = portableEventLine("old", "2026-06-01T00:00:00.000Z");
+    await put(source, "usage/events/2026-08.jsonl", newData);
     await put(source, "settings.json", "{\"costWindow\":\"7d\"}");
-    await put(target, "usage/events/old.jsonl", "old-data\n");
+    await put(target, "usage/events/2026-06.jsonl", oldData);
     await put(target, "settings.json", "{\"costWindow\":\"30d\"}");
     await put(target, "quotabar.log", "keep-log");
     await exportPortableData(source, archivePath);
     await stagePortableImport(archivePath, target, targetHome);
     let injected = false;
     const rename = async (from: Parameters<typeof fsPromises.rename>[0], to: Parameters<typeof fsPromises.rename>[1]) => {
-      if (String(from).endsWith(path.join("usage", "events", "old.jsonl")) && String(to).includes(".rollback")) {
+      if (String(from).endsWith(path.join("usage", "events", "2026-06.jsonl")) && String(to).includes(".rollback")) {
         injected = true;
         throw new Error("rename-super-secret");
       }
@@ -308,8 +389,8 @@ describe("portable archive service", () => {
       rollbackOutcome: "completed",
     });
     expect(injected).toBe(true);
-    expect(await readFile(path.join(target, "usage/events/old.jsonl"), "utf8")).toBe("old-data\n");
-    await expect(access(path.join(target, "usage/events/new.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path.join(target, "usage/events/2026-06.jsonl"), "utf8")).toBe(oldData);
+    await expect(access(path.join(target, "usage/events/2026-08.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe("{\"costWindow\":\"30d\"}");
     expect(await readFile(path.join(target, "quotabar.log"), "utf8")).toBe("keep-log");
   });
@@ -320,20 +401,21 @@ describe("portable archive service", () => {
     const targetHome = path.join(root, "target");
     const target = path.join(targetHome, ".quotabar-win");
     const archivePath = path.join(root, "portable.zip");
-    await put(source, "usage/events/new.jsonl", "new-data\n");
-    await put(target, "usage/events/old.jsonl", "old-data\n");
+    const newData = portableEventLine("resume-new", "2026-08-01T00:00:00.000Z");
+    await put(source, "usage/events/2026-08.jsonl", newData);
+    await put(target, "usage/events/2026-06.jsonl", portableEventLine("resume-old", "2026-06-01T00:00:00.000Z"));
     await exportPortableData(source, archivePath);
     await stagePortableImport(archivePath, target, targetHome);
     const pending = JSON.parse(await readFile(path.join(target, ".portable-import.pending.json"), "utf8"));
     const staging = path.join(targetHome, pending.stagingDirectory);
     const rollback = path.join(targetHome, pending.rollbackDirectory);
     await mkdir(path.join(rollback, "usage/events"), { recursive: true });
-    await fsPromises.rename(path.join(target, "usage/events/old.jsonl"), path.join(rollback, "usage/events/old.jsonl"));
-    await fsPromises.rename(path.join(staging, "usage/events/new.jsonl"), path.join(target, "usage/events/new.jsonl"));
+    await fsPromises.rename(path.join(target, "usage/events/2026-06.jsonl"), path.join(rollback, "usage/events/2026-06.jsonl"));
+    await fsPromises.rename(path.join(staging, "usage/events/2026-08.jsonl"), path.join(target, "usage/events/2026-08.jsonl"));
 
     await expect(applyPendingImport(target)).resolves.toMatchObject({ applied: true });
-    expect(await readFile(path.join(target, "usage/events/new.jsonl"), "utf8")).toBe("new-data\n");
-    await expect(access(path.join(target, "usage/events/old.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path.join(target, "usage/events/2026-08.jsonl"), "utf8")).toBe(newData);
+    await expect(access(path.join(target, "usage/events/2026-06.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects missing or corrupt referenced backups before any apply rename", async () => {
@@ -574,9 +656,10 @@ describe("portable archive service", () => {
       const originalSettings = "{\"costWindow\":\"30d\"}\n";
       const originalIngest = "{\"schemaVersion\":1,\"sources\":{\"original\":{\"size\":1,\"processedAt\":\"2026-01-01T00:00:00.000Z\"}}}\n";
       await put(source, "settings.json", "{\"costWindow\":\"7d\"}");
-      await put(source, "usage/events/new.jsonl", "new-data\n");
+      await put(source, "usage/events/2026-08.jsonl", portableEventLine(`new-${failurePosition}`, "2026-08-01T00:00:00.000Z"));
       await put(target, "settings.json", originalSettings);
-      await put(target, "usage/events/old.jsonl", "old-data\n");
+      const oldData = portableEventLine(`old-${failurePosition}`, "2026-06-01T00:00:00.000Z");
+      await put(target, "usage/events/2026-06.jsonl", oldData);
       await put(target, "usage/ingest-state.json", originalIngest);
       await put(target, "quotabar.log", "keep-log");
       await put(target, "cache/prices.json", "keep-cache");
@@ -598,9 +681,9 @@ describe("portable archive service", () => {
       await expect(applyPendingImport(target, { rename })).rejects.toThrow("Portable data apply failed");
       expect(injected, `rename ${failurePosition}`).toBe(true);
       expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe(originalSettings);
-      expect(await readFile(path.join(target, "usage/events/old.jsonl"), "utf8")).toBe("old-data\n");
+      expect(await readFile(path.join(target, "usage/events/2026-06.jsonl"), "utf8")).toBe(oldData);
       expect(await readFile(path.join(target, "usage/ingest-state.json"), "utf8")).toBe(originalIngest);
-      await expect(access(path.join(target, "usage/events/new.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(path.join(target, "usage/events/2026-08.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
       expect(await readFile(path.join(target, "quotabar.log"), "utf8")).toBe("keep-log");
       expect(await readFile(path.join(target, "cache/prices.json"), "utf8")).toBe("keep-cache");
       expect(await readFile(path.join(target, "debug/events.jsonl"), "utf8")).toBe("keep-debug");
@@ -614,9 +697,9 @@ describe("portable archive service", () => {
     const target = path.join(targetHome, ".quotabar-win");
     const archivePath = path.join(root, "rollback-failure.zip");
     await put(source, "settings.json", "{\"costWindow\":\"7d\"}");
-    await put(source, "usage/events/new.jsonl", "new-data\n");
+    await put(source, "usage/events/2026-08.jsonl", portableEventLine("rollback-new", "2026-08-01T00:00:00.000Z"));
     await put(target, "settings.json", "original-settings\n");
-    await put(target, "usage/events/old.jsonl", "old-data\n");
+    await put(target, "usage/events/2026-06.jsonl", portableEventLine("rollback-old", "2026-06-01T00:00:00.000Z"));
     await exportPortableData(source, archivePath);
     await stagePortableImport(archivePath, target, targetHome);
     const pendingPath = path.join(target, ".portable-import.pending.json");
@@ -650,9 +733,10 @@ describe("portable archive service", () => {
     const target = path.join(targetHome, ".quotabar-win");
     const archivePath = path.join(root, "post-verify.zip");
     await put(source, "settings.json", "{\"costWindow\":\"7d\"}\n");
-    await put(source, "usage/events/new.jsonl", "new-data\n");
+    await put(source, "usage/events/2026-08.jsonl", portableEventLine("post-new", "2026-08-01T00:00:00.000Z"));
     await put(target, "settings.json", "{\"costWindow\":\"30d\"}\n");
-    await put(target, "usage/events/old.jsonl", "old-data\n");
+    const oldData = portableEventLine("post-old", "2026-06-01T00:00:00.000Z");
+    await put(target, "usage/events/2026-06.jsonl", oldData);
     await exportPortableData(source, archivePath);
     await stagePortableImport(archivePath, target, targetHome);
     let importedRenames = 0;
@@ -669,7 +753,7 @@ describe("portable archive service", () => {
       rollbackOutcome: "completed",
     });
     expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe("{\"costWindow\":\"30d\"}\n");
-    expect(await readFile(path.join(target, "usage/events/old.jsonl"), "utf8")).toBe("old-data\n");
+    expect(await readFile(path.join(target, "usage/events/2026-06.jsonl"), "utf8")).toBe(oldData);
     await expect(applyPendingImport(target)).resolves.toEqual({ applied: false, fileCount: 0, totalBytes: 0 });
   });
 
@@ -683,9 +767,10 @@ describe("portable archive service", () => {
       const archivePath = path.join(root, `aborted-${crashAt}.zip`);
       const originalSettings = "{\"costWindow\":\"30d\"}\n";
       await put(source, "settings.json", "{\"costWindow\":\"7d\"}\n");
-      await put(source, "usage/events/new.jsonl", "new-data\n");
+      await put(source, "usage/events/2026-08.jsonl", portableEventLine(`aborted-new-${crashAt}`, "2026-08-01T00:00:00.000Z"));
       await put(target, "settings.json", originalSettings);
-      await put(target, "usage/events/old.jsonl", "old-data\n");
+      const oldData = portableEventLine(`aborted-old-${crashAt}`, "2026-06-01T00:00:00.000Z");
+      await put(target, "usage/events/2026-06.jsonl", oldData);
       await exportPortableData(source, archivePath);
       await stagePortableImport(archivePath, target, targetHome);
       const pending = JSON.parse(await readFile(path.join(target, ".portable-import.pending.json"), "utf8"));
@@ -718,7 +803,7 @@ describe("portable archive service", () => {
         await applying.rejects.toMatchObject({ rollbackOutcome: "pending-recovery" });
       }
       expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe(originalSettings);
-      expect(await readFile(path.join(target, "usage/events/old.jsonl"), "utf8")).toBe("old-data\n");
+      expect(await readFile(path.join(target, "usage/events/2026-06.jsonl"), "utf8")).toBe(oldData);
 
       await expect(applyPendingImport(target)).resolves.toEqual({ applied: false, fileCount: 0, totalBytes: 0 });
       await expect(access(path.join(target, ".portable-import.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -733,9 +818,9 @@ describe("portable archive service", () => {
     const archivePath = path.join(root, "aborted-phase-write.zip");
     const originalSettings = "{\"costWindow\":\"30d\"}\n";
     await put(source, "settings.json", "{\"costWindow\":\"7d\"}\n");
-    await put(source, "usage/events/new.jsonl", "new-data\n");
+    await put(source, "usage/events/2026-08.jsonl", portableEventLine("phase-new", "2026-08-01T00:00:00.000Z"));
     await put(target, "settings.json", originalSettings);
-    await put(target, "usage/events/old.jsonl", "old-data\n");
+    await put(target, "usage/events/2026-06.jsonl", portableEventLine("phase-old", "2026-06-01T00:00:00.000Z"));
     await exportPortableData(source, archivePath);
     await stagePortableImport(archivePath, target, targetHome);
     const pendingPath = path.join(target, ".portable-import.pending.json");
@@ -778,15 +863,15 @@ describe("portable archive service", () => {
     const archivePath = path.join(root, "new-file-rollback.zip");
     const originalSettings = "{\"costWindow\":\"30d\"}\n";
     await put(source, "settings.json", "{\"costWindow\":\"7d\"}\n");
-    await put(source, "usage/events/new.jsonl", "new-data\n");
+    await put(source, "usage/events/2026-08.jsonl", portableEventLine("brand-new", "2026-08-01T00:00:00.000Z"));
     await put(target, "settings.json", originalSettings);
     await exportPortableData(source, archivePath);
     await stagePortableImport(archivePath, target, targetHome);
     const pendingPath = path.join(target, ".portable-import.pending.json");
     const rename: typeof fsPromises.rename = async (from, to) => {
       await fsPromises.rename(from, to);
-      if (String(to).endsWith(path.join("usage", "events", "new.jsonl"))) {
-        await writeFile(path.join(target, "usage/events/new.jsonl"), "corrupt-new-file\n");
+      if (String(to).endsWith(path.join("usage", "events", "2026-08.jsonl"))) {
+        await writeFile(path.join(target, "usage/events/2026-08.jsonl"), "corrupt-new-file\n");
       }
     };
     let completedPhaseRenames = 0;
@@ -802,11 +887,11 @@ describe("portable archive service", () => {
     });
     expect(JSON.parse(await readFile(pendingPath, "utf8"))).toMatchObject({ phase: "rolling-back" });
     expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe(originalSettings);
-    await expect(access(path.join(target, "usage/events/new.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(path.join(target, "usage/events/2026-08.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
 
     await expect(applyPendingImport(target)).resolves.toEqual({ applied: false, fileCount: 0, totalBytes: 0 });
     await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(access(path.join(target, "usage/events/new.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(path.join(target, "usage/events/2026-08.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("stages, verifies, and applies with a private backup file larger than 64 MiB", async () => {
@@ -896,10 +981,9 @@ describe("portable archive service", () => {
     const targetHome = path.join(root, "target-stream-observer");
     const target = path.join(targetHome, ".quotabar-win");
     const archivePath = path.join(root, "streamed.zip");
-    await mkdir(path.join(source, "usage/events"), { recursive: true });
-    await mkdir(path.join(source, "quota"), { recursive: true });
-    await writeFile(path.join(source, "usage/events/one.jsonl"), randomBytes(2 * 1024 * 1024));
-    await writeFile(path.join(source, "quota/two.jsonl"), randomBytes(2 * 1024 * 1024));
+    await put(source, "usage/events/2026-07.jsonl", portableEventLine("stream", "2026-07-01T00:00:00.000Z")
+      .replace("claude-sonnet-4", `claude-${"x".repeat(2 * 1024 * 1024)}`));
+    await put(source, "quota/snapshots/2026-08.jsonl", portableQuotaLine("codex-stream", "2026-08-01T00:00:00.000Z", "x".repeat(2 * 1024 * 1024)));
     await put(target, "settings.json", "{}");
     await exportPortableData(source, archivePath);
     const entryOrder: string[] = [];
@@ -912,7 +996,7 @@ describe("portable archive service", () => {
       },
     });
 
-    expect(new Set(entryOrder)).toEqual(new Set(["quota/two.jsonl", "usage/events/one.jsonl"]));
+    expect(new Set(entryOrder)).toEqual(new Set(["quota/snapshots/2026-08.jsonl", "usage/events/2026-07.jsonl"]));
     expect(entryOrder).toHaveLength(2);
     expect(maximumChunk).toBeGreaterThan(0);
     expect(maximumChunk).toBeLessThan(2 * 1024 * 1024);
@@ -1022,15 +1106,20 @@ describe("portable archive service", () => {
     const targetHome = path.join(root, "large-incompressible-target");
     const target = path.join(targetHome, ".quotabar-win");
     const archivePath = path.join(root, "large-incompressible.zip");
-    await mkdir(path.join(source, "quota"), { recursive: true });
-    for (let index = 0; index < 4; index += 1) {
-      await writeFile(path.join(source, "quota", `${index}.jsonl`), randomBytes(MAX_ARCHIVE_FILE_SIZE));
+    for (let index = 0; index < 6; index += 1) {
+      const month = String(index + 1).padStart(2, "0");
+      const padding = randomBytes(47 * 1024 * 1024).toString("base64");
+      await put(source, `quota/snapshots/2026-${month}.jsonl`, portableQuotaLine(
+        `large-${index}`,
+        `2026-${month}-01T00:00:00.000Z`,
+        padding,
+      ));
     }
     await put(target, "settings.json", "{}");
 
     await exportPortableData(source, archivePath);
     expect((await fsPromises.stat(archivePath)).size).toBeGreaterThan(256 * 1024 * 1024);
-    await expect(stagePortableImport(archivePath, target, targetHome)).resolves.toMatchObject({ pending: true, fileCount: 4 });
+    await expect(stagePortableImport(archivePath, target, targetHome)).resolves.toMatchObject({ pending: true, fileCount: 6 });
   }, 120_000);
 
   it("removes a partial export when the streaming output cap is exceeded", async () => {

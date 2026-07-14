@@ -39,7 +39,7 @@ export function mergeWindowHistory(
   return Array.from(byKey.values()).sort((a, b) => a.weekEnd.localeCompare(b.weekEnd));
 }
 
-function isWindowHistoryFile(value: unknown): value is WindowHistoryFile {
+export function isWindowHistoryFile(value: unknown): value is WindowHistoryFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const r = value as Record<string, unknown>;
   // v1 enthielt durch instabiles Codex-resetsAt erzeugte Pseudo-Perioden →

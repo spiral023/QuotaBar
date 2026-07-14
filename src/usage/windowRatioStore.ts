@@ -16,7 +16,7 @@ export async function saveWindowRatioFile(filePath: string, file: WindowRatioFil
   await writeAppDataFile(filePath, `${JSON.stringify(file, null, 2)}\n`);
 }
 
-function isWindowRatioFile(value: unknown): value is WindowRatioFile {
+export function isWindowRatioFile(value: unknown): value is WindowRatioFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const r = value as Record<string, unknown>;
   // v1-Dateien nutzten Provider-only-Keys; bewusst verwerfen (→ leerer State,

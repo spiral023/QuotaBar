@@ -315,6 +315,24 @@ export function sanitizeQuotaSnapshot(value: unknown): SnapshotEvent | undefined
   return result;
 }
 
+/** Strict archive boundary: snapshots must contain exactly their canonical fields. */
+export function validateQuotaSnapshotForArchive(value: unknown): SnapshotEvent {
+  const sanitized = sanitizeQuotaSnapshot(value);
+  if (!sanitized || canonicalJson(value) !== canonicalJson(sanitized)) {
+    throw new Error("Invalid portable quota snapshot");
+  }
+  return sanitized;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function sanitizeWindow(value: unknown): UsageWindow | undefined {
   if (!value || typeof value !== "object") return undefined;
   const item = value as Record<string, unknown>;
