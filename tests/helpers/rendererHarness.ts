@@ -11,18 +11,20 @@ class FakeClassList {
 }
 
 export class FakeElement {
-  textContent = ""; hidden = false; value = ""; disabled = false; dataset: Record<string, string> = {};
+  textContent = ""; hidden = false; value = ""; disabled = false; checked = false; dataset: Record<string, string> = {};
   style = { display: "", setProperty() {}, removeProperty() {} } as any;
   classList = new FakeClassList();
   listeners = new Map<string, Array<(...args: any[]) => any>>();
   attributes = new Map<string, string>();
+  children: FakeElement[] = [];
   private html = "";
   parentNode: FakeElement | null = null;
   private _id = "";
   constructor(private readonly document: FakeDocument, id = "", readonly tagName = "div") { this.id = id; }
-  set id(value: string) { this._id = value; if (value) this.document.register(value, this); }
+  set id(value: string) { this._id = value; }
   get id() { return this._id; }
-  set innerHTML(value: string) { this.html = value; this.document.discover(value, true); }
+  get isConnected() { return this.document.isConnected(this); }
+  set innerHTML(value: string) { this.html = value; this.document.replaceChildrenFromHtml(this, value); }
   get innerHTML() { return this.html; }
   addEventListener(name: string, fn: (...args: any[]) => any) { this.listeners.set(name, [...(this.listeners.get(name) ?? []), fn]); }
   async emit(name: string, value: any = {}) {
@@ -31,21 +33,26 @@ export class FakeElement {
     for (const fn of this.listeners.get(name) ?? []) await fn(event);
   }
   click() { return this.emit("click"); }
-  focus() { this.document.activeElement = this; }
+  focus() { if (this.isConnected && !this.disabled && !this.hidden) this.document.activeElement = this; }
   appendChild(element: FakeElement) {
-    element.parentNode = this;
-    this.document.track(element);
-    return element;
+    return this.document.appendChild(this, element);
   }
-  querySelector(selector: string) { return this.document.querySelector(selector); }
-  querySelectorAll(selector: string) { return this.document.querySelectorAll(selector); }
-  closest(selector: string) { return this.document.matches(this, selector) ? this : this.document.generic; }
+  querySelector(selector: string) { return this.document.queryWithin(this, selector)[0] ?? null; }
+  querySelectorAll(selector: string) { return this.document.queryWithin(this, selector); }
+  closest(selector: string) {
+    if (this.document.matchesSimple(this, selector)) return this;
+    for (let node = this.parentNode; node; node = node.parentNode) {
+      if (this.document.matchesSimple(node, selector)) return node;
+    }
+    return null;
+  }
   setAttribute(name: string, value: unknown = "") {
     const text = String(value);
     this.attributes.set(name, text);
     if (name === "id") this.id = text;
     if (name === "class") text.split(/\s+/).filter(Boolean).forEach((item) => this.classList.add(item));
     if (name === "disabled") this.disabled = true;
+    if (name === "checked") this.checked = true;
     if (name === "hidden") this.hidden = true;
     if (name.startsWith("data-")) this.dataset[name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = text;
     if (name === "style") {
@@ -56,6 +63,7 @@ export class FakeElement {
   removeAttribute(name: string) {
     this.attributes.delete(name);
     if (name === "disabled") this.disabled = false;
+    if (name === "checked") this.checked = false;
     if (name === "hidden") this.hidden = false;
   }
   getAttribute(name: string) {
@@ -64,45 +72,49 @@ export class FakeElement {
     return this.attributes.get(name) ?? null;
   }
   getContext() { return {}; }
-  replaceWith() {}
-  remove() {}
-  insertBefore() {}
+  replaceWith(element: FakeElement) { this.document.replace(this, element); }
+  remove() { this.document.remove(this); }
+  insertBefore(element: FakeElement, reference: FakeElement | null) { return this.document.insertBefore(this, element, reference); }
   get offsetWidth() { return 1; }
 }
 
 export class FakeDocument {
-  elements = new Map<string, FakeElement>();
-  allElements: FakeElement[] = [];
   generic = new FakeElement(this);
-  body = new FakeElement(this, "body");
+  body = new FakeElement(this, "body", "body");
   activeElement: FakeElement | null = null;
-  windowPills = ["7d", "30d", "all"].map((win) => {
-    const pill = new FakeElement(this);
-    pill.dataset.win = win;
-    if (win === "30d") pill.classList.add("active");
-    return pill;
-  });
-  private optionalMissingIds = new Set(["an-noplan-chip"]);
-  register(id: string, element: FakeElement) { this.elements.set(id, element); }
-  track(element: FakeElement) { if (!this.allElements.includes(element)) this.allElements.push(element); }
-  getElementById(id: string) {
-    const element = this.elements.get(id);
-    if (this.optionalMissingIds.has(id)) return element ?? null;
-    return element ?? null;
+  windowPills: FakeElement[] = [];
+  loadHtml(html: string) {
+    const body = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(html)?.[1] ?? html;
+    this.body.innerHTML = body;
+    this.windowPills = this.querySelectorAll("#window-pill-grid .pill");
   }
-  createElement() { const element = new FakeElement(this); element.parentNode = this.generic; return element; }
+  getElementById(id: string) {
+    return this.descendants(this.body).find((element) => element.id === id) ?? null;
+  }
+  createElement(tagName = "div") { return new FakeElement(this, "", tagName.toLowerCase()); }
   querySelector(selector: string) {
-    if (selector.startsWith("#") && !selector.includes(" ")) return this.elements.get(selector.slice(1).split(/[ .:[>]/)[0]) ?? null;
-    if (selector === "#window-pill-grid .pill.active") return this.windowPills.find((pill) => pill.classList.contains("active")) ?? null;
     return this.querySelectorAll(selector)[0] ?? null;
   }
   querySelectorAll(selector = "") {
-    if (selector === "#qs-grid .qs-tile-val") return ["qs-api-cost", "qs-roi", "qs-active-days", "qs-session"].map((id) => this.getElementById(id)).filter((item): item is FakeElement => item !== null);
-    if (selector === "#window-pill-grid .pill") return this.windowPills;
-    const target = selector.trim().split(/\s+/).at(-1) ?? selector;
-    return this.allElements.filter((element) => this.matches(element, target));
+    return this.queryWithin(this.body, selector);
   }
-  matches(element: FakeElement, selector: string) {
+  queryWithin(root: FakeElement, selector: string) {
+    const selectors = selector.split(",").map((item) => item.trim()).filter(Boolean);
+    return this.descendants(root).filter((element) => selectors.some((item) => this.matchesPath(element, item, root)));
+  }
+  matchesPath(element: FakeElement, selector: string, boundary: FakeElement) {
+    const parts = selector.trim().split(/\s+/);
+    if (!this.matchesSimple(element, parts.pop() ?? "")) return false;
+    let ancestor = element.parentNode;
+    while (parts.length) {
+      const expected = parts.pop();
+      while (ancestor && ancestor !== boundary.parentNode && !this.matchesSimple(ancestor, expected ?? "")) ancestor = ancestor.parentNode;
+      if (!ancestor || ancestor === boundary.parentNode) return false;
+      ancestor = ancestor.parentNode;
+    }
+    return true;
+  }
+  matchesSimple(element: FakeElement, selector: string) {
     const id = /#([\w-]+)/.exec(selector)?.[1];
     if (id && element.id !== id) return false;
     const classes = [...selector.matchAll(/\.([\w-]+)/g)].map((match) => match[1]);
@@ -111,19 +123,70 @@ export class FakeDocument {
       const actual = element.getAttribute(match[1]);
       if (actual == null || (match[2] != null && actual !== match[2])) return false;
     }
-    return Boolean(id || classes.length || selector.includes("["));
+    if (selector.includes(":checked") && !element.checked) return false;
+    const tag = /^([a-z][\w-]*)/i.exec(selector)?.[1];
+    if (tag && element.tagName !== tag.toLowerCase()) return false;
+    return Boolean(tag || id || classes.length || selector.includes("["));
   }
-  discover(html: string, replaceExisting = false) {
-    for (const tag of html.matchAll(/<([a-z][\w-]*)([^>]*)>/gi)) {
-      const attrs = new Map<string, string>();
-      for (const attr of tag[2].matchAll(/([:\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
-        attrs.set(attr[1], attr[2] ?? attr[3] ?? attr[4] ?? "");
+  descendants(root: FakeElement) {
+    const result: FakeElement[] = [];
+    const visit = (parent: FakeElement) => {
+      for (const child of parent.children) { result.push(child); visit(child); }
+    };
+    visit(root);
+    return result;
+  }
+  isConnected(element: FakeElement) {
+    if (element === this.body) return true;
+    for (let node = element.parentNode; node; node = node.parentNode) if (node === this.body) return true;
+    return false;
+  }
+  appendChild(parent: FakeElement, element: FakeElement) {
+    element.remove();
+    element.parentNode = parent;
+    parent.children.push(element);
+    return element;
+  }
+  insertBefore(parent: FakeElement, element: FakeElement, reference: FakeElement | null) {
+    element.remove();
+    element.parentNode = parent;
+    const index = reference ? parent.children.indexOf(reference) : -1;
+    if (index < 0) parent.children.push(element); else parent.children.splice(index, 0, element);
+    return element;
+  }
+  replace(current: FakeElement, replacement: FakeElement) {
+    const parent = current.parentNode;
+    if (!parent) return;
+    this.insertBefore(parent, replacement, current);
+    this.remove(current);
+  }
+  remove(element: FakeElement) {
+    const parent = element.parentNode;
+    if (!parent) return;
+    parent.children = parent.children.filter((child) => child !== element);
+    element.parentNode = null;
+    if (this.activeElement === element || this.descendants(element).includes(this.activeElement)) this.activeElement = null;
+  }
+  replaceChildrenFromHtml(owner: FakeElement, html: string) {
+    for (const child of [...owner.children]) this.remove(child);
+    const stack = [owner];
+    const voidTags = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+    for (const token of html.matchAll(/<\/?([a-z][\w-]*)([^>]*)>/gi)) {
+      const full = token[0];
+      const tagName = token[1].toLowerCase();
+      if (full.startsWith("</")) {
+        while (stack.length > 1) {
+          const closed = stack.pop();
+          if (closed?.tagName === tagName) break;
+        }
+        continue;
       }
-      const id = attrs.get("id") ?? "";
-      const existing = id ? this.elements.get(id) : undefined;
-      const element = existing && !replaceExisting ? existing : new FakeElement(this, id, tag[1].toLowerCase());
-      for (const [name, value] of attrs) element.setAttribute(name, value);
-      this.track(element);
+      const element = new FakeElement(this, "", tagName);
+      for (const attr of token[2].matchAll(/([:\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
+        element.setAttribute(attr[1], attr[2] ?? attr[3] ?? attr[4] ?? "");
+      }
+      this.appendChild(stack.at(-1) ?? owner, element);
+      if (!voidTags.has(tagName) && !full.endsWith("/>")) stack.push(element);
     }
   }
 }
@@ -154,7 +217,7 @@ export class FakeTimers {
 
 export function rendererHarness(responses: Record<string, unknown[]>) {
   const document = new FakeDocument();
-  document.discover(fs.readFileSync("src/renderer/index.html", "utf8"));
+  document.loadHtml(fs.readFileSync("src/renderer/index.html", "utf8"));
   const timers = new FakeTimers();
   const calls: string[] = [];
   const invocations: Array<{ channel: string; args: unknown[] }> = [];
@@ -186,7 +249,7 @@ export function rendererHarness(responses: Record<string, unknown[]>) {
     setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout, setInterval: () => 1, clearInterval() {},
     localStorage: { getItem: () => null, setItem() {} }, ResizeObserver: class { observe() {} disconnect() {} },
   });
-  return { context, QB, document, calls, invocations, handlers, timers, run(file: string) { const code = fs.readFileSync(file, "utf8"); document.discover(code); vm.runInContext(code, context); } };
+  return { context, QB, document, calls, invocations, handlers, timers, run(file: string) { const code = fs.readFileSync(file, "utf8"); vm.runInContext(code, context); } };
 }
 
 export async function flush(): Promise<void> { await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => setImmediate(resolve)); }

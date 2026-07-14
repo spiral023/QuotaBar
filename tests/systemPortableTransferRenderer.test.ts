@@ -300,4 +300,88 @@ describe("System portable data transfer controls", () => {
     finishExport({ ok: false, cancelled: true });
     await exportClick;
   });
+
+  it("restores staged recovery into the current connected UI after rerender", async () => {
+    const h = transferHarness({
+      "system:import-portable-data": [{
+        ok: true,
+        restartScheduled: true,
+        backupPath: "C:\\Backups\\rerendered.zip",
+      }],
+      "system:confirm-portable-import-restart": [{ ok: false }],
+    });
+    (h.context as Record<string, unknown>).requestAnimationFrame = (callback: () => void) => { callback(); return 1; };
+    await h.QB.renderSystem();
+    await byId(h, "sys-import-portable-confirm").emit("click");
+    const removedRetry = byId(h, "sys-import-restart-retry");
+
+    await h.QB.renderSystem();
+
+    const currentRetry = byId(h, "sys-import-restart-retry");
+    expect(currentRetry).not.toBe(removedRetry);
+    expect(removedRetry.isConnected).toBe(false);
+    expect(currentRetry.isConnected).toBe(true);
+    expect(byId(h, "sys-import-portable-panel").hidden).toBe(false);
+    expect(byId(h, "sys-transfer-result").textContent).toContain("C:\\Backups\\rerendered.zip");
+    expect(byId(h, "sys-import-portable-data").disabled).toBe(true);
+    expect(currentRetry.hidden).toBe(false);
+    expect(h.document.activeElement).toBe(currentRetry);
+  });
+
+  it("applies pending confirmation failure to the live UI after a rerender", async () => {
+    let finishConfirmation!: (result: unknown) => void;
+    const pendingConfirmation = new Promise((resolve) => { finishConfirmation = resolve; });
+    const h = transferHarness({
+      "system:import-portable-data": [{
+        ok: true,
+        restartScheduled: true,
+        backupPath: "C:\\Backups\\pending-rerender.zip",
+      }],
+      "system:confirm-portable-import-restart": [pendingConfirmation],
+    });
+    (h.context as Record<string, unknown>).requestAnimationFrame = (callback: () => void) => { callback(); return 1; };
+    await h.QB.renderSystem();
+
+    const importClick = byId(h, "sys-import-portable-confirm").emit("click");
+    await flush();
+    await h.QB.renderSystem();
+    const currentRetry = byId(h, "sys-import-restart-retry");
+
+    expect(byId(h, "sys-import-portable-panel").hidden).toBe(false);
+    expect(currentRetry.hidden).toBe(false);
+    expect(currentRetry.disabled).toBe(true);
+    expect(byId(h, "sys-transfer-result").textContent).toContain("C:\\Backups\\pending-rerender.zip");
+
+    finishConfirmation({ ok: false });
+    await importClick;
+
+    expect(byId(h, "sys-import-restart-retry")).toBe(currentRetry);
+    expect(currentRetry.disabled).toBe(false);
+    expect(h.document.activeElement).toBe(currentRetry);
+    expect(byId(h, "sys-transfer-result").textContent).toContain("Restart confirmation failed");
+  });
+
+  it("recovers safe controls when the post-delete refresh fails without allowing repeat deletion", async () => {
+    const h = transferHarness({
+      "system:get": [systemReport(), () => { throw new Error("refresh failed"); }],
+      "system:delete-app-data": [{ ok: true, deleted: ["cache.json"] }],
+    });
+    await h.QB.renderSystem();
+    await h.document.querySelectorAll(".sys-delete-row")[0].emit("click");
+    await byId(h, "sys-delete-confirm").emit("click");
+    const execute = byId(h, "sys-del-execute");
+    await execute.emit("click");
+
+    h.timers.advanceBy(1_200);
+    await flush();
+
+    expect(byId(h, "sys-export-portable-data").disabled).toBe(false);
+    expect(byId(h, "sys-import-portable-data").disabled).toBe(false);
+    expect(byId(h, "sys-delete-toggle").disabled).toBe(true);
+    expect(execute.disabled).toBe(true);
+    expect(byId(h, "sys-transfer-result").textContent).toContain("Scan");
+
+    await execute.emit("click");
+    expect(h.calls.filter((channel) => channel === "system:delete-app-data")).toHaveLength(1);
+  });
 });
