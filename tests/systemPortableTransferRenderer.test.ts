@@ -142,6 +142,10 @@ describe("System portable data transfer controls", () => {
     expect(styles).toContain(".sys-transfer-actions");
   });
 
+  it("keeps hidden System actions out of layout and keyboard focus order", () => {
+    expect(styles).toMatch(/\.sys-action\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}/);
+  });
+
   it("disables every data action while export is pending and reports its destination", async () => {
     let finishExport!: (result: unknown) => void;
     const pendingExport = new Promise((resolve) => { finishExport = resolve; });

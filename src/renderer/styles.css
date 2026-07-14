@@ -2247,6 +2247,7 @@
       font-family: 'DM Sans', system-ui, sans-serif; font-size: 10.5px; font-weight: 600;
       transition-property: background, color, scale; transition-duration: 120ms;
     }
+    .sys-action[hidden] { display: none !important; }
     .sys-action:hover { background: rgba(82,208,23,0.14); color: #72e832; }
     .sys-action:active { scale: 0.96; }
     .sys-action:disabled { opacity: 0.55; cursor: default; }
