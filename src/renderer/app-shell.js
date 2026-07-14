@@ -288,6 +288,7 @@
 
     async function loadAnalyticsSummary(costWindow, { skeleton = false } = {}) {
       const win = costWindow ?? activeCostWindowFromUI();
+      clearInactiveSummaryRetries(win);
       // Synchronous (before the first await): the old values are already
       // replaced by skeleton bars when the click handler returns.
       if (skeleton) setQuickStatsLoading();
@@ -295,6 +296,11 @@
       try {
         const s = await loadAnalyticsSummaryForWindow(win);
         if (token !== _summaryRenderToken) return; // stale — a newer request owns the UI
+        if (QB.isPortableDataPreparing(s)) {
+          QB.schedulePortableDataRetry(`analytics-summary:${win}`, () => loadAnalyticsSummary(win));
+        } else {
+          QB.clearPortableDataRetry(`analytics-summary:${win}`);
+        }
         if (_statsLoadingCount > 0) {
           // Hold the result until every in-flight load is done, so the
           // numbers appear exactly once instead of changing after the fact.
@@ -310,6 +316,12 @@
     }
 
     function renderSummary(s) {
+      if (QB.isPortableDataPreparing(s)) {
+        for (const el of document.querySelectorAll('#qs-grid .qs-tile-val')) el.textContent = 'Preparing data…';
+        const tbody = document.getElementById('top-models-body');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="text-align:center">Preparing data…</td></tr>';
+        return;
+      }
       updateQuickStats(s);
       updateTopModels(s);
       updateInsights(s);
@@ -322,6 +334,9 @@
           QB.ipc.invoke('analytics:summary', { costWindow }).catch(error => {
             analyticsSummaryCache.delete(costWindow);
             throw error;
+          }).then(summary => {
+            if (QB.isPortableDataPreparing(summary)) analyticsSummaryCache.delete(costWindow);
+            return summary;
           })
         );
       }
@@ -344,6 +359,13 @@
 
     function clearDashboardDataCache() {
       analyticsSummaryCache.clear();
+      clearInactiveSummaryRetries(null);
+    }
+
+    function clearInactiveSummaryRetries(activeWindow) {
+      for (const win of ['7d', '30d', 'all']) {
+        if (win !== activeWindow) QB.clearPortableDataRetry(`analytics-summary:${win}`);
+      }
     }
 
     // Reference counter: the skeleton stays as long as at least one

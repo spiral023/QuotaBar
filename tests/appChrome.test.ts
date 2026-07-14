@@ -16,4 +16,11 @@ describe("app chrome renderer", () => {
     expect(script).toContain("app:meta");
     expect(script).toContain("titlebar-version");
   });
+
+  it("keeps preparing analytics summaries out of the dashboard cache", () => {
+    const script = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "app-shell.js"), "utf8");
+    expect(script).toContain("QB.isPortableDataPreparing(s)");
+    expect(script).toContain("Preparing data");
+    expect(script).toMatch(/isPortableDataPreparing\(summary\)[\s\S]{0,220}analyticsSummaryCache\.delete\(costWindow\)/);
+  });
 });

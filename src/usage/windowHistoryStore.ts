@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import path from "node:path";
+import { writeAppDataFile } from "../portable/appDataLock";
 import {
   emptyWindowHistoryFile,
   type WindowHistoryEntry,
@@ -17,8 +17,7 @@ export async function loadWindowHistoryFile(filePath: string): Promise<WindowHis
 }
 
 export async function saveWindowHistoryFile(filePath: string, file: WindowHistoryFile): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+  await writeAppDataFile(filePath, `${JSON.stringify(file, null, 2)}\n`);
 }
 
 /**
@@ -40,7 +39,7 @@ export function mergeWindowHistory(
   return Array.from(byKey.values()).sort((a, b) => a.weekEnd.localeCompare(b.weekEnd));
 }
 
-function isWindowHistoryFile(value: unknown): value is WindowHistoryFile {
+export function isWindowHistoryFile(value: unknown): value is WindowHistoryFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const r = value as Record<string, unknown>;
   // v1 enthielt durch instabiles Codex-resetsAt erzeugte Pseudo-Perioden →

@@ -1,10 +1,12 @@
 import path from "node:path";
 import { app, shell } from "electron";
 import { configureAppIdentity, ensureWindowsNotificationShortcut, detectAppVariant } from "./appIdentity";
-import { isFirstRun } from "../config/firstRun";
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { createProviderRegistry } from "../providers/providerRegistry";
 import { PricingEngine } from "../pricing/subscription-factor";
+import { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
+import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
+import { readCodexSpeedTierFromPaths } from "../pricing/codex-cost-calculator";
 import { RefreshLoop } from "../usage/refreshLoop";
 import { UsageStore } from "../usage/usageStore";
 import { applyStartupFlag } from "./autostart";
@@ -15,21 +17,27 @@ import { DetailsWindowController } from "./detailsWindow";
 import { openOnboardingWindow } from "./onboardingWindow";
 import { initializeUpdater, setUpdateReadyCallback, setUpdateManualCallback, quitAndInstall } from "./updater";
 import { NotificationService, RELEASES_URL } from "./notifications";
+import { createShutdownDrain } from "./shutdown";
 import { collectSystemData, formatSystemPathDiagnostics, formatWslDiscoveryDiagnostics } from "./systemData";
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { DebugRecorder } from "./debugRecorder";
-import { runBackfill, BACKFILL_REPAIR_VERSION } from "./debugBackfill";
-import { getRepairedVersion, setRepairedVersion } from "./backfillManifest";
-import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath } from "../config/paths";
+import { snapshotEvent } from "./debugEvents";
+import { createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, readLegacyQuotaSnapshots, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
+import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
 import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
 import { BonusResetTracker } from "../usage/bonusReset";
 import { loadBonusStateFile, saveBonusStateFile } from "../usage/bonusStateStore";
 import { seedFromDebugLogs } from "./windowRatioSeeder";
-import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
-import { HistoricalPricingResolver } from "../pricing/historical-pricing-resolver";
 import { loadCachedSnapshots, markSnapshotsFromCache, saveCachedSnapshots } from "../usage/snapshotCache";
 import { registerLifecycleEvents } from "./lifecycleEvents";
+import { appendQuotaSnapshots } from "../portable/quotaStore";
+import { PortableUsageStore } from "../portable/usageStore";
+import { ingestPortableUsage } from "../portable/ingestion";
+import { enrichPortableEventCosts } from "../portable/costEnrichment";
+import { beginMigrationRefresh, beginMigrationRefreshRecovery, markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData, readCompleteMigrationRevision } from "../portable/migration";
+import { readBackfillDayRecords } from "../reports/backfill-reader";
+import { loadInitialStartupState } from "./pendingImportStartup";
 
 interface CliOptions {
   debug: boolean;
@@ -47,6 +55,7 @@ configureAppIdentity();
 // Wird in whenReady gesetzt, sobald der NotificationService existiert. Der
 // second-instance-Handler kann eine quotabar://-Aktivierung dann weiterreichen.
 let onProtocolUrl: ((url: string) => void) | null = null;
+let portableIngestionLifecycle: PortableIngestionLifecycle | undefined;
 
 function findProtocolUrl(argv: readonly string[]): string | null {
   return argv.find((arg) => arg.startsWith("quotabar://")) ?? null;
@@ -66,6 +75,8 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady()
     .then(async () => {
+      await portableIngestionLifecycle?.stop();
+      portableIngestionLifecycle = undefined;
       ensureWindowsNotificationShortcut();
       // quotabar://-Protokoll registrieren, damit Windows Toast-Aktivierungen an
       // diese App weiterleitet (Voraussetzung für funktionierende Toast-Buttons).
@@ -79,8 +90,9 @@ if (!app.requestSingleInstanceLock()) {
       }
       applyStartupFlag(cli.startupAction);
 
-      const firstRun = await isFirstRun();
-      const settings = await loadSettings(cli.pollIntervalSeconds ? { pollIntervalSeconds: cli.pollIntervalSeconds } : {});
+      const { firstRun, settings } = await loadInitialStartupState(
+        cli.pollIntervalSeconds ? { pollIntervalSeconds: cli.pollIntervalSeconds } : {},
+      );
       const appVariant = detectAppVariant();
       log.info(`QuotaBar startup: version=${app.getVersion()} variant=${appVariant.id} packaged=${app.isPackaged} noWindow=${cli.noWindow}`);
       // Route live requests through a proxy when configured. This must run
@@ -138,23 +150,25 @@ if (!app.requestSingleInstanceLock()) {
       const bonusStatePath = getBonusStatePath();
       const bonusTracker = new BonusResetTracker(await loadBonusStateFile(bonusStatePath));
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder, windowRatioTracker, bonusTracker);
-      const backfillFetcher = new LiteLLMFetcher(settings.pricingOfflineMode);
-      const backfillPricingResolver = new HistoricalPricingResolver(backfillFetcher);
-      const tray = new TrayController(providers, refreshLoop, async () => {
-        const currentSettings = await loadSettings();
-        const runtime = mergeSettingsWithAgentRoots(currentSettings);
-        const pathContext = { claudeRoots: runtime.claudeRoots ?? [], codexHomes: runtime.codexHomes ?? [] };
-        await runBackfill({
-          recorder,
-          logDir: getDebugLogDir(),
+      const portableUsageStore = new PortableUsageStore(getPortableUsageDir());
+      const portablePricingResolver = new HistoricalPricingResolver(new LiteLLMFetcher(runtimeSettings.pricingOfflineMode));
+      const ingestPortableSources = async () => {
+        const currentSettings = mergeSettingsWithAgentRoots(await loadSettings());
+        const pathContext = {
+          claudeRoots: currentSettings.claudeRoots ?? [],
+          codexHomes: currentSettings.codexHomes ?? [],
+        };
+        const codexSpeed = await readCodexSpeedTierFromPaths(getCodexConfigPaths(pathContext));
+        return await ingestPortableUsage({
+          store: portableUsageStore,
+          statePath: getPortableIngestStatePath(),
           claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
           codexSessionsDirs: getCodexSessionsDirs(pathContext),
-          codexConfigPaths: getCodexConfigPaths(pathContext),
-          pricingResolver: backfillPricingResolver,
-          force: true,
-        }).catch((err: unknown) => {
-          log.warn(`Backfill regenerate failed: ${err instanceof Error ? err.message : String(err)}`);
+          enrichCosts: (events) => enrichPortableEventCosts(events, portablePricingResolver, codexSpeed),
         });
+      };
+      const tray = new TrayController(providers, refreshLoop, async () => {
+        await portableIngestionLifecycle?.trigger("manual-recompute");
       }, settings.providerOrder);
       const detailsWindow = new DetailsWindowController(
         () => tray.getTray(),
@@ -170,14 +184,79 @@ if (!app.requestSingleInstanceLock()) {
         tray.setSnapshots(cachedSnapshots);
         detailsWindow.notifyUpdate(cachedSnapshots);
       }
-      // Analytics-Worker früh hochfahren und die JSONL-Historie parsen, damit die
-      // Quick Stats beim ersten Dashboard-Öffnen nicht auf einen Kaltstart warten.
-      detailsWindow.prewarmAnalytics();
+      let portableReady = false;
+      await preparePortableData({
+        beginMigration: () => markMigrationRunning(getPortableMigrationPath()),
+        ingestProviderEvents: ingestPortableSources,
+        readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
+        reconcileLegacy: (records) => migrateLegacyData({
+          store: portableUsageStore,
+          records,
+          statePath: getPortableMigrationPath(),
+          finalizeState: false,
+        }),
+        readLegacyQuota: () => readLegacyQuotaSnapshots(getDebugLogDir()),
+        migrateQuota: (snapshots) => appendQuotaSnapshots(getPortableQuotaDir(), snapshots),
+        completeMigration: (revision) => markMigrationComplete(getPortableMigrationPath(), revision, portableUsageStore),
+        failMigration: (code, expectation) => markMigrationFailed(
+          getPortableMigrationPath(),
+          code,
+          expectation,
+          portableUsageStore,
+        ),
+        prewarmConsumers: () => detailsWindow.prewarmAnalytics(),
+        onStageComplete: (stage, durationMs, count) => {
+          log.info(`Portable data stage=${stage} count=${count} durationMs=${durationMs}`);
+        },
+      }).then((result) => {
+        portableReady = result.status === "complete";
+      }).catch(() => {
+        log.warn("Portable data preparation failed");
+      });
+      if (portableReady) {
+        portableIngestionLifecycle = createPortableIngestionLifecycle(createPortableIngestionRunner(async () => {
+          await refreshPortableData({
+            readCompleteRevision: () => readCompleteMigrationRevision(getPortableMigrationPath()),
+            readStoreRevision: () => portableUsageStore.getRevision(),
+            recoverRefresh: () => beginMigrationRefreshRecovery(getPortableMigrationPath()),
+            ingestProviderEvents: ingestPortableSources,
+            beginRefresh: (revision) => beginMigrationRefresh(getPortableMigrationPath(), revision),
+            readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
+            reconcileLegacy: (records, owner) => migrateLegacyData({
+              store: portableUsageStore,
+              records,
+              statePath: getPortableMigrationPath(),
+              finalizeState: false,
+              expectedOwner: owner,
+            }),
+            completeMigration: (revision, owner) => markMigrationComplete(
+              getPortableMigrationPath(),
+              revision,
+              portableUsageStore,
+              owner,
+            ),
+            failMigration: (code, expectation) => markMigrationFailed(
+              getPortableMigrationPath(),
+              code,
+              expectation,
+              portableUsageStore,
+            ),
+            refreshConsumers: () => detailsWindow.prewarmAnalytics(),
+            onStageComplete: (stage, durationMs, count) => {
+              log.info(`Portable data refresh stage=${stage} count=${count} durationMs=${durationMs}`);
+            },
+          });
+        }, (diagnostic) => log.warn(diagnostic)));
+        await portableIngestionLifecycle.start();
+      }
+      const recomputeCostsAndIngest = (): void => {
+        void refreshLoop.recomputeCost().finally(() => portableIngestionLifecycle?.trigger("manual-recompute"));
+      };
       await tray.rebuildMenu();
       if (cli.openWindow) {
         setTimeout(() => detailsWindow.open(
           () => void refreshLoop.refreshNow("dashboard"),
-          () => void refreshLoop.recomputeCost(),
+          recomputeCostsAndIngest,
         ), 1500);
       }
       const notificationService = new NotificationService(settings.notifications);
@@ -185,7 +264,7 @@ if (!app.requestSingleInstanceLock()) {
       notificationService.setActionHandlers({
         openDashboard: (tab = "live") => detailsWindow.open(
           () => void refreshLoop.refreshNow("dashboard"),
-          () => void refreshLoop.recomputeCost(),
+          recomputeCostsAndIngest,
           { tab },
         ),
         muteRule: async (ruleId: string) => {
@@ -228,6 +307,9 @@ if (!app.requestSingleInstanceLock()) {
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
         detailsWindow.notifyUpdate(snapshots);
+        void appendQuotaSnapshots(getPortableQuotaDir(), snapshots.map(snapshotEvent)).catch(() => {
+          log.warn("Portable quota snapshot save failed");
+        });
         void saveCachedSnapshots(usageSnapshotCachePath, snapshots).catch((err: unknown) => {
           log.warn(`Usage snapshot cache save failed: ${err instanceof Error ? err.message : String(err)}`);
         });
@@ -257,45 +339,26 @@ if (!app.requestSingleInstanceLock()) {
           }
         },
       });
-      const backfillTimer = setTimeout(() => {
-        void (async () => {
-          const logDir = getDebugLogDir();
-          // Erster Start nach einem datenverändernden Fix → einmaliger Force-Rebuild,
-          // der alle bereits beschädigten Tagessätze neu berechnet. Danach läuft der
-          // Backfill wieder inkrementell.
-          const needsRepair = (await getRepairedVersion(logDir)) < BACKFILL_REPAIR_VERSION;
-          if (needsRepair) {
-            log.info(`Backfill repair: forcing one-time rebuild to version ${BACKFILL_REPAIR_VERSION}`);
-          }
-          const currentSettings = await loadSettings();
-          const runtime = mergeSettingsWithAgentRoots(currentSettings);
-          const pathContext = { claudeRoots: runtime.claudeRoots ?? [], codexHomes: runtime.codexHomes ?? [] };
-          const result = await runBackfill({
-            recorder,
-            logDir,
-            claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
-            codexSessionsDirs: getCodexSessionsDirs(pathContext),
-            codexConfigPaths: getCodexConfigPaths(pathContext),
-            pricingResolver: backfillPricingResolver,
-            force: needsRepair,
-          });
-          // Marker nur setzen, wenn der Rebuild fehlerfrei durchlief – sonst beim
-          // nächsten Start erneut versuchen.
-          if (needsRepair && result.errors.length === 0) {
-            await setRepairedVersion(logDir, BACKFILL_REPAIR_VERSION);
-          }
-        })().catch((err: unknown) => {
-          log.warn(`Backfill failed: ${err instanceof Error ? err.message : String(err)}`);
-        });
-      }, 15_000);
-      backfillTimer.unref();
-      let flushed = false;
+      const drainShutdown = createShutdownDrain({
+        stopIngestion: async () => {
+          const lifecycle = portableIngestionLifecycle;
+          portableIngestionLifecycle = undefined;
+          await lifecycle?.stop();
+        },
+        flushNotifications: () => notificationService.flush(),
+        flushRecorder: () => recorder.flush(),
+        warn: (message) => log.warn(message),
+      });
+      let shutdownStarted = false;
+      let shutdownFinished = false;
       app.on("before-quit", (event) => {
-        if (flushed) return;
+        if (shutdownFinished) return;
         event.preventDefault();
+        if (shutdownStarted) return;
+        shutdownStarted = true;
         recorder.write({ kind: "app.exit", reason: "user-quit" });
-        void recorder.flush().finally(() => {
-          flushed = true;
+        void drainShutdown().finally(() => {
+          shutdownFinished = true;
           app.quit();
         });
       });

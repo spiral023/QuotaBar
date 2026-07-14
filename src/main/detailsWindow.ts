@@ -1,22 +1,22 @@
 import fs from "node:fs/promises";
 import path from "path";
 import { Worker } from "node:worker_threads";
-import { app, BrowserWindow, ipcMain, screen, Tray, clipboard, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, Tray, clipboard, dialog, shell } from "electron";
 import { UsageSnapshot } from "../providers/types";
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { log } from "./logging";
 import { generateUsageReport } from "../reports/reportService";
 import type { ReportRequest } from "../reports/types";
 import {
-  getClaudeProjectsDirs, getCodexSessionsDirs, getDebugLogDir, getWindowHistoryPath,
-  getAppConfigDir, getLogPath, getNotificationLogPath, getUsageSnapshotCachePath,
+  getWindowHistoryPath, getPortableMigrationPath,
+  getAppConfigDir, getHomeDir, getLogPath, getNotificationLogPath, getUsageSnapshotCachePath,
   getFxCachePath, getLiteLLMModelPricesPath, getWindowRatioPath, getBonusStatePath, getNotificationStatePath,
 } from "../config/paths";
 import { loadWindowHistoryFile, saveWindowHistoryFile, mergeWindowHistory } from "../usage/windowHistoryStore";
 import type { CostWindow, ViewMode, Settings } from "../config/settings";
 import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
 import type { ModelsData } from "./modelsData";
-import type { WindowBudgetData, WindowHistoryData } from "./analyticsWorker";
+import type { AnalyticsWorkerSettings, WindowBudgetData, WindowHistoryData } from "./analyticsWorker";
 import type { NotificationService } from "./notifications";
 import type { DebugRecorder } from "./debugRecorder";
 import { AsyncResultCache } from "./asyncResultCache";
@@ -35,6 +35,18 @@ import { QuickStatsLoadMetric } from "./quickStatsLoadMetric";
 import { detectAppVariant } from "./appIdentity";
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { mergeAndSaveSettings } from "./settingsSave";
+import { parseMigrationState } from "../portable/migration";
+import { PortableUsageStore } from "../portable/usageStore";
+import { exportPortableData, stagePortableImport } from "../portable/archiveService";
+
+let archiveOperation: "export" | "import" | null = null;
+let portableImportRestart: "pending" | "exiting" | null = null;
+
+const ARCHIVE_BUSY_RESULT = Object.freeze({
+  ok: false,
+  error: "archive_operation_in_progress",
+  message: "Another portable archive operation is already in progress.",
+});
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -45,6 +57,101 @@ const analyticsWorker = new PersistentWorkerClient(
 
 function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
   return analyticsWorker.request(data);
+}
+
+function analyticsWorkerSettings(settings: Settings): AnalyticsWorkerSettings {
+  return {
+    plans: settings.plans,
+    pricingOfflineMode: settings.pricingOfflineMode,
+    minModelTokenSharePct: settings.minModelTokenSharePct,
+  };
+}
+
+export function createAnalyticsSummaryRequest(
+  settings: Settings,
+  costWindow: CostWindow,
+  cacheHitRate: AnalyticsSummary["cacheHitRate"],
+  periodEndMs = Date.now(),
+): Record<string, unknown> {
+  const workerWindow = resolveAnalyticsWindow(costWindow, periodEndMs);
+  return {
+    task: "summary",
+    periodStartMs: workerWindow.periodStartMs,
+    windowDays: workerWindow.windowDays,
+    since: workerWindow.since,
+    periodEndMs,
+    settings: analyticsWorkerSettings(settings),
+    cacheHitRate,
+    usageRange: { since: new Date(workerWindow.periodStartMs).toISOString(), until: new Date(periodEndMs).toISOString() },
+    quotaRange: { since: new Date(workerWindow.periodStartMs).toISOString(), until: new Date(periodEndMs).toISOString() },
+  };
+}
+
+export function createAnalyticsGetRequest(
+  settings: Settings,
+  request: { since?: string; until?: string; timeZone?: string } | undefined,
+  cacheHitRate: AnalyticsSummary["cacheHitRate"],
+  nowMs: number,
+  eurUsdRates: Record<string, number>,
+  fxEstimated: boolean,
+): Record<string, unknown> {
+  const { periodStartMs, periodEndMs, windowDays, since, until, timeZone } = resolveAnalyticsGetWindow(request, nowMs);
+  return {
+    task: "get",
+    periodStartMs,
+    windowDays,
+    since,
+    until,
+    settings: analyticsWorkerSettings(settings),
+    cacheHitRate,
+    eurUsdRates,
+    fxEstimated,
+    nowMs,
+    periodEndMs,
+    timeZone,
+    usageRange: { since: new Date(periodStartMs).toISOString(), until: new Date(periodEndMs).toISOString() },
+    quotaRange: { since: new Date(periodStartMs).toISOString(), until: new Date(periodEndMs).toISOString() },
+  };
+}
+
+export interface PortableDataPreparing {
+  portableDataPreparing: true;
+}
+
+const PORTABLE_DATA_PREPARING: PortableDataPreparing = Object.freeze({ portableDataPreparing: true });
+
+export async function portableDataIsReady(
+  statePath = getPortableMigrationPath(),
+  store = new PortableUsageStore(path.dirname(statePath)),
+): Promise<boolean> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(statePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
+    // Read diagnostics can contain host paths; expose only the fixed readiness category.
+    // eslint-disable-next-line preserve-caught-error
+    throw new Error("Portable migration readiness read failed");
+  }
+  let state;
+  try {
+    state = parseMigrationState(JSON.parse(raw)).state;
+  } catch {
+    return false;
+  }
+  if (state?.status !== "complete" || !state.storeRevision) return false;
+  try {
+    return await store.getRevision() === state.storeRevision;
+  } catch {
+    throw new Error("Portable readiness store read failed");
+  }
+}
+
+export interface DetailsWindowDependencies {
+  portableDataIsReady: () => Promise<boolean>;
+  runAnalyticsWorker: (data: Record<string, unknown>) => Promise<unknown>;
+  loadRuntimeSettings: () => Promise<Settings>;
+  now: () => number;
 }
 
 async function loadRuntimeSettings(): Promise<Settings> {
@@ -76,8 +183,25 @@ export class DetailsWindowController {
     private readonly getTray: () => Tray | null,
     private readonly recorder?: DebugRecorder,
     private readonly onSettingsSaved?: (settings: Settings, changedKeys: string[]) => void,
+    private readonly dependencies: Partial<DetailsWindowDependencies> = {},
   ) {
     this.registerIpcHandlers();
+  }
+
+  private isPortableDataReady(): Promise<boolean> {
+    return (this.dependencies.portableDataIsReady ?? portableDataIsReady)();
+  }
+
+  private requestAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
+    return (this.dependencies.runAnalyticsWorker ?? runAnalyticsWorker)(data);
+  }
+
+  private runtimeSettings(): Promise<Settings> {
+    return (this.dependencies.loadRuntimeSettings ?? loadRuntimeSettings)();
+  }
+
+  private nowMs(): number {
+    return (this.dependencies.now ?? Date.now)();
   }
 
   setNotificationService(svc: NotificationService): void {
@@ -164,23 +288,14 @@ export class DetailsWindowController {
 
   private computeSummary(settings: Settings, costWindow: CostWindow): Promise<AnalyticsSummary> {
     const runtimeSettings = mergeSettingsWithAgentRoots(settings);
-    const workerWindow = resolveAnalyticsWindow(costWindow);
     const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
     const cacheKey = `summary:${costWindow}`;
-    const pathContext = { claudeRoots: runtimeSettings.claudeRoots ?? [], codexHomes: runtimeSettings.codexHomes ?? [] };
 
     return this.analyticsSummaryCache.get(cacheKey, async () => {
       const startedAtMs = Date.now();
-      const summary = await runAnalyticsWorker({
-        task: "summary",
-        claudeProjectsDirs: getClaudeProjectsDirs(pathContext),
-        codexSessionsDirs:  getCodexSessionsDirs(pathContext),
-        periodStartMs: workerWindow.periodStartMs,
-        windowDays: workerWindow.windowDays,
-        since: workerWindow.since,
-        settings: { ...runtimeSettings, costWindow },
-        cacheHitRate,
-      }) as AnalyticsSummary;
+      const summary = await this.requestAnalyticsWorker(
+        createAnalyticsSummaryRequest(runtimeSettings, costWindow, cacheHitRate, startedAtMs),
+      ) as AnalyticsSummary;
       const durationMs = Math.max(0, Date.now() - startedAtMs);
       if (this.quickStatsLoadMetric.record(durationMs)) {
         log.info(`Quick Stats initial load completed in ${formatSeconds(durationMs)}`);
@@ -189,19 +304,16 @@ export class DetailsWindowController {
     });
   }
 
-  /**
-   * Spawnt den Analytics-Worker und parst die JSONL-/Codex-Historie in dessen
-   * FileParseCache, bevor der Nutzer das Dashboard öffnet. Die erste
-   * analytics:summary-Anfrage blockiert auf einem Kaltstart sonst ~15-20 s auf
-   * Worker-Boot + Vollparse — das Vorwärmen verlagert diese Kosten weg vom
-   * Öffnen-Pfad. Das hier memoizierte Ergebnis wird ggf. vom ersten Live-Refresh
-   * verworfen, doch der modulglobale FileParseCache im Worker überlebt das, sodass
-   * die spätere echte Anfrage die Dateien nur noch neu statt parst.
-   */
-  prewarmAnalytics(): void {
-    void loadRuntimeSettings()
-      .then(settings => this.computeSummary(settings, settings.costWindow))
-      .catch(err => log.warn(`Analytics prewarm failed: ${err instanceof Error ? err.message : String(err)}`));
+  /** Warms the worker and portable summary store before the dashboard opens. */
+  async prewarmAnalytics(): Promise<void> {
+    if (!await this.isPortableDataReady()) throw new Error("Portable analytics prewarm is not ready");
+    const until = this.nowMs();
+    const since = until - 30 * 24 * 3600 * 1000;
+    await this.requestAnalyticsWorker({
+      task: "prewarm",
+      usageRange: { since: new Date(since).toISOString(), until: new Date(until).toISOString() },
+      quotaRange: { since: new Date(since).toISOString(), until: new Date(until).toISOString() },
+    });
   }
 
   private pushUpdate(): void {
@@ -353,8 +465,9 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("reports:get", async (_, request: ReportRequest) => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadRuntimeSettings();
-      const report = await generateUsageReport(request, { settings });
+      const report = await generateUsageReport({ ...request, source: "portable" }, { settings });
       const sinceDay = request.since ?? report.rows[0]?.bucket?.slice(0, 10);
       const untilDay = request.until ?? new Date().toISOString().slice(0, 10);
       const planChanges = (sinceDay && untilDay) ? [
@@ -365,21 +478,24 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("reports:copy-json", async (_, request: ReportRequest) => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadRuntimeSettings();
-      const report = await generateUsageReport(request, { settings });
+      const report = await generateUsageReport({ ...request, source: "portable" }, { settings });
       clipboard.writeText(JSON.stringify(report, null, 2));
       return { ok: true };
     });
 
     ipcMain.handle("analytics:summary", async (_, request?: { costWindow?: string }) => {
-      const settings = await loadRuntimeSettings();
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
+      const settings = await this.runtimeSettings();
       const costWindow = normalizeCostWindow(request?.costWindow) ?? settings.costWindow;
       return this.computeSummary(settings, costWindow);
     });
 
-    ipcMain.handle("analytics:get", async (_, request?: { since?: string; until?: string }) => {
-      const settings     = await loadRuntimeSettings();
-      const { periodStartMs, windowDays, since, until } = resolveAnalyticsGetWindow(request);
+    ipcMain.handle("analytics:get", async (_, request?: { since?: string; until?: string; timeZone?: string }) => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
+      const settings     = await this.runtimeSettings();
+      const { since, until } = resolveAnalyticsGetWindow(request, this.nowMs());
       const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
 
       const needsFx = settings.plans.some((p) => p.currency === "EUR");
@@ -388,15 +504,9 @@ export class DetailsWindowController {
       const fxEstimated = sharedFxFetcher.estimated;
       const planSig = JSON.stringify(settings.plans);
 
-      return this.analyticsDataCache.get(`get:${since}:${until}:${planSig}`, () => runAnalyticsWorker({
-        task: "get",
-        claudeProjectsDirs: getClaudeProjectsDirs({ claudeRoots: settings.claudeRoots ?? [] }),
-        codexSessionsDirs:  getCodexSessionsDirs({ codexHomes: settings.codexHomes ?? [] }),
-        periodStartMs, windowDays, since, until, settings, cacheHitRate,
-        eurUsdRates, fxEstimated,
-        logDir: getDebugLogDir(),
-        nowMs: Date.now(),
-      }) as Promise<AnalyticsData>);
+      return this.analyticsDataCache.get(`get:${since}:${until}:${request?.timeZone ?? "local"}:${planSig}`, () => this.requestAnalyticsWorker(
+        createAnalyticsGetRequest(settings, request, cacheHitRate, this.nowMs(), eurUsdRates, fxEstimated),
+      ) as Promise<AnalyticsData>);
     });
 
     ipcMain.handle("plans:get", async () => {
@@ -420,14 +530,17 @@ export class DetailsWindowController {
     }));
 
     ipcMain.handle("models:get", async () => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadSettings();
-      return this.modelsDataCache.get("models", () => runAnalyticsWorker({
+      return this.modelsDataCache.get("models", () => this.requestAnalyticsWorker({
         task: "models",
-        settings,
+        settings: analyticsWorkerSettings(settings),
+        usageRange: { since: "1970-01-01T00:00:00.000Z", until: new Date().toISOString() },
       }) as Promise<ModelsData>);
     });
 
-    ipcMain.handle("windowBudget:get", async (): Promise<WindowBudgetData> => {
+    ipcMain.handle("windowBudget:get", async () => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const snapshots = this.lastSnapshots ?? [];
       const providers = snapshots
         .filter((s) => s.status === "ok" || s.status === "stale")
@@ -449,23 +562,25 @@ export class DetailsWindowController {
         });
       if (providers.length === 0) return { perProvider: {} };
       return this.windowBudgetCache.get("windowBudget", () =>
-        runAnalyticsWorker({
+        this.requestAnalyticsWorker({
           task: "windowBudget",
-          logDir: getDebugLogDir(),
-          nowMs: Date.now(),
+          nowMs: this.nowMs(),
+          usageRange: { since: new Date(this.nowMs() - 28 * 24 * 3600 * 1000).toISOString(), until: new Date(this.nowMs()).toISOString() },
+          quotaRange: { since: new Date(this.nowMs() - 28 * 24 * 3600 * 1000).toISOString(), until: new Date(this.nowMs()).toISOString() },
           providers,
         }) as Promise<WindowBudgetData>
       );
     });
 
     ipcMain.handle("windowHistory:get", async () => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadSettings();
       // Aus den Logs berechnete, abgeschlossene 7d-Fenster (gecached).
       const computed = await this.windowHistoryCache.get("windowHistory", () =>
-        runAnalyticsWorker({
+        this.requestAnalyticsWorker({
           task: "windowHistory",
-          logDir: getDebugLogDir(),
-          nowMs: Date.now(),
+          nowMs: this.nowMs(),
+          quotaRange: { since: new Date(this.nowMs() - 365 * 24 * 3600 * 1000).toISOString(), until: new Date(this.nowMs()).toISOString() },
         }) as Promise<WindowHistoryData>
       );
       // Mit dem persistenten Store vereinen (überlebt gelöschte Logs) und speichern.
@@ -490,6 +605,73 @@ export class DetailsWindowController {
         appVariant: detectAppVariant(),
         ...runtimeRootContext(),
       });
+    });
+
+    ipcMain.handle("system:export-portable-data", async () => {
+      if (archiveOperation !== null || portableImportRestart !== null) return ARCHIVE_BUSY_RESULT;
+      archiveOperation = "export";
+      try {
+        const selected = await dialog.showSaveDialog({
+          title: "Export portable data",
+          defaultPath: path.join(getHomeDir(), "QuotaBar-portable-data.zip"),
+          filters: [{ name: "ZIP archives", extensions: ["zip"] }],
+          properties: ["showOverwriteConfirmation"],
+        });
+        if (selected.canceled || !selected.filePath) return { ok: false, cancelled: true };
+        const result = await exportPortableData(getAppConfigDir(), selected.filePath);
+        log.info(`Portable archive action=export result=success files=${result.fileCount} bytes=${result.totalBytes}`);
+        return { ok: true, ...result };
+      } catch {
+        const message = "Portable data export failed.";
+        log.warn(`Portable archive action=export error=${message}`);
+        return { ok: false, error: "portable_export_failed", message };
+      } finally {
+        archiveOperation = null;
+      }
+    });
+
+    ipcMain.handle("system:import-portable-data", async () => {
+      if (archiveOperation !== null || portableImportRestart !== null) return ARCHIVE_BUSY_RESULT;
+      archiveOperation = "import";
+      try {
+        const selected = await dialog.showOpenDialog({
+          title: "Import portable data",
+          filters: [{ name: "ZIP archives", extensions: ["zip"] }],
+          properties: ["openFile"],
+        });
+        const source = selected.filePaths[0];
+        if (selected.canceled || !source) return { ok: false, cancelled: true };
+        const result = await stagePortableImport(source, getAppConfigDir(), getHomeDir());
+        log.info(`Portable archive action=import result=success files=${result.fileCount} bytes=${result.totalBytes}`);
+        portableImportRestart = "pending";
+        return {
+          ok: true,
+          backupPath: result.backupPath,
+          fileCount: result.fileCount,
+          totalBytes: result.totalBytes,
+          restartScheduled: true,
+        };
+      } catch {
+        const message = "Portable data import failed.";
+        log.warn(`Portable archive action=import error=${message}`);
+        return { ok: false, error: "portable_import_failed", message };
+      } finally {
+        archiveOperation = null;
+      }
+    });
+
+    ipcMain.handle("system:confirm-portable-import-restart", async () => {
+      if (portableImportRestart !== "pending") {
+        return {
+          ok: false,
+          error: "portable_import_restart_not_pending",
+          message: "No portable import restart is pending.",
+        };
+      }
+      portableImportRestart = "exiting";
+      app.relaunch();
+      app.exit(0);
+      return { ok: true };
     });
 
     ipcMain.handle("system:codex-homes:suggest", async () => {
@@ -640,8 +822,9 @@ function formatPathListForLog(value: unknown): string {
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function resolveAnalyticsGetWindow(
-  request?: { since?: string; until?: string },
-): { periodStartMs: number; windowDays: number; since: string; until: string } {
+  request?: { since?: string; until?: string; timeZone?: string },
+  nowMs = Date.now(),
+): { periodStartMs: number; periodEndMs: number; windowDays: number; since: string; until: string; timeZone: string } {
   if (
     request && typeof request.since === "string" && typeof request.until === "string" &&
     DATE_KEY_RE.test(request.since) && DATE_KEY_RE.test(request.until)
@@ -649,30 +832,79 @@ function resolveAnalyticsGetWindow(
     let since = request.since;
     let until = request.until;
     if (since > until) [since, until] = [until, since];
-    const start = new Date(`${since}T00:00:00`);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(`${until}T00:00:00`);
-    const windowDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
-    return { periodStartMs: start.getTime(), windowDays, since, until };
+    const timeZone = validTimeZone(request.timeZone);
+    const periodStartMs = zonedMidnightMs(since, timeZone);
+    const periodEndMs = zonedMidnightMs(nextDateKey(until), timeZone) - 1;
+    const windowDays = calendarDayDistance(since, until) + 1;
+    return { periodStartMs, periodEndMs, windowDays, since, until, timeZone };
   }
-  const cw = calendarWindow(30);
-  return { ...cw, until: localDateKey(new Date()) };
+  const now = new Date(nowMs);
+  const cw = calendarWindow(30, now);
+  return { ...cw, periodEndMs: nowMs, until: localDateKey(now), timeZone: validTimeZone(request?.timeZone) };
 }
 
-function resolveAnalyticsWindow(costWindow: CostWindow): { periodStartMs: number; windowDays: number; since: string } {
+function validTimeZone(candidate: string | undefined): string {
+  const fallback = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!candidate) return fallback;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format();
+    return candidate;
+  } catch {
+    return fallback;
+  }
+}
+
+function nextDateKey(dateKey: string): string {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return next.toISOString().slice(0, 10);
+}
+
+function calendarDayDistance(since: string, until: string): number {
+  return Math.max(0, Math.round((Date.parse(`${until}T00:00:00.000Z`) - Date.parse(`${since}T00:00:00.000Z`)) / 86_400_000));
+}
+
+function zonedMidnightMs(dateKey: string, timeZone: string): number {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const targetUtc = Date.UTC(year, month - 1, day);
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  let candidate = targetUtc;
+  for (let i = 0; i < 4; i++) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(candidate)).map((part) => [part.type, part.value]));
+    const representedAsUtc = Date.UTC(
+      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+      Number(parts.hour), Number(parts.minute), Number(parts.second),
+    );
+    const correction = targetUtc - representedAsUtc;
+    candidate += correction;
+    if (correction === 0) break;
+  }
+  return candidate;
+}
+
+function resolveAnalyticsWindow(costWindow: CostWindow, periodEndMs = Date.now()): { periodStartMs: number; windowDays: number; since: string } {
   if (costWindow === "all") {
     return { periodStartMs: 0, windowDays: 0, since: new Date(0).toISOString().slice(0, 10) };
   }
   const windowDays = costWindow === "7d" ? 7 : 30;
-  return calendarWindow(windowDays);
+  return calendarWindow(windowDays, new Date(periodEndMs));
 }
 
 // Align the window to whole local calendar days: it covers exactly `windowDays`
 // days (today plus the previous windowDays-1), starting at local midnight. This
 // keeps the distinct active-day count from ever exceeding windowDays (e.g. 8/7),
 // which a rolling now-minus-N×24h start would otherwise allow at day boundaries.
-function calendarWindow(windowDays: number): { periodStartMs: number; windowDays: number; since: string } {
-  const start = new Date();
+function calendarWindow(windowDays: number, now = new Date()): { periodStartMs: number; windowDays: number; since: string } {
+  const start = new Date(now);
   start.setHours(0, 0, 0, 0);
   start.setDate(start.getDate() - (windowDays - 1));
   return { periodStartMs: start.getTime(), windowDays, since: localDateKey(start) };

@@ -22,6 +22,21 @@ export interface WindowBudgetSeries {
   currentUsage?: CurrentWindowUsage;
 }
 
+/**
+ * Blendet die 5h-Reset-Marker aus, solange kein umgerechnetes Fenster-Budget
+ * existiert (weekly-only oder Learning-Phase). Der reine Weekly-Trend bleibt
+ * dadurch frei von 5h-Overlays; sobald `windowsPerWeek` bekannt ist, erscheinen
+ * die echten Marker wieder. Präsentations-Filter — die Serie selbst meldet immer
+ * die tatsächlich beobachteten Resets.
+ */
+export function withBudgetMarkers(
+  series: WindowBudgetSeries,
+  windowsPerWeek: number | null | undefined,
+): WindowBudgetSeries {
+  if (typeof windowsPerWeek === "number") return series;
+  return { ...series, fiveHourResets: [] };
+}
+
 export interface WeeklySeriesRequest {
   provider: string;
   windowStartMs: number;

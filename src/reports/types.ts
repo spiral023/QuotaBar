@@ -16,7 +16,8 @@ export interface ReportRequest {
   codexSpeed?: CodexSpeed;
   order?: ReportOrder;
   breakdown?: boolean;
-  source?: "live" | "backfill";
+  /** @deprecated Use "portable" or "legacy". "live" and "backfill" remain compatibility aliases. */
+  source?: "portable" | "legacy" | "live" | "backfill";
   limit?: number;
 }
 
@@ -71,6 +72,7 @@ export interface BackfillPerModelEntry extends CostComponents {
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
+  reasoningOutputTokens: number;
   totalTokens: number;
   costUSD: number;
 }

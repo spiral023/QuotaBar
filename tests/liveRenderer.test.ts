@@ -43,6 +43,11 @@ function loadLiveHelpers(): {
 }
 
 describe("live renderer helpers", () => {
+  it("keeps preparing window budgets out of the hydration cache", () => {
+    const script = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "tabs", "live.js"), "utf8");
+    expect(script).toMatch(/windowBudget:get[\s\S]{0,220}isPortableDataPreparing\(data\)/);
+  });
+
   it("uses the weekly window as effective card usage when weekly is the limiting quota", () => {
     const helpers = loadLiveHelpers();
     const fiveHour = { name: "fiveHour", usedPercent: 12 };

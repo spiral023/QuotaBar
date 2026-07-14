@@ -73,26 +73,44 @@ function parseDaySummary(
   const perModelRaw = event.perModel;
   const perModel: Record<string, BackfillPerModelEntry> = {};
   if (perModelRaw && typeof perModelRaw === "object" && !Array.isArray(perModelRaw)) {
-    for (const [model, pm] of Object.entries(perModelRaw as Record<string, unknown>)) {
+    const rawEntries = Object.entries(perModelRaw as Record<string, unknown>);
+    for (const [model, pm] of rawEntries) {
       if (!pm || typeof pm !== "object" || Array.isArray(pm)) continue;
       const p = pm as Record<string, unknown>;
       const outputTokens = num(p.output);
       const cacheCreationTokens = num(p.cacheCreation);
       const cacheReadTokens = num(p.cacheRead ?? p.cachedInput);
-      const reasoningOutput = num(p.reasoningOutput);
       // Codex stores `input` including cached tokens; show uncached only (input − cached),
       // consistent with the Claude reader and the live report path.
       const inputTokens = provider === "codex"
         ? Math.max(0, num(p.input) - cacheReadTokens)
         : num(p.input);
+      let reasoningOutputTokens = 0;
+      if (provider === "codex") {
+        if (p.reasoningOutput !== undefined) {
+          if (!isNonNegativeFinite(p.reasoningOutput)) return null;
+          reasoningOutputTokens = p.reasoningOutput;
+        } else {
+          const legacyTotal = isNonNegativeFinite(p.totalTokens)
+            ? p.totalTokens
+            : rawEntries.length === 1 && isNonNegativeFinite(event.totalTokens)
+              ? event.totalTokens
+              : undefined;
+          if (legacyTotal === undefined) return null;
+          reasoningOutputTokens = legacyTotal
+            - inputTokens - outputTokens - cacheCreationTokens - cacheReadTokens;
+          if (reasoningOutputTokens < 0) return null;
+        }
+      }
       const totalTokens = provider === "claude"
         ? inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
-        : inputTokens + cacheReadTokens + outputTokens + reasoningOutput;
+        : inputTokens + cacheReadTokens + outputTokens + reasoningOutputTokens;
       perModel[model] = {
         inputTokens,
         outputTokens,
         cacheCreationTokens,
         cacheReadTokens,
+        reasoningOutputTokens,
         totalTokens,
         costUSD: num(p.costUSD),
         // Per-Typ-Kosten: erst seit BACKFILL_REPAIR_VERSION 2 geschrieben; Altsätze → 0.
@@ -123,4 +141,8 @@ function parseDaySummary(
 
 function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }

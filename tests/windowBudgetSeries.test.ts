@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readWeeklySeries, readWeeklySeriesForProviders, insertBreaks, GAP_THRESHOLD_MS, WEEKLY_RESET_DROP_PCT } from "../src/main/windowBudgetSeries";
+import { readWeeklySeries, readWeeklySeriesForProviders, insertBreaks, withBudgetMarkers, GAP_THRESHOLD_MS, WEEKLY_RESET_DROP_PCT } from "../src/main/windowBudgetSeries";
 
 function snapLine(provider: string, fivePct: number, weeklyPct: number, ts: string, fiveResetsAt?: string, planType?: string): string {
   const windows = [
@@ -286,6 +286,29 @@ describe("readWeeklySeries", () => {
     expect(s.currentUsage?.budgetEquivalentUsedWindows).toBeCloseTo(11.75658, 5);
     expect(s.currentUsage?.remainingWindows).toBeCloseTo(2.16788, 5);
   });
+
+  it("weekly-only snapshots yield points but no currentUsage and no 5h resets", async () => {
+    const weeklyOnly = (weeklyPct: number, ts: string) => JSON.stringify({
+      ts, kind: "snapshot", provider: "codex", status: "ok",
+      windows: [{ name: "weekly", usedPercent: weeklyPct, windowSeconds: 604800 }],
+      fetchedAt: ts,
+    });
+    await fs.writeFile(path.join(dir, "2026-06-09.jsonl"), [
+      weeklyOnly(20, "2026-06-09T08:00:00Z"),
+      weeklyOnly(25, "2026-06-09T08:40:00Z"),
+    ].join("\n"), "utf8");
+
+    const [s] = await readWeeklySeriesForProviders(dir, [{
+      provider: "codex",
+      windowStartMs: START,
+      windowsPerWeek: null,
+      currentWeeklyPct: 25,
+    }], NOW);
+
+    expect(s.points.map((p) => p.weeklyPct)).toEqual([20, 25]);
+    expect(s.currentUsage).toBeUndefined();
+    expect(s.fiveHourResets).toEqual([]);
+  });
 });
 
 describe("insertBreaks", () => {
@@ -332,5 +355,26 @@ describe("insertBreaks", () => {
   it("gibt leere/einelementige Serie unverändert zurück", () => {
     expect(insertBreaks([])).toEqual([]);
     expect(insertBreaks([pt("2026-06-12T08:00:00Z", 5)])).toHaveLength(1);
+  });
+});
+
+describe("withBudgetMarkers", () => {
+  const base = () => ({
+    points: [{ t: "2026-06-09T08:00:00Z", weeklyPct: 10 }],
+    fiveHourResets: ["2026-06-09T10:00:00Z"],
+  });
+
+  it("keeps 5h reset markers when a window-budget ratio exists", () => {
+    expect(withBudgetMarkers(base(), 8.3).fiveHourResets).toEqual(["2026-06-09T10:00:00Z"]);
+  });
+
+  it("drops 5h reset markers when the ratio is absent (weekly-only / learning)", () => {
+    expect(withBudgetMarkers(base(), null).fiveHourResets).toEqual([]);
+    expect(withBudgetMarkers(base(), undefined).fiveHourResets).toEqual([]);
+  });
+
+  it("leaves points untouched while suppressing markers", () => {
+    const out = withBudgetMarkers(base(), null);
+    expect(out.points).toEqual([{ t: "2026-06-09T08:00:00Z", weeklyPct: 10 }]);
   });
 });

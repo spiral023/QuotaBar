@@ -2247,6 +2247,7 @@
       font-family: 'DM Sans', system-ui, sans-serif; font-size: 10.5px; font-weight: 600;
       transition-property: background, color, scale; transition-duration: 120ms;
     }
+    .sys-action[hidden] { display: none !important; }
     .sys-action:hover { background: rgba(82,208,23,0.14); color: #72e832; }
     .sys-action:active { scale: 0.96; }
     .sys-action:disabled { opacity: 0.55; cursor: default; }
@@ -2478,6 +2479,31 @@
     .sys-root-suggestion-meta {
       font-size: 8.5px; color: var(--t400);
       text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap;
+    }
+
+    .sys-transfer-actions {
+      display: flex; align-items: center; justify-content: flex-end;
+      gap: 6px; flex-wrap: wrap;
+    }
+    .sys-transfer-actions .sys-action,
+    .sys-transfer-panel .sys-action {
+      min-height: 26px; padding: 0 8px; gap: 5px; font-size: 9.5px;
+    }
+    .sys-transfer-result {
+      min-height: 14px; margin-top: 5px;
+      font-size: 10px; color: var(--green); font-weight: 500;
+      overflow-wrap: anywhere;
+    }
+    .sys-transfer-result:empty { min-height: 0; margin-top: 0; }
+    .sys-transfer-result.error { color: #ff6060; }
+    .sys-transfer-panel {
+      display: none; margin-top: 8px; padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .sys-transfer-panel.open { display: block; }
+    .sys-transfer-copy {
+      padding: 0 9px; color: var(--t400);
+      font-size: 9.5px; line-height: 1.45;
     }
 
     .sys-delete-panel {

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelPricing } from "../src/pricing/cost-calculator";
 import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests, type ModelPricingLookup } from "../src/pricing/historical-pricing-resolver";
 import { LITELLM_PRICING_SOURCE } from "../src/pricing/litellm-fetcher";
@@ -21,6 +21,26 @@ function temporaryHistoryPath(): string {
 }
 
 describe("HistoricalPricingResolver", () => {
+  it("resolves a model batch with stable pricing versions using one lookup", async () => {
+    const lookup = { getModelPricing: vi.fn(async () => ({ input_cost_per_token: 5e-6 })) };
+    const resolver = new HistoricalPricingResolver(lookup, {
+      historyPath: temporaryHistoryPath(),
+      now: () => new Date("2026-06-01T00:00:00.000Z"),
+    });
+
+    const resolved = await resolver.getModelPricingBatch("test-model", [
+      "2026-05-01T00:00:00.000Z",
+      "2026-06-02T00:00:00.000Z",
+      "2026-06-03T00:00:00.000Z",
+    ]);
+
+    expect(lookup.getModelPricing).toHaveBeenCalledOnce();
+    expect(resolved).toHaveLength(3);
+    expect(resolved.every((item) => item?.pricingVersion === resolved[0]?.pricingVersion)).toBe(true);
+    expect(resolved[0]?.pricingVersion).toMatch(/^litellm:[a-f0-9]{64}$/);
+    expect(resolved[0]?.pricing).toEqual({ input_cost_per_token: 5e-6 });
+  });
+
   it("uses the price observed before each event when a model price changes", async () => {
     const historyPath = temporaryHistoryPath();
     let currentPricing: ModelPricing = { input_cost_per_token: 10e-6, output_cost_per_token: 20e-6 };

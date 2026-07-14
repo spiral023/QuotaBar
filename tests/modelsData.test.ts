@@ -1,215 +1,86 @@
-// tests/modelsData.test.ts
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { buildModelsData } from "../src/main/modelsData";
+import { describe, expect, it, vi } from "vitest";
 import { defaultSettings } from "../src/config/settings";
-import type { BackfillDayRecord } from "../src/reports/types";
-import type { ClaudeUsageEntry } from "../src/pricing/jsonl-reader";
-import type { CodexTokenEvent } from "../src/pricing/codex-log-reader";
+import { buildModelsData } from "../src/main/modelsData";
+import { fromClaudeEntries, fromCodexEvents } from "../src/portable/eventAdapters";
+import { PortableUsageStore } from "../src/portable/usageStore";
 
-const SETTINGS = { ...defaultSettings, pricingOfflineMode: true };
-const BENCHMARKS_FILE = path.join(__dirname, "..", "src", "config", "model-benchmarks.json");
+const settings = { ...defaultSettings, pricingOfflineMode: true };
+const benchmarksFile = path.join(__dirname, "..", "src", "config", "model-benchmarks.json");
 
-function record(
-  date: string,
-  provider: "claude" | "codex",
-  perModel: BackfillDayRecord["perModel"],
-): BackfillDayRecord {
-  const totals = Object.values(perModel).reduce(
-    (acc, m) => ({
-      inputTokens: acc.inputTokens + m.inputTokens,
-      outputTokens: acc.outputTokens + m.outputTokens,
-      cacheCreationTokens: acc.cacheCreationTokens + m.cacheCreationTokens,
-      cacheReadTokens: acc.cacheReadTokens + m.cacheReadTokens,
-      totalTokens: acc.totalTokens + m.totalTokens,
-      costUSD: acc.costUSD + m.costUSD,
-    }),
-    { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0 },
-  );
-  return { date, provider, ...totals, sessionCount: 1, models: Object.keys(perModel), perModel };
-}
-
-const PM = (input: number, output: number, costUSD: number) => ({
-  inputTokens: input, outputTokens: output,
-  cacheCreationTokens: 0, cacheReadTokens: 0,
-  totalTokens: input + output, costUSD,
-});
-
-describe("buildModelsData — backfill aggregation", () => {
-  it("emits one ModelDay per date/provider/model", async () => {
-    const data = await buildModelsData({
-      settings: SETTINGS,
-      benchmarksFile: BENCHMARKS_FILE,
-      backfillRecords: [
-        record("2026-01-01", "claude", { "claude-opus-4-8": PM(100, 50, 1.5) }),
-        record("2026-01-01", "codex",  { "gpt-5.5": PM(200, 80, 0.9) }),
-        record("2026-01-02", "claude", { "claude-opus-4-8": PM(10, 5, 0.2) }),
-      ],
-      claudeEntries: [],
-      codexEvents: [],
-    });
-    expect(data.days).toHaveLength(3);
-    const d1 = data.days.find(d => d.date === "2026-01-01" && d.provider === "claude");
-    expect(d1?.model).toBe("claude-opus-4-8");
-    expect(d1?.costUSD).toBeCloseTo(1.5);
+describe("buildModelsData portable aggregation", () => {
+  it("reads an explicitly bounded portable range and never needs provider history", async () => {
+    const store = new PortableUsageStore("unused");
+    const read = vi.spyOn(store, "read").mockResolvedValue([]);
+    await buildModelsData({ settings, usageStore: store, usageRange: { since: "2026-01-01T00:00:00.000Z", until: "2026-01-31T23:59:59.999Z" }, benchmarksFile });
+    expect(read).toHaveBeenCalledWith({ since: "2026-01-01T00:00:00.000Z", until: "2026-01-31T23:59:59.999Z" });
   });
 
-  it("normalizes model names and merges entries that collapse to the same name", async () => {
-    const data = await buildModelsData({
-      settings: SETTINGS,
-      benchmarksFile: BENCHMARKS_FILE,
-      backfillRecords: [
-        record("2026-01-01", "claude", {
-          "claude-haiku-4-5-20251001": PM(100, 10, 0.1),
-          "claude-haiku-4-5":          PM(50, 5, 0.05),
-        }),
-      ],
-      claudeEntries: [],
-      codexEvents: [],
-    });
+  it("normalizes models, filters internal models and sorts UTC provider days", async () => {
+    const usageEvents = [
+      ...fromClaudeEntries([
+        { provider: "claude" as const, timestamp: "2026-01-03T08:00:00.000Z", model: "claude-haiku-4-5-20251001", project: "p", session: "s", inputTokens: 10, outputTokens: 2, cacheCreationTokens: 1, cacheReadTokens: 3, costUSD: .4 },
+        { provider: "claude" as const, timestamp: "2026-01-03T09:00:00.000Z", model: "claude-haiku-4-5", project: "p", session: "s", inputTokens: 5, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 2, costUSD: .1 },
+        { provider: "claude" as const, timestamp: "2026-01-01T09:00:00.000Z", model: "unknown", project: "p", session: "s", inputTokens: 999, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0 },
+      ]),
+      ...fromCodexEvents([{ timestamp: "2026-01-02T08:00:00.000Z", model: "gpt-5.5", isFallback: false, session: "x", directory: ".", inputTokens: 20, cachedInputTokens: 4, outputTokens: 5, reasoningOutputTokens: 2, totalTokens: 25, costUSD: .8 }]),
+    ];
+    const data = await buildModelsData({ settings, usageEvents, benchmarksFile });
+    expect(data.days.map(({ date, provider, model }) => ({ date, provider, model }))).toEqual([
+      { date: "2026-01-02", provider: "codex", model: "gpt-5.5" },
+      { date: "2026-01-03", provider: "claude", model: "claude-haiku-4-5" },
+    ]);
+    expect(data.days[1]).toMatchObject({ inputTokens: 15, outputTokens: 3, cacheCreationTokens: 1, cacheReadTokens: 5, costUSD: .5 });
+  });
+
+  it("uses stored authoritative cost components and does not recalculate event cost", async () => {
+    const usageEvents = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "claude-haiku-4-5", project: "p", session: "s", inputTokens: 1_000_000, outputTokens: 1_000_000, cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 7, inputCostUSD: 1, outputCostUSD: 6 }]);
+    const data = await buildModelsData({ settings, usageEvents, benchmarksFile });
+    expect(data.days[0]).toMatchObject({ costUSD: 7, inputCostUSD: 1, outputCostUSD: 6 });
+  });
+
+  it("keeps cost-only reconciliation deltas and hides only truly neutral markers", async () => {
+    const base = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "claude-haiku-4-5", project: "p", session: "s", inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 }])[0];
+    const target = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, reasoningOutputTokens: 0, costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, cacheCreationCostUSD: 0, cacheReadCostUSD: 0 };
+    const data = await buildModelsData({ settings, benchmarksFile, usageEvents: [
+      { ...base, id: "cost-delta", source: "legacy-reconciliation", synthetic: true, costUSD: 2.5, legacyTarget: target },
+      { ...base, id: "neutral", source: "legacy-reconciliation", synthetic: true, costUSD: 0, legacyTarget: target },
+    ] });
     expect(data.days).toHaveLength(1);
-    expect(data.days[0].model).toBe("claude-haiku-4-5");
-    expect(data.days[0].inputTokens).toBe(150);
-    expect(data.days[0].costUSD).toBeCloseTo(0.15);
+    expect(data.days[0]).toMatchObject({ date: "2026-01-01", model: "claude-haiku-4-5", costUSD: 2.5 });
   });
 
-  it("filters synthetic and unknown models", async () => {
-    const data = await buildModelsData({
-      settings: SETTINGS,
-      benchmarksFile: BENCHMARKS_FILE,
-      backfillRecords: [
-        record("2026-01-01", "claude", {
-          "<synthetic>": PM(5, 1, 0),
-          "unknown":     PM(5, 1, 0),
-          "claude-opus-4-8": PM(100, 50, 1.0),
-        }),
-      ],
-      claudeEntries: [],
-      codexEvents: [],
-    });
-    expect(data.days).toHaveLength(1);
-    expect(data.days[0].model).toBe("claude-opus-4-8");
+  it("derives available model pricing metadata from stored components without LiteLLM I/O", async () => {
+    const usageEvents = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "claude-haiku-4-5", project: "p", session: "s", inputTokens: 1_000_000, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 500_000, inputCostUSD: .8, cacheReadCostUSD: .04, costUSD: .84 }]);
+    const data = await buildModelsData({ settings, usageEvents, benchmarksFile });
+    const scores = (JSON.parse(fs.readFileSync(benchmarksFile, "utf8")) as { indexes: { intelligence: { scores: Record<string, number> } } }).indexes.intelligence.scores;
+    expect(data.benchmarks["claude-opus-4-8"]).toBe(scores["claude-opus-4-8"]);
+    expect(data.pricing["claude-haiku-4-5"].inputPerMTok).toBeCloseTo(.8);
+    expect(data.pricing["claude-haiku-4-5"].cacheReadPerMTok).toBeCloseTo(.08);
+    expect(fs.readFileSync(path.join(__dirname, "..", "src", "main", "modelsData.ts"), "utf8")).not.toContain("LiteLLMFetcher");
   });
 
-  it("days are sorted by date ascending", async () => {
-    const data = await buildModelsData({
-      settings: SETTINGS,
-      benchmarksFile: BENCHMARKS_FILE,
-      backfillRecords: [
-        record("2026-01-03", "claude", { "claude-opus-4-8": PM(1, 1, 0.1) }),
-        record("2026-01-01", "claude", { "claude-opus-4-8": PM(1, 1, 0.1) }),
-      ],
-      claudeEntries: [],
-      codexEvents: [],
-    });
-    expect(data.days.map(d => d.date)).toEqual(["2026-01-01", "2026-01-03"]);
-  });
-});
-
-function claudeEntry(isoTs: string, model: string, output: number): ClaudeUsageEntry {
-  return {
-    provider: "claude", timestamp: isoTs, model,
-    project: "p", session: "s",
-    inputTokens: 10, outputTokens: output, cacheCreationTokens: 0, cacheReadTokens: 0,
-    costUSD: 0.5,
-  };
-}
-
-function codexEvent(isoTs: string, model: string, output: number): CodexTokenEvent {
-  return {
-    timestamp: isoTs, model, isFallback: false, session: "s", directory: ".",
-    inputTokens: 10, cachedInputTokens: 0, outputTokens: output,
-    reasoningOutputTokens: 0, totalTokens: 10 + output,
-  };
-}
-
-describe("buildModelsData — live tail merge", () => {
-  it("adds live days strictly after the provider's last backfill date", async () => {
-    const data = await buildModelsData({
-      settings: SETTINGS,
-      benchmarksFile: BENCHMARKS_FILE,
-      backfillRecords: [
-        record("2026-01-10", "claude", { "claude-opus-4-8": PM(100, 50, 1.0) }),
-      ],
-      claudeEntries: [
-        claudeEntry("2026-01-10T12:00:00.000Z", "claude-opus-4-8", 99),  // selber Tag → ignoriert
-        claudeEntry("2026-01-11T12:00:00.000Z", "claude-opus-4-8", 42),  // danach → übernommen
-      ],
-      codexEvents: [],
-    });
-    const backfillDay = data.days.find(d => d.date === "2026-01-10");
-    expect(backfillDay?.outputTokens).toBe(50); // unverändert, kein Doppelzählen
-    const liveDay = data.days.find(d => d.date === "2026-01-11");
-    expect(liveDay?.outputTokens).toBe(42);
+  it("leaves unit pricing unavailable when portable components are absent", async () => {
+    const usageEvents = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "componentless", project: "p", session: "s", inputTokens: 100, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0, costUSD: 1 }]);
+    const data = await buildModelsData({ settings, usageEvents, benchmarksFile });
+    expect(data.pricing.componentless).toBeUndefined();
   });
 
-  it("falls back to live-only when a provider has no backfill records", async () => {
-    const data = await buildModelsData({
-      settings: SETTINGS,
-      benchmarksFile: BENCHMARKS_FILE,
-      backfillRecords: [],
-      claudeEntries: [claudeEntry("2026-01-05T08:00:00.000Z", "claude-sonnet-4-6", 7)],
-      codexEvents: [codexEvent("2026-01-06T08:00:00.000Z", "gpt-5.5", 11)],
-    });
-    expect(data.days.find(d => d.provider === "claude")?.date).toBe("2026-01-05");
-    expect(data.days.find(d => d.provider === "codex")?.date).toBe("2026-01-06");
+  it("suppresses model pricing when cache-read tokens lack a stored cache cost", async () => {
+    const usageEvents = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "partial", project: "p", session: "s", inputTokens: 1_000_000, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 500_000, inputCostUSD: 1, costUSD: 1 }]);
+    const data = await buildModelsData({ settings, usageEvents, benchmarksFile });
+    expect(data.pricing.partial).toBeUndefined();
   });
 
-  it("normalizes live model names too", async () => {
-    const data = await buildModelsData({
-      settings: SETTINGS,
-      benchmarksFile: BENCHMARKS_FILE,
-      backfillRecords: [],
-      claudeEntries: [claudeEntry("2026-01-05T08:00:00.000Z", "claude-haiku-4-5-20251001", 3)],
-      codexEvents: [],
-    });
-    expect(data.days[0].model).toBe("claude-haiku-4-5");
-  });
-});
-
-describe("buildModelsData — pricing & benchmarks", () => {
-  it("includes per-model pricing rates from offline fallback prices", async () => {
-    const data = await buildModelsData({
-      settings: SETTINGS, // pricingOfflineMode: true → deterministische FALLBACK_PRICES
-      benchmarksFile: BENCHMARKS_FILE,
-      backfillRecords: [record("2026-01-01", "claude", { "claude-haiku-4-5": PM(10, 5, 0.01) })],
-      claudeEntries: [],
-      codexEvents: [],
-    });
-    const rate = data.pricing["claude-haiku-4-5"];
-    expect(rate).toBeDefined();
-    expect(rate.inputPerMTok).toBeCloseTo(0.8);      // 8e-7 × 1e6
-    expect(rate.cacheReadPerMTok).toBeCloseTo(0.08); // 8e-8 × 1e6
+  it("preserves an explicitly stored free cache-read rate", async () => {
+    const usageEvents = fromClaudeEntries([{ provider: "claude", timestamp: "2026-01-01T00:00:00.000Z", model: "free-cache", project: "p", session: "s", inputTokens: 1_000_000, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 500_000, inputCostUSD: 1, cacheReadCostUSD: 0, costUSD: 1 }]);
+    const data = await buildModelsData({ settings, usageEvents, benchmarksFile });
+    expect(data.pricing["free-cache"]).toEqual({ inputPerMTok: 1, cacheReadPerMTok: 0 });
   });
 
-  it("exposes benchmark scores with asOf", async () => {
-    const data = await buildModelsData({
-      settings: SETTINGS,
-      benchmarksFile: BENCHMARKS_FILE,
-      backfillRecords: [],
-      claudeEntries: [],
-      codexEvents: [],
-    });
-    // Gegen die gepflegte JSON prüfen statt einen festen Score zu pinnen — Scores
-    // werden regelmäßig aktualisiert; der Test verifiziert das Durchreichen, nicht den Wert.
-    const fileScores = (JSON.parse(fs.readFileSync(BENCHMARKS_FILE, "utf8")) as {
-      indexes: { intelligence: { scores: Record<string, number> } };
-    }).indexes.intelligence.scores;
-    expect(data.benchmarks["claude-opus-4-8"]).toBe(fileScores["claude-opus-4-8"]);
-    expect(data.benchmarksAsOf).toMatch(/^\d{4}-\d{2}(-\d{2})?$/);
-    expect(data.benchmarkIndexes.codingAgent.scores["gpt-5.6-sol"]).toBe(79);
-    expect(data.benchmarkIndexes.codingAgent.asOf).toMatch(/^\d{4}-\d{2}(-\d{2})?$/);
-  });
-
-  it("returns empty benchmarks when the file is missing (spec error case)", async () => {
-    const data = await buildModelsData({
-      settings: SETTINGS,
-      benchmarksFile: path.join(__dirname, "does-not-exist.json"),
-      backfillRecords: [],
-      claudeEntries: [],
-      codexEvents: [],
-    });
+  it("returns empty benchmarks for a missing file", async () => {
+    const data = await buildModelsData({ settings, usageEvents: [], benchmarksFile: path.join(__dirname, "missing.json") });
     expect(data.benchmarks).toEqual({});
     expect(data.benchmarksAsOf).toBe("");
   });

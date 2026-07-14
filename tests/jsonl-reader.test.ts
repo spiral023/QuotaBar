@@ -2,7 +2,13 @@ import { describe, expect, it, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readClaudeTokensForPeriod } from "../src/pricing/jsonl-reader";
+import { Readable } from "node:stream";
+import {
+  listClaudeSourceFilesStrict,
+  readClaudeTokensForPeriod,
+  readClaudeUsageEntriesForPeriod,
+  readClaudeUsageEntriesFromFilesStrict,
+} from "../src/pricing/jsonl-reader";
 
 const tmpDir = path.join(os.tmpdir(), `quotabar-test-${process.pid}`);
 
@@ -16,6 +22,98 @@ async function writeJsonl(dir: string, filename: string, entries: unknown[]): Pr
 }
 
 describe("readClaudeTokensForPeriod", () => {
+  it("strict listing and reading propagate outer I/O failures", async () => {
+    const missing = path.join(tmpDir, "missing");
+    await expect(listClaudeSourceFilesStrict(missing)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readClaudeUsageEntriesFromFilesStrict([{ file: path.join(missing, "gone.jsonl"), baseDir: missing }]))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("strict reading still skips malformed individual lines", async () => {
+    const projectDir = path.join(tmpDir, "strict-project");
+    await fs.mkdir(projectDir, { recursive: true });
+    const file = path.join(projectDir, "strict.jsonl");
+    await fs.writeFile(file, `not-json\n${JSON.stringify({
+      timestamp: "2026-05-10T10:00:00.000Z",
+      message: { id: "strict-id", model: "claude-sonnet-4-6", usage: { input_tokens: 7, output_tokens: 3 } },
+    })}\n`, "utf8");
+
+    await expect(readClaudeUsageEntriesFromFilesStrict([{ file, baseDir: tmpDir }]))
+      .resolves.toEqual([expect.objectContaining({ sourceEventId: "strict-id", inputTokens: 7 })]);
+  });
+
+  it("strict reading rejects an interrupted stream without caching its partial entries", async () => {
+    const file = path.join(tmpDir, "interrupted.jsonl");
+    const valid = JSON.stringify({
+      timestamp: "2026-05-10T10:00:00.000Z",
+      message: { id: "after-retry", model: "claude-sonnet-4-6", usage: { input_tokens: 7, output_tokens: 3 } },
+    });
+    await fs.mkdir(tmpDir, { recursive: true });
+    await fs.writeFile(file, `${valid}\n`, "utf8");
+    const interrupted = () => Readable.from((async function* () {
+      yield `${valid}\n`;
+      throw Object.assign(new Error("secret stream failure"), { code: "EIO" });
+    })());
+
+    await expect(readClaudeUsageEntriesFromFilesStrict([{ file, baseDir: tmpDir }], undefined, {
+      createReadStream: interrupted,
+    })).rejects.toMatchObject({ code: "EIO" });
+    await expect(readClaudeUsageEntriesFromFilesStrict([{ file, baseDir: tmpDir }]))
+      .resolves.toEqual([expect.objectContaining({ sourceEventId: "after-retry" })]);
+  });
+
+  it.each([
+    ["C:\\Users\\person\\src\\QuotaBar", "QuotaBar"],
+    ["/home/person/src/quota-bar", "quota-bar"],
+    ["/home/alice/-frontend", "-frontend"],
+    ["C:\\work\\C--compiler", "C--compiler"],
+  ])("uses only the basename of cwd as projectName (%s)", async (cwd, expected) => {
+    await writeJsonl(path.join(tmpDir, "legacy-project"), "session.jsonl", [{
+      timestamp: "2026-05-10T10:00:00.000Z",
+      cwd,
+      message: { model: "claude-sonnet-4-6", usage: { input_tokens: 1, output_tokens: 2 } },
+    }]);
+
+    const [entry] = await readClaudeUsageEntriesForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(entry.projectName).toBe(expected);
+    expect(entry.projectName).not.toContain("person");
+  });
+
+  it("falls back to the existing project label when cwd is unavailable", async () => {
+    await writeJsonl(path.join(tmpDir, "legacy-project"), "session.jsonl", [{
+      timestamp: "2026-05-10T10:00:00.000Z",
+      message: { model: "claude-sonnet-4-6", usage: { input_tokens: 1, output_tokens: 2 } },
+    }]);
+    const [entry] = await readClaudeUsageEntriesForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(entry.projectName).toBe("legacy-project");
+  });
+
+  it.each([
+    "C--Users-Alice-Documents-GitHub-QuotaBar",
+    "D--Work-Alice-QuotaBar",
+    "C--src-private-QuotaBar",
+    "-home-alice-projects-QuotaBar",
+    "-workspace-alice-QuotaBar",
+  ])("does not expose encoded provider directory labels (%s)", async (encodedProject) => {
+    await writeJsonl(path.join(tmpDir, encodedProject), "session.jsonl", [{
+      timestamp: "2026-05-10T10:00:00.000Z",
+      message: { model: "claude-sonnet-4-6", usage: { input_tokens: 1, output_tokens: 2 } },
+    }]);
+    const [entry] = await readClaudeUsageEntriesForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(entry.projectName).toBeUndefined();
+    expect(Object.keys(entry)).not.toContain("projectName");
+    expect(JSON.stringify({ projectName: entry.projectName })).not.toMatch(/Alice|alice|home|Documents/);
+  });
+
+  it("exposes the provider message ID as in-memory source identity", async () => {
+    await writeJsonl(path.join(tmpDir, "QuotaBar"), "source-id.jsonl", [{
+      timestamp: "2026-05-10T10:00:00.000Z",
+      message: { id: "msg_source_123", model: "claude-sonnet-4-6", usage: { input_tokens: 1, output_tokens: 2 } },
+    }]);
+    const [entry] = await readClaudeUsageEntriesForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(entry.sourceEventId).toBe("msg_source_123");
+  });
+
   it("returns zeros when directory does not exist", async () => {
     const result = await readClaudeTokensForPeriod("/nonexistent/path/xyz", new Date("2026-05-01"));
     expect(result).toEqual({
