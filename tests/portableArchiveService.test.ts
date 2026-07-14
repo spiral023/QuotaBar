@@ -673,6 +673,103 @@ describe("portable archive service", () => {
     await expect(applyPendingImport(target)).resolves.toEqual({ applied: false, fileCount: 0, totalBytes: 0 });
   });
 
+  it.each(["rollback", "staging", "pending"] as const)(
+    "resumes aborted import cleanup after a crash at the %s boundary",
+    async (crashAt) => {
+      const root = await tempRoot();
+      const source = path.join(root, "source", ".quotabar-win");
+      const targetHome = path.join(root, `target-aborted-${crashAt}`);
+      const target = path.join(targetHome, ".quotabar-win");
+      const archivePath = path.join(root, `aborted-${crashAt}.zip`);
+      const originalSettings = "{\"costWindow\":\"30d\"}\n";
+      await put(source, "settings.json", "{\"costWindow\":\"7d\"}\n");
+      await put(source, "usage/events/new.jsonl", "new-data\n");
+      await put(target, "settings.json", originalSettings);
+      await put(target, "usage/events/old.jsonl", "old-data\n");
+      await exportPortableData(source, archivePath);
+      await stagePortableImport(archivePath, target, targetHome);
+      const pending = JSON.parse(await readFile(path.join(target, ".portable-import.pending.json"), "utf8"));
+      const stagingDir = path.join(targetHome, pending.stagingDirectory);
+      let importedRenames = 0;
+      const rename: typeof fsPromises.rename = async (from, to) => {
+        await fsPromises.rename(from, to);
+        if (String(from).startsWith(`${stagingDir}${path.sep}`)) {
+          importedRenames += 1;
+          if (importedRenames === 3) await writeFile(path.join(target, "settings.json"), "corrupt-after-apply\n");
+        }
+      };
+      let cleanupCalls = 0;
+      const removeTree = async (directory: string) => {
+        cleanupCalls += 1;
+        await fsPromises.rm(directory, { recursive: true });
+        if ((crashAt === "rollback" && cleanupCalls === 1) || (crashAt === "staging" && cleanupCalls === 2)) {
+          throw new Error(`crash after ${crashAt} cleanup`);
+        }
+      };
+      const unlinkPending = async (filePath: string) => {
+        await fsPromises.unlink(filePath);
+        if (crashAt === "pending") throw new Error("crash after pending cleanup");
+      };
+
+      const applying = expect(applyPendingImport(target, { rename, removeTree, unlinkPending }));
+      if (crashAt === "pending") {
+        await applying.rejects.toMatchObject({ rollbackOutcome: "completed" });
+      } else {
+        await applying.rejects.toMatchObject({ rollbackOutcome: "pending-recovery" });
+      }
+      expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe(originalSettings);
+      expect(await readFile(path.join(target, "usage/events/old.jsonl"), "utf8")).toBe("old-data\n");
+
+      await expect(applyPendingImport(target)).resolves.toEqual({ applied: false, fileCount: 0, totalBytes: 0 });
+      await expect(access(path.join(target, ".portable-import.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("resumes when the aborted phase write fails after rollback completed", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "source", ".quotabar-win");
+    const targetHome = path.join(root, "target-aborted-phase-write");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "aborted-phase-write.zip");
+    const originalSettings = "{\"costWindow\":\"30d\"}\n";
+    await put(source, "settings.json", "{\"costWindow\":\"7d\"}\n");
+    await put(source, "usage/events/new.jsonl", "new-data\n");
+    await put(target, "settings.json", originalSettings);
+    await put(target, "usage/events/old.jsonl", "old-data\n");
+    await exportPortableData(source, archivePath);
+    await stagePortableImport(archivePath, target, targetHome);
+    const pendingPath = path.join(target, ".portable-import.pending.json");
+    const pending = JSON.parse(await readFile(pendingPath, "utf8"));
+    const stagingDir = path.join(targetHome, pending.stagingDirectory);
+    let importedRenames = 0;
+    const rename: typeof fsPromises.rename = async (from, to) => {
+      await fsPromises.rename(from, to);
+      if (String(from).startsWith(`${stagingDir}${path.sep}`)) {
+        importedRenames += 1;
+        if (importedRenames === 3) await writeFile(path.join(target, "settings.json"), "corrupt-after-apply\n");
+      }
+    };
+    let completedPhaseRenames = 0;
+    let injected = false;
+    const pendingWriteCheckpoint = async (checkpoint: import("../src/portable/archiveService").PendingWriteCheckpoint) => {
+      if (checkpoint === "after-rename") completedPhaseRenames += 1;
+      if (checkpoint === "before-temp-write" && completedPhaseRenames === 2) {
+        injected = true;
+        throw new Error("crash before aborted phase write");
+      }
+    };
+
+    await expect(applyPendingImport(target, { rename, pendingWriteCheckpoint })).rejects.toMatchObject({
+      rollbackOutcome: "pending-recovery",
+    });
+    expect(injected).toBe(true);
+    expect(JSON.parse(await readFile(pendingPath, "utf8"))).toMatchObject({ phase: "rolling-back" });
+    expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe(originalSettings);
+
+    await expect(applyPendingImport(target)).resolves.toEqual({ applied: false, fileCount: 0, totalBytes: 0 });
+    await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("stages, verifies, and applies with a private backup file larger than 64 MiB", async () => {
     const root = await tempRoot();
     const source = path.join(root, "source", ".quotabar-win");

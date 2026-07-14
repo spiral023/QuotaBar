@@ -296,6 +296,13 @@ describe("portable analytics readiness", () => {
 });
 
 describe("DetailsWindowController system IPC", () => {
+  it("keeps archive operations separate from terminal restart state", async () => {
+    const source = await fs.readFile(path.resolve("src/main/detailsWindow.ts"), "utf8");
+
+    expect(source).toContain('let archiveOperation: "export" | "import" | null = null;');
+    expect(source).toContain('let portableImportRestart: "pending" | "exiting" | null = null;');
+  });
+
   it("registers app metadata, system data, and path-opening handlers", () => {
     new DetailsWindowController(() => null);
 

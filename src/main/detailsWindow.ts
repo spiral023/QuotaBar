@@ -39,7 +39,8 @@ import { parseMigrationState } from "../portable/migration";
 import { PortableUsageStore } from "../portable/usageStore";
 import { exportPortableData, stagePortableImport } from "../portable/archiveService";
 
-let archiveOperation: "export" | "import" | "restarting" | "exiting" | null = null;
+let archiveOperation: "export" | "import" | null = null;
+let portableImportRestart: "pending" | "exiting" | null = null;
 
 const ARCHIVE_BUSY_RESULT = Object.freeze({
   ok: false,
@@ -605,7 +606,7 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("system:export-portable-data", async () => {
-      if (archiveOperation !== null) return ARCHIVE_BUSY_RESULT;
+      if (archiveOperation !== null || portableImportRestart !== null) return ARCHIVE_BUSY_RESULT;
       archiveOperation = "export";
       try {
         const selected = await dialog.showSaveDialog({
@@ -628,7 +629,7 @@ export class DetailsWindowController {
     });
 
     ipcMain.handle("system:import-portable-data", async () => {
-      if (archiveOperation !== null) return ARCHIVE_BUSY_RESULT;
+      if (archiveOperation !== null || portableImportRestart !== null) return ARCHIVE_BUSY_RESULT;
       archiveOperation = "import";
       try {
         const selected = await dialog.showOpenDialog({
@@ -640,7 +641,7 @@ export class DetailsWindowController {
         if (selected.canceled || !source) return { ok: false, cancelled: true };
         const result = await stagePortableImport(source, getAppConfigDir(), getHomeDir());
         log.info(`Portable archive action=import result=success files=${result.fileCount} bytes=${result.totalBytes}`);
-        archiveOperation = "restarting";
+        portableImportRestart = "pending";
         return {
           ok: true,
           backupPath: result.backupPath,
@@ -653,19 +654,19 @@ export class DetailsWindowController {
         log.warn(`Portable archive action=import error=${message}`);
         return { ok: false, error: "portable_import_failed", message };
       } finally {
-        if (archiveOperation === "import") archiveOperation = null;
+        archiveOperation = null;
       }
     });
 
     ipcMain.handle("system:confirm-portable-import-restart", async () => {
-      if (archiveOperation !== "restarting") {
+      if (portableImportRestart !== "pending") {
         return {
           ok: false,
           error: "portable_import_restart_not_pending",
           message: "No portable import restart is pending.",
         };
       }
-      archiveOperation = "exiting";
+      portableImportRestart = "exiting";
       app.relaunch();
       app.exit(0);
       return { ok: true };

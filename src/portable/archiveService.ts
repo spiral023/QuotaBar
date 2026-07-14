@@ -127,7 +127,7 @@ interface FileIdentity {
 interface PendingImport {
   format: typeof PENDING_FORMAT;
   formatVersion: typeof PENDING_VERSION;
-  phase: "prepared" | "applying" | "committed";
+  phase: "prepared" | "applying" | "rolling-back" | "committed" | "aborted";
   stagingDirectory: string;
   rollbackDirectory: string;
   backup: PendingBackup;
@@ -332,6 +332,22 @@ export async function applyPendingImport(
       await verifyReferencedBackup(appDir, pending);
       const stagingDir = safeSibling(parent, pending.stagingDirectory, `.${path.basename(appDir)}.portable-import-`);
       const rollbackDir = safeSibling(parent, pending.rollbackDirectory, `.${path.basename(appDir)}.portable-import-`);
+      if (pending.phase === "aborted") {
+        applyStarted = true;
+        await removeTree(rollbackDir);
+        await removeTree(stagingDir);
+        await unlinkPendingDurably(pendingPath, unlinkPending);
+        return { applied: false, fileCount: 0, totalBytes: 0 };
+      }
+      if (pending.phase === "rolling-back") {
+        applyStarted = true;
+        const stagedByPath = new Map(pending.stagedEntries.map((entry) => [entry.path, entry]));
+        const aborted = await finishPendingRollback(
+          appDir, stagingDir, rollbackDir, pendingPath, pending, stagedByPath,
+          rename, removeTree, unlinkPending, dependencies.pendingWriteCheckpoint,
+        );
+        if (aborted) return { applied: false, fileCount: 0, totalBytes: 0 };
+      }
       if (pending.phase === "committed") {
         applyStarted = true;
         await verifyCommittedLive(appDir, pending.stagedEntries);
@@ -360,14 +376,11 @@ export async function applyPendingImport(
         await verifyCommittedLive(appDir, pending.stagedEntries);
       } catch {
         try {
-          const rollback = await rollbackAll(appDir, stagingDir, rollbackDir, pending.replacePaths, stagedByPath, rename);
-          if (rollback.retryable) {
-            await updatePendingPhase(appDir, pendingPath, pending, "prepared", dependencies.pendingWriteCheckpoint);
-          } else {
-            await removeTree(rollbackDir);
-            await removeTree(stagingDir);
-            await unlinkPendingDurably(pendingPath, unlinkPending);
-          }
+          await updatePendingPhase(appDir, pendingPath, pending, "rolling-back", dependencies.pendingWriteCheckpoint);
+          await finishPendingRollback(
+            appDir, stagingDir, rollbackDir, pendingPath, pending, stagedByPath,
+            rename, removeTree, unlinkPending, dependencies.pendingWriteCheckpoint,
+          );
         } catch {
           throw new PortableImportApplyError("pending-recovery");
         }
@@ -635,7 +648,7 @@ function parsePending(input: Uint8Array): PendingImport {
     ])
     || parsed.format !== PENDING_FORMAT
     || parsed.formatVersion !== PENDING_VERSION
-    || !["prepared", "applying", "committed"].includes(String(parsed.phase))
+    || !["prepared", "applying", "rolling-back", "committed", "aborted"].includes(String(parsed.phase))
     || typeof parsed.stagingDirectory !== "string"
     || typeof parsed.rollbackDirectory !== "string"
     || !isRecord(parsed.backup)
@@ -824,6 +837,30 @@ async function applyOnePath(
   }
 }
 
+async function finishPendingRollback(
+  appDir: string,
+  stagingDir: string,
+  rollbackDir: string,
+  pendingPath: string,
+  pending: PendingImport,
+  stagedByPath: ReadonlyMap<string, ArchiveManifestEntry>,
+  rename: typeof fs.rename,
+  removeTree: (directory: string) => Promise<void>,
+  unlinkPending: (filePath: string) => Promise<void>,
+  checkpoint?: (checkpoint: PendingWriteCheckpoint) => Promise<void>,
+): Promise<boolean> {
+  const rollback = await rollbackAll(appDir, stagingDir, rollbackDir, pending.replacePaths, stagedByPath, rename);
+  if (rollback.retryable) {
+    await updatePendingPhase(appDir, pendingPath, pending, "prepared", checkpoint);
+    return false;
+  }
+  await updatePendingPhase(appDir, pendingPath, pending, "aborted", checkpoint);
+  await removeTree(rollbackDir);
+  await removeTree(stagingDir);
+  await unlinkPendingDurably(pendingPath, unlinkPending);
+  return true;
+}
+
 async function rollbackAll(
   appDir: string,
   stagingDir: string,
@@ -842,7 +879,12 @@ async function rollbackAll(
       const imported = stagedByPath.get(relativePath);
       const liveExists = await safeRegularFileExists(livePath);
       const stagedExists = await safeRegularFileExists(stagedPath);
+      const rollbackExists = await safeRegularFileExists(rollbackPath);
       if (imported && liveExists && !stagedExists) {
+        if (!rollbackExists && await hasCorruptStagedMarker(stagingDir, relativePath)) {
+          retryable = false;
+          continue;
+        }
         await ensureSafeParents(stagingDir, relativePath);
         let importedMatches = false;
         try {
@@ -858,7 +900,7 @@ async function rollbackAll(
           await renameWithBoundParents(livePath, `${stagedPath}.corrupt-${randomUUID()}`, rename);
         }
       }
-      if (await safeRegularFileExists(rollbackPath)) {
+      if (rollbackExists) {
         if (await safeRegularFileExists(livePath)) throw new Error("Live target occupied during rollback");
         await ensureSafeParents(appDir, relativePath);
         await renameWithBoundParents(rollbackPath, livePath, rename);
@@ -869,6 +911,19 @@ async function rollbackAll(
   }
   if (rollbackError) throw new Error("Portable data rollback failed");
   return { retryable };
+}
+
+async function hasCorruptStagedMarker(stagingDir: string, relativePath: string): Promise<boolean> {
+  const stagedPath = containedPath(stagingDir, relativePath);
+  const parent = path.dirname(stagedPath);
+  const prefix = `${path.basename(stagedPath)}.corrupt-`;
+  try {
+    const entries = await fs.readdir(parent, { withFileTypes: true });
+    return entries.some((entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.startsWith(prefix));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 async function unlinkPendingDurably(

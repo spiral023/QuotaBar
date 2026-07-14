@@ -17,6 +17,15 @@ window.QB = window.QB || {};
 
   let _update = null;
 
+  QB.importPortableData = async function importPortableData(processSuccess) {
+    const result = await QB.ipc.invoke('system:import-portable-data');
+    if (!result?.ok || !result.restartScheduled) return result;
+    if (typeof processSuccess !== 'function') throw new Error('Portable import success handler is required');
+    await processSuccess(result);
+    await QB.ipc.invoke('system:confirm-portable-import-restart');
+    return result;
+  };
+
   async function loadUpdateState(force) {
     try {
       _update = await QB.ipc.invoke(force ? 'update:check' : 'update:get-state');
