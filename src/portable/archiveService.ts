@@ -337,7 +337,7 @@ export async function applyPendingImport(
         await verifyCommittedLive(appDir, pending.stagedEntries);
         await removeTree(rollbackDir);
         await removeTree(stagingDir);
-        await unlinkPending(pendingPath);
+        await unlinkPendingDurably(pendingPath, unlinkPending);
         return {
           applied: true,
           fileCount: pending.manifest.entries.length,
@@ -357,20 +357,26 @@ export async function applyPendingImport(
           const imported = stagedByPath.get(relativePath);
           await applyOnePath(appDir, stagingDir, rollbackDir, relativePath, imported, rename);
         }
+        await verifyCommittedLive(appDir, pending.stagedEntries);
       } catch {
         try {
-          await rollbackAll(appDir, stagingDir, rollbackDir, pending.replacePaths, stagedByPath, rename);
-          await updatePendingPhase(appDir, pendingPath, pending, "prepared", dependencies.pendingWriteCheckpoint);
+          const rollback = await rollbackAll(appDir, stagingDir, rollbackDir, pending.replacePaths, stagedByPath, rename);
+          if (rollback.retryable) {
+            await updatePendingPhase(appDir, pendingPath, pending, "prepared", dependencies.pendingWriteCheckpoint);
+          } else {
+            await removeTree(rollbackDir);
+            await removeTree(stagingDir);
+            await unlinkPendingDurably(pendingPath, unlinkPending);
+          }
         } catch {
           throw new PortableImportApplyError("pending-recovery");
         }
         throw new PortableImportApplyError("completed");
       }
-      await verifyCommittedLive(appDir, pending.stagedEntries);
       await updatePendingPhase(appDir, pendingPath, pending, "committed", dependencies.pendingWriteCheckpoint);
       await removeTree(rollbackDir);
       await removeTree(stagingDir);
-      await unlinkPending(pendingPath);
+      await unlinkPendingDurably(pendingPath, unlinkPending);
       return {
         applied: true,
         fileCount: pending.manifest.entries.length,
@@ -825,8 +831,9 @@ async function rollbackAll(
   paths: readonly string[],
   stagedByPath: ReadonlyMap<string, ArchiveManifestEntry>,
   rename: typeof fs.rename,
-): Promise<void> {
+): Promise<{ retryable: boolean }> {
   let rollbackError: unknown;
+  let retryable = true;
   for (const relativePath of [...paths].reverse()) {
     try {
       const livePath = containedPath(appDir, relativePath);
@@ -847,6 +854,7 @@ async function rollbackAll(
         if (importedMatches) {
           await renameWithBoundParents(livePath, stagedPath, rename);
         } else {
+          retryable = false;
           await renameWithBoundParents(livePath, `${stagedPath}.corrupt-${randomUUID()}`, rename);
         }
       }
@@ -860,6 +868,19 @@ async function rollbackAll(
     }
   }
   if (rollbackError) throw new Error("Portable data rollback failed");
+  return { retryable };
+}
+
+async function unlinkPendingDurably(
+  pendingPath: string,
+  unlinkPending: (filePath: string) => Promise<void>,
+): Promise<void> {
+  try {
+    await unlinkPending(pendingPath);
+  } catch (error) {
+    if (!await safeRegularFileExists(pendingPath)) return;
+    throw error;
+  }
 }
 
 async function verifyManagedEntry(root: string, entry: ArchiveManifestEntry): Promise<void> {

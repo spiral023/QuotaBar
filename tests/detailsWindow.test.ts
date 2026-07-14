@@ -309,6 +309,7 @@ describe("DetailsWindowController system IPC", () => {
     expect(channels).toContain("system:open-path");
     expect(channels).toContain("system:export-portable-data");
     expect(channels).toContain("system:import-portable-data");
+    expect(channels).toContain("system:confirm-portable-import-restart");
   });
 
   it.each([
@@ -352,6 +353,7 @@ describe("DetailsWindowController system IPC", () => {
       expect.stringMatching(/\.quotabar-win$/),
       "C:\\Exports\\QuotaBar.zip",
     );
+    expect(JSON.stringify(logMocks.info.mock.calls)).not.toContain("C:\\Exports");
   });
 
   it("returns a stable sanitized export failure and releases the archive operation", async () => {
@@ -372,50 +374,16 @@ describe("DetailsWindowController system IPC", () => {
     expect(JSON.stringify(logMocks.warn.mock.calls)).not.toMatch(/secret-token|private|archive\.zip/);
   });
 
-  it("stages an import, returns its verified backup, then restarts after the response flushes", async () => {
-    vi.useFakeTimers();
-    try {
-      vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: ["C:\\Imports\\QuotaBar.zip"] });
-      archiveMocks.stagePortableImport.mockResolvedValue({
-        path: "C:\\Imports\\QuotaBar.zip",
-        backupPath: "C:\\QuotaBar Backups\\verified.zip",
-        pending: true,
-        fileCount: 3,
-        totalBytes: 96,
-      });
-      new DetailsWindowController(() => null);
+  it("rejects restart confirmation unless a staged import is awaiting restart", async () => {
+    new DetailsWindowController(() => null);
 
-      const result = await findIpcHandler("system:import-portable-data")({});
-
-      expect(result).toEqual({
-        ok: true,
-        backupPath: "C:\\QuotaBar Backups\\verified.zip",
-        fileCount: 3,
-        totalBytes: 96,
-        restartScheduled: true,
-      });
-      expect(archiveMocks.stagePortableImport).toHaveBeenCalledWith(
-        "C:\\Imports\\QuotaBar.zip",
-        expect.stringMatching(/\.quotabar-win$/),
-        expect.any(String),
-      );
-      expect(dialog.showOpenDialog).toHaveBeenCalledWith({
-        title: "Import portable data",
-        filters: [{ name: "ZIP archives", extensions: ["zip"] }],
-        properties: ["openFile"],
-      });
-      expect(app.relaunch).not.toHaveBeenCalled();
-      expect(app.exit).not.toHaveBeenCalled();
-
-      await vi.runAllTimersAsync();
-
-      expect(app.relaunch).toHaveBeenCalledOnce();
-      expect(app.exit).toHaveBeenCalledWith(0);
-      expect(vi.mocked(app.relaunch).mock.invocationCallOrder[0])
-        .toBeLessThan(vi.mocked(app.exit).mock.invocationCallOrder[0]);
-    } finally {
-      vi.useRealTimers();
-    }
+    await expect(findIpcHandler("system:confirm-portable-import-restart")({})).resolves.toEqual({
+      ok: false,
+      error: "portable_import_restart_not_pending",
+      message: "No portable import restart is pending.",
+    });
+    expect(app.relaunch).not.toHaveBeenCalled();
+    expect(app.exit).not.toHaveBeenCalled();
   });
 
   it("returns a stable sanitized import failure and releases the archive operation", async () => {
@@ -484,6 +452,57 @@ describe("DetailsWindowController system IPC", () => {
 
     expect(result).toEqual({ ok: true });
     expect(shell.openExternal).toHaveBeenCalledWith("https://artificialanalysis.ai/methodology/coding-agents-benchmarking");
+  });
+
+  it("stages an import, blocks more work, then restarts only after renderer confirmation", async () => {
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: ["C:\\Imports\\QuotaBar.zip"] });
+    archiveMocks.stagePortableImport.mockResolvedValue({
+      path: "C:\\Imports\\QuotaBar.zip",
+      backupPath: "C:\\QuotaBar Backups\\verified.zip",
+      pending: true,
+      fileCount: 3,
+      totalBytes: 96,
+    });
+    new DetailsWindowController(() => null);
+
+    const result = await findIpcHandler("system:import-portable-data")({});
+
+    expect(result).toEqual({
+      ok: true,
+      backupPath: "C:\\QuotaBar Backups\\verified.zip",
+      fileCount: 3,
+      totalBytes: 96,
+      restartScheduled: true,
+    });
+    expect(archiveMocks.stagePortableImport).toHaveBeenCalledWith(
+      "C:\\Imports\\QuotaBar.zip",
+      expect.stringMatching(/\.quotabar-win$/),
+      expect.any(String),
+    );
+    expect(dialog.showOpenDialog).toHaveBeenCalledWith({
+      title: "Import portable data",
+      filters: [{ name: "ZIP archives", extensions: ["zip"] }],
+      properties: ["openFile"],
+    });
+    expect(app.relaunch).not.toHaveBeenCalled();
+    expect(app.exit).not.toHaveBeenCalled();
+    expect(JSON.stringify(logMocks.info.mock.calls)).not.toMatch(/C:\\Imports|\.quotabar-win/);
+
+    await expect(findIpcHandler("system:export-portable-data")({})).resolves.toEqual({
+      ok: false,
+      error: "archive_operation_in_progress",
+      message: "Another portable archive operation is already in progress.",
+    });
+
+    await expect(findIpcHandler("system:confirm-portable-import-restart")({})).resolves.toEqual({ ok: true });
+    await expect(findIpcHandler("system:confirm-portable-import-restart")({})).resolves.toMatchObject({
+      ok: false,
+      error: "portable_import_restart_not_pending",
+    });
+    expect(app.relaunch).toHaveBeenCalledOnce();
+    expect(app.exit).toHaveBeenCalledWith(0);
+    expect(vi.mocked(app.relaunch).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(app.exit).mock.invocationCallOrder[0]);
   });
 });
 

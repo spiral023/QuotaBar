@@ -39,7 +39,7 @@ import { parseMigrationState } from "../portable/migration";
 import { PortableUsageStore } from "../portable/usageStore";
 import { exportPortableData, stagePortableImport } from "../portable/archiveService";
 
-let archiveOperation: "export" | "import" | null = null;
+let archiveOperation: "export" | "import" | "restarting" | "exiting" | null = null;
 
 const ARCHIVE_BUSY_RESULT = Object.freeze({
   ok: false,
@@ -616,7 +616,7 @@ export class DetailsWindowController {
         });
         if (selected.canceled || !selected.filePath) return { ok: false, cancelled: true };
         const result = await exportPortableData(getAppConfigDir(), selected.filePath);
-        log.info(`Portable archive action=export destination=${result.path} files=${result.fileCount} bytes=${result.totalBytes}`);
+        log.info(`Portable archive action=export result=success files=${result.fileCount} bytes=${result.totalBytes}`);
         return { ok: true, ...result };
       } catch {
         const message = "Portable data export failed.";
@@ -639,12 +639,8 @@ export class DetailsWindowController {
         const source = selected.filePaths[0];
         if (selected.canceled || !source) return { ok: false, cancelled: true };
         const result = await stagePortableImport(source, getAppConfigDir(), getHomeDir());
-        log.info(`Portable archive action=import destination=${getAppConfigDir()} files=${result.fileCount} bytes=${result.totalBytes}`);
-        const restartTimer = setTimeout(() => {
-          app.relaunch();
-          app.exit(0);
-        }, 100);
-        restartTimer.unref();
+        log.info(`Portable archive action=import result=success files=${result.fileCount} bytes=${result.totalBytes}`);
+        archiveOperation = "restarting";
         return {
           ok: true,
           backupPath: result.backupPath,
@@ -657,8 +653,22 @@ export class DetailsWindowController {
         log.warn(`Portable archive action=import error=${message}`);
         return { ok: false, error: "portable_import_failed", message };
       } finally {
-        archiveOperation = null;
+        if (archiveOperation === "import") archiveOperation = null;
       }
+    });
+
+    ipcMain.handle("system:confirm-portable-import-restart", async () => {
+      if (archiveOperation !== "restarting") {
+        return {
+          ok: false,
+          error: "portable_import_restart_not_pending",
+          message: "No portable import restart is pending.",
+        };
+      }
+      archiveOperation = "exiting";
+      app.relaunch();
+      app.exit(0);
+      return { ok: true };
     });
 
     ipcMain.handle("system:codex-homes:suggest", async () => {

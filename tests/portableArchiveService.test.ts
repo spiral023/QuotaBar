@@ -643,6 +643,36 @@ describe("portable archive service", () => {
     expect(await readFile(path.join(rollbackDir, "settings.json"), "utf8")).toBe("original-settings\n");
   });
 
+  it("rolls back post-apply corruption and does not loop on the next startup", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "source", ".quotabar-win");
+    const targetHome = path.join(root, "target-post-verify");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "post-verify.zip");
+    await put(source, "settings.json", "{\"costWindow\":\"7d\"}\n");
+    await put(source, "usage/events/new.jsonl", "new-data\n");
+    await put(target, "settings.json", "{\"costWindow\":\"30d\"}\n");
+    await put(target, "usage/events/old.jsonl", "old-data\n");
+    await exportPortableData(source, archivePath);
+    await stagePortableImport(archivePath, target, targetHome);
+    let importedRenames = 0;
+    const rename: typeof fsPromises.rename = async (from, to) => {
+      await fsPromises.rename(from, to);
+      if (String(from).includes("portable-import-") && !String(from).includes("rollback")) {
+        importedRenames += 1;
+        if (importedRenames === 3) await writeFile(path.join(target, "settings.json"), "corrupt-after-apply\n");
+      }
+    };
+
+    await expect(applyPendingImport(target, { rename })).rejects.toMatchObject({
+      message: "Portable data apply failed",
+      rollbackOutcome: "completed",
+    });
+    expect(await readFile(path.join(target, "settings.json"), "utf8")).toBe("{\"costWindow\":\"30d\"}\n");
+    expect(await readFile(path.join(target, "usage/events/old.jsonl"), "utf8")).toBe("old-data\n");
+    await expect(applyPendingImport(target)).resolves.toEqual({ applied: false, fileCount: 0, totalBytes: 0 });
+  });
+
   it("stages, verifies, and applies with a private backup file larger than 64 MiB", async () => {
     const root = await tempRoot();
     const source = path.join(root, "source", ".quotabar-win");
@@ -689,15 +719,39 @@ describe("portable archive service", () => {
         if (crashAt === "pending") throw new Error("simulated pending unlink crash");
       };
 
-      await expect(applyPendingImport(target, { removeTree, unlinkPending })).rejects.toMatchObject({
-        message: "Portable data apply failed",
-        rollbackOutcome: "pending-recovery",
-      });
+      const applying = expect(applyPendingImport(target, { removeTree, unlinkPending }));
+      if (crashAt === "pending") await applying.resolves.toMatchObject({ applied: true });
+      else {
+        await applying.rejects.toMatchObject({
+          message: "Portable data apply failed",
+          rollbackOutcome: "pending-recovery",
+        });
+      }
       expect(cleanupCalls).toBeGreaterThan(0);
       if (crashAt === "pending") expect(unlinkCalls).toBe(1);
       await expect(applyPendingImport(target)).resolves.toMatchObject({ applied: crashAt !== "pending" });
       expect(JSON.parse(await readFile(path.join(target, "settings.json"), "utf8")).costWindow).toBe("7d");
     }
+  });
+
+  it("treats an unlink that succeeded before throwing as completed apply cleanup", async () => {
+    const root = await tempRoot();
+    const source = path.join(root, "source", ".quotabar-win");
+    const targetHome = path.join(root, "target-unlink-after-success");
+    const target = path.join(targetHome, ".quotabar-win");
+    const archivePath = path.join(root, "unlink-after-success.zip");
+    await put(source, "settings.json", "{\"costWindow\":\"7d\"}\n");
+    await put(target, "settings.json", "{\"costWindow\":\"30d\"}\n");
+    await exportPortableData(source, archivePath);
+    await stagePortableImport(archivePath, target, targetHome);
+    const unlinkPending = async (filePath: string) => {
+      await fsPromises.unlink(filePath);
+      throw new Error("throw after durable unlink");
+    };
+
+    await expect(applyPendingImport(target, { unlinkPending })).resolves.toMatchObject({ applied: true });
+    expect(JSON.parse(await readFile(path.join(target, "settings.json"), "utf8"))).toMatchObject({ costWindow: "7d" });
+    await expect(applyPendingImport(target)).resolves.toEqual({ applied: false, fileCount: 0, totalBytes: 0 });
   });
 
   it("streams portable payloads sequentially with bounded chunks", async () => {
