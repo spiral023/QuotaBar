@@ -385,7 +385,11 @@ function Export-WindowsCaBundle([string] $OutFile, [switch] $DryRun) {
     New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
     Set-Content -Path $tmpOut -Value "" -Encoding ascii
 
-    foreach ($store in @("Cert:\LocalMachine\Root", "Cert:\CurrentUser\Root")) {
+    # Root- UND CA-Stores (Intermediates) exportieren. TLS-inspizierende Firmenproxys
+    # praesentieren oft ein Leaf, das von einer Issuing-/Intermediate-CA signiert ist
+    # (z. B. GRZ-ISSUING-CA-31), deren Zertifikat nur im \CA-Store liegt. Fehlt es im
+    # Bundle, scheitert Codex (rustls) mit "invalid peer certificate: UnknownIssuer".
+    foreach ($store in @("Cert:\LocalMachine\Root", "Cert:\CurrentUser\Root", "Cert:\LocalMachine\CA", "Cert:\CurrentUser\CA")) {
       if (-not (Test-Path $store)) { continue }
       foreach ($cert in (Get-ChildItem -Path $store -ErrorAction SilentlyContinue)) {
         if ($seen.ContainsKey($cert.Thumbprint)) { continue }
@@ -750,6 +754,42 @@ function Test-PemFile([string] $Path) {
   try { return [bool](Select-String -Path $Path -Pattern "-----BEGIN CERTIFICATE-----" -SimpleMatch -Quiet -ErrorAction SilentlyContinue) } catch { return $false }
 }
 
+function Get-PemCertificateCount([string] $Path) {
+  if (-not $Path -or -not (Test-Path $Path)) { return 0 }
+  try {
+    $m = Select-String -Path $Path -Pattern "-----BEGIN CERTIFICATE-----" -SimpleMatch -ErrorAction SilentlyContinue
+    if (-not $m) { return 0 }
+    return ($m | Measure-Object).Count
+  } catch { return 0 }
+}
+
+function Find-OpenSslPath {
+  foreach ($c in @("C:\Program Files\Git\usr\bin\openssl.exe", "C:\Program Files\Git\mingw64\bin\openssl.exe")) {
+    if (Test-Path $c) { return $c }
+  }
+  foreach ($name in @("openssl", "openssl.exe")) {
+    $src = Get-CmdSource $name
+    if ($src) { return $src }
+  }
+  return $null
+}
+
+# Aktiver End-to-End-Test des Codex-Trust-Pfads: baut ueber Px eine TLS-Verbindung zum Ziel auf und
+# laesst openssl die praesentierte Kette gegen das CA-Bundle verifizieren. Faengt genau den Fall, den
+# der reine "ist-gesetzt/ist-PEM"-Check nicht sieht: eine unvollstaendige Kette (fehlendes Intermediate).
+function Test-TlsChainViaPx([string] $HostName, [string] $CaFile) {
+  if (-not $CaFile -or -not (Test-Path $CaFile)) { return "nicht getestet, CA-Bundle fehlt" }
+  if (-not (Test-Port $PxAddr $PxPort)) { return "nicht getestet, Px laeuft nicht" }
+  $openssl = Find-OpenSslPath
+  if (-not $openssl) { return "nicht pruefbar, openssl (z. B. aus Git) fehlt" }
+  try {
+    $out = ("Q" | & $openssl s_client -connect "${HostName}:443" -servername $HostName -proxy "${PxAddr}:${PxPort}" -CAfile $CaFile 2>&1) -join "`n"
+    if ($out -match "Verify return code:\s*0\b") { return "Kette vollstaendig, Verify OK ($HostName)" }
+    if ($out -match "Verify return code:\s*(\d+[^\r\n]*)") { return "Verify-Fehler ($HostName): $($Matches[1])" }
+    return "keine Verify-Antwort ($HostName)"
+  } catch { return "Fehler: $($_.Exception.Message)" }
+}
+
 function Invoke-HealthCheck {
   Write-Head "Healthcheck"
   Resolve-PxPath | Out-Null
@@ -824,8 +864,23 @@ function Invoke-HealthCheck {
   if (Test-Path $CaBundlePath) {
     $caSize = 0
     try { $caSize = (Get-Item -Path $CaBundlePath -ErrorAction Stop).Length } catch { Write-Verbose "Konnte Dateigröße von $CaBundlePath nicht ermitteln: $($_.Exception.Message)" }
-    if (Test-PemFile $CaBundlePath) { Write-SelfCheck "CA-Bundle" "OK" "$CaBundlePath ($caSize Bytes, PEM erkannt)" } else { Write-SelfCheck "CA-Bundle" "FAIL" "$CaBundlePath ($caSize Bytes, kein PEM erkannt)" }
+    $caCerts = Get-PemCertificateCount $CaBundlePath
+    if (Test-PemFile $CaBundlePath) { Write-SelfCheck "CA-Bundle" "OK" "$CaBundlePath ($caSize Bytes, $caCerts Zertifikate)" } else { Write-SelfCheck "CA-Bundle" "FAIL" "$CaBundlePath ($caSize Bytes, kein PEM erkannt)" }
   } else { Write-SelfCheck "CA-Bundle" "WARN" "nicht vorhanden: $CaBundlePath" }
+  # CA-Variablen sollten alle auf dasselbe Bundle zeigen. Divergenz (SSL_CERT_FILE leer,
+  # NODE_EXTRA_CA_CERTS zeigt woanders hin) war die Ursache eines frueheren Codex-TLS-Fehlers.
+  $caVarDivergence = @()
+  foreach ($n in @("CODEX_CA_CERTIFICATE", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS")) {
+    $v = Get-UserEnvValue $n
+    if (-not $v) { $caVarDivergence += "$n=<leer>" }
+    elseif ($v -ne $CaBundlePath) { $caVarDivergence += "$n=$v" }
+  }
+  if ($caVarDivergence.Count -eq 0) { Write-Ok "CA-Variablen zeigen konsistent auf $CaBundlePath" }
+  else { Write-Warn "CA-Variablen weichen von $CaBundlePath ab: $($caVarDivergence -join '; ')" }
+  $chainResult = Test-TlsChainViaPx "auth.openai.com" $CaBundlePath
+  if ($chainResult -match "Verify OK") { Write-SelfCheck "TLS-Kette auth.openai.com (Codex-Pfad)" "OK" $chainResult }
+  elseif ($chainResult -match "nicht getestet|nicht pruefbar") { Write-SelfCheck "TLS-Kette auth.openai.com (Codex-Pfad)" "WARN" $chainResult }
+  else { Write-SelfCheck "TLS-Kette auth.openai.com (Codex-Pfad)" "FAIL" $chainResult }
   foreach ($line in (Get-QuotaBarStatusLine)) { Write-Info $line }
   foreach ($u in @("https://api.anthropic.com", "https://auth.openai.com", "https://chatgpt.com", "https://chatgpt.com/backend-api/codex/responses")) { Write-Info "Verbindung via Px: $u -> $(Test-UrlViaPx $u)" }
 }
