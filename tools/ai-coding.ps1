@@ -24,7 +24,7 @@ param(
   [string] $CaBundlePath = "C:\Entwicklung\certs\windows-ca-bundle.pem",
   [string] $LogRoot      = "C:\Entwicklung\ai-coding",
   [string] $ReportRoot   = "C:\Entwicklung\ai-coding",
-  [ValidateSet("Menu", "StartPx", "HealthCheck", "DiagnosticReport", "DryRun", "UpdateCaBundle", "InstallClaude", "InstallCodex", "InstallBoth", "UpdateAll", "ShowConfiguration")]
+  [ValidateSet("Menu", "StartPx", "StopPx", "HealthCheck", "DiagnosticReport", "DryRun", "UpdateCaBundle", "InstallClaude", "InstallCodex", "InstallBoth", "UpdateAll", "ShowConfiguration")]
   [string] $Action = "Menu",
   [switch] $DryRun,
   [switch] $AssumeYes
@@ -531,6 +531,48 @@ function Initialize-Px {
   }
   Write-Err "Px lauscht nicht auf ${PxAddr}:${PxPort}. Prüfe px.ini und Px-Logs."
   return $false
+}
+
+function Stop-Px {
+  Write-Head "Px-Proxy stoppen"
+  $status = Get-PxStatus
+  if (-not $status.Listening -and -not $status.PxRunning) {
+    Write-Ok "Px läuft nicht - es ist nichts zu stoppen."
+    return
+  }
+  # px-Prozesse per Name sammeln ...
+  $targets = @{}
+  foreach ($p in @(Get-Process -Name "px" -ErrorAction SilentlyContinue)) { $targets[[int]$p.Id] = $p }
+  # ... plus den tatsaechlichen Port-Listener (px daemonisiert per fork; der Owner kann ein Kind sein).
+  $ownerIds = @()
+  try {
+    $ownerIds = @(Get-NetTCPConnection -LocalPort $PxPort -State Listen -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty OwningProcess -Unique | Where-Object { $_ -gt 0 })
+  } catch { Write-Verbose "Konnte Port-Owner für Port $PxPort nicht ermitteln: $($_.Exception.Message)" }
+  # Kein px-Prozess, aber der Port ist belegt: fremder Prozess - nicht blind beenden (analog Initialize-Px).
+  if ($targets.Count -eq 0 -and $ownerIds.Count -gt 0) {
+    Write-Warn "Port ${PxAddr}:${PxPort} ist belegt, aber es läuft kein px-Prozess. Belegt durch: $($status.OwnerText)."
+    Write-Info "Dieser fremde Prozess wird nicht automatisch beendet. Beende ihn bei Bedarf selbst."
+    return
+  }
+  foreach ($id in $ownerIds) {
+    $proc = Get-Process -Id $id -ErrorAction SilentlyContinue
+    if ($proc) { $targets[[int]$proc.Id] = $proc }
+  }
+  foreach ($proc in $targets.Values) {
+    try {
+      Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+      Write-Change "Px-Prozess $($proc.ProcessName) (PID $($proc.Id))" "läuft" "gestoppt" "Changed"
+    } catch {
+      Write-Err "Konnte Prozess $($proc.ProcessName) (PID $($proc.Id)) nicht beenden: $($_.Exception.Message)"
+    }
+  }
+  Start-Sleep -Milliseconds 400
+  if (Test-Port $PxAddr $PxPort) {
+    Write-Warn "Port ${PxAddr}:${PxPort} ist weiterhin belegt. Ggf. sind Adminrechte nötig oder der Prozess wurde neu gestartet."
+  } else {
+    Write-Ok "Px wurde gestoppt."
+  }
 }
 
 function Remove-CompetingClaudeNativeInstall([switch] $DryRun) {
@@ -1212,11 +1254,13 @@ function Show-Menu {
   Write-ConsoleLine ("  QuotaBar : {0}" -f $qb) "DarkGray"
   Write-ConsoleLine "" ""
   Write-ConsoleLine "  1) Px-Proxy starten / prüfen" ""
+  Write-ConsoleLine "  s) Px-Proxy stoppen" ""
   Write-ConsoleLine "  2) Installation & Aktualisierung" ""
   Write-ConsoleLine "  3) Diagnose & Status" ""
   Write-ConsoleLine "  4) Werkzeuge & Ordner" ""
   Write-ConsoleLine "  u) Alle Tools auf neueste Version aktualisieren" ""
   Write-ConsoleLine "  0) Beenden" ""
+  Write-ConsoleLine "  q) Beenden und Px-Proxy stoppen" ""
   if (-not $qbInstalled) {
     Write-ConsoleLine "" ""
     Write-ConsoleLine "  QuotaBar herunterladen:" "DarkGray"
@@ -1237,6 +1281,7 @@ function Invoke-SelectedAction([string] $SelectedAction, [switch] $DryRun) {
   try {
     switch ($SelectedAction) {
       "StartPx" { Write-Head "Px-Proxy"; if (Initialize-Px) { Show-CodingAgentUpdate } else { Write-Err "Action StartPx ist fehlgeschlagen." } }
+      "StopPx" { Stop-Px }
       "HealthCheck" { Invoke-HealthCheck }
       "DiagnosticReport" { Export-DiagnosticReport }
       "DryRun" { Invoke-DryRun }
@@ -1266,14 +1311,16 @@ if ($Action -eq "Menu") {
     $choice = (Read-Host "Auswahl").Trim()
     switch ($choice) {
       "1" { Invoke-MenuAction "Px-Proxy starten / prüfen" { Write-Head "Px-Proxy"; if (Initialize-Px) { Show-CodingAgentUpdate } } }
+      "s" { Invoke-MenuAction "Px-Proxy stoppen" { Stop-Px } }
       "2" { Show-InstallMenu }
       "3" { Show-DiagnosticsMenu }
       "4" { Show-ToolsMenu }
       "u" { Invoke-MenuAction "Alle Tools aktualisieren" { Update-AllTools } }
       "0" { Write-ConsoleLine "`nBeendet." "Cyan" }
+      "q" { Reset-ActionCounter "Beenden und Px-Proxy stoppen"; Stop-Px; Write-ConsoleLine "`nBeendet." "Cyan" }
       default { Write-Warn "Ungültige Auswahl: '$choice'"; Start-Sleep -Milliseconds 800 }
     }
-  } while ($choice -ne "0")
+  } while ($choice -ne "0" -and $choice -ne "q")
 } else {
   $ok = Invoke-SelectedAction $Action -DryRun:$DryRun
   if (-not $ok) { exit 1 }
