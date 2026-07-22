@@ -790,6 +790,19 @@ function Test-TlsChainViaPx([string] $HostName, [string] $CaFile) {
   } catch { return "Fehler: $($_.Exception.Message)" }
 }
 
+# Alle CA-Variablen sollten auf dasselbe (vollstaendige) Bundle zeigen. Divergenz - z. B. leeres
+# SSL_CERT_FILE oder ein NODE_EXTRA_CA_CERTS, das auf eine Einzeldatei statt aufs Bundle zeigt - war
+# eine Ursache schwer auffindbarer Codex-TLS-Fehler. Liefert die Liste abweichender Variablen.
+function Get-CaVarDivergence {
+  $divergence = @()
+  foreach ($n in @("CODEX_CA_CERTIFICATE", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS")) {
+    $v = Get-UserEnvValue $n
+    if (-not $v) { $divergence += "$n=<leer>" }
+    elseif ($v -ne $CaBundlePath) { $divergence += "$n=$v" }
+  }
+  return $divergence
+}
+
 function Invoke-HealthCheck {
   Write-Head "Healthcheck"
   Resolve-PxPath | Out-Null
@@ -867,20 +880,18 @@ function Invoke-HealthCheck {
     $caCerts = Get-PemCertificateCount $CaBundlePath
     if (Test-PemFile $CaBundlePath) { Write-SelfCheck "CA-Bundle" "OK" "$CaBundlePath ($caSize Bytes, $caCerts Zertifikate)" } else { Write-SelfCheck "CA-Bundle" "FAIL" "$CaBundlePath ($caSize Bytes, kein PEM erkannt)" }
   } else { Write-SelfCheck "CA-Bundle" "WARN" "nicht vorhanden: $CaBundlePath" }
-  # CA-Variablen sollten alle auf dasselbe Bundle zeigen. Divergenz (SSL_CERT_FILE leer,
-  # NODE_EXTRA_CA_CERTS zeigt woanders hin) war die Ursache eines frueheren Codex-TLS-Fehlers.
-  $caVarDivergence = @()
-  foreach ($n in @("CODEX_CA_CERTIFICATE", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS")) {
-    $v = Get-UserEnvValue $n
-    if (-not $v) { $caVarDivergence += "$n=<leer>" }
-    elseif ($v -ne $CaBundlePath) { $caVarDivergence += "$n=$v" }
-  }
+  # CA-Variablen sollten alle auf dasselbe Bundle zeigen (Divergenz war Ursache frueherer Fehler).
+  $caVarDivergence = Get-CaVarDivergence
   if ($caVarDivergence.Count -eq 0) { Write-Ok "CA-Variablen zeigen konsistent auf $CaBundlePath" }
   else { Write-Warn "CA-Variablen weichen von $CaBundlePath ab: $($caVarDivergence -join '; ')" }
-  $chainResult = Test-TlsChainViaPx "auth.openai.com" $CaBundlePath
-  if ($chainResult -match "Verify OK") { Write-SelfCheck "TLS-Kette auth.openai.com (Codex-Pfad)" "OK" $chainResult }
-  elseif ($chainResult -match "nicht getestet|nicht pruefbar") { Write-SelfCheck "TLS-Kette auth.openai.com (Codex-Pfad)" "WARN" $chainResult }
-  else { Write-SelfCheck "TLS-Kette auth.openai.com (Codex-Pfad)" "FAIL" $chainResult }
+  # Aktiver Ketten-Verify fuer Login- (auth.openai.com) UND Nutzungs-Endpoint (chatgpt.com).
+  foreach ($h in @("auth.openai.com", "chatgpt.com")) {
+    $chainResult = Test-TlsChainViaPx $h $CaBundlePath
+    if ($chainResult -match "Verify OK") { Write-SelfCheck "TLS-Kette $h (Codex-Pfad)" "OK" $chainResult }
+    elseif ($chainResult -match "nicht getestet|nicht pruefbar") { Write-SelfCheck "TLS-Kette $h (Codex-Pfad)" "WARN" $chainResult }
+    else { Write-SelfCheck "TLS-Kette $h (Codex-Pfad)" "FAIL" $chainResult }
+  }
+  Write-Info "Hinweis: 'Falling back from WebSockets to HTTPS transport' (403 am Firmenproxy) ist kein CA-Fehler - Codex nutzt dann den HTTPS-Fallback und funktioniert normal."
   foreach ($line in (Get-QuotaBarStatusLine)) { Write-Info $line }
   foreach ($u in @("https://api.anthropic.com", "https://auth.openai.com", "https://chatgpt.com", "https://chatgpt.com/backend-api/codex/responses")) { Write-Info "Verbindung via Px: $u -> $(Test-UrlViaPx $u)" }
 }
@@ -987,6 +998,10 @@ function Export-DiagnosticReport {
   $lines += "Codex Version: $(Get-VersionOutput 'codex' @('--version'))"
   $lines += "Codex Pfad: $(Format-Value (Get-CmdSource 'codex'))"
   $lines += "CA-Bundle vorhanden: $(if (Test-Path $CaBundlePath) { 'ja' } else { 'nein' })"
+  $lines += "CA-Bundle Zertifikate: $(Get-PemCertificateCount $CaBundlePath)"
+  $caVarDivergence = Get-CaVarDivergence
+  $lines += "CA-Variablen konsistent auf CaBundlePath: $(if ($caVarDivergence.Count -eq 0) { 'ja' } else { "nein ($($caVarDivergence -join '; '))" })"
+  foreach ($h in @("auth.openai.com", "chatgpt.com")) { $lines += "TLS-Kette $h (Codex-Pfad): $(Test-TlsChainViaPx $h $CaBundlePath)" }
   $lines += "Connectivity https://api.anthropic.com: $(Test-UrlViaPx 'https://api.anthropic.com')"
   $lines += "Connectivity https://auth.openai.com: $(Test-UrlViaPx 'https://auth.openai.com')"
   $lines += "Connectivity https://chatgpt.com: $(Test-UrlViaPx 'https://chatgpt.com')"
