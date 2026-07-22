@@ -217,7 +217,11 @@ function Show-RestartNotice {
 
 function Test-Port([string] $a, [int] $p) {
   try {
-    if (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue) { return $true }
+    # Erreichbar auf $a ist der Port, wenn ein Listener auf genau $a ODER auf allen Interfaces
+    # (0.0.0.0 / ::) laeuft. Ein Listener auf einer anderen konkreten IP zaehlt NICHT.
+    foreach ($c in @(Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue)) {
+      if ($c.LocalAddress -eq $a -or $c.LocalAddress -eq "0.0.0.0" -or $c.LocalAddress -eq "::") { return $true }
+    }
     return $false
   } catch {
     try {
@@ -860,7 +864,9 @@ function Get-CaVarDivergence {
     elseif (-not (Test-Path $v)) { $problems += "$n=$v (Datei fehlt)" }
     else { $setValues += $v }
   }
-  $distinct = @($setValues | Select-Object -Unique)
+  # Sort-Object -Unique vergleicht case-insensitiv (Windows-Pfade sind es auch);
+  # Select-Object -Unique waere ordinal/case-sensitiv und gaebe Falsch-Positive.
+  $distinct = @($setValues | Sort-Object -Unique)
   if ($distinct.Count -gt 1) { $problems += "unterschiedliche Pfade: $($distinct -join ' vs ')" }
   return $problems
 }
@@ -1211,7 +1217,7 @@ function Show-InstallMenu {
     switch ($c) {
       "1" { Invoke-MenuAction "Claude Code installieren / neu installieren" { Install-ClaudeCode } }
       "2" { Invoke-MenuAction "Codex CLI installieren / neu installieren" { Install-CodexCli } }
-      "3" { Invoke-MenuAction "Beide installieren" { Install-ClaudeCode; Install-CodexCli } }
+      "3" { Invoke-MenuAction "Beide installieren" { Install-ClaudeCode; if ($Script:FailedCount -eq 0) { Install-CodexCli } } }
       "4" { Invoke-MenuAction "Corporate-CA-Bundle aktualisieren" { Update-CaBundle } }
       "0" { }
       default { Write-Warn "Ungültige Auswahl: '$c'"; Start-Sleep -Milliseconds 800 }
