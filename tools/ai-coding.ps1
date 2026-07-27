@@ -56,7 +56,7 @@ function Format-Value([string] $Value) {
   return $Value
 }
 
-function Write-Log([string] $Message) {
+function Write-AiCodingLog([string] $Message) {
   if ($Script:LogFile) {
     try { Add-Content -Path $Script:LogFile -Value $Message -Encoding UTF8 } catch { Write-Verbose "Konnte nicht in Logdatei schreiben: $($_.Exception.Message)" }
   }
@@ -87,11 +87,11 @@ function Initialize-Logging {
     Set-Content -Path $Script:LogFile -Value "$AppName Änderungsjournal" -Encoding UTF8
   }
   if (-not $hadLogRoot) {
-    Write-Log "CHANGE Ordner $LogRoot"
-    Write-Log "Old    : <not present>"
-    Write-Log "New    : present"
-    Write-Log "Result : Changed"
-    Write-Log ""
+    Write-AiCodingLog "CHANGE Ordner $LogRoot"
+    Write-AiCodingLog "Old    : <not present>"
+    Write-AiCodingLog "New    : present"
+    Write-AiCodingLog "Result : Changed"
+    Write-AiCodingLog ""
   }
 }
 
@@ -111,11 +111,11 @@ function Write-Info([string] $m) { Write-ConsoleLine "  - $m" "Gray" }
 
 function Write-Change([string] $Name, [string] $Old, [string] $New, [string] $Result, [switch] $DryRun) {
   $prefix = if ($DryRun) { "DRYRUN CHANGE" } else { "CHANGE" }
-  Write-Log "$prefix $Name"
-  Write-Log ("Old    : {0}" -f (Format-Value $Old))
-  Write-Log ("New    : {0}" -f (Format-Value $New))
-  Write-Log ("Result : {0}" -f $Result)
-  Write-Log ""
+  Write-AiCodingLog "$prefix $Name"
+  Write-AiCodingLog ("Old    : {0}" -f (Format-Value $Old))
+  Write-AiCodingLog ("New    : {0}" -f (Format-Value $New))
+  Write-AiCodingLog ("Result : {0}" -f $Result)
+  Write-AiCodingLog ""
   if ($DryRun) {
     Write-Info "$prefix $Name -> $Result"
     return
@@ -126,10 +126,10 @@ function Write-Change([string] $Name, [string] $Old, [string] $New, [string] $Re
 }
 
 function Write-ExternalCommandLog([string] $CommandLine, [int] $ExitCode, [string] $Result) {
-  Write-Log "COMMAND $CommandLine"
-  Write-Log "ExitCode : $ExitCode"
-  Write-Log "Result   : $Result"
-  Write-Log ""
+  Write-AiCodingLog "COMMAND $CommandLine"
+  Write-AiCodingLog "ExitCode : $ExitCode"
+  Write-AiCodingLog "Result   : $Result"
+  Write-AiCodingLog ""
 }
 
 function Invoke-ExternalCommand([string] $Command, [string[]] $Arguments, [string] $DisplayName) {

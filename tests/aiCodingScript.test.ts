@@ -61,7 +61,7 @@ describe("ai-coding PowerShell setup script", () => {
     const report = functionBody("Export-DiagnosticReport");
     [
       "Initialize-Logging",
-      "Write-Log",
+      "Write-AiCodingLog",
       "Write-Change",
       "Write-ExternalCommandLog",
       "Reset-ActionCounter",
@@ -83,8 +83,8 @@ describe("ai-coding PowerShell setup script", () => {
     expect(script).toContain('${ts}_${AppName}-diagnostic.txt');
     expect(script).toContain('"$AppName.log"');
     expect(script).not.toContain('${ts}_${AppName}.log');
-    expect(functionBody("Write-ConsoleLine")).not.toContain("Write-Log");
-    expect(functionBody("Reset-ActionCounter")).not.toContain("Write-Log");
+    expect(functionBody("Write-ConsoleLine")).not.toContain("Write-AiCodingLog");
+    expect(functionBody("Reset-ActionCounter")).not.toContain("Write-AiCodingLog");
     ["PxAddr:", "PxPort:", "Proxy-URL:", "LogRoot:", "ReportRoot:"].forEach((text) => expect(report).not.toContain(text));
   });
 
@@ -97,13 +97,14 @@ describe("ai-coding PowerShell setup script", () => {
   });
 
   it("supports non-interactive actions and keeps menu as the default action", () => {
-    expect(script).toContain('[ValidateSet("Menu", "StartPx", "HealthCheck", "DiagnosticReport", "DryRun", "UpdateCaBundle", "InstallClaude", "InstallCodex", "InstallBoth", "UpdateAll", "ShowConfiguration")]');
+    expect(script).toContain('[ValidateSet("Menu", "StartPx", "StopPx", "HealthCheck", "DiagnosticReport", "DryRun", "UpdateCaBundle", "InstallClaude", "InstallCodex", "InstallBoth", "UpdateAll", "ShowConfiguration")]');
     expect(script).toContain('[string] $Action = "Menu"');
     expect(script).toContain("[switch] $DryRun");
     expect(script).toContain("[switch] $AssumeYes");
     expect(script).toContain("function Invoke-SelectedAction");
     [
       '"StartPx"',
+      '"StopPx"',
       '"HealthCheck"',
       '"DiagnosticReport"',
       '"DryRun"',
