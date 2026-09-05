@@ -295,6 +295,7 @@ export function createPortableIngestionRunner(
   let requestedGeneration = 0;
   let completedGeneration = 0;
   let active: Promise<void> | undefined;
+  const waiters = new Map<number, Array<() => void>>();
 
   const drain = async (): Promise<void> => {
     while (true) {
@@ -306,6 +307,7 @@ export function createPortableIngestionRunner(
           onDiagnostic("Portable ingestion failed");
         }
         completedGeneration = generation;
+        settleWaiters();
       }
       await options.beforeActiveCleanup?.();
       if (completedGeneration >= requestedGeneration) return;
@@ -316,6 +318,7 @@ export function createPortableIngestionRunner(
     if (!active) {
       const settled = drain().finally(() => {
         if (active === settled) active = undefined;
+        settleWaiters();
         if (completedGeneration < requestedGeneration) void ensureActive();
       });
       active = settled;
@@ -323,8 +326,28 @@ export function createPortableIngestionRunner(
     return active;
   };
 
-  const waitForGeneration = async (generation: number): Promise<void> => {
-    while (completedGeneration < generation) await ensureActive();
+  /**
+   * Resolves callers whose own generation has completed. Waiting on the drain
+   * promise instead would mean waiting for *all* queued work: once a cycle takes
+   * longer than the polling interval, new generations are requested faster than
+   * they finish and the drain promise never settles.
+   */
+  function settleWaiters(): void {
+    for (const [generation, callbacks] of [...waiters]) {
+      if (completedGeneration >= generation) {
+        waiters.delete(generation);
+        for (const resolve of callbacks) resolve();
+      }
+    }
+  }
+
+  const waitForGeneration = (generation: number): Promise<void> => {
+    if (completedGeneration >= generation) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const callbacks = waiters.get(generation) ?? [];
+      callbacks.push(resolve);
+      waiters.set(generation, callbacks);
+    });
   };
 
   return {

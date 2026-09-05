@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.1 - 2026-09-05
+
+### Fixed
+
+- QuotaBar could stop refreshing shortly after launch: the tray menu was not rebuilt and
+  no new quota data arrived, leaving the refresh indicator stuck. Startup waited for the
+  background ingest to finish, but that wait also covered every follow-up cycle the timer
+  had queued in the meantime. Once a cycle took longer than the polling interval - which
+  happens on large histories - the wait never ended and startup never completed.
+
 ## 2.1.0 - 2026-09-05
 
 ### Changed

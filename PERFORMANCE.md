@@ -115,6 +115,47 @@ Details:
   zweimal (einmal die Staging-Datei, danach nochmals das Ziel nach dem Rename).
   Die Integritätsprüfung vor dem Rename bleibt unangetastet.
 
+## Feldbefunde aus v2.1.0
+
+Nach dem Rollout auf der Entwicklungsmaschine (184k Events) aufgetreten.
+
+### Livelock beim Start (behoben in 2.1.1)
+
+`createPortableIngestionRunner.waitForGeneration()` wartete über die drain-Promise auf
+*alle* angeforderten Durchläufe statt auf den eigenen. Sobald ein Ingest-Zyklus länger
+dauert als das 15-s-Intervall, werden neue Generationen schneller angefordert, als sie
+fertig werden — die Promise löst nie auf. Damit blieb `await lifecycle.start()` in
+`main.ts` hängen und alles danach wurde nie erreicht, insbesondere `tray.rebuildMenu()`
+und `refreshLoop.start()`. Symptom: Die App lädt, aber der Refresh-Balken hängt und es
+kommen keine Quota-Daten mehr.
+
+Der Bug war latent vorhanden und schlug zu, als die Zykluszeit über das Intervall stieg.
+Nachweis in den Logs: `refresh.start` und `snapshot` fehlen nach dem Start vollständig.
+
+### Watcher auf WSL-Pfaden wirkungslos
+
+`fs.watch(..., { recursive: true })` scheitert auf UNC-Pfaden mit `EISDIR` (beobachtet für
+ein Codex-Home unter `\\wsl.localhost\...`). Der Fallback greift korrekt — es wird wie
+bisher bei jedem Tick gescannt — aber bei Setups mit WSL-Codex-Home entfällt die
+Listing-Ersparnis vollständig. Ein Teil-Watch nur für die lokalen Roots bringt nichts,
+weil der Scan ohnehin alle Roots listet.
+
+### Ingest-Zyklus länger als sein Intervall
+
+Gemessen auf derselben Maschine am selben Tag, Mediane in ms:
+
+| Stage | v2.0.0 | v2.1.0 |
+| --- | --- | --- |
+| ingestion | 15.629 | 16.756 |
+| legacy_reconciliation | 3.129 | 3.141 |
+| migration_completion | 1.283 | 1.304 |
+| consumer_prewarm | 2.441 | **1.557** |
+
+Ein voller Zyklus dauert ~22 s bei 15 s Intervall, die App rechnet also praktisch
+ununterbrochen und blockiert dabei den Main-Thread. Runde 1 und 2 haben die
+Dashboard-Pfade optimiert (`consumer_prewarm` −36 %), den Ingest-Stage aber nicht
+angefasst — der ist jetzt der dominante Posten. Siehe offene Punkte 1, 3 und 7.
+
 ## Offen
 
 Priorisiert nach Nutzen/Aufwand. Zahlen aus den Messungen oben.
@@ -162,6 +203,13 @@ Append-Last, nicht Rewrite-Last — für die SSD irrelevant, aber es verlangsamt
 RSS ~650 MB nach einem vollen Read; Main-Prozess und Analytics-Worker halten je
 einen eigenen Partition-Cache. Bisher kein Problem, sollte aber mit dem Store
 mitwachsend im Auge behalten werden. Erledigt sich weitgehend mit Punkt 2.
+
+### 7. Ingest-Intervall an die Zykluszeit koppeln — hoch
+
+Das Intervall steht fest auf 15 s, ein Zyklus dauert aber ~22 s. Dadurch steht immer ein
+Folgelauf an und der Main-Thread kommt nie zur Ruhe. Ein Mindestabstand, der sich an der
+letzten Zykluszeit orientiert, würde das entkoppeln — und hätte den Livelock oben gar
+nicht erst auslösen können.
 
 ## SSD-Verschleiß
 
