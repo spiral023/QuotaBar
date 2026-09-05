@@ -26,7 +26,7 @@ import { readQuotaSnapshots } from "../portable/quotaStore";
 import type { SnapshotEvent } from "./debugEvents";
 import { toClaudeEntries, toCodexEvents } from "../portable/eventAdapters";
 import type { PortableUsageEvent } from "../portable/types";
-import { PortableUsageStore } from "../portable/usageStore";
+import { getSharedUsageStore, PortableUsageStore } from "../portable/usageStore";
 import { isIgnoredModel, normalizeModelName } from "../shared/modelNames";
 
 export interface AnalyticsWorkerSettings {
@@ -122,7 +122,9 @@ export interface WindowHistoryData {
 
 type WorkerInput = AnalyticsTaskInput | ModelsTaskInput | WindowBudgetTaskInput | WindowHistoryTaskInput | PrewarmTaskInput;
 
-const sharedUsageStore = new PortableUsageStore();
+// Must be the same instance the report layer falls back to, so the worker keeps
+// one partition cache instead of two.
+const sharedUsageStore = getSharedUsageStore();
 
 function getUsageStore(deps: AnalyticsWorkerDependencies): PortableUsageStore {
   return deps.usageStore ?? sharedUsageStore;

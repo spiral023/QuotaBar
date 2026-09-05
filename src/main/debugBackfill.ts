@@ -342,6 +342,11 @@ interface PortableIngestionLifecycleRuntime {
   clearInterval(handle: ReturnType<typeof setInterval>): void;
 }
 
+export interface PortableIngestionLifecycleOptions {
+  /** Returning false skips a scheduled tick entirely. Startup always runs. */
+  shouldRun?: () => boolean;
+}
+
 export interface PortableIngestionLifecycle {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -355,7 +360,11 @@ export function createPortableIngestionLifecycle(
     setInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
     clearInterval: (handle) => clearInterval(handle),
   },
+  options: PortableIngestionLifecycleOptions = {},
 ): PortableIngestionLifecycle {
+  // Ticks are cheap to schedule but each one lists the whole source tree, so a
+  // caller that can tell when nothing changed suppresses that work.
+  const shouldRun = options.shouldRun ?? (() => true);
   let active = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let inFlight: Promise<void> | undefined;
@@ -382,7 +391,7 @@ export function createPortableIngestionLifecycle(
       await stop();
       active = true;
       timer = runtime.setInterval(() => {
-        if (active) void track(runner.trigger("source-change"));
+        if (active && shouldRun()) void track(runner.trigger("source-change"));
       }, 15_000);
       timer.unref?.();
       await track(runner.trigger("startup"));

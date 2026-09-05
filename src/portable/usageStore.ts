@@ -57,6 +57,11 @@ interface PartitionSnapshot extends PartitionFile {
   events: PortableUsageEvent[];
 }
 
+interface AppendPlan {
+  contents: string;
+  events: PortableUsageEvent[];
+}
+
 interface PartitionCacheEntry {
   identity: string;
   events: PortableUsageEvent[];
@@ -99,12 +104,33 @@ export interface LegacyDerivedResult {
 }
 
 const rootQueues = new Map<string, Promise<void>>();
+const sharedStores = new Map<string, PortableUsageStore>();
+
+/**
+ * Returns the process-wide store for a root. Each instance owns a partition
+ * cache and a revision memo, so handing out fresh instances per call silently
+ * re-reads the whole history; callers that only need a readiness check must
+ * share one.
+ */
+export function getSharedUsageStore(rootDir = getPortableUsageDir()): PortableUsageStore {
+  const resolved = path.resolve(rootDir);
+  const key = canonicalPath(resolved);
+  const existing = sharedStores.get(key);
+  if (existing) return existing;
+  const store = new PortableUsageStore(resolved);
+  sharedStores.set(key, store);
+  return store;
+}
 
 export class PortableUsageStore {
   private readonly rootDir: string;
   private readonly rootKey: string;
   private readonly partitionCache = new Map<string, PartitionCacheEntry>();
   private metadataIdentity?: string;
+  private revisionMemo?: { fingerprint: string; revision: string };
+  private metadataPartitions?: Map<string, string>;
+  /** Partition path -> size this store last wrote, the precondition for appending. */
+  private readonly appendableFiles = new Map<string, bigint>();
 
   constructor(
     rootDir = getPortableUsageDir(),
@@ -125,9 +151,49 @@ export class PortableUsageStore {
   getRevision(): Promise<string> {
     return this.exclusive(async () => {
       await this.prepareStore();
-      const snapshots = await this.scanPartitions({ acceptMisplaced: false });
-      return storeRevision(snapshotsToMaps(snapshots));
+      return this.currentRevision();
     });
+  }
+
+  /**
+   * Hashing every event costs seconds on a large store, and callers poll this
+   * to answer "did anything change?". Partition identities answer that first;
+   * only a changed fingerprint re-serializes. The digest stays byte-identical
+   * to storeRevision(), so persisted revisions remain comparable.
+   */
+  private async currentRevision(): Promise<string> {
+    const stamped: Array<PartitionFile & { identity: string }> = [];
+    for (const file of await this.listPartitions()) {
+      stamped.push({ ...file, identity: await this.partitionIdentity(file.filePath) });
+    }
+    stamped.sort((left, right) => compareText(left.month, right.month));
+    const fingerprint = stamped.map(({ month, identity }) => `${month}:${identity}`).join("|");
+    if (this.revisionMemo?.fingerprint === fingerprint) return this.revisionMemo.revision;
+
+    const digest = createHash("sha256");
+    digest.update(`[${PORTABLE_STORE_VERSION},[`);
+    let first = true;
+    for (const file of stamped) {
+      const events = (await this.readValidEvents(file.filePath))
+        .filter((item) => monthKey(new Date(item.occurredAt)) === file.month);
+      if (!first) digest.update(",");
+      first = false;
+      digest.update(partitionCanonical(file.month, events));
+    }
+    digest.update("]]");
+    const revision = digest.digest("hex");
+    this.revisionMemo = { fingerprint, revision };
+    return revision;
+  }
+
+  private async partitionIdentity(filePath: string): Promise<string> {
+    try {
+      const info = await this.fileSystem.lstat(filePath, { bigint: true });
+      return info.isFile() ? `${info.size}:${info.mtimeNs}:${info.ctimeNs}` : "non-file";
+    } catch (error) {
+      if (isMissingFile(error)) return "missing";
+      throw error;
+    }
   }
 
   commitIfRevision(
@@ -332,6 +398,11 @@ export class PortableUsageStore {
     }
 
     const affected = new Set<string>();
+    // Ingestion is overwhelmingly append-only: new events for the current month.
+    // Recording which months saw nothing but insertions lets those partitions be
+    // appended to instead of rewritten in full.
+    const insertedByMonth = new Map<string, PortableUsageEvent[]>();
+    let mutatedStored = false;
     let inserted = 0;
     let updated = 0;
     let existing = 0;
@@ -344,6 +415,7 @@ export class PortableUsageStore {
         continue;
       } else {
         updated += 1;
+        mutatedStored = true;
         for (const [month, partition] of storedByMonth) {
           if (partition.delete(item.id)) affected.add(month);
         }
@@ -354,21 +426,39 @@ export class PortableUsageStore {
       partition.set(item.id, item);
       storedByMonth.set(month, partition);
       affected.add(month);
+      if (!stored) {
+        const pending = insertedByMonth.get(month) ?? [];
+        pending.push(item);
+        insertedByMonth.set(month, pending);
+      }
     }
 
     const writes = new Map<string, string>();
+    const appends = new Map<string, AppendPlan>();
     const removals: string[] = [];
     for (const month of [...affected].sort()) {
       const partition = storedByMonth.get(month);
       if (!partition || partition.size === 0) {
         removals.push(this.partitionPath(month));
         storedByMonth.delete(month);
+        continue;
+      }
+      const partitionPath = this.partitionPath(month);
+      const additions = mutatedStored ? undefined : insertedByMonth.get(month);
+      const priorSize = additions ? partition.size - additions.length : 0;
+      if (additions && additions.length > 0 && await this.canAppendTo(partitionPath, priorSize)) {
+        appends.set(partitionPath, { contents: serializeEvents(additions), events: additions });
       } else {
-        writes.set(this.partitionPath(month), serializeEvents(partition.values()));
+        writes.set(partitionPath, serializeEvents(partition.values()));
       }
     }
     writes.set(this.metadataPath(), `${JSON.stringify(buildMetadata(storedByMonth), null, 2)}\n`);
     if (ingestStateContents !== undefined) writes.set(this.ingestStatePath(), ingestStateContents);
+    // Appends run first on purpose. A crash between the two leaves the events on
+    // disk while ingest-state still lists the source as unread, so the next pass
+    // re-derives the same immutable IDs and settles as "existing" — no loss, no
+    // duplicates. The reverse order could drop events permanently.
+    await this.commitAppends(appends);
     await this.commitTransaction(writes, removals);
     return { inserted, updated, existing };
   }
@@ -427,7 +517,9 @@ export class PortableUsageStore {
     acceptMisplaced: boolean;
   }): Promise<PartitionSnapshot[]> {
     const metadataIdentity = await this.readMetadataIdentity();
-    if (this.metadataIdentity !== undefined && this.metadataIdentity !== metadataIdentity) this.partitionCache.clear();
+    if (this.metadataIdentity !== undefined && this.metadataIdentity !== metadataIdentity) {
+      await this.dropPartitionsChangedExternally();
+    }
     this.metadataIdentity = metadataIdentity;
     const files = (await this.listPartitions()).filter(({ month }) => options.include?.(month) ?? true);
     const snapshots: PartitionSnapshot[] = [];
@@ -459,6 +551,65 @@ export class PortableUsageStore {
       .map(({ entry, match }) => ({ month: match[1], filePath: path.join(eventsDir, entry.name) }))
       .filter(({ month }) => isValidMonth(month))
       .sort((a, b) => a.month.localeCompare(b.month));
+  }
+
+  /**
+   * Appending is only safe when the file on disk is exactly what this store last
+   * wrote. A size that no longer matches means someone else wrote it, or a
+   * previous append was cut short by a crash and left a partial line — either
+   * way the partition is rewritten in full, which repairs it.
+   *
+   * Ordering inside the file is deliberately not a concern: readers sort events
+   * on load and the revision digest is computed from the sorted set, so an
+   * appended line does not have to be in chronological position.
+   */
+  private async canAppendTo(filePath: string, expectedEventCount: number): Promise<boolean> {
+    if (expectedEventCount === 0) return false;
+    const known = this.appendableFiles.get(canonicalPath(filePath));
+    if (known === undefined) return false;
+    try {
+      const info = await this.fileSystem.lstat(filePath, { bigint: true });
+      return info.isFile() && info.size === known;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Writes only the new lines. Partition rewrites dominated this store's disk
+   * traffic: a single new event rewrote the whole month, tens of megabytes at a
+   * time, many times per minute during active use.
+   */
+  private async commitAppends(appends: ReadonlyMap<string, AppendPlan>): Promise<void> {
+    for (const [filePath, plan] of appends) {
+      const key = canonicalPath(filePath);
+      const cached = this.partitionCache.get(key);
+      await this.fileSystem.writeFile(filePath, plan.contents, { encoding: "utf8", flag: "a" });
+      this.revisionMemo = undefined;
+      let identity: string | undefined;
+      let size: bigint | undefined;
+      try {
+        const info = await this.fileSystem.lstat(filePath, { bigint: true });
+        if (info.isFile()) {
+          identity = `${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+          size = info.size;
+        }
+      } catch {
+        // Losing the post-append identity only costs a re-read next time.
+      }
+      // The appended events are already sanitized, so the cache can be extended
+      // instead of dropped — otherwise every append would force a full re-parse.
+      if (identity !== undefined && cached !== undefined) {
+        this.partitionCache.set(key, {
+          identity,
+          events: [...cached.events, ...plan.events.map(clonePortableEvent)],
+        });
+      } else {
+        this.partitionCache.delete(key);
+      }
+      if (size !== undefined) this.appendableFiles.set(key, size);
+      else this.appendableFiles.delete(key);
+    }
   }
 
   private async readValidEvents(filePath: string): Promise<PortableUsageEvent[]> {
@@ -530,6 +681,53 @@ export class PortableUsageStore {
     }
     await this.rollForward(transaction);
     this.metadataIdentity = await this.readMetadataIdentity();
+    this.metadataPartitions = await this.readMetadataPartitions();
+  }
+
+  /**
+   * Another process (or an import) rewrote the store. Metadata carries a
+   * per-month event count and last timestamp, so only the months it reports as
+   * changed need dropping instead of the whole cache. An unreadable or
+   * unparsable metadata file falls back to clearing everything.
+   */
+  private async dropPartitionsChangedExternally(): Promise<void> {
+    this.revisionMemo = undefined;
+    const current = await this.readMetadataPartitions();
+    const previous = this.metadataPartitions;
+    if (!current || !previous) {
+      this.partitionCache.clear();
+      this.metadataPartitions = current;
+      return;
+    }
+    for (const month of new Set([...current.keys(), ...previous.keys()])) {
+      if (current.get(month) !== previous.get(month)) {
+        this.partitionCache.delete(canonicalPath(this.partitionPath(month)));
+      }
+    }
+    this.metadataPartitions = current;
+  }
+
+  /** Month -> compact signature of that partition, or undefined if unreadable. */
+  private async readMetadataPartitions(): Promise<Map<string, string> | undefined> {
+    let contents: string;
+    try {
+      contents = await this.fileSystem.readFile(this.metadataPath(), "utf8");
+    } catch {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(contents) as { partitions?: Record<string, unknown> };
+      const partitions = parsed?.partitions;
+      if (!partitions || typeof partitions !== "object") return undefined;
+      const result = new Map<string, string>();
+      for (const [month, value] of Object.entries(partitions)) {
+        const item = value as { eventCount?: unknown; firstAt?: unknown; lastAt?: unknown };
+        result.set(month, `${String(item?.eventCount)}:${String(item?.firstAt)}:${String(item?.lastAt)}`);
+      }
+      return result;
+    } catch {
+      return undefined;
+    }
   }
 
   private async readMetadataIdentity(): Promise<string> {
@@ -564,9 +762,24 @@ export class PortableUsageStore {
   }
 
   private async rollForward(transaction: PendingTransaction): Promise<void> {
+    // Every write path funnels through here (commit and startup recovery), so
+    // this is the one place that can drop cached state deterministically.
+    // File identities alone cannot: NTFS timestamp granularity lets two writes
+    // of equal size share size/mtime/ctime, which would strand a stale cache.
+    this.revisionMemo = undefined;
+    for (const target of transaction.entries.map((entry) => entry.target).concat(transaction.remove)) {
+      const key = canonicalPath(this.resolveRelative(target));
+      this.partitionCache.delete(key);
+      this.appendableFiles.delete(key);
+    }
     for (const entry of transaction.entries) {
       const target = this.resolveRelative(entry.target);
       const temporary = this.resolveRelative(entry.temporary);
+      // The staged file is verified before it is renamed into place, and a
+      // missing staged file means the rename already happened, so the target is
+      // verified instead. Re-reading the target after a successful rename would
+      // hash the same bytes a second time — on a large partition that is tens of
+      // megabytes of pointless reads per commit.
       if (await this.isRegularFile(temporary)) {
         const staged = await this.fileSystem.readFile(temporary);
         if (sha256(staged) !== entry.sha256) throw new Error("Portable store transaction checksum mismatch");
@@ -577,13 +790,20 @@ export class PortableUsageStore {
           throw new Error("Portable store transaction cannot be recovered safely");
         }
       }
-      const committed = await this.readFileIfRegular(target);
-      if (!committed || sha256(committed) !== entry.sha256) {
-        throw new Error("Portable store transaction checksum mismatch");
-      }
     }
     for (const removal of transaction.remove) await this.removeObsoletePartition(removal);
     await this.removeMarkerIfOwned(transaction.transactionId);
+    // Record what was just written so the next insert-only reconcile can append
+    // to these files instead of rewriting them.
+    for (const entry of transaction.entries) {
+      const target = this.resolveRelative(entry.target);
+      try {
+        const info = await this.fileSystem.lstat(target, { bigint: true });
+        if (info.isFile()) this.appendableFiles.set(canonicalPath(target), info.size);
+      } catch {
+        // Without a recorded size the file simply stays on the rewrite path.
+      }
+    }
   }
 
   private validateTransactionPaths(transaction: PendingTransaction): void {
@@ -935,6 +1155,14 @@ function buildMetadata(partitions: ReadonlyMap<string, ReadonlyMap<string, Porta
     };
   }
   return metadata;
+}
+
+function partitionCanonical(month: string, events: readonly PortableUsageEvent[]): string {
+  const partition = new Map<string, PortableUsageEvent>();
+  for (const item of [...events].sort(compareCanonicalEvents)) {
+    if (!partition.has(item.id)) partition.set(item.id, item);
+  }
+  return JSON.stringify([month, [...partition.values()].sort(compareCanonicalEvents).map(canonicalSerialize)]);
 }
 
 function storeRevision(partitions: ReadonlyMap<string, ReadonlyMap<string, PortableUsageEvent>>): string {

@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.1.0 - 2026-09-05
+
+### Changed
+
+- QuotaBar is substantially faster on large histories. Opening the dashboard, switching
+  tabs and the background refresh no longer re-read and re-hash the whole event store on
+  every request. On a 184k-event store the readiness check dropped from 2.2 s to 11 ms,
+  the store revision check from 1.25 s to 9 ms, all-time reports from 3.6 s to 1.1 s and
+  the 365-day analytics view from 7.1 s to 5.4 s.
+- Ingesting new usage writes far less to disk. A single new event previously rewrote the
+  entire monthly partition; new events are now appended, reducing a typical ingest cycle
+  from 28.7 MB to 14.1 MB written and from 28.8 MB to 14.1 MB read.
+- The idle background loop no longer scans the agent source directories on every tick. It
+  now reacts to file-system changes, with periodic scans retained as a fallback.
+
+### Fixed
+
+- Analytics and model statistics are no longer discarded and recomputed on every quota
+  poll, which made tab switches slow for no reason: a poll only brings new quota
+  percentages and cannot change the token history.
+
 ## 2.0.0 — 2026-07-14
 
 ### Added

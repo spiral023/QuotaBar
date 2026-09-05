@@ -539,10 +539,11 @@ async function _ensureHourlyBuckets() {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       order: 'asc', breakdown: false,
     };
-    const [cr, xr] = await Promise.all([
-      QB.ipc.invoke('reports:get', { ...base, provider: 'claude' }),
-      QB.ipc.invoke('reports:get', { ...base, provider: 'codex' }),
-    ]);
+    // One request for both providers: the main process then reads the range
+    // once instead of once per provider.
+    const batch = await QB.ipc.invoke('reports:get-batch', { ...base, providers: ['claude', 'codex'] });
+    const cr = batch?.claude || {};
+    const xr = batch?.codex || {};
     const cm = new Map((cr.rows || []).map(r => [r.bucket, r.costUSD || 0]));
     const xm = new Map((xr.rows || []).map(r => [r.bucket, r.costUSD || 0]));
     const all = new Set([...cm.keys(), ...xm.keys()]);

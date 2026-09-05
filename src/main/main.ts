@@ -22,6 +22,7 @@ import { collectSystemData, formatSystemPathDiagnostics, formatWslDiscoveryDiagn
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { DebugRecorder } from "./debugRecorder";
 import { snapshotEvent } from "./debugEvents";
+import { watchSourceRoots, type SourceChangeWatcher } from "./sourceChangeWatcher";
 import { createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, readLegacyQuotaSnapshots, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
 import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
@@ -32,7 +33,7 @@ import { seedFromDebugLogs } from "./windowRatioSeeder";
 import { loadCachedSnapshots, markSnapshotsFromCache, saveCachedSnapshots } from "../usage/snapshotCache";
 import { registerLifecycleEvents } from "./lifecycleEvents";
 import { appendQuotaSnapshots } from "../portable/quotaStore";
-import { PortableUsageStore } from "../portable/usageStore";
+import { getSharedUsageStore } from "../portable/usageStore";
 import { ingestPortableUsage } from "../portable/ingestion";
 import { enrichPortableEventCosts } from "../portable/costEnrichment";
 import { beginMigrationRefresh, beginMigrationRefreshRecovery, markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData, readCompleteMigrationRevision } from "../portable/migration";
@@ -56,6 +57,7 @@ configureAppIdentity();
 // second-instance-Handler kann eine quotabar://-Aktivierung dann weiterreichen.
 let onProtocolUrl: ((url: string) => void) | null = null;
 let portableIngestionLifecycle: PortableIngestionLifecycle | undefined;
+let sourceChangeWatcher: SourceChangeWatcher | undefined;
 
 function findProtocolUrl(argv: readonly string[]): string | null {
   return argv.find((arg) => arg.startsWith("quotabar://")) ?? null;
@@ -77,6 +79,8 @@ if (!app.requestSingleInstanceLock()) {
     .then(async () => {
       await portableIngestionLifecycle?.stop();
       portableIngestionLifecycle = undefined;
+      sourceChangeWatcher?.close();
+      sourceChangeWatcher = undefined;
       ensureWindowsNotificationShortcut();
       // quotabar://-Protokoll registrieren, damit Windows Toast-Aktivierungen an
       // diese App weiterleitet (Voraussetzung für funktionierende Toast-Buttons).
@@ -150,8 +154,12 @@ if (!app.requestSingleInstanceLock()) {
       const bonusStatePath = getBonusStatePath();
       const bonusTracker = new BonusResetTracker(await loadBonusStateFile(bonusStatePath));
       const refreshLoop = new RefreshLoop(providers, store, settings.pollIntervalSeconds, settings.providerTimeoutMs, pricingEngine, recorder, windowRatioTracker, bonusTracker);
-      const portableUsageStore = new PortableUsageStore(getPortableUsageDir());
+      const portableUsageStore = getSharedUsageStore(getPortableUsageDir());
       const portablePricingResolver = new HistoricalPricingResolver(new LiteLLMFetcher(runtimeSettings.pricingOfflineMode));
+      sourceChangeWatcher = watchSourceRoots([
+        ...getClaudeProjectsDirs({ claudeRoots: runtimeSettings.claudeRoots ?? [], codexHomes: runtimeSettings.codexHomes ?? [] }),
+        ...getCodexSessionsDirs({ claudeRoots: runtimeSettings.claudeRoots ?? [], codexHomes: runtimeSettings.codexHomes ?? [] }),
+      ]);
       const ingestPortableSources = async () => {
         const currentSettings = mergeSettingsWithAgentRoots(await loadSettings());
         const pathContext = {
@@ -246,7 +254,9 @@ if (!app.requestSingleInstanceLock()) {
               log.info(`Portable data refresh stage=${stage} count=${count} durationMs=${durationMs}`);
             },
           });
-        }, (diagnostic) => log.warn(diagnostic)));
+        }, (diagnostic) => log.warn(diagnostic)), undefined, {
+          shouldRun: () => sourceChangeWatcher?.consume() ?? true,
+        });
         await portableIngestionLifecycle.start();
       }
       const recomputeCostsAndIngest = (): void => {
@@ -343,6 +353,8 @@ if (!app.requestSingleInstanceLock()) {
         stopIngestion: async () => {
           const lifecycle = portableIngestionLifecycle;
           portableIngestionLifecycle = undefined;
+          sourceChangeWatcher?.close();
+          sourceChangeWatcher = undefined;
           await lifecycle?.stop();
         },
         flushNotifications: () => notificationService.flush(),

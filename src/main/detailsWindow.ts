@@ -5,7 +5,7 @@ import { app, BrowserWindow, ipcMain, screen, Tray, clipboard, dialog, shell } f
 import { UsageSnapshot } from "../providers/types";
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { log } from "./logging";
-import { generateUsageReport } from "../reports/reportService";
+import { generateUsageReport, portableReadRange } from "../reports/reportService";
 import type { ReportRequest } from "../reports/types";
 import {
   getWindowHistoryPath, getPortableMigrationPath,
@@ -36,7 +36,7 @@ import { detectAppVariant } from "./appIdentity";
 import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { mergeAndSaveSettings } from "./settingsSave";
 import { parseMigrationState } from "../portable/migration";
-import { PortableUsageStore } from "../portable/usageStore";
+import { getSharedUsageStore } from "../portable/usageStore";
 import { exportPortableData, stagePortableImport } from "../portable/archiveService";
 
 let archiveOperation: "export" | "import" | null = null;
@@ -120,9 +120,18 @@ export interface PortableDataPreparing {
 
 const PORTABLE_DATA_PREPARING: PortableDataPreparing = Object.freeze({ portableDataPreparing: true });
 
+/**
+ * Cache-hit rate is a ratio that drifts by tiny amounts between polls. Rounding
+ * it into the key keeps entries reusable across ticks while still separating
+ * genuinely different inputs.
+ */
+function cacheHitRateKey(rate: { claude: number; codex: number }): string {
+  return `${rate.claude.toFixed(3)}/${rate.codex.toFixed(3)}`;
+}
+
 export async function portableDataIsReady(
   statePath = getPortableMigrationPath(),
-  store = new PortableUsageStore(path.dirname(statePath)),
+  store = getSharedUsageStore(path.dirname(statePath)),
 ): Promise<boolean> {
   let raw: string;
   try {
@@ -274,10 +283,23 @@ export class DetailsWindowController {
   notifyUpdate(snapshots: UsageSnapshot[]): void {
     this.lastSnapshots = snapshots;
     this.lastRefreshedAt = new Date();
-    this.clearAnalyticsCaches();
+    this.clearSnapshotDerivedCaches();
     this.pushUpdate();
   }
 
+  /**
+   * A poll tick only brings fresh quota percentages from the provider APIs; the
+   * token history behind analytics and models is untouched. Recomputing those
+   * costs seconds on a large store, so only the caches that actually read from
+   * snapshots are dropped here. Cache-hit rate does feed the analytics tasks,
+   * so it is part of their cache keys instead of a reason to discard them.
+   */
+  private clearSnapshotDerivedCaches(): void {
+    this.windowBudgetCache.clear();
+    this.windowHistoryCache.clear();
+  }
+
+  /** Usage data itself changed (settings, plans, ingestion) — drop everything. */
   private clearAnalyticsCaches(): void {
     this.analyticsSummaryCache.clear();
     this.analyticsDataCache.clear();
@@ -289,7 +311,7 @@ export class DetailsWindowController {
   private computeSummary(settings: Settings, costWindow: CostWindow): Promise<AnalyticsSummary> {
     const runtimeSettings = mergeSettingsWithAgentRoots(settings);
     const cacheHitRate = computeCacheHitRate(this.lastSnapshots);
-    const cacheKey = `summary:${costWindow}`;
+    const cacheKey = `summary:${costWindow}:${cacheHitRateKey(cacheHitRate)}`;
 
     return this.analyticsSummaryCache.get(cacheKey, async () => {
       const startedAtMs = Date.now();
@@ -304,9 +326,15 @@ export class DetailsWindowController {
     });
   }
 
-  /** Warms the worker and portable summary store before the dashboard opens. */
+  /**
+   * Warms the worker and portable summary store before the dashboard opens.
+   * Reached only after ingestion actually changed the store (refreshPortableData
+   * returns "unchanged" before this), so it is the point where cached analytics
+   * built on the old event set must be dropped.
+   */
   async prewarmAnalytics(): Promise<void> {
     if (!await this.isPortableDataReady()) throw new Error("Portable analytics prewarm is not ready");
+    this.clearAnalyticsCaches();
     const until = this.nowMs();
     const since = until - 30 * 24 * 3600 * 1000;
     await this.requestAnalyticsWorker({
@@ -477,6 +505,25 @@ export class DetailsWindowController {
       return { ...report, planChanges };
     });
 
+    // The analytics tab needs the same time range split by provider. Asking
+    // twice re-reads and re-adapts the whole range for each call; reading the
+    // events once and building both reports from them is several times faster.
+    ipcMain.handle("reports:get-batch", async (_, request: ReportRequest & { providers?: unknown }) => {
+      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
+      const settings = await loadRuntimeSettings();
+      const providers = Array.isArray(request.providers)
+        ? request.providers.filter((item): item is "claude" | "codex" => item === "claude" || item === "codex")
+        : ["claude", "codex"] as const;
+      const { providers: _ignored, ...base } = request;
+      const range = portableReadRange(base.since, base.until);
+      const usageEvents = await getSharedUsageStore().read(range);
+      const reports = await Promise.all(providers.map((provider) => generateUsageReport(
+        { ...base, provider, source: "portable" },
+        { settings, usageEvents },
+      )));
+      return Object.fromEntries(providers.map((provider, index) => [provider, reports[index]]));
+    });
+
     ipcMain.handle("reports:copy-json", async (_, request: ReportRequest) => {
       if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadRuntimeSettings();
@@ -504,7 +551,7 @@ export class DetailsWindowController {
       const fxEstimated = sharedFxFetcher.estimated;
       const planSig = JSON.stringify(settings.plans);
 
-      return this.analyticsDataCache.get(`get:${since}:${until}:${request?.timeZone ?? "local"}:${planSig}`, () => this.requestAnalyticsWorker(
+      return this.analyticsDataCache.get(`get:${since}:${until}:${request?.timeZone ?? "local"}:${planSig}:${cacheHitRateKey(cacheHitRate)}`, () => this.requestAnalyticsWorker(
         createAnalyticsGetRequest(settings, request, cacheHitRate, this.nowMs(), eurUsdRates, fxEstimated),
       ) as Promise<AnalyticsData>);
     });
@@ -561,7 +608,7 @@ export class DetailsWindowController {
           }];
         });
       if (providers.length === 0) return { perProvider: {} };
-      return this.windowBudgetCache.get("windowBudget", () =>
+      return this.windowBudgetCache.get(JSON.stringify(providers), () =>
         this.requestAnalyticsWorker({
           task: "windowBudget",
           nowMs: this.nowMs(),

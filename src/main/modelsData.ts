@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Settings } from "../config/settings";
 import { defaultSettings } from "../config/settings";
 import { normalizeModelName, isIgnoredModel } from "../shared/modelNames";
-import { PortableUsageStore } from "../portable/usageStore";
+import { getSharedUsageStore, PortableUsageStore } from "../portable/usageStore";
 import type { PortableUsageEvent } from "../portable/types";
 import { isNeutralInternalMarker } from "../portable/eventAdapters";
 
@@ -67,7 +67,7 @@ export async function buildModelsData(deps: ModelsDataDeps = {}): Promise<Models
     since: "1970-01-01T00:00:00.000Z",
     until: new Date().toISOString(),
   };
-  const events = deps.usageEvents ?? await (deps.usageStore ?? new PortableUsageStore()).read(usageRange);
+  const events = deps.usageEvents ?? await (deps.usageStore ?? getSharedUsageStore()).read(usageRange);
 
   const dayMap = new Map<string, ModelDay>();
   for (const event of events) {

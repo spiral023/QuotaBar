@@ -27,7 +27,7 @@ import {
 } from "./ingestState";
 import { withNamedPortableRootLock } from "./rootLock";
 import { PORTABLE_STORE_VERSION, type PortableIngestState, type PortableProvider, type PortableUsageEvent } from "./types";
-import { PortableUsageStore } from "./usageStore";
+import { getSharedUsageStore, PortableUsageStore } from "./usageStore";
 
 type ReconcileResult = { inserted: number; updated: number; existing: number };
 type SourceErrorCode = "listing_failed" | "stat_failed" | "read_failed" | "adapter_failed" | "cost_failed";
@@ -92,8 +92,6 @@ interface LoadedState {
 }
 
 const stateQueues = new Map<string, Promise<void>>();
-// Normal production has one canonical root; retaining its store also retains verified partition snapshots.
-const defaultStores = new Map<string, PortableUsageStore>();
 const INGEST_OPERATION_ERROR = Symbol("ingest-operation-error");
 const CORRUPT_STATE_FILE = /^ingest-state\.corrupt\.(\d{13})\.json$/;
 const MAX_CORRUPT_STATE_FILES = 3;
@@ -655,11 +653,5 @@ function isOperationError(value: unknown): value is { marker: symbol; error: unk
 }
 
 function getDefaultStore(): PortableUsageStore {
-  const rootDir = path.resolve(getPortableUsageDir());
-  const key = canonicalPath(rootDir);
-  const existing = defaultStores.get(key);
-  if (existing) return existing;
-  const store = new PortableUsageStore(rootDir);
-  defaultStores.set(key, store);
-  return store;
+  return getSharedUsageStore(getPortableUsageDir());
 }
