@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.1 - 2026-09-06
+
+### Fixed
+
+- The usage chart is back for Codex accounts on the larger plans. Those plans no longer
+  report a 5-hour window, and the whole chart pipeline was gated on that window being
+  present, so the card lost its history entirely. The weekly (7-day) trend, the forecast
+  and the unscheduled-reset badge are now built from the weekly window alone; only the
+  conversion into 5-hour windows and its reset markers are omitted, and the panel is
+  titled "Weekly trend" instead of "Window budget". Resets — both the ones OpenAI issues
+  and a banked reset you redeem yourself — break the line rather than drawing a drop.
+
 ## 2.2.0 - 2026-09-06
 
 ### Changed

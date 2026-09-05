@@ -189,6 +189,14 @@ function windowBudgetRowHtml(snap, currentUsage) {
   const wb = snap.windowBudget;
   if (!wb) return '';
   const id = `wb-row-${QB.esc(snap.provider)}`;
+  if (wb.weeklyOnly) {
+    // Kein 5h-Fenster (größere Codex-Tarife): Die Fenster-Leiste hat keine
+    // Bezugsgröße und entfällt. Ein erkannter Bonus-Reset bleibt sichtbar —
+    // ohne Fenster-Zahl, die es ohne Verhältnis nicht gibt. Ohne Badge nichts
+    // rendern, sonst bliebe der margin-top des leeren Wrappers als Lücke stehen.
+    const badge = bonusBadgeHtml(wb, null);
+    return badge ? `<div class="wb-wrap" id="${id}">${badge}</div>` : '';
+  }
   if (wb.learning) {
     const tip = 'QuotaBar is learning the ratio between the 5h and weekly limit from your usage.\n'
       + `Progress: ${Math.round(wb.sampleFivePct)} % of 200 % 5h usage observed.`;
@@ -269,6 +277,9 @@ function windowBudgetCollapseHtml(snap) {
   const wb = snap.windowBudget;
   if (!wb || wb.learning) return '';
   const id = `wbc-${QB.esc(snap.provider)}`;
+  // Ohne 5h-Fenster zeigt der Chart den reinen 7d-Verlauf — der Titel darf dann
+  // kein Fenster-Budget versprechen, das es hier nicht gibt.
+  const label = wb.weeklyOnly ? 'Weekly trend' : 'Window budget';
   let isOpen = false;
   try { isOpen = localStorage.getItem('windowBudgetOpen') === '1'; } catch {}
   return `<div class="token-collapse wb-collapse${isOpen ? ' open' : ''}" id="${id}">
@@ -278,7 +289,7 @@ function windowBudgetCollapseHtml(snap) {
         <path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.5"
               stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      Window budget
+      ${label}
     </button>
     <div class="token-body">
       <div class="wb-chart-wrap"><canvas id="wb-chart-${QB.esc(snap.provider)}"></canvas></div>

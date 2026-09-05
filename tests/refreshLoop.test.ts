@@ -8,6 +8,7 @@ import { RefreshLoop } from "../src/usage/refreshLoop";
 import { UsageStore } from "../src/usage/usageStore";
 import { DebugRecorder } from "../src/main/debugRecorder";
 import { WindowRatioTracker, emptyRatioFile, emptyProviderState } from "../src/usage/windowRatio";
+import { BonusResetTracker } from "../src/usage/bonusReset";
 import { log } from "../src/main/logging";
 
 function okSnap(provider: string): UsageSnapshot {
@@ -389,6 +390,72 @@ describe("RefreshLoop windowBudget", () => {
 
     const [snap] = await loop.refreshNow();
     expect(snap.windowBudget).toBeUndefined();
+  });
+
+  function weeklyOnlySnap(provider: string, weeklyPct: number, resetsAt?: string): UsageSnapshot {
+    return {
+      provider,
+      status: "ok",
+      windows: [{
+        name: "weekly",
+        usedPercent: weeklyPct,
+        windowSeconds: 604800,
+        ...(resetsAt ? { resetsAt } : {}),
+      }],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  it("markiert Snapshots ohne 5h-Fenster als weeklyOnly statt sie zu übergehen", async () => {
+    const store = new UsageStore();
+    const tracker = new WindowRatioTracker();
+    const provider = makeProvider("codex", async () => weeklyOnlySnap("codex", 92));
+    const loop = new RefreshLoop([provider], store, 60, 10_000, undefined, undefined, tracker);
+
+    const [snap] = await loop.refreshNow();
+    expect(snap.windowBudget).toEqual({ learning: false, weeklyOnly: true });
+    // Ohne 5h-Paare darf der Ratio-Tracker keinen State anlegen.
+    expect(tracker.getFile().providers).toEqual({});
+  });
+
+  it("verfolgt Bonus-Resets auch ohne 5h-Fenster — ohne Fenster-Schätzung", async () => {
+    const store = new UsageStore();
+    const resetsAt = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+    let weeklyPct = 80;
+    const bonusTracker = new BonusResetTracker();
+    const provider = makeProvider("codex", async () => weeklyOnlySnap("codex", weeklyPct, resetsAt));
+    const loop = new RefreshLoop(
+      [provider], store, 60, 10_000, undefined, undefined, new WindowRatioTracker(), bonusTracker,
+    );
+
+    await loop.refreshNow();
+    // Weekly fällt auf ~0, der 7d-Termin bleibt stehen → außerplanmäßiger Reset.
+    weeklyPct = 1;
+    const [snap] = await loop.refreshNow();
+
+    expect(snap.windowBudget?.bonus?.active).toBe(true);
+    // Ohne windowsPerWeek gibt es keine Fenster-Zahl zu schätzen.
+    expect(snap.windowBudget?.bonus?.estimatedExtraWindows).toBe(0);
+  });
+
+  it("wertet einen selbst eingelösten Reset ohne 5h-Fenster nicht als Bonus", async () => {
+    const store = new UsageStore();
+    const bonusTracker = new BonusResetTracker();
+    let weeklyPct = 80;
+    // Ein eingelöster Reset schiebt resetsAt nach vorn (neues Fenster) —
+    // laut weeklyTransition ein regulärer Fensterwechsel, kein Kulanz-Bonus.
+    let resetsAt = new Date(Date.now() + 2 * 24 * 3600 * 1000).toISOString();
+    const provider = makeProvider("codex", async () => weeklyOnlySnap("codex", weeklyPct, resetsAt));
+    const loop = new RefreshLoop(
+      [provider], store, 60, 10_000, undefined, undefined, new WindowRatioTracker(), bonusTracker,
+    );
+
+    await loop.refreshNow();
+    weeklyPct = 0;
+    resetsAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+    const [snap] = await loop.refreshNow();
+
+    expect(snap.windowBudget).toEqual({ learning: false, weeklyOnly: true });
   });
 
   it("liest den State des aktiven Plan-Tiers", async () => {

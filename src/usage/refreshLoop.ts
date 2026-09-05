@@ -6,7 +6,7 @@ import { computeLinearPace, toRateWindow, computeSafetyGap } from "./usagePace";
 import { BurnRateTracker } from "./burnRateTracker";
 import type { PricingEngine } from "../pricing/subscription-factor";
 import type { DebugRecorder } from "../main/debugRecorder";
-import type { WindowRatioTracker } from "./windowRatio";
+import { weeklyOnlyBudget, type WindowRatioTracker } from "./windowRatio";
 import type { BonusResetTracker } from "./bonusReset";
 import { snapshotEvent } from "../main/debugEvents";
 import { computeBackoffMs } from "./backoff";
@@ -118,29 +118,40 @@ export class RefreshLoop {
         if (snapshot.status === "ok") {
           const five = snapshot.windows.find((w) => w.name === "fiveHour");
           const weekly = snapshot.windows.find((w) => w.name === "weekly");
-          if (typeof five?.usedPercent === "number" && typeof weekly?.usedPercent === "number") {
+          // Das Weekly-Fenster allein genügt: Codex' größere Tarife liefern gar
+          // kein 5h-Fenster mehr. Ohne 5h entfällt nur das Fenster-Verhältnis —
+          // Weekly-Trend, Forecast und Bonus-Erkennung bleiben auswertbar.
+          if (typeof weekly?.usedPercent === "number") {
+            const fivePct = typeof five?.usedPercent === "number" ? five.usedPercent : null;
             if (this.windowRatioTracker) {
-              this.windowRatioTracker.record(snapshot.provider, {
-                fivePct: five.usedPercent,
-                weeklyPct: weekly.usedPercent,
-                fiveResetsAt: five.resetsAt ?? null,
-                planType: snapshot.planType ?? null,
-                ts: now.toISOString(),
-              });
-              snapshot.windowBudget = this.windowRatioTracker.getBudget(snapshot.provider, snapshot.planType ?? null, weekly.usedPercent);
+              if (fivePct !== null) {
+                this.windowRatioTracker.record(snapshot.provider, {
+                  fivePct,
+                  weeklyPct: weekly.usedPercent,
+                  fiveResetsAt: five?.resetsAt ?? null,
+                  planType: snapshot.planType ?? null,
+                  ts: now.toISOString(),
+                });
+                snapshot.windowBudget = this.windowRatioTracker.getBudget(snapshot.provider, snapshot.planType ?? null, weekly.usedPercent);
+              } else {
+                snapshot.windowBudget = weeklyOnlyBudget();
+              }
             }
             if (this.bonusTracker) {
               this.bonusTracker.record(snapshot.provider, snapshot.planType ?? null, {
                 usedPercent: weekly.usedPercent,
                 resetsAt: weekly.resetsAt ?? null,
-                fivePercent: five.usedPercent,
+                fivePercent: fivePct,
                 ts: now.toISOString(),
               });
               // Bonus nur anhängen, wenn ein belastbares Budget vorliegt (nicht im Lernmodus).
+              // Ohne 5h-Fenster gibt es kein windowsPerWeek — dann bleibt der Bonus
+              // ohne Fenster-Schätzung (estimateBonusWindows liefert 0).
               if (snapshot.windowBudget && !snapshot.windowBudget.learning) {
                 const bonus = this.bonusTracker.getBonus(
                   snapshot.provider, snapshot.planType ?? null,
-                  weekly.resetsAt ?? null, now.getTime(), snapshot.windowBudget.windowsPerWeek,
+                  weekly.resetsAt ?? null, now.getTime(),
+                  snapshot.windowBudget.weeklyOnly ? 0 : snapshot.windowBudget.windowsPerWeek,
                 );
                 if (bonus) snapshot.windowBudget.bonus = bonus;
               }

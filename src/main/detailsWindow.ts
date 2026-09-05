@@ -601,7 +601,9 @@ export class DetailsWindowController {
             provider: s.provider,
             weeklyUsedPercent: weekly.usedPercent,
             weeklyResetsAt: weekly.resetsAt ?? null,
-            windowsPerWeek: budget.windowsPerWeek,
+            // null = kein 5h-Fenster: Serie und Forecast bleiben, nur die
+            // Umrechnung in 5h-Fenster und deren Reset-Marker entfallen.
+            windowsPerWeek: budget.weeklyOnly ? null : budget.windowsPerWeek,
             burnRatePctPerHour: weekly.burnRatePctPerHour ?? null,
             pace: weekly.pace ?? null,
             planType: s.planType ?? null,

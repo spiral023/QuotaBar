@@ -9,11 +9,21 @@ type UsageWindow = {
   resetsAt?: string;
   windowSeconds?: number;
 };
+type WindowBudget = {
+  learning?: boolean;
+  weeklyOnly?: boolean;
+  windowsPerWeek?: number;
+  usedWindows?: number;
+  remainingWindows?: number;
+  sampleFivePct?: number;
+  bonus?: { active: boolean; estimatedExtraWindows: number };
+};
 type Snapshot = {
   provider: string;
   status: string;
   windows: UsageWindow[];
   identity?: { email?: string };
+  windowBudget?: WindowBudget;
 };
 
 function loadLiveHelpers(): {
@@ -96,6 +106,66 @@ describe("live renderer helpers", () => {
     expect(html).toContain("Wk 1%");
     expect(html).toContain("Weekly");
     expect(html).not.toContain("5-Hour");
+  });
+
+  it("renders the weekly trend chart for a weekly-only budget", () => {
+    const helpers = loadLiveHelpers();
+    const html = helpers.renderStandard({
+      provider: "codex",
+      status: "ok",
+      windows: [{ name: "weekly", usedPercent: 92 }],
+      windowBudget: { learning: false, weeklyOnly: true },
+    }, "Codex", "", 1);
+
+    // Chart-Canvas + Forecast-Slot müssen da sein, damit hydrateWindowBudgets füllen kann.
+    expect(html).toContain('id="wb-chart-codex"');
+    expect(html).toContain('id="wb-forecast-codex"');
+    // Ohne 5h-Fenster kein Fenster-Budget-Versprechen im Titel …
+    expect(html).toContain("Weekly trend");
+    expect(html).not.toContain("Window budget");
+    // … und keine 5h-Fenster-Leiste.
+    expect(html).not.toContain("5h windows:");
+    expect(html).not.toContain("still learning");
+  });
+
+  it("shows a bonus badge without a window estimate for a weekly-only budget", () => {
+    const helpers = loadLiveHelpers();
+    const html = helpers.renderStandard({
+      provider: "codex",
+      status: "ok",
+      windows: [{ name: "weekly", usedPercent: 2 }],
+      windowBudget: {
+        learning: false,
+        weeklyOnly: true,
+        bonus: { active: true, estimatedExtraWindows: 0 },
+      },
+    }, "Codex", "", 1);
+
+    expect(html).toContain("Bonus week");
+    expect(html).not.toContain("5h windows");
+  });
+
+  it("keeps the window budget label and bar when a ratio is known", () => {
+    const helpers = loadLiveHelpers();
+    const html = helpers.renderStandard({
+      provider: "claude",
+      status: "ok",
+      windows: [
+        { name: "fiveHour", usedPercent: 12 },
+        { name: "weekly", usedPercent: 34 },
+      ],
+      windowBudget: {
+        learning: false,
+        windowsPerWeek: 10,
+        usedWindows: 3.4,
+        remainingWindows: 6.6,
+        sampleFivePct: 400,
+      },
+    }, "Claude", "", 1);
+
+    expect(html).toContain("Window budget");
+    expect(html).not.toContain("Weekly trend");
+    expect(html).toContain("5h windows: 3.4 used");
   });
 
   it("renders both quota rows when five-hour and weekly windows are available", () => {

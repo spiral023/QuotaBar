@@ -106,6 +106,59 @@ describe("analytics summary worker request", () => {
   });
 });
 
+describe("windowBudget:get provider inputs", () => {
+  function budgetHandlerFor(runWorker: ReturnType<typeof vi.fn>): {
+    controller: DetailsWindowController;
+    invoke: () => Promise<unknown>;
+  } {
+    const controller = new DetailsWindowController(() => null, undefined, undefined, {
+      portableDataIsReady: vi.fn(async () => true),
+      runAnalyticsWorker: runWorker,
+      loadRuntimeSettings: vi.fn(async () => defaultSettings),
+      now: () => Date.parse("2026-09-06T00:00:00.000Z"),
+    });
+    const calls = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const handler = [...calls].reverse().find((call: unknown[]) => call[0] === "windowBudget:get")?.[1] as
+      ((event: unknown, request?: unknown) => Promise<unknown>);
+    return { controller, invoke: () => handler({}, undefined) };
+  }
+
+  it("passes windowsPerWeek null for a weekly-only provider", async () => {
+    const runWorker = vi.fn(async () => ({ perProvider: {} }));
+    const { controller, invoke } = budgetHandlerFor(runWorker);
+    controller.notifyUpdate([{
+      provider: "codex",
+      status: "ok",
+      planType: "self_serve_business_prolite",
+      windows: [{ name: "weekly", usedPercent: 92, resetsAt: "2026-09-12T13:11:14.000Z" }],
+      windowBudget: { learning: false, weeklyOnly: true },
+      updatedAt: "2026-09-06T00:00:00.000Z",
+    }]);
+
+    await invoke();
+
+    expect(runWorker).toHaveBeenCalledWith(expect.objectContaining({
+      task: "windowBudget",
+      providers: [expect.objectContaining({ provider: "codex", windowsPerWeek: null, weeklyUsedPercent: 92 })],
+    }));
+  });
+
+  it("still skips a provider that is only learning the ratio", async () => {
+    const runWorker = vi.fn(async () => ({ perProvider: {} }));
+    const { controller, invoke } = budgetHandlerFor(runWorker);
+    controller.notifyUpdate([{
+      provider: "claude",
+      status: "ok",
+      windows: [{ name: "weekly", usedPercent: 30, resetsAt: "2026-09-12T13:11:14.000Z" }],
+      windowBudget: { learning: true, sampleFivePct: 12 },
+      updatedAt: "2026-09-06T00:00:00.000Z",
+    }]);
+
+    await expect(invoke()).resolves.toEqual({ perProvider: {} });
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+});
+
 describe("portable analytics readiness", () => {
   it("gates every portable endpoint before worker or store reads", async () => {
     const runWorker = vi.fn(async () => { throw new Error("portable store read must not run"); });

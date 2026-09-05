@@ -139,6 +139,8 @@ export function recordObservation(state: ProviderRatioState, obs: RatioObservati
 
 export interface WindowBudget {
   learning: false;
+  /** Discriminator gegen {@link WindowBudgetWeeklyOnly}: hier ist eine Ratio bekannt. */
+  weeklyOnly?: false;
   windowsPerWeek: number;
   usedWindows: number;
   remainingWindows: number;
@@ -156,7 +158,27 @@ export interface WindowBudgetLearning {
   sampleFivePct: number;
 }
 
-export type WindowBudgetInfo = WindowBudget | WindowBudgetLearning;
+/**
+ * Der Anbieter liefert überhaupt kein 5h-Fenster (Codex' größere Tarife haben
+ * nur noch das 7d-Fenster). Ein Fenster-Verhältnis ist damit nicht bloß noch
+ * ungelernt, sondern grundsätzlich nicht ermittelbar — deshalb ein eigener
+ * Zustand statt `learning: true`: Der Weekly-Trend bleibt vollständig
+ * auswertbar (Chart, Forecast, Bonus-Erkennung), nur die Umrechnung in
+ * 5h-Fenster entfällt.
+ */
+export interface WindowBudgetWeeklyOnly {
+  learning: false;
+  weeklyOnly: true;
+  /** Wie bei {@link WindowBudget} vom BonusResetTracker befüllt, nicht von computeBudget. */
+  bonus?: { active: boolean; estimatedExtraWindows: number };
+}
+
+export type WindowBudgetInfo = WindowBudget | WindowBudgetLearning | WindowBudgetWeeklyOnly;
+
+/** Budget-Zustand für Anbieter ohne 5h-Fenster. */
+export function weeklyOnlyBudget(): WindowBudgetWeeklyOnly {
+  return { learning: false, weeklyOnly: true };
+}
 
 export function computeBudget(state: ProviderRatioState | undefined, weeklyUsedPercent: number): WindowBudgetInfo {
   if (!state || state.sumFivePct < MIN_SAMPLE_FIVE_PCT || state.sumWeeklyPct < MIN_SAMPLE_WEEKLY_PCT) {
