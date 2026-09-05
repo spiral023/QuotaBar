@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.0 - 2026-09-06
+
+### Changed
+
+- Background ingestion now pauses between passes instead of running continuously. Each
+  pass is followed by a cooldown as long as the pass itself, capped at 60 seconds, so the
+  app no longer keeps a CPU core busy the whole time it is open. Newly recorded usage can
+  appear up to one cycle later than before; manual refresh is unaffected.
+- Reading the stored history is about 45% faster, which speeds up every dashboard view.
+  Sorting re-parsed both timestamps on every comparison and rebuilt a date object per
+  event just to derive its month; both are now derived directly from the stored value.
+
 ## 2.1.2 - 2026-09-05
 
 ### Changed

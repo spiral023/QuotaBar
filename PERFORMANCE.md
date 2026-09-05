@@ -49,17 +49,24 @@ const store = new PortableUsageStore(root, { ...nodeFs, writeFile: zaehlend });
 im selben Prozess verfälschen durch JIT-Warmup und gefüllte Caches — ein früher
 Vergleich zeigte dadurch fälschlich "keine Verbesserung", wo isoliert −32 % lagen.
 
-**Ergebnisgleichheit** wird über stabile Hashes des Ergebnisobjekts geprüft
-(`generatedAt` maskiert). Referenzwerte vom 2026-09-05, vor allen Änderungen:
+**Ergebnisgleichheit** wird über Hashes des Ergebnisobjekts geprüft (`generatedAt`
+maskiert). Wichtig: Gegen **feste** Referenz-Hashes zu prüfen funktioniert nicht — der
+Store wächst im Betrieb weiter, und schon eine laufende App macht jeden gestern notierten
+Hash wertlos. Das hat hier einmal einen Fehlalarm ausgelöst.
 
-| Abfrage | Hash |
-| --- | --- |
-| `analytics:get` 30 d | `b832d7ce711755de…` |
-| `analytics:get` 365 d | `b3704332f4503f72…` |
-| `reports:get` all-time | `f8ea48607314d6a4…` |
-| Store-Revision | `2a796cf21f0ab1f9…` |
+Richtig ist ein A/B-Vergleich auf eingefrorenem Datenstand:
 
-Diese Hashes müssen nach Optimierungen **unverändert** bleiben.
+```bash
+cp -r ~/.quotabar-win/usage/events  <fixture>/     # Datenstand einfrieren
+cp ~/.quotabar-win/usage/store-metadata.json <fixture>/
+node equiv.js <fixture>            # mit der Änderung
+git stash && npm run build
+node equiv.js <fixture>            # ohne die Änderung
+git stash pop && npm run build
+```
+
+Verglichen werden Store-Revision, ein Hash über alle `(id, occurredAt)` in Lesereihenfolge
+und ein Report-Hash. Alle drei müssen zwischen den beiden Läufen übereinstimmen.
 
 ## Erledigt
 
@@ -114,6 +121,36 @@ Details:
 - **Doppelte Verifikation entfernt** — `rollForward()` las und hashte jede Datei
   zweimal (einmal die Staging-Datei, danach nochmals das Ziel nach dem Rename).
   Die Integritätsprüfung vor dem Rename bleibt unangetastet.
+
+### Runde 3 — Ingest-Kadenz und heiße Schleifen (2026-09-06)
+
+Alle vier Änderungen sind ergebnisneutral; nachgewiesen per A/B-Vergleich auf
+eingefrorenem Datenstand (200.872 Events), Revision und Report-Hash identisch.
+
+| Operation | vorher | nachher |
+| --- | --- | --- |
+| `store.read()` (volle Historie) | 950 ms | **519 ms** (−45 %) |
+| `reconcile` innerhalb des Ingests | 1.063 ms | **581 ms** (−45 %) |
+| `reports:get` all-time | 1.725 ms | 1.480 ms (−14 %) |
+| `getRevision()` kalt | 2.754 ms | 2.477 ms (−10 %) |
+
+- **Ruhephase nach jedem Ingest-Durchlauf** (offener Punkt 7). Jeder geplante Durchlauf
+  wird von einer Pause gefolgt, die so lang ist wie der Durchlauf selbst, gedeckelt auf
+  60 s. Damit rechnet der Hintergrund nur noch etwa die Hälfte der Zeit statt
+  durchgehend. Startup- und manuelle Trigger umgehen die Pause. Kosten: Neue Nutzung
+  erscheint im ungünstigsten Fall einen Zyklus später.
+- **Zeitstempel-Vergleich ohne `Date.parse`.** `compareCanonicalEvents` parste bei *jedem*
+  Vergleich beide Zeitstempel — beim Sortieren der ganzen Historie sind das Millionen
+  Aufrufe. Da `sanitizePortableEvent` kanonisches UTC erzwingt (`occurredAt !==
+  new Date(occurredAt).toISOString()` wird abgelehnt, verifiziert an 200.872 Events),
+  sind die Strings gleich lang und lexikografische Ordnung ist chronologische Ordnung.
+  Ungleiche Längen fallen auf `Date.parse` zurück.
+- **Monatsschlüssel ohne `Date`.** `monthKey(new Date(e.occurredAt))` baute ein
+  Date-Objekt und formatierte einen vollen ISO-String, um sieben Zeichen abzuschneiden —
+  einmal pro Event in mehreren Schleifen. Aus demselben Grund wie oben ist der Monat
+  einfach das Präfix.
+- **`canonicalPath` memoisiert.** `path.resolve` lief mehrfach pro bekannter Quelle, also
+  tausendfach pro Durchlauf über dieselben Pfade.
 
 ## Feldbefunde aus v2.1.0
 
@@ -230,12 +267,21 @@ RSS ~650 MB nach einem vollen Read; Main-Prozess und Analytics-Worker halten je
 einen eigenen Partition-Cache. Bisher kein Problem, sollte aber mit dem Store
 mitwachsend im Auge behalten werden. Erledigt sich weitgehend mit Punkt 2.
 
-### 7. Ingest-Intervall an die Zykluszeit koppeln — hoch
+### 7. Datei-Stats im Ingest — mittel
 
-Das Intervall steht fest auf 15 s, ein Zyklus dauert aber ~22 s. Dadurch steht immer ein
-Folgelauf an und der Main-Thread kommt nie zur Ruhe. Ein Mindestabstand, der sich an der
-letzten Zykluszeit orientiert, würde das entkoppeln — und hätte den Livelock oben gar
-nicht erst auslösen können.
+Nach Runde 3 der größte verbliebene Einzelposten im Profil: `internalModuleStat` mit ~8 %,
+also 3.389 `lstat`-Aufrufe pro Durchlauf für die Änderungserkennung. Die sind grundsätzlich
+nötig — offen ist, ob sich die Menge eingrenzen lässt, etwa indem Quellen mit weit
+zurückliegendem `processedAt` seltener geprüft werden. Vorsicht: Das ist genau der
+Mechanismus, der Änderungen erkennt; eine falsche Eingrenzung verliert Nutzungsdaten.
+
+### 8. Klonen bei jedem Store-Read — mittel
+
+`readValidEvents` gibt `cached.events.map(clonePortableEvent)` zurück, kopiert also bei
+jedem Lesevorgang die gesamte Historie. Das treibt die GC-Last (~4,6 % im Profil).
+`Object.freeze` statt Klonen wäre schneller, verlagert aber eine bisher stille Annahme
+(„Aufrufer mutieren nicht") in eine harte Zusage — im strict mode würde eine Mutation
+werfen. Erst prüfen, ob wirklich kein Aufrufer mutiert.
 
 ## SSD-Verschleiß
 

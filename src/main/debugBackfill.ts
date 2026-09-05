@@ -363,7 +363,16 @@ export function createPortableIngestionRunner(
 interface PortableIngestionLifecycleRuntime {
   setInterval(callback: () => void, milliseconds: number): ReturnType<typeof setInterval>;
   clearInterval(handle: ReturnType<typeof setInterval>): void;
+  now?(): number;
 }
+
+/** Polling cadence; a pass that outlasts this is followed by a cooldown. */
+const INGESTION_TICK_MS = 15_000;
+/**
+ * Upper bound for that cooldown. Without it a slow pass would push the next one
+ * arbitrarily far out and usage would show up late.
+ */
+const INGESTION_MAX_COOLDOWN_MS = 60_000;
 
 export interface PortableIngestionLifecycleOptions {
   /** Returning false skips a scheduled tick entirely. Startup always runs. */
@@ -388,9 +397,22 @@ export function createPortableIngestionLifecycle(
   // Ticks are cheap to schedule but each one lists the whole source tree, so a
   // caller that can tell when nothing changed suppresses that work.
   const shouldRun = options.shouldRun ?? (() => true);
+  const now = runtime.now ?? (() => Date.now());
   let active = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let inFlight: Promise<void> | undefined;
+  // A pass costs seconds on a large history. Running back-to-back keeps the main
+  // process permanently busy for no gain, so each pass is followed by a cooldown
+  // as long as the pass itself, capped so fresh usage still shows up promptly.
+  let cooldownUntil = 0;
+
+  const runScheduledPass = (): void => {
+    const startedAt = now();
+    void track(runner.trigger("source-change").finally(() => {
+      const elapsed = Math.max(0, now() - startedAt);
+      cooldownUntil = now() + Math.min(elapsed, INGESTION_MAX_COOLDOWN_MS);
+    }));
+  };
 
   const track = (work: Promise<void>): Promise<void> => {
     const tracked = work.finally(() => {
@@ -414,8 +436,9 @@ export function createPortableIngestionLifecycle(
       await stop();
       active = true;
       timer = runtime.setInterval(() => {
-        if (active && shouldRun()) void track(runner.trigger("source-change"));
-      }, 15_000);
+        if (!active || now() < cooldownUntil) return;
+        if (shouldRun()) runScheduledPass();
+      }, INGESTION_TICK_MS);
       timer.unref?.();
       await track(runner.trigger("startup"));
     },

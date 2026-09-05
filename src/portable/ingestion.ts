@@ -615,9 +615,19 @@ function sourceKey(provider: PortableProvider, sourcePath: string): string {
   return portableIngestSourceKey(provider, sourcePath);
 }
 
+// path.resolve is not cheap and this runs several times per known source, which
+// means thousands of calls per ingest pass over the same handful of paths.
+const canonicalPaths = new Map<string, string>();
+
 function canonicalPath(filePath: string): string {
+  const cached = canonicalPaths.get(filePath);
+  if (cached !== undefined) return cached;
   const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const canonical = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  // Paths come from directory listings and stored state, so the set is bounded
+  // by the number of sources; a cap keeps a pathological case from growing it.
+  if (canonicalPaths.size < 50_000) canonicalPaths.set(filePath, canonical);
+  return canonical;
 }
 
 function compareText(left: string, right: string): number {

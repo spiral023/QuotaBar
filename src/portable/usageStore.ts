@@ -175,7 +175,7 @@ export class PortableUsageStore {
     let first = true;
     for (const file of stamped) {
       const events = (await this.readValidEvents(file.filePath))
-        .filter((item) => monthKey(new Date(item.occurredAt)) === file.month);
+        .filter((item) => monthKeyOf(item.occurredAt) === file.month);
       if (!first) digest.update(",");
       first = false;
       digest.update(partitionCanonical(file.month, events));
@@ -249,7 +249,7 @@ export class PortableUsageStore {
 
       const affected = new Set<string>();
       for (const item of incoming) {
-        const month = monthKey(new Date(item.occurredAt));
+        const month = monthKeyOf(item.occurredAt);
         const partition = storedByMonth.get(month) ?? new Map<string, PortableUsageEvent>();
         partition.set(item.id, item);
         storedByMonth.set(month, partition);
@@ -335,7 +335,7 @@ export class PortableUsageStore {
             if (partition.delete(event.id)) affected.add(month);
           }
         }
-        const month = monthKey(new Date(event.occurredAt));
+        const month = monthKeyOf(event.occurredAt);
         const partition = storedByMonth.get(month) ?? new Map<string, PortableUsageEvent>();
         partition.set(event.id, event);
         storedByMonth.set(month, partition);
@@ -421,7 +421,7 @@ export class PortableUsageStore {
         }
       }
 
-      const month = monthKey(new Date(item.occurredAt));
+      const month = monthKeyOf(item.occurredAt);
       const partition = storedByMonth.get(month) ?? new Map<string, PortableUsageEvent>();
       partition.set(item.id, item);
       storedByMonth.set(month, partition);
@@ -470,11 +470,11 @@ export class PortableUsageStore {
       const repaired = deduplicateRepairCandidates(snapshots.flatMap(({ month, events }) =>
         events.map((event) => ({
           event,
-          canonical: monthKey(new Date(event.occurredAt)) === month,
+          canonical: monthKeyOf(event.occurredAt) === month,
         }))));
       const repairedByMonth = new Map<string, Map<string, PortableUsageEvent>>();
       for (const item of repaired) {
-        const month = monthKey(new Date(item.occurredAt));
+        const month = monthKeyOf(item.occurredAt);
         const partition = repairedByMonth.get(month) ?? new Map<string, PortableUsageEvent>();
         partition.set(item.id, item);
         repairedByMonth.set(month, partition);
@@ -529,7 +529,7 @@ export class PortableUsageStore {
         ...file,
         events: options.acceptMisplaced
           ? events
-          : events.filter((item) => monthKey(new Date(item.occurredAt)) === file.month),
+          : events.filter((item) => monthKeyOf(item.occurredAt) === file.month),
       });
     }
     return snapshots;
@@ -1192,9 +1192,22 @@ function clonePortableEvent(event: PortableUsageEvent): PortableUsageEvent {
 }
 
 function compareCanonicalEvents(left: PortableUsageEvent, right: PortableUsageEvent): number {
-  return Date.parse(left.occurredAt) - Date.parse(right.occurredAt)
+  return compareOccurredAt(left.occurredAt, right.occurredAt)
     || compareText(left.id, right.id)
     || compareText(canonicalSerialize(left), canonicalSerialize(right));
+}
+
+/**
+ * Sorting the whole history re-parsed both timestamps on every comparison.
+ * Stored timestamps are canonical UTC — sanitizePortableEvent rejects anything
+ * that differs from `new Date(value).toISOString()` — so they are fixed-width
+ * and compare lexicographically in chronological order. Differing lengths can
+ * only come from non-canonical input, which falls back to parsing.
+ */
+function compareOccurredAt(left: string, right: string): number {
+  if (left === right) return 0;
+  if (left.length === right.length) return left < right ? -1 : 1;
+  return Date.parse(left) - Date.parse(right);
 }
 
 function compareText(left: string, right: string): number {
@@ -1289,6 +1302,15 @@ function isValidMonth(month: string): boolean {
 
 function monthKey(date: Date): string {
   return date.toISOString().slice(0, 7);
+}
+
+/**
+ * The month of a stored timestamp is its first seven characters, because
+ * canonical UTC is enforced on write. Building a Date and formatting a full ISO
+ * string just to slice it off ran once per event in several hot loops.
+ */
+function monthKeyOf(occurredAt: string): string {
+  return occurredAt.endsWith("Z") ? occurredAt.slice(0, 7) : monthKey(new Date(occurredAt));
 }
 
 function temporaryPath(target: string): string {
