@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.2 - 2026-09-05
+
+### Changed
+
+- Background ingestion is about 40% faster on installations with many session files.
+  Validating a source record re-checked every stored event ID, and that check ran inside
+  loops over all known sources, so the work grew with the square of the history. A full
+  ingest pass over 3,389 sources dropped from 17.7 s to 10.3 s.
+
 ## 2.1.1 - 2026-09-05
 
 ### Fixed

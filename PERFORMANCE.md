@@ -140,6 +140,32 @@ bisher bei jedem Tick gescannt — aber bei Setups mit WSL-Codex-Home entfällt 
 Listing-Ersparnis vollständig. Ein Teil-Watch nur für die lokalen Roots bringt nichts,
 weil der Scan ohnehin alle Roots listet.
 
+### Ingest-Hotspot: Type-Guard validierte Event-IDs millionenfach (behoben in 2.1.2)
+
+Ein CPU-Profil des Ingest-Laufs zeigte **37,5 % der Zeit in `RegExp: ^[a-f0-9]{64}$`** —
+der Event-ID-Prüfung in `isEventIds()`. Ursache: `isCurrentIngestSourceState()` validiert
+jede eventId einer Quelle neu, und der Guard wird in Schleifen über *alle* bekannten
+Quellen aufgerufen (`findPreviousSource`, `removeLegacySource`, die Owner-Sammlung). Bei
+3.389 Quellen mit zusammen 188.069 IDs ergibt das hunderte Millionen Regex-Tests.
+
+Fix: Validierte Records werden pro Objekt in einem `WeakSet` gemerkt. Sicher, weil
+Source-Records immer als Ganzes ersetzt und nie in place mutiert werden.
+
+Wirkung auf einen kompletten Ingest-Lauf (3.389 Quellen, 122 geändert):
+
+| | vorher | nachher |
+| --- | --- | --- |
+| Gesamt | 17.723 ms | **10.346 ms** (−42 %) |
+| davon nicht in Listing/Lesen/Reconcile | 12.516 ms | 5.095 ms |
+
+Danach ist kein dominanter Posten mehr übrig: Datei-Stats ~8 %, JSONL-Parsen ~5 %,
+Store-Operationen (`readValidEvents`, `compareCanonicalEvents`, `monthKey`) ~13 %.
+
+**Lehre:** Die ursprüngliche Vermutung war die verschachtelte Kollisionsschleife in
+`ingestion.ts` (122 × 3.289 Owner). Nachgemessen kostet die nur 449 ms — ein invertierter
+Index würde daraus 55 ms machen, also 0,4 s statt der vermuteten Sekunden. Ohne Profil
+wäre hier viel Aufwand am eigentlichen Problem vorbeigegangen.
+
 ### Ingest-Zyklus länger als sein Intervall
 
 Gemessen auf derselben Maschine am selben Tag, Mediane in ms:

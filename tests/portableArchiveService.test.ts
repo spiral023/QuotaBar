@@ -1074,7 +1074,9 @@ describe("portable archive service", () => {
     await expect(access(pendingPath)).resolves.toBeUndefined();
   });
 
-  it("stops central-directory collection at entry 25,001 without retaining the overflow entry", async () => {
+  // Builds a 25,001-entry archive, which takes ~4.3s on its own and overran the
+  // default 5s budget whenever the suite ran it alongside other files.
+  it("stops central-directory collection at entry 25,001 without retaining the overflow entry", { timeout: 30_000 }, async () => {
     const root = await tempRoot();
     const archivePath = path.join(root, "too-many.zip");
     await writeSyntheticZip(archivePath, (zip) => {

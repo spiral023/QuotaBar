@@ -31,10 +31,23 @@ export function parsePortableIngestStateForLoad(value: unknown): ParsedPortableI
   return parseState(value);
 }
 
+/**
+ * Validated records are remembered per object. The guard itself is O(eventIds)
+ * because it regex-checks every ID, and it is called inside loops that walk all
+ * known sources — on a store with thousands of sources that dominated ingestion
+ * time. Source records are always replaced wholesale, never mutated in place, so
+ * a result stays valid for the lifetime of the object.
+ */
+const validatedSourceRecords = new WeakSet<object>();
+
 export function isCurrentIngestSourceState(
   value: PortableIngestState["sources"][string] | undefined,
 ): value is CurrentIngestSourceState {
-  return Boolean(value && isCurrentSourceRecord(value as unknown as Record<string, unknown>));
+  if (!value || typeof value !== "object") return false;
+  if (validatedSourceRecords.has(value)) return true;
+  if (!isCurrentSourceRecord(value as unknown as Record<string, unknown>)) return false;
+  validatedSourceRecords.add(value);
+  return true;
 }
 
 export function portableIngestSourceKey(provider: PortableProvider, sourcePath: string): string {
