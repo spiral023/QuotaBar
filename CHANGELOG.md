@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.2.2 - 2026-09-17
+
+### Changed
+
+- Model benchmark scores now follow the Artificial Analysis Intelligence Index v4.3,
+  which incorporates ten evaluations and rescales the index against v4.1. Every score is
+  lower than before, so the numbers are only meaningful relative to each other within
+  this release - do not compare them to the ones QuotaBar showed previously. Claude
+  Fable 5.1, Claude Opus 5, GPT-6 Astra, GPT-5.4 mini, GLM-5.3 and Qwen3.8 27B joined the
+  table. The Coding Agent index is unchanged.
+
+### Security
+
+- Updated dependencies to clear all 15 advisories reported by npm audit, one of them
+  rated critical (node-tar) and eleven high. The notable one for the running app is
+  Electron 42.3.3 -> 42.11.4, which carries the accumulated Chromium security fixes; the
+  rest are build and test tooling. No dependency ranges changed, so the update is a
+  lockfile refresh only.
+
 ## 2.2.1 - 2026-09-06
 
 ### Fixed
