@@ -34,21 +34,44 @@ jobs:
         run: |
           node -e "require('./dist/build/versionTag').assertTagMatches(process.env.GIT_TAG, require('./package.json').version)"
 
-      - name: Pre-create GitHub Release
+      - name: Pre-create GitHub Release (draft)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_TAG: ${{ github.ref_name }}
         run: |
-          gh release view "${{ github.ref_name }}" 2>/dev/null || \
-            gh release create "${{ github.ref_name }}" \
-              --title "${{ github.ref_name }}" \
-              --notes "" \
-              --draft=false
+          # Bewusst als Draft: Ein veroeffentlichtes, aber noch leeres Release laesst
+          # jeden laufenden Client beim Update-Check in einen 404 auf latest.yml laufen,
+          # solange der Installer-Build noch nichts hochgeladen hat. Drafts sind fuer
+          # electron-updater unsichtbar; veroeffentlicht wird erst nach dem Upload.
+          gh release view "$GIT_TAG" >/dev/null 2>&1 || gh release create "$GIT_TAG" --title "$GIT_TAG" --notes "" --draft
 
       - name: Build & publish installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --publish always
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_TAG: ${{ github.ref_name }}
+        run: |
+          # Ohne latest.yml kann electron-updater das Update nicht aufloesen. Fehlt sie,
+          # bleibt das Release Draft und der Job schlaegt fehl, statt ein kaputtes
+          # Update zu veroeffentlichen.
+          assets=$(gh release view "$GIT_TAG" --json assets --jq '[.assets[].name] | join(" ")')
+          echo "Assets am Release: $assets"
+          for required in latest.yml; do
+            case " $assets " in
+              *" $required "*) ;;
+              *)
+                echo "::error::$required fehlt am Release $GIT_TAG - Release bleibt Draft."
+                exit 1
+                ;;
+            esac
+          done
+          gh release edit "$GIT_TAG" --draft=false
 
       - name: Collect builds (versioned + latest)
         shell: bash
