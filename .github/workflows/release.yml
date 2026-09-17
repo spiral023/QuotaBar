@@ -121,18 +121,49 @@ jobs:
             echo "  -> Exitcode $rc nach $((SECONDS - start))s"
             return $rc
           }
-          # latest.yml zuletzt - an ihr erkennt electron-updater das Release als nutzbar.
-          for file in "${binaries[@]}" package-output/latest.yml; do
+          # Kein Abbruch beim ersten Fehlschlag: Wir wollen wissen, welche Artefakte
+          # GitHub annimmt und welche nicht. Bisher endete der Lauf bei der setup.exe,
+          # bevor die uebrigen Dateien ueberhaupt versucht wurden.
+          failed=()
+          for file in "${binaries[@]}"; do
+            ok=0
             for attempt in 1 2 3; do
               echo "Upload $file (Versuch $attempt)"
               if upload_one "$file"; then
-                continue 2
+                ok=1
+                break
               fi
               sleep 15
             done
-            echo "::error::Upload von $file nach 3 Versuchen fehlgeschlagen."
-            exit 1
+            if [ "$ok" -eq 0 ]; then
+              failed+=("$file")
+            fi
           done
+
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "::warning::Nicht hochgeladen: ${failed[*]}"
+            # Gegenprobe mit der ersten gescheiterten Datei unter neutralem Namen und
+            # ohne .exe-Endung. Geht sie so durch, haengt es an Name oder Dateityp;
+            # haengt auch das, liegt es am Inhalt der Datei selbst.
+            cp "${failed[0]}" package-output/diagnose-probe.bin
+            echo "Gegenprobe: ${failed[0]} als diagnose-probe.bin"
+            probe_rc=0
+            timeout --signal=KILL 300 gh release upload "$GIT_TAG" package-output/diagnose-probe.bin --clobber || probe_rc=$?
+            echo "  -> Gegenprobe Exitcode $probe_rc"
+            echo "::error::Upload unvollstaendig. latest.yml wird bewusst nicht hochgeladen, das Release bleibt Draft."
+            exit 1
+          fi
+
+          # latest.yml zuletzt - an ihr erkennt electron-updater das Release als nutzbar.
+          for attempt in 1 2 3; do
+            echo "Upload package-output/latest.yml (Versuch $attempt)"
+            if upload_one package-output/latest.yml; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Upload von latest.yml nach 3 Versuchen fehlgeschlagen."
+          exit 1
 
       - name: Publish GitHub Release
         shell: bash
