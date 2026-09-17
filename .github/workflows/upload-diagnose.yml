@@ -53,7 +53,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view upload-probe >/dev/null 2>&1 || gh release create upload-probe --title upload-probe --notes "Temporaer, nur zur Diagnose." --draft
+          # --repo ist noetig, weil dieser Workflow das Repository nicht auscheckt und
+          # gh es sonst aus dem Git-Kontext ableiten will.
+          gh release view upload-probe --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create upload-probe --repo "$GITHUB_REPOSITORY" --target main --title upload-probe --notes "Temporaer, nur zur Diagnose." --draft
 
       - name: Uploads messen
         shell: bash
@@ -68,7 +70,7 @@ jobs:
           for file in probe/QuotaBar-2.2.1-setup.exe probe/probe-random.bin; do
             start=$SECONDS
             rc=0
-            timeout --signal=KILL 300 gh release upload upload-probe "$file" --clobber || rc=$?
+            timeout --signal=KILL 300 gh release upload upload-probe --repo "$GITHUB_REPOSITORY" "$file" --clobber || rc=$?
             if [ "$rc" -eq 0 ]; then
               echo "OK       $file nach $((SECONDS - start))s"
             elif [ "$rc" -eq 137 ]; then
