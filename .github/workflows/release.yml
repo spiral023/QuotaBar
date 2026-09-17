@@ -11,6 +11,7 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -46,10 +47,40 @@ jobs:
           # electron-updater unsichtbar; veroeffentlicht wird erst nach dem Upload.
           gh release view "$GIT_TAG" >/dev/null 2>&1 || gh release create "$GIT_TAG" --title "$GIT_TAG" --notes "" --draft
 
-      - name: Build & publish installer
+      - name: Build installer
+        run: npx electron-builder --win --publish never
+
+      - name: Upload release assets
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish always
+          GIT_TAG: ${{ github.ref_name }}
+        run: |
+          # electron-builder laedt nicht mehr selbst hoch: sein GitHub-Upload blieb bei
+          # v2.2.2 zweimal reproduzierbar an QuotaBar-<version>-setup.exe haengen - ohne
+          # Fehler, ohne Timeout, waehrend gleich grosse Dateien danebendurchliefen. gh
+          # bricht stattdessen mit Exitcode ab, womit der Retry unten greift. latest.yml
+          # schreibt electron-builder auch bei --publish never (PublishManager schreibt
+          # die Update-Infos ausserhalb des isPublish-Zweigs).
+          shopt -s nullglob
+          binaries=(package-output/QuotaBar-*-setup.exe package-output/QuotaBar-*-portable.exe package-output/QuotaBar-*-win.zip package-output/*.blockmap)
+          if [ ${#binaries[@]} -eq 0 ]; then
+            echo "::error::Keine Build-Artefakte in package-output gefunden."
+            exit 1
+          fi
+          # latest.yml zuletzt - an ihr erkennt electron-updater das Release als nutzbar.
+          for file in "${binaries[@]}" package-output/latest.yml; do
+            for attempt in 1 2 3; do
+              echo "Upload $file (Versuch $attempt)"
+              if gh release upload "$GIT_TAG" "$file" --clobber; then
+                continue 2
+              fi
+              echo "Upload von $file fehlgeschlagen."
+              sleep 15
+            done
+            echo "::error::Upload von $file nach 3 Versuchen fehlgeschlagen."
+            exit 1
+          done
 
       - name: Publish GitHub Release
         shell: bash
