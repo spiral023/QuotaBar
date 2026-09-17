@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.3 - 2026-09-17
+
+### Fixed
+
+- Release packaging only - the app itself is identical to 2.2.2. That release never
+  shipped a usable installer: the pipeline hung while uploading the setup executable, in
+  three consecutive attempts, so the release ended up without its installer and without
+  the latest.yml that describes the update. Every update check ran into a 404 with
+  "Cannot find latest.yml in the latest release artifacts". Artifacts are now uploaded
+  through the GitHub CLI with retries, and a release only becomes visible once its
+  update metadata is in place.
+
 ## 2.2.2 - 2026-09-17
 
 ### Changed
