@@ -50,11 +50,28 @@ jobs:
       - name: Build installer
         run: npx electron-builder --win --publish never
 
+      - name: Artefakte vermessen
+        shell: bash
+        run: |
+          # Trennt die beiden moeglichen Ursachen des Upload-Haengers: Ist schon das
+          # lokale Lesen der Datei langsam, liegt es am Runner. Ist es schnell, liegt es
+          # an der Uebertragung zu GitHub. Die setup.exe blieb dreimal haengen, waehrend
+          # die praktisch gleich grosse portable.exe jedes Mal durchlief.
+          ls -l package-output/
+          for file in package-output/QuotaBar-*-setup.exe package-output/QuotaBar-*-portable.exe; do
+            start=$SECONDS
+            cat "$file" > /dev/null
+            echo "Lesen von $file: $((SECONDS - start))s"
+          done
+
       - name: Upload release assets
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GIT_TAG: ${{ github.ref_name }}
+          # Protokolliert jeden HTTP-Aufruf der CLI, damit sichtbar wird, bei welchem
+          # API-Call der Upload stehenbleibt. Kann raus, sobald die Ursache klar ist.
+          GH_DEBUG: api
         run: |
           # electron-builder laedt nicht mehr selbst hoch: sein GitHub-Upload blieb bei
           # v2.2.2 zweimal reproduzierbar an QuotaBar-<version>-setup.exe haengen - ohne
@@ -68,14 +85,28 @@ jobs:
             echo "::error::Keine Build-Artefakte in package-output gefunden."
             exit 1
           fi
+          # Ein einzelner Versuch wird nach 8 Minuten abgeraeumt. Ein stehender Upload
+          # soll den Job nicht bis zum Job-Timeout blockieren, sondern in den naechsten
+          # Versuch laufen - mit frischer Verbindung.
+          upload_one() {
+            file=$1
+            start=$SECONDS
+            rc=0
+            if command -v timeout >/dev/null 2>&1; then
+              timeout --signal=KILL 480 gh release upload "$GIT_TAG" "$file" --clobber || rc=$?
+            else
+              gh release upload "$GIT_TAG" "$file" --clobber || rc=$?
+            fi
+            echo "  -> Exitcode $rc nach $((SECONDS - start))s"
+            return $rc
+          }
           # latest.yml zuletzt - an ihr erkennt electron-updater das Release als nutzbar.
           for file in "${binaries[@]}" package-output/latest.yml; do
             for attempt in 1 2 3; do
               echo "Upload $file (Versuch $attempt)"
-              if gh release upload "$GIT_TAG" "$file" --clobber; then
+              if upload_one "$file"; then
                 continue 2
               fi
-              echo "Upload von $file fehlgeschlagen."
               sleep 15
             done
             echo "::error::Upload von $file nach 3 Versuchen fehlgeschlagen."

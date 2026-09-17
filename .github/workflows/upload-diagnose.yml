@@ -1,0 +1,79 @@
+name: Upload-Diagnose
+
+# Nur manuell startbar, beruehrt kein echtes Release.
+#
+# Hintergrund: Bei v2.2.2 und v2.2.3 blieb der Upload von QuotaBar-<version>-setup.exe
+# zu GitHub reproduzierbar stehen - erst mit electron-builder, danach genauso mit der
+# GitHub CLI. Gleich grosse Artefakte (portable.exe, win.zip) liefen im selben Lauf
+# durch. Zwei Erklaerungen bleiben uebrig, und dieser Workflow trennt sie:
+#
+#   1. Es liegt an der neu gebauten Datei (seit Electron 42.11.4).
+#   2. Es liegt generell an Uploads vom Runner zu GitHub.
+#
+# Dazu wird die setup.exe aus v2.2.1 - die am 06.09. ohne Probleme durch denselben
+# Pfad lief - erneut hochgeladen, dazu eine gleich grosse Zufallsdatei als Gegenprobe.
+#
+# Aufraeumen nach der Diagnose:
+#   gh release delete upload-probe --yes --cleanup-tag
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Probedateien bereitstellen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p probe
+          gh release download v2.2.1 --repo "$GITHUB_REPOSITORY" --pattern "QuotaBar-2.2.1-setup.exe" --dir probe
+          size=$(stat -c%s probe/QuotaBar-2.2.1-setup.exe)
+          head -c "$size" /dev/urandom > probe/probe-random.bin
+          ls -l probe/
+
+      - name: Lesegeschwindigkeit messen
+        shell: bash
+        run: |
+          # Ist schon das lokale Lesen langsam, liegt es am Runner und nicht an GitHub.
+          for file in probe/*; do
+            start=$SECONDS
+            cat "$file" > /dev/null
+            echo "Lesen von $file: $((SECONDS - start))s"
+          done
+
+      - name: Draft-Release fuer die Probe anlegen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view upload-probe >/dev/null 2>&1 || gh release create upload-probe --title upload-probe --notes "Temporaer, nur zur Diagnose." --draft
+
+      - name: Uploads messen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Protokolliert jeden HTTP-Aufruf, damit im Log steht, bei welchem API-Call
+          # der Upload stehenbleibt.
+          GH_DEBUG: api
+        run: |
+          # Kein Abbruch bei Fehlschlag: Beide Dateien sollen gemessen werden, damit
+          # der Vergleich aussagekraeftig ist.
+          for file in probe/QuotaBar-2.2.1-setup.exe probe/probe-random.bin; do
+            start=$SECONDS
+            rc=0
+            timeout --signal=KILL 300 gh release upload upload-probe "$file" --clobber || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "OK       $file nach $((SECONDS - start))s"
+            elif [ "$rc" -eq 137 ]; then
+              echo "HAENGT   $file - nach 300s abgeraeumt"
+            else
+              echo "FEHLER   $file - Exitcode $rc nach $((SECONDS - start))s"
+            fi
+          done
