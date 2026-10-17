@@ -24,7 +24,7 @@ export class RefreshLoop {
   private readonly consecutiveRateLimits = new Map<string, number>();
   private offline = false;
   private lastCostWindow: string | undefined;
-  // Diagnose für anomale Rate-Limit-Bursts (siehe ANALYSIS.md): tickSeq zählt
+  // Diagnose für anomale Rate-Limit-Bursts (siehe docs/archive/ANALYSIS.md): tickSeq zählt
   // jede refreshNow()-Ausführung, callSeq jeden tatsächlichen fetchWithTimeout-
   // Aufruf pro Provider. So lässt sich am nächsten Burst ablesen, ob mehrere
   // echte Ticks in kurzer Folge laufen (z. B. durch wiederholte "dashboard"/

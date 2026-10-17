@@ -187,8 +187,8 @@ describe("ai-coding PowerShell setup script", () => {
 
   it("adds PowerShell quality check scaffolding", () => {
     const pesterPath = path.join(repoRoot, "tests", "ai-coding.Tests.ps1");
-    const analyzerPath = path.join(repoRoot, "PSScriptAnalyzerSettings.psd1");
-    const qualityPath = path.join(repoRoot, "Invoke-QualityCheck.ps1");
+    const analyzerPath = path.join(repoRoot, "tools", "PSScriptAnalyzerSettings.psd1");
+    const qualityPath = path.join(repoRoot, "tools", "Invoke-QualityCheck.ps1");
 
     expect(fs.existsSync(pesterPath)).toBe(true);
     expect(fs.existsSync(analyzerPath)).toBe(true);

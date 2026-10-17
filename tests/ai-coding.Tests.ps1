@@ -59,7 +59,7 @@ Describe "ai-coding.ps1" {
       Write-Warning "PSScriptAnalyzer ist nicht installiert"
       return
     }
-    $settings = Join-Path $RepoRoot "PSScriptAnalyzerSettings.psd1"
+    $settings = Join-Path $RepoRoot "tools\PSScriptAnalyzerSettings.psd1"
     $issues = Invoke-ScriptAnalyzer -Path $ScriptPath -Settings $settings
     $issues | Should BeNullOrEmpty
   }

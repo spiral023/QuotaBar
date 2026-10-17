@@ -5,10 +5,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $PSCommandPath
-$ScriptPath = Join-Path $Root "tools\ai-coding.ps1"
+$ToolsDir = Split-Path -Parent $PSCommandPath
+$Root = Split-Path -Parent $ToolsDir
+$ScriptPath = Join-Path $ToolsDir "ai-coding.ps1"
 $PesterPath = Join-Path $Root "tests\ai-coding.Tests.ps1"
-$AnalyzerSettings = Join-Path $Root "PSScriptAnalyzerSettings.psd1"
+$AnalyzerSettings = Join-Path $ToolsDir "PSScriptAnalyzerSettings.psd1"
 
 if (-not $SkipPester) {
   if (Get-Command Invoke-Pester -ErrorAction SilentlyContinue) {

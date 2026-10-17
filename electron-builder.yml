@@ -15,12 +15,19 @@ files:
   - dist/**
   - package.json
   - assets/**
-  - logos/**
+  # Only the provider logos the renderer shows; the README hero and the NSIS
+  # sidebar are build-time or repo assets and do not belong in the app.
+  - logos/claude.png
+  - logos/codex.png
   - src/renderer/**
   - src/config/**
 extraResources:
+  # Toast notifications need real files outside the asar archive.
   - from: logos
     to: logos
+    filter:
+      - claude.png
+      - codex.png
 win:
   target:
     - nsis
