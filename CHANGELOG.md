@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.3.0 - 2026-10-17
+
+### Changed
+
+- Live quota values now arrive about 2 seconds after launch instead of about 22. Polling,
+  notifications, the tray menu and the update check used to wait until the stored usage
+  history had been prepared; that preparation now runs in the background. Quitting while
+  it is still running waits for it to finish, so no write is cut short.
+- Background ingestion while idle costs a fraction of what it did. A single passive pass
+  dropped from 5.5-8.5 s to 1.5-2.4 s on a large history, and passes with new usage finish
+  their follow-up steps in about 3 s instead of 5-6 s. Three causes:
+  - Session files containing a zero-token placeholder entry from Claude Code (API errors,
+    "No response requested.") were treated as not fully priced, so they were re-read on
+    every pass - 133 files here - together with the entire stored history.
+  - A single folder that cannot be watched for changes, such as a Codex home inside WSL,
+    disabled change detection for all folders, so every 15-second tick scanned the full
+    history. Such folders are now covered by a scan at most once a minute; new usage there
+    can take up to a minute to appear.
+  - The store fingerprint, which serializes and hashes every event, was computed three
+    times per pass, once without being used.
+- Each ingest pass now appends the few changed entries to a small journal instead of
+  rewriting the complete ingest state (about 20 MB here) every time.
+- Startup no longer re-reads every legacy debug log to migrate quota snapshots; only new or
+  grown logs are read, which cuts that step from 3-5 s to about 0.5 s.
+
+### Fixed
+
+- Usage of gpt-5-codex-mini is now priced, at the gpt-5.1-codex-mini rates. Codex
+  auto-review and Antigravity proxy models, which have no published price, are booked at
+  zero. Previously these events had no cost at all and kept a background cost repair
+  running on every pass.
+- Improved the contrast of dimmed text to meet WCAG AA: the version number in the header,
+  disabled notification rules and the Codex "Active" badge.
+
 ## 2.2.3 - 2026-09-17
 
 ### Fixed
