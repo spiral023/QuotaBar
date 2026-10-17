@@ -18,10 +18,14 @@ describe("dashboard provider logos", () => {
     expect(liveJs).toContain("../../logos/codex.png");
   });
 
-  it("includes the logo folder in packaged builds", () => {
+  it("packages every provider logo the renderer and notifications reference", () => {
     const builderConfig = fs.readFileSync(path.join(repoRoot, "electron-builder.yml"), "utf8");
 
-    expect(builderConfig).toContain("logos/**");
+    for (const logo of ["claude.png", "codex.png"]) {
+      expect(builderConfig).toContain(`logos/${logo}`);
+      expect(builderConfig).toContain(`- ${logo}`);
+      expect(fs.existsSync(path.join(repoRoot, "logos", logo))).toBe(true);
+    }
   });
 
   it("keeps the Claude logo on a neutral background for contrast", () => {
