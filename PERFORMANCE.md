@@ -245,6 +245,49 @@ die es nie einen Preis gibt; 132 Session-Dateien enthielten mindestens einen dav
   JSONL-Reads darunter Sekunden kosteten. Lese-Hotspots über die Self-Time der Blätter
   (`processJsonlFile`, Readline, `string_decoder`) zuordnen, nicht über Aufrufer.
 
+### Runde 7 — Startpfad und Revisions-Hashes (2026-10-17)
+
+Live gemessen in der Dev-Build mit echtem Datenbestand, je zwei Starts hintereinander (der erste
+füllt das Legacy-Quota-Manifest und schließt die Kostenreparatur ab, der zweite ist der
+Normalfall).
+
+| Start | vorher | nachher (2. Start) |
+| --- | --- | --- |
+| Session-Start → erste Live-Quota-Abfrage | ~22 s | **~1,6 s** |
+| `quota_migration` | 2,9–5,4 s (63k Snapshots) | **0,5 s** (146 Snapshots, nur heutiges Log) |
+| `migration_completion` | ~1,0 s | **0,03–0,09 s** |
+| erster Ingest-Lauf | 8,4 s | **3,4 s** (keine Kostenreparatur mehr) |
+| `legacy_reconciliation` | 4,1–5,0 s | 5,3–6,0 s (kalter Cache, jetzt parallel zu Polling/UI) |
+
+| Refresh-Lauf mit neuen Events | vorher | nachher |
+| --- | --- | --- |
+| `legacy_reconciliation` | 2,6–3,5 s | **2,3 s** |
+| `migration_completion` | 0,85–1,3 s | **0,03 s** |
+| `consumer_prewarm` | 1,3–1,8 s | 0,7 s |
+| Folge-Stages gesamt | ~5–6 s | **~3,1 s** |
+
+`legacy_reconciliation` beim Start bleibt offen: Dort muss die Revision einmal kalt berechnet
+werden, und Polling/UI laufen jetzt parallel. Der nächste Hebel ist Option 2 aus Punkt 3
+(überspringen, wenn kein Legacy-Tag betroffen ist).
+
+- **Live-Pfad entkoppelt** ([main.ts](src/main/main.ts)) — `startPortableData()` startet erst
+  nach `refreshLoop.start()` und läuft im Hintergrund. Der Shutdown setzt ein Stop-Flag und wartet
+  auf die laufende Vorbereitung, damit kein Commit abgeschnitten wird und danach kein
+  Ingest-Lifecycle mehr anläuft. Das Detailfenster überbrückt den Zwischenzustand mit
+  `portableDataPreparing` und Retry.
+- **Verworfener Hash gestrichen** ([usageStore.ts](src/portable/usageStore.ts)) — Der
+  Builder-Parameter `revision` von `reconcileLegacyDerived` entfällt; ohne Writes und in
+  `commitIfRevision` dient die memoisierte, byte-identische `currentRevision()`. Ein Test prüft
+  die Gleichheit mit einer frischen Vollberechnung.
+- **Legacy-Quota-Import inkrementell** ([debugBackfill.ts](src/main/debugBackfill.ts)) —
+  Manifest `cache/legacy-quota-import.json` (Größe + mtime je Debug-Log, maschinenlokal, bewusst
+  nicht im archivierten `quota/`). Ignoriert, wenn keine Quota-Partitionen existieren; erst nach
+  erfolgreichem Append geschrieben; nach angewendetem Archiv-Import gelöscht.
+- **Preise:** `gpt-5-codex-mini` per Alias auf `gpt-5.1-codex-mini` (+3,23 $ Codex-Kosten),
+  `codex-auto-review` und `ag-`-Proxy-Routen bewusst 0 $, sofern kein Preis gefunden wird.
+- **Datenprüfung** gegen Backup: Events und Tokens identisch, Quota-Snapshots bis 11:45 UTC
+  identisch (63.296), 0 unbepreiste Events.
+
 ## Feldbefunde aus v2.1.0
 
 Nach dem Rollout auf der Entwicklungsmaschine (184k Events) aufgetreten.
@@ -354,9 +397,9 @@ Update irgendwo setzt `mutatedStored` global und erzwingt Rewrites **aller** bet
 Updates oder durch Inserts umschreibt, ist noch nicht gemessen — vor der Umsetzung klären,
 sonst greift der Fix nicht.
 
-### 11. Live-Polling startet erst nach ~22 s Startarbeit — hoch
+### 11. ~~Live-Polling startet erst nach ~22 s Startarbeit~~ — erledigt in Runde 7
 
-`refreshLoop.start()`, `NotificationService` und Updater laufen erst nach
+Ursprünglicher Befund: `refreshLoop.start()`, `NotificationService` und Updater liefen erst nach
 `await preparePortableData` und `await portableIngestionLifecycle.start()`
 ([main.ts:196, 260, 333](src/main/main.ts#L333)). Tray und Klick-Menü sind sofort da, zeigen
 aber bis zu ~22 s gecachte Quota-Werte. Start-Stages live: ingestion 8,4 s,
@@ -366,19 +409,19 @@ bewusst alle Stages (Test `portableStartup.test.ts:156`), es gibt keinen Skip-Ma
 Entkoppeln ist der größte spürbare Hebel; Risiko mittel wegen der Livelock-Historie (siehe
 Feldbefunde).
 
-### 12. quota_migration liest bei jedem Start 73 MB Debug-Logs — mittel
+### 12. ~~quota_migration liest bei jedem Start 73 MB Debug-Logs~~ — erledigt in Runde 7
 
-`readLegacyQuotaSnapshots` parst alle 106 `debug/YYYY-MM-DD.jsonl` (~63k Snapshots),
+Ursprünglicher Befund: `readLegacyQuotaSnapshots` parst alle 106 `debug/YYYY-MM-DD.jsonl` (~63k Snapshots),
 `appendQuotaSnapshots` liest zum Deduplizieren alle betroffenen Quota-Partitionen (~52 MB) und
 schreibt im Normalfall nichts. Nicht einfach abschaltbar: Er heilt fehlgeschlagene
 Live-Appends (20× `Portable quota snapshot save failed` im Log, zuletzt 17.10.). Ansatz: ein
 Manifest mit Größe/mtime je Debug-Datei, nur geänderte Dateien lesen (normal heute/gestern).
 
-### 13. Kostenreparatur-Drossel greift beim Start nie — niedrig
+### 13. ~~Kostenreparatur-Drossel greift beim Start nie~~ — erledigt in Runde 7
 
-Die Drossel aus Runde 6 lebt nur im Speicher, also liest der erste Lauf jedes Starts den ganzen
-Store zur Kostenreparatur. Erledigt sich, sobald die 3 unbepreisten Modelle einen Preis haben
-und `costEnrichmentVersion` gesetzt wird.
+Mit Preisen für alle Modelle ist die Reparatur abgeschlossen (`costEnrichmentVersion: 1`), der
+erste Lauf liest den Store nicht mehr. Kommt ein neues unbepreistes Modell hinzu, greift
+wieder die stündliche Drossel; beim Start läuft dann einmal ein voller Versuch.
 
 ### 2. Tages-Rollups persistieren — hoch, größerer Umbau
 
