@@ -24,13 +24,15 @@ const CODEX_MODEL_ALIASES: Readonly<Record<string, string>> = {
 };
 
 /**
- * Models with no published price and no known underlying model, booked at zero
- * on purpose. Left unpriced, they kept the cost-enrichment repair open forever.
+ * Models with no published price and no known underlying model. When the price
+ * lookup finds nothing for them they are booked at zero on purpose; left
+ * unpriced, they kept the cost-enrichment repair open forever.
  */
-const ZERO_PRICED_MODELS: ReadonlySet<string> = new Set([
-  "codex:codex-auto-review",
-  "claude:ag-gemini-pro",
-]);
+function isDeliberatelyUnpriced(event: PortableUsageEvent): boolean {
+  if (event.provider === "codex") return event.model === "codex-auto-review";
+  // Antigravity routes proxied through CLIProxyAPI carry an "ag-" prefix.
+  return event.model.startsWith("ag-");
+}
 
 /** Marks costs that are zero because the event has no tokens, not because a price was found. */
 export const ZERO_TOKEN_PRICING_VERSION = "zero-tokens";
@@ -50,22 +52,9 @@ export async function enrichPortableEventCosts(
     // Claude Code logs API errors and "No response requested." as <synthetic>
     // messages with zero tokens. No price exists for them, and none is needed;
     // leaving them unpriced kept their whole source file permanently unresolved.
-    if ((event.costUSD ?? 0) === 0) {
-      const zeroReason = hasNoTokens(event)
-        ? ZERO_TOKEN_PRICING_VERSION
-        : ZERO_PRICED_MODELS.has(`${event.provider}:${event.model}`) ? ZERO_PRICED_MODEL_PRICING_VERSION : undefined;
-      if (zeroReason) {
-        result[index] = {
-          ...event,
-          costUSD: 0,
-          inputCostUSD: 0,
-          outputCostUSD: 0,
-          cacheCreationCostUSD: 0,
-          cacheReadCostUSD: 0,
-          pricingVersion: zeroReason,
-        };
-        continue;
-      }
+    if (hasNoTokens(event) && (event.costUSD ?? 0) === 0) {
+      result[index] = zeroCost(event, ZERO_TOKEN_PRICING_VERSION);
+      continue;
     }
     const model = event.provider === "codex" ? (CODEX_MODEL_ALIASES[event.model] ?? event.model) : event.model;
     const key = JSON.stringify([event.provider, model]);
@@ -83,7 +72,12 @@ export async function enrichPortableEventCosts(
       const index = indexes[offset];
       const event = events[index];
       const price = resolved[offset];
-      if (!price) continue;
+      if (!price) {
+        if (isDeliberatelyUnpriced(event) && (event.costUSD ?? 0) === 0) {
+          result[index] = zeroCost(event, ZERO_PRICED_MODEL_PRICING_VERSION);
+        }
+        continue;
+      }
       const calculated = event.provider === "codex"
         ? codexBreakdown(event, price.pricing, codexSpeed)
         : calculateCostBreakdown({
@@ -118,6 +112,18 @@ function authoritativeComponents(calculated: CostBreakdown, costUSD: number): Co
     };
   }
   return scaleBreakdownTo(calculated, costUSD);
+}
+
+function zeroCost(event: PortableUsageEvent, pricingVersion: string): PortableUsageEvent {
+  return {
+    ...event,
+    costUSD: 0,
+    inputCostUSD: 0,
+    outputCostUSD: 0,
+    cacheCreationCostUSD: 0,
+    cacheReadCostUSD: 0,
+    pricingVersion,
+  };
 }
 
 function hasNoTokens(event: PortableUsageEvent): boolean {

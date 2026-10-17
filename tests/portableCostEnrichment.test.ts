@@ -56,18 +56,27 @@ describe("portable cost enrichment", () => {
   });
 
   it("books models without a published price at zero on purpose", async () => {
-    const pricing = resolver(null);
     const events = [
       event({ provider: "codex", model: "codex-auto-review" }),
-      event({ provider: "claude", model: "ag-gemini-pro" }),
+      event({ provider: "claude", model: "ag-proxy-model" }),
     ];
 
-    const result = await enrichPortableEventCosts(events, pricing, "standard");
+    const result = await enrichPortableEventCosts(events, resolver(null), "standard");
 
     for (const item of result) {
       expect(item).toMatchObject({ costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, pricingVersion: "unpriced-model" });
     }
-    expect(pricing.getModelPricingBatch).not.toHaveBeenCalled();
+  });
+
+  it("prefers a real price over the deliberate zero once one exists", async () => {
+    const [result] = await enrichPortableEventCosts(
+      [event({ provider: "codex", model: "codex-auto-review" })],
+      resolver({ input_cost_per_token: 1, output_cost_per_token: 2 }),
+      "standard",
+    );
+
+    expect(result.costUSD).toBeGreaterThan(0);
+    expect(result.pricingVersion).toMatch(/^litellm:/);
   });
 
   it("prices gpt-5-codex-mini as gpt-5.1-codex-mini", async () => {

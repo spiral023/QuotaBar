@@ -236,9 +236,10 @@ die es nie einen Preis gibt; 132 Session-Dateien enthielten mindestens einen dav
   Rein im Speicher, kein Formatwechsel.
 - **Datenprüfung** gegen ein Backup vor dem Lauf: Events, Tokens und Kosten bis 10:00 und
   11:00 UTC identisch; einzige Änderung sind 150 `<synthetic>`-Events mit jetzt 0 $.
-- **Weiter unbepreist** (684 Events): `gpt-5-codex-mini` (675), `codex-auto-review` (6),
-  `ag-gemini-pro` (3). Dafür fehlt ein Preis in LiteLLM und in `FALLBACK_PRICES`; solange
-  bleibt `costEnrichmentVersion` leer und die stündliche Reparatur aktiv.
+- **Danach noch unbepreist** (684 Events): `gpt-5-codex-mini` (675), `codex-auto-review` (6)
+  und eine Antigravity-Proxy-Route mit `ag-`-Präfix (3). Erledigt im Folge-Commit: Alias
+  `gpt-5-codex-mini` → `gpt-5.1-codex-mini`, die beiden anderen bewusst mit 0 $
+  (`pricingVersion: "unpriced-model"`), sofern der Lookup keinen Preis findet.
 - **Profil-Fallstrick:** In async-Code zeigt die inklusive Zeit eines Aufrufers nur den
   synchronen Teil bis zum ersten `await`. `readSource` erschien mit 0,3 s, obwohl die
   JSONL-Reads darunter Sekunden kosteten. Lese-Hotspots über die Self-Time der Blätter
@@ -343,6 +344,42 @@ komplett neu. Passiert bei jedem App-Start. Möglicher Ansatz: die Append-Vorbed
 ersten Lesen einer Partition aus deren tatsächlicher Größe ableiten, sofern die Datei
 vollständig und mit Zeilenende gelesen wurde.
 
+Geprüft 2026-10-17: Der Ansatz ist sicher (Größenprüfung und Append liegen im selben Root-Lock),
+aber nur mit strengerer Vorbedingung. Zeilenende allein reicht nicht: Jede nicht-leere Zeile
+muss gültig sein, im richtigen Monat liegen und eine eindeutige ID haben, sonst verewigt ein
+Append Defekte, die ein Rewrite repariert hätte (`archiveContentValidator` lehnt sie ab; Test
+`portableUsageStoreAppend.test.ts:117` deckt genau das ab). Zweite Einschränkung: Ein einziges
+Update irgendwo setzt `mutatedStored` global und erzwingt Rewrites **aller** betroffenen Monate
+([usageStore.ts:454](src/portable/usageStore.ts#L454)). Ob der Start-Lauf überwiegend durch
+Updates oder durch Inserts umschreibt, ist noch nicht gemessen — vor der Umsetzung klären,
+sonst greift der Fix nicht.
+
+### 11. Live-Polling startet erst nach ~22 s Startarbeit — hoch
+
+`refreshLoop.start()`, `NotificationService` und Updater laufen erst nach
+`await preparePortableData` und `await portableIngestionLifecycle.start()`
+([main.ts:196, 260, 333](src/main/main.ts#L333)). Tray und Klick-Menü sind sofort da, zeigen
+aber bis zu ~22 s gecachte Quota-Werte. Start-Stages live: ingestion 8,4 s,
+legacy_reconciliation 5,0 s, quota_migration 2,9–5,4 s, migration_completion 1,0 s,
+consumer_prewarm 1,8 s, danach sofort ein zweiter Refresh-Pass (~1,5 s). Jeder Start fährt
+bewusst alle Stages (Test `portableStartup.test.ts:156`), es gibt keinen Skip-Marker.
+Entkoppeln ist der größte spürbare Hebel; Risiko mittel wegen der Livelock-Historie (siehe
+Feldbefunde).
+
+### 12. quota_migration liest bei jedem Start 73 MB Debug-Logs — mittel
+
+`readLegacyQuotaSnapshots` parst alle 106 `debug/YYYY-MM-DD.jsonl` (~63k Snapshots),
+`appendQuotaSnapshots` liest zum Deduplizieren alle betroffenen Quota-Partitionen (~52 MB) und
+schreibt im Normalfall nichts. Nicht einfach abschaltbar: Er heilt fehlgeschlagene
+Live-Appends (20× `Portable quota snapshot save failed` im Log, zuletzt 17.10.). Ansatz: ein
+Manifest mit Größe/mtime je Debug-Datei, nur geänderte Dateien lesen (normal heute/gestern).
+
+### 13. Kostenreparatur-Drossel greift beim Start nie — niedrig
+
+Die Drossel aus Runde 6 lebt nur im Speicher, also liest der erste Lauf jedes Starts den ganzen
+Store zur Kostenreparatur. Erledigt sich, sobald die 3 unbepreisten Modelle einen Preis haben
+und `costEnrichmentVersion` gesetzt wird.
+
 ### 2. Tages-Rollups persistieren — hoch, größerer Umbau
 
 Der Architektur-Fix: `rollups/<YYYY-MM>.jsonl` je Tag × Provider × Modell mit
@@ -352,11 +389,28 @@ mit *Tagen* statt mit *Events* — die Voraussetzung dafür, dass sie langfristi
 schnell bleibt. Adressiert zugleich `models:get` (1,0 s) und `windowHistory`
 (0,85 s), die weiterhin die volle Historie lesen.
 
-### 3. Legacy-Reconciliation prüfen — mittel
+### 3. Legacy-Reconciliation: dreifacher Store-Hash pro Lauf — hoch, geprüft 2026-10-17
 
-Kostet 2,8–3,4 s pro Ingest-Zyklus und liest dabei 86 MB Debug-Logs. Zu klären:
-Wie viel davon ist nach abgeschlossener Migration noch nötig, und lässt sich der
-Pfad an Änderungen der Debug-Logs koppeln, statt ihn bei jedem Zyklus zu fahren.
+Die Debug-Logs sind **nicht** der Kostenpunkt. Gelesen werden nur die 201 `*.backfill.jsonl`
+(36 MB, 320 ms, und im Refresh-Pfad sogar außerhalb des Stage-Timers); sie sind seit
+14.07.2026 eingefroren, `runBackfill` hat keinen Aufrufer mehr.
+
+Die ~2,9 s von `legacy_reconciliation` (count=0) und ~1 s von `migration_completion` sind fast
+nur `storeRevision`: JSON-Serialisierung aller 264k Events plus SHA-256, ~1,2 s pro Aufruf
+(read-only nachgemessen). `reconcileLegacyDerived` rechnet ihn zweimal
+([usageStore.ts:300](src/portable/usageStore.ts#L300) und `:377`), den ersten verwirft der
+einzige Aufrufer ungenutzt (`void revision`, [migration.ts:224](src/portable/migration.ts#L224));
+`commitIfRevision` rechnet ihn ein drittes Mal. Dazu zwei volle Klone und mehrere Sorts.
+
+Optionen nach Nutzen/Risiko:
+1. Den verworfenen Hash streichen und `revisionMemo` nach eigenen Writes setzen, damit
+   `commitIfRevision` die memoisierte Revision nutzt. Spart ~2 s pro Lauf, ändert keine Daten.
+2. Reconciliation überspringen, wenn kein geänderter Event-Tag ein Legacy-Tag ist
+   (2025-09-24 bis 2026-07-14) und die Backfill-Dateien unverändert sind. Die Tag-Erkennung
+   muss eine Obermenge sein (inkl. `activityChanged`/Kosten-Reparatur), sonst driften die
+   synthetischen Rest-Events.
+3. `consumer_prewarm` (~1,5–1,7 s) nicht abwarten: Er läuft im Worker, verlängert aber Zyklus
+   und Cooldown.
 
 ### 4. Ein Analytics-Durchlauf statt mehrerer — mittel
 
