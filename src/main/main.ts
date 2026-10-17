@@ -192,73 +192,81 @@ if (!app.requestSingleInstanceLock()) {
         tray.setSnapshots(cachedSnapshots);
         detailsWindow.notifyUpdate(cachedSnapshots);
       }
-      let portableReady = false;
-      await preparePortableData({
-        beginMigration: () => markMigrationRunning(getPortableMigrationPath()),
-        ingestProviderEvents: ingestPortableSources,
-        readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
-        reconcileLegacy: (records) => migrateLegacyData({
-          store: portableUsageStore,
-          records,
-          statePath: getPortableMigrationPath(),
-          finalizeState: false,
-        }),
-        readLegacyQuota: () => readLegacyQuotaSnapshots(getDebugLogDir()),
-        migrateQuota: (snapshots) => appendQuotaSnapshots(getPortableQuotaDir(), snapshots),
-        completeMigration: (revision) => markMigrationComplete(getPortableMigrationPath(), revision, portableUsageStore),
-        failMigration: (code, expectation) => markMigrationFailed(
-          getPortableMigrationPath(),
-          code,
-          expectation,
-          portableUsageStore,
-        ),
-        prewarmConsumers: () => detailsWindow.prewarmAnalytics(),
-        onStageComplete: (stage, durationMs, count) => {
-          log.info(`Portable data stage=${stage} count=${count} durationMs=${durationMs}`);
-        },
-      }).then((result) => {
-        portableReady = result.status === "complete";
-      }).catch(() => {
-        log.warn("Portable data preparation failed");
-      });
-      if (portableReady) {
-        portableIngestionLifecycle = createPortableIngestionLifecycle(createPortableIngestionRunner(async () => {
-          await refreshPortableData({
-            readCompleteRevision: () => readCompleteMigrationRevision(getPortableMigrationPath()),
-            readStoreRevision: () => portableUsageStore.getRevision(),
-            recoverRefresh: () => beginMigrationRefreshRecovery(getPortableMigrationPath()),
-            ingestProviderEvents: ingestPortableSources,
-            beginRefresh: (revision) => beginMigrationRefresh(getPortableMigrationPath(), revision),
-            readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
-            reconcileLegacy: (records, owner) => migrateLegacyData({
-              store: portableUsageStore,
-              records,
-              statePath: getPortableMigrationPath(),
-              finalizeState: false,
-              expectedOwner: owner,
-            }),
-            completeMigration: (revision, owner) => markMigrationComplete(
-              getPortableMigrationPath(),
-              revision,
-              portableUsageStore,
-              owner,
-            ),
-            failMigration: (code, expectation) => markMigrationFailed(
-              getPortableMigrationPath(),
-              code,
-              expectation,
-              portableUsageStore,
-            ),
-            refreshConsumers: () => detailsWindow.prewarmAnalytics(),
-            onStageComplete: (stage, durationMs, count) => {
-              log.info(`Portable data refresh stage=${stage} count=${count} durationMs=${durationMs}`);
-            },
-          });
-        }, (diagnostic) => log.warn(diagnostic)), undefined, {
-          shouldRun: () => sourceChangeWatcher?.consume() ?? true,
+      // Preparing portable data takes seconds on a large history (ingest, legacy
+      // reconciliation, quota migration). It is started only once the live path
+      // below is up, so quota polling, notifications and the tray menu no longer
+      // wait for it. Shutdown waits for it instead of cutting a commit short.
+      let portableStartupStopped = false;
+      let portableStartup: Promise<void> = Promise.resolve();
+      const startPortableData = async (): Promise<void> => {
+        let portableReady = false;
+        await preparePortableData({
+          beginMigration: () => markMigrationRunning(getPortableMigrationPath()),
+          ingestProviderEvents: ingestPortableSources,
+          readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
+          reconcileLegacy: (records) => migrateLegacyData({
+            store: portableUsageStore,
+            records,
+            statePath: getPortableMigrationPath(),
+            finalizeState: false,
+          }),
+          readLegacyQuota: () => readLegacyQuotaSnapshots(getDebugLogDir()),
+          migrateQuota: (snapshots) => appendQuotaSnapshots(getPortableQuotaDir(), snapshots),
+          completeMigration: (revision) => markMigrationComplete(getPortableMigrationPath(), revision, portableUsageStore),
+          failMigration: (code, expectation) => markMigrationFailed(
+            getPortableMigrationPath(),
+            code,
+            expectation,
+            portableUsageStore,
+          ),
+          prewarmConsumers: () => detailsWindow.prewarmAnalytics(),
+          onStageComplete: (stage, durationMs, count) => {
+            log.info(`Portable data stage=${stage} count=${count} durationMs=${durationMs}`);
+          },
+        }).then((result) => {
+          portableReady = result.status === "complete";
+        }).catch(() => {
+          log.warn("Portable data preparation failed");
         });
-        await portableIngestionLifecycle.start();
-      }
+        if (portableReady && !portableStartupStopped) {
+          portableIngestionLifecycle = createPortableIngestionLifecycle(createPortableIngestionRunner(async () => {
+            await refreshPortableData({
+              readCompleteRevision: () => readCompleteMigrationRevision(getPortableMigrationPath()),
+              readStoreRevision: () => portableUsageStore.getRevision(),
+              recoverRefresh: () => beginMigrationRefreshRecovery(getPortableMigrationPath()),
+              ingestProviderEvents: ingestPortableSources,
+              beginRefresh: (revision) => beginMigrationRefresh(getPortableMigrationPath(), revision),
+              readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
+              reconcileLegacy: (records, owner) => migrateLegacyData({
+                store: portableUsageStore,
+                records,
+                statePath: getPortableMigrationPath(),
+                finalizeState: false,
+                expectedOwner: owner,
+              }),
+              completeMigration: (revision, owner) => markMigrationComplete(
+                getPortableMigrationPath(),
+                revision,
+                portableUsageStore,
+                owner,
+              ),
+              failMigration: (code, expectation) => markMigrationFailed(
+                getPortableMigrationPath(),
+                code,
+                expectation,
+                portableUsageStore,
+              ),
+              refreshConsumers: () => detailsWindow.prewarmAnalytics(),
+              onStageComplete: (stage, durationMs, count) => {
+                log.info(`Portable data refresh stage=${stage} count=${count} durationMs=${durationMs}`);
+              },
+            });
+          }, (diagnostic) => log.warn(diagnostic)), undefined, {
+            shouldRun: () => sourceChangeWatcher?.consume() ?? true,
+          });
+          await portableIngestionLifecycle.start();
+        }
+      };
       const recomputeCostsAndIngest = (): void => {
         void refreshLoop.recomputeCost().finally(() => portableIngestionLifecycle?.trigger("manual-recompute"));
       };
@@ -331,6 +339,9 @@ if (!app.requestSingleInstanceLock()) {
         });
       });
       refreshLoop.start();
+      portableStartup = startPortableData().catch((err: unknown) => {
+        log.warn(`Portable data startup failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
       registerLifecycleEvents({
         recorder,
         onResume: (sleepSeconds: number) => {
@@ -351,6 +362,8 @@ if (!app.requestSingleInstanceLock()) {
       });
       const drainShutdown = createShutdownDrain({
         stopIngestion: async () => {
+          portableStartupStopped = true;
+          await portableStartup;
           const lifecycle = portableIngestionLifecycle;
           portableIngestionLifecycle = undefined;
           sourceChangeWatcher?.close();

@@ -37,6 +37,18 @@ describe("portable startup preparation", () => {
     expect(prewarm).toBeGreaterThan(preparation);
   });
 
+  it("starts live polling before portable preparation and lets shutdown wait for it", async () => {
+    const source = await readFile(path.resolve("src/main/main.ts"), "utf8");
+    const liveStart = source.indexOf("refreshLoop.start();");
+    const portableStart = source.indexOf("portableStartup = startPortableData()");
+    const drain = source.indexOf("const drainShutdown");
+    expect(liveStart).toBeGreaterThan(-1);
+    expect(portableStart).toBeGreaterThan(liveStart);
+    expect(source.indexOf("await preparePortableData(")).toBeLessThan(liveStart);
+    expect(source.indexOf("await portableStartup;", drain)).toBeLessThan(source.indexOf("await lifecycle?.stop()", drain));
+    expect(source).toContain("if (portableReady && !portableStartupStopped)");
+  });
+
   it("prices provider events before committing them to the portable store", async () => {
     const source = await readFile(path.resolve("src/main/main.ts"), "utf8");
     expect(source).toContain("new HistoricalPricingResolver(new LiteLLMFetcher(runtimeSettings.pricingOfflineMode))");
