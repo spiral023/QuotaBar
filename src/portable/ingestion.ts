@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as nodeFs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -20,14 +21,19 @@ import {
 import { fromClaudeEntries, fromCodexEvents } from "./eventAdapters";
 import { PORTABLE_COST_ENRICHMENT_VERSION } from "./costEnrichment";
 import {
+  applyPortableIngestJournal,
   isCurrentIngestSourceState,
   parsePortableIngestStateForLoad,
   portableIngestSourceKey,
+  PORTABLE_INGEST_JOURNAL_FILE,
+  serializePortableIngestJournalEntry,
   type CurrentIngestSourceState,
+  type PortableIngestJournalBase,
+  type PortableIngestStateDelta,
 } from "./ingestState";
 import { withNamedPortableRootLock } from "./rootLock";
 import { PORTABLE_STORE_VERSION, type PortableIngestState, type PortableProvider, type PortableUsageEvent } from "./types";
-import { getSharedUsageStore, PortableUsageStore } from "./usageStore";
+import { getSharedUsageStore, PortableUsageStore, type IngestJournalWrite } from "./usageStore";
 
 type ReconcileResult = { inserted: number; updated: number; existing: number };
 type SourceErrorCode = "listing_failed" | "stat_failed" | "read_failed" | "adapter_failed" | "cost_failed";
@@ -37,6 +43,7 @@ type IngestionStore = {
   getIngestStatePath(): string;
   recoverPending(): Promise<void>;
   reconcileWithIngestState(events: readonly PortableUsageEvent[], state: PortableIngestState): Promise<ReconcileResult>;
+  reconcileWithIngestJournal?(events: readonly PortableUsageEvent[], write: IngestJournalWrite): Promise<ReconcileResult>;
   read?(): Promise<PortableUsageEvent[]>;
 };
 
@@ -59,6 +66,10 @@ export interface IngestPortableUsageOptions {
   readCodex?: (refs: CodexSourceFileRef[]) => Promise<CodexTokenEvent[]>;
   statSource?: (sourcePath: string) => Promise<PortableSourceFingerprint>;
   enrichCosts?: (events: readonly PortableUsageEvent[]) => Promise<PortableUsageEvent[]>;
+  /** Smallest snapshot worth journaling; below it a full rewrite is cheap enough. */
+  journalMinSnapshotBytes?: number;
+  /** Journal size, relative to the snapshot, at which it is compacted into a new snapshot. */
+  journalMaxSnapshotShare?: number;
 }
 
 export interface IngestPortableUsageResult extends ReconcileResult {
@@ -89,12 +100,37 @@ interface LoadedState {
   state: PortableIngestState;
   diagnostics: IngestDiagnostic[];
   rewriteRequired: boolean;
+  /** Present when the snapshot on disk can be extended by a journal. */
+  journal?: LoadedJournal;
+}
+
+interface LoadedJournal {
+  base: PortableIngestJournalBase;
+  snapshotBytes: number;
+  /** False when the next journal write has to start a new journal on this snapshot. */
+  usable: boolean;
+  bytes: number;
+}
+
+interface CachedState {
+  identity: string;
+  loaded: Omit<LoadedState, "diagnostics">;
 }
 
 const stateQueues = new Map<string, Promise<void>>();
 const INGEST_OPERATION_ERROR = Symbol("ingest-operation-error");
 const CORRUPT_STATE_FILE = /^ingest-state\.corrupt\.(\d{13})\.json$/;
 const MAX_CORRUPT_STATE_FILES = 3;
+const JOURNAL_MIN_SNAPSHOT_BYTES = 256 * 1024;
+/** Compacting once the journal reaches a quarter of the snapshot keeps replay cheap and rewrites rare. */
+const JOURNAL_MAX_SNAPSHOT_SHARE = 0.25;
+/**
+ * Parsed ingest state by canonical state path. The state is megabytes of JSON
+ * that every pass used to re-read, re-validate and re-serialize even when no
+ * source had changed. File identities guard each entry, so a write by anyone
+ * else — an import, another process — is still picked up.
+ */
+const stateCache = new Map<string, CachedState>();
 
 export function ingestPortableUsage(options: IngestPortableUsageOptions = {}): Promise<IngestPortableUsageResult> {
   const store = options.store ?? getDefaultStore();
@@ -157,14 +193,16 @@ async function ingestExclusive(
   } catch {
     throw new Error("Portable usage store recovery failed");
   }
-  const loaded = await readStateRecovering(statePath);
+  const loaded = await readStateCached(statePath);
   const previousState = loaded.state;
   if (options.enrichCosts
     && previousState.costEnrichmentVersion !== undefined
     && previousState.costEnrichmentVersion > PORTABLE_COST_ENRICHMENT_VERSION) {
     throw new Error("Portable cost enrichment version is newer than supported");
   }
-  const nextSources = cloneSources(previousState.sources);
+  // Source records are only ever replaced, never mutated, so cached records can
+  // be shared and a changed record is recognizable by identity.
+  const nextSources: PortableIngestState["sources"] = { ...previousState.sources };
   const discovery = await collectKnownSources(options, errors);
   const knownSources = discovery.sources;
   const sourceByKey = new Map(knownSources.map((source) => [source.key, source]));
@@ -316,11 +354,36 @@ async function ingestExclusive(
       : {}),
     sources: nextSources,
   };
+  const journalWrite = planJournalWrite(loaded, nextState, store, {
+    minSnapshotBytes: options.journalMinSnapshotBytes ?? JOURNAL_MIN_SNAPSHOT_BYTES,
+    maxSnapshotShare: options.journalMaxSnapshotShare ?? JOURNAL_MAX_SNAPSHOT_SHARE,
+  });
+  const cacheKey = canonicalPath(statePath);
+  stateCache.delete(cacheKey);
   let reconciled: ReconcileResult;
   try {
-    reconciled = await store.reconcileWithIngestState(incoming, nextState);
+    reconciled = journalWrite && store.reconcileWithIngestJournal
+      ? await store.reconcileWithIngestJournal(incoming, journalWrite)
+      : await store.reconcileWithIngestState(incoming, nextState);
   } catch {
     throw new Error("Portable usage reconciliation failed");
+  }
+  // After a journal append the new state is known exactly. A full rewrite is
+  // re-serialized by the store, so the next pass reads that back instead.
+  if (journalWrite && loaded.journal) {
+    try {
+      const identity = await stateFilesIdentity(statePath);
+      stateCache.set(cacheKey, {
+        identity: identity.key,
+        loaded: {
+          state: nextState,
+          rewriteRequired: false,
+          journal: { ...loaded.journal, usable: true, bytes: identity.journalBytes },
+        },
+      });
+    } catch {
+      // Without an identity the next pass simply reads the files again.
+    }
   }
   return {
     scanned: knownSources.length,
@@ -410,7 +473,12 @@ function canonicalValue(value: unknown): string {
 
 async function assertSupportedCostEnrichmentState(statePath: string): Promise<void> {
   try {
-    const parsed = parsePortableIngestStateForLoad(JSON.parse(await nodeFs.readFile(statePath, "utf8"))).state;
+    // The version is never journaled — changing it forces a snapshot rewrite —
+    // so a cached state that still matches the files answers this as well.
+    const cached = stateCache.get(canonicalPath(statePath));
+    const parsed = cached && cached.identity === (await stateFilesIdentity(statePath)).key
+      ? cached.loaded.state
+      : parsePortableIngestStateForLoad(JSON.parse(await nodeFs.readFile(statePath, "utf8"))).state;
     if (parsed.costEnrichmentVersion !== undefined
       && parsed.costEnrichmentVersion > PORTABLE_COST_ENRICHMENT_VERSION) {
       throw new Error("Portable cost enrichment version is newer than supported");
@@ -502,10 +570,84 @@ async function statSourceStrict(sourcePath: string): Promise<PortableSourceFinge
   };
 }
 
-async function readStateRecovering(statePath: string): Promise<LoadedState> {
-  let text: string;
+async function readStateCached(statePath: string): Promise<LoadedState> {
+  const cacheKey = canonicalPath(statePath);
+  let identity: string | undefined;
   try {
-    text = await nodeFs.readFile(statePath, "utf8");
+    identity = (await stateFilesIdentity(statePath)).key;
+  } catch {
+    identity = undefined;
+  }
+  const cached = stateCache.get(cacheKey);
+  if (identity !== undefined && cached?.identity === identity) return { ...cached.loaded, diagnostics: [] };
+  stateCache.delete(cacheKey);
+  const loaded = await readStateRecovering(statePath);
+  // The identity was taken before reading, so a write in between only makes the
+  // entry miss next time; it can never pin content the files no longer hold.
+  if (identity !== undefined && loaded.diagnostics.length === 0) {
+    const { diagnostics: _diagnostics, ...rest } = loaded;
+    stateCache.set(cacheKey, { identity, loaded: rest });
+  }
+  return loaded;
+}
+
+async function stateFilesIdentity(statePath: string): Promise<{ key: string; journalBytes: number }> {
+  const snapshot = await fileIdentity(statePath);
+  const journal = await fileIdentity(journalPathFor(statePath));
+  return { key: `${snapshot.key}|${journal.key}`, journalBytes: journal.size };
+}
+
+async function fileIdentity(filePath: string): Promise<{ key: string; size: number; mtimeNs: string }> {
+  try {
+    const info = await nodeFs.stat(filePath, { bigint: true });
+    return { key: `${info.size}:${info.mtimeNs}:${info.ctimeNs}`, size: Number(info.size), mtimeNs: info.mtimeNs.toString() };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { key: "missing", size: 0, mtimeNs: "0" };
+    throw error;
+  }
+}
+
+function journalPathFor(statePath: string): string {
+  return path.join(path.dirname(statePath), PORTABLE_INGEST_JOURNAL_FILE);
+}
+
+/**
+ * Decides whether this pass may append to the journal instead of rewriting the
+ * snapshot. Anything unusual — a migrated or recovered state, a damaged journal,
+ * a changed cost-enrichment version — takes the full rewrite, which is always
+ * correct and also compacts the journal away.
+ */
+function planJournalWrite(
+  loaded: LoadedState,
+  nextState: PortableIngestState,
+  store: IngestionStore,
+  limits: { minSnapshotBytes: number; maxSnapshotShare: number },
+): IngestJournalWrite | undefined {
+  const journal = loaded.journal;
+  const previousState = loaded.state;
+  if (!store.reconcileWithIngestJournal || !journal || loaded.rewriteRequired) return undefined;
+  if (journal.snapshotBytes < limits.minSnapshotBytes) return undefined;
+  if (nextState.costEnrichmentVersion !== previousState.costEnrichmentVersion) return undefined;
+  const delta: PortableIngestStateDelta = {};
+  for (const [key, record] of Object.entries(nextState.sources)) {
+    if (previousState.sources[key] === record) continue;
+    // Legacy records are never produced by a pass, only migrated away by a rewrite.
+    if (!isCurrentIngestSourceState(record)) return undefined;
+    delta[key] = record;
+  }
+  for (const key of Object.keys(previousState.sources)) {
+    if (!Object.prototype.hasOwnProperty.call(nextState.sources, key)) delta[key] = null;
+  }
+  const entryBytes = Buffer.byteLength(serializePortableIngestJournalEntry(delta), "utf8");
+  const existingBytes = journal.usable ? journal.bytes : 0;
+  if (existingBytes + entryBytes > journal.snapshotBytes * limits.maxSnapshotShare) return undefined;
+  return journal.usable ? { delta } : { delta, startWith: journal.base };
+}
+
+async function readStateRecovering(statePath: string): Promise<LoadedState> {
+  let bytes: Buffer;
+  try {
+    bytes = await nodeFs.readFile(statePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
       return { state: emptyState(), diagnostics: [], rewriteRequired: false };
@@ -514,24 +656,79 @@ async function readStateRecovering(statePath: string): Promise<LoadedState> {
     // eslint-disable-next-line preserve-caught-error
     throw new Error("Portable ingest state read failed");
   }
+  const text = bytes.toString("utf8");
+  let parsed: ReturnType<typeof parsePortableIngestStateForLoad> | undefined;
   try {
-    const parsed = parsePortableIngestStateForLoad(JSON.parse(text));
-    const canonical = `${JSON.stringify(parsed.state, null, 2)}\n`;
-    return { state: parsed.state, diagnostics: [], rewriteRequired: parsed.migrated || text !== canonical };
+    parsed = parsePortableIngestStateForLoad(JSON.parse(text));
   } catch {
-    const quarantine = path.join(path.dirname(statePath), `ingest-state.corrupt.${Date.now()}.json`);
-    try {
-      await renameWithRetry(statePath, quarantine);
-      await cleanupCorruptStateFiles(path.dirname(statePath));
-    } catch {
-      throw new Error("Portable ingest state recovery failed");
-    }
+    parsed = undefined;
+  }
+  if (parsed) {
+    const canonical = `${JSON.stringify(parsed.state, null, 2)}\n`;
+    const journal = await readJournal(statePath, parsed.state, bytes);
     return {
-      state: emptyState(),
-      diagnostics: [{ code: "state_recovered", path: statePath }],
-      rewriteRequired: true,
+      state: journal.state,
+      diagnostics: [],
+      rewriteRequired: parsed.migrated || text !== canonical || journal.damaged,
+      ...(journal.loaded ? { journal: journal.loaded } : {}),
     };
   }
+
+  const quarantine = path.join(path.dirname(statePath), `ingest-state.corrupt.${Date.now()}.json`);
+  try {
+    await renameWithRetry(statePath, quarantine);
+    await cleanupCorruptStateFiles(path.dirname(statePath));
+  } catch {
+    throw new Error("Portable ingest state recovery failed");
+  }
+  // No journal is loaded, so the rewrite that follows also removes any journal
+  // that belonged to the quarantined snapshot.
+  return {
+    state: emptyState(),
+    diagnostics: [{ code: "state_recovered", path: statePath }],
+    rewriteRequired: true,
+  };
+}
+
+/** Reads the journal next to a parsed snapshot. Any read problem degrades to "no journal". */
+async function readJournal(
+  statePath: string,
+  snapshot: PortableIngestState,
+  snapshotBytes: Buffer,
+): Promise<{ state: PortableIngestState; damaged: boolean; loaded?: LoadedJournal }> {
+  let base: PortableIngestJournalBase;
+  try {
+    const identity = await fileIdentity(statePath);
+    base = {
+      size: String(snapshotBytes.byteLength),
+      mtimeNs: identity.mtimeNs,
+      sha256: createHash("sha256").update(snapshotBytes).digest("hex"),
+    };
+  } catch {
+    return { state: snapshot, damaged: false };
+  }
+  let text: string;
+  try {
+    text = await nodeFs.readFile(journalPathFor(statePath), "utf8");
+  } catch {
+    // Missing or unreadable: the next journal write starts over on this snapshot.
+    return {
+      state: snapshot,
+      damaged: false,
+      loaded: { base, snapshotBytes: snapshotBytes.byteLength, usable: false, bytes: 0 },
+    };
+  }
+  const applied = applyPortableIngestJournal(snapshot, base, text);
+  return {
+    state: applied.state,
+    damaged: applied.damaged,
+    loaded: {
+      base,
+      snapshotBytes: snapshotBytes.byteLength,
+      usable: applied.usable,
+      bytes: applied.usable ? Buffer.byteLength(text, "utf8") : 0,
+    },
+  };
 }
 
 async function renameWithRetry(from: string, to: string): Promise<void> {
@@ -589,13 +786,6 @@ function sameFingerprint(
   fingerprint: { size: string; mtimeNs: string; ctimeNs: string },
 ): boolean {
   return state.size === fingerprint.size && state.mtimeNs === fingerprint.mtimeNs && state.ctimeNs === fingerprint.ctimeNs;
-}
-
-function cloneSources(sources: PortableIngestState["sources"]): PortableIngestState["sources"] {
-  return Object.fromEntries(Object.entries(sources).map(([key, value]) => [key, {
-    ...value,
-    ...(value.eventIds ? { eventIds: [...value.eventIds] } : {}),
-  }]));
 }
 
 function emptyState(): PortableIngestState {

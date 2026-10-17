@@ -10,7 +10,13 @@ import {
   type PortableStoreMetadata,
   type PortableUsageEvent,
 } from "./types";
-import { sanitizePortableIngestState } from "./ingestState";
+import {
+  PORTABLE_INGEST_JOURNAL_FILE,
+  sanitizePortableIngestState,
+  serializePortableIngestJournalEntry,
+  serializePortableIngestJournalHeader,
+  type PortableIngestJournalBase,
+} from "./ingestState";
 import { withPortableRootLock } from "./rootLock";
 
 const PARTITION_FILE = /^(\d{4}-\d{2})\.jsonl$/;
@@ -88,6 +94,17 @@ interface SanitizedResult {
 interface RepairCandidate {
   event: PortableUsageEvent;
   canonical: boolean;
+}
+
+/** Changed ingest-state records to append; startWith begins a fresh journal on that snapshot. */
+export interface IngestJournalWrite {
+  delta: unknown;
+  startWith?: PortableIngestJournalBase;
+}
+
+interface IngestStateWrite {
+  snapshot?: string;
+  journal?: { contents: string; flag: "a" | "w" };
 }
 
 export interface LegacyDerivedPlan {
@@ -371,12 +388,31 @@ export class PortableUsageStore {
     } catch {
       throw new Error("Invalid portable ingest state");
     }
-    return this.exclusive(() => this.reconcileUnlocked(events, `${JSON.stringify(sanitized, null, 2)}\n`));
+    return this.exclusive(() => this.reconcileUnlocked(events, {
+      snapshot: `${JSON.stringify(sanitized, null, 2)}\n`,
+    }));
+  }
+
+  /** Like reconcileWithIngestState, but records only the changed sources in the ingest journal. */
+  async reconcileWithIngestJournal(
+    events: readonly PortableUsageEvent[],
+    write: IngestJournalWrite,
+  ): Promise<{ inserted: number; updated: number; existing: number }> {
+    let contents: string;
+    try {
+      const entry = serializePortableIngestJournalEntry(write.delta);
+      contents = write.startWith ? `${serializePortableIngestJournalHeader(write.startWith)}${entry}` : entry;
+    } catch {
+      throw new Error("Invalid portable ingest state");
+    }
+    return this.exclusive(() => this.reconcileUnlocked(events, {
+      journal: { contents, flag: write.startWith ? "w" : "a" },
+    }));
   }
 
   private async reconcileUnlocked(
     events: readonly PortableUsageEvent[],
-    ingestStateContents?: string,
+    ingestState: IngestStateWrite = {},
   ): Promise<{ inserted: number; updated: number; existing: number }> {
     await this.prepareStore();
     // Readers may emit the same immutable source ID more than once; the last source occurrence is authoritative.
@@ -453,13 +489,26 @@ export class PortableUsageStore {
       }
     }
     writes.set(this.metadataPath(), `${JSON.stringify(buildMetadata(storedByMonth), null, 2)}\n`);
-    if (ingestStateContents !== undefined) writes.set(this.ingestStatePath(), ingestStateContents);
+    if (ingestState.snapshot !== undefined) {
+      writes.set(this.ingestStatePath(), ingestState.snapshot);
+      // The new snapshot already contains everything the journal recorded. The
+      // journal goes first: losing it only rolls the state back to the older
+      // snapshot, while surviving next to a new one could replay stale records.
+      await this.removeIngestJournal();
+    }
     // Appends run first on purpose. A crash between the two leaves the events on
     // disk while ingest-state still lists the source as unread, so the next pass
     // re-derives the same immutable IDs and settles as "existing" — no loss, no
-    // duplicates. The reverse order could drop events permanently.
+    // duplicates. The reverse order could drop events permanently. The journal
+    // line comes last for the same reason.
     await this.commitAppends(appends);
     await this.commitTransaction(writes, removals);
+    if (ingestState.journal) {
+      await this.fileSystem.writeFile(this.ingestJournalPath(), ingestState.journal.contents, {
+        encoding: "utf8",
+        flag: ingestState.journal.flag,
+      });
+    }
     return { inserted, updated, existing };
   }
 
@@ -967,6 +1016,18 @@ export class PortableUsageStore {
 
   private ingestStatePath(): string {
     return path.join(this.rootDir, "ingest-state.json");
+  }
+
+  private ingestJournalPath(): string {
+    return path.join(this.rootDir, PORTABLE_INGEST_JOURNAL_FILE);
+  }
+
+  private async removeIngestJournal(): Promise<void> {
+    try {
+      await this.fileSystem.unlink(this.ingestJournalPath());
+    } catch (error) {
+      if (!isMissingFile(error)) throw error;
+    }
   }
 
   private transactionPath(): string {

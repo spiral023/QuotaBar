@@ -3,7 +3,7 @@
 Langfristiges Register für Performance-Analysen, Messwerte und offene Optimierungen.
 
 Erstanalyse: 2026-09-05
-Letzte Aktualisierung: 2026-09-05
+Letzte Aktualisierung: 2026-10-17
 
 ## Warum diese Datei
 
@@ -152,6 +152,39 @@ eingefrorenem Datenstand (200.872 Events), Revision und Report-Hash identisch.
 - **`canonicalPath` memoisiert.** `path.resolve` lief mehrfach pro bekannter Quelle, also
   tausendfach pro Durchlauf über dieselben Pfade.
 
+### Runde 4 — Ingest-State-Journal (2026-10-17)
+
+Gemessen auf eingefrorenem Datenstand (`ingest-state.json` inzwischen 19,5 MB), gleiche
+Kopie für beide Versionen, je ein frischer Prozess. Ein „geänderter Lauf" simuliert genau
+eine geänderte Quelle (die jüngste Session-Datei), wie im aktiven Betrieb üblich.
+
+| Kennzahl | vorher | nachher |
+| --- | --- | --- |
+| Schreiben pro Lauf mit 1 geänderter Quelle | 20.074 KB | **5 KB** |
+| Laufzeit mit 1 geänderter Quelle | ~2.220 ms | **~1.750 ms** |
+| Laufzeit ohne Änderung | ~1.780 ms | **~1.430 ms** |
+
+- **Append-Journal** ([ingestState.ts](src/portable/ingestState.ts)) — Ein Lauf hängt nur
+  die geänderten Quell-Records als eine Zeile an `ingest-state.journal.jsonl` an, statt den
+  kompletten Snapshot neu zu schreiben. Kompaktiert wird, sobald das Journal ein Viertel des
+  Snapshots erreicht; unter 256 KB Snapshot wird wie bisher immer voll geschrieben.
+- **Sicherheitsargument:** Die Journal-Zeile wird *nach* Events und Metadaten geschrieben.
+  Fehlt sie oder ein beliebiges Ende des Journals, gelten nur weniger Quellen als verarbeitet;
+  der nächste Lauf liest sie erneut und landet bei „existing" — derselbe Pfad wie ein
+  Absturz vor dem State-Schreiben. Ein abgerissenes Zeilenende wird übersprungen und erzwingt
+  die Kompaktierung.
+- **Bindung an den Snapshot:** Der Journal-Header trägt Größe, `mtimeNs` und SHA-256 des
+  Snapshots. Ersetzt jemand anderes den Snapshot (Import, ältere App-Version), passt der
+  Header nicht mehr und das Journal wird ignoriert — auch bei byte-identischem Inhalt.
+  Ältere App-Versionen ignorieren das Journal ohnehin und lesen dann etwas mehr neu ein.
+- **State-Cache** ([ingestion.ts](src/portable/ingestion.ts)) — Der geparste State bleibt
+  im Prozess, abgesichert über Größe/mtime/ctime von Snapshot und Journal. Vorher wurde er
+  bei *jedem* Lauf gelesen, voll validiert und zum Kanonik-Vergleich neu serialisiert, auch
+  ohne jede Änderung; dazu ein zweites Komplett-Parsen in der Cost-Enrichment-Vorprüfung.
+- **Kein Tiefenklon mehr** — `cloneSources` kopierte alle `eventIds` jeder Quelle pro Lauf.
+  Records werden nur ersetzt, nie mutiert; eine flache Kopie reicht, und geänderte Records
+  sind damit über die Objektidentität als Delta erkennbar.
+
 ## Feldbefunde aus v2.1.0
 
 Nach dem Rollout auf der Entwicklungsmaschine (184k Events) aufgetreten.
@@ -223,15 +256,18 @@ angefasst — der ist jetzt der dominante Posten. Siehe offene Punkte 1, 3 und 7
 
 Priorisiert nach Nutzen/Aufwand. Zahlen aus den Messungen oben.
 
-### 1. `ingest-state.json` aufteilen — hoch
+### 1. ~~`ingest-state.json` aufteilen~~ — erledigt in Runde 4
 
-14,1 MB pro Zyklus, jetzt der **gesamte verbleibende Schreib-Overhead**. 85 % der
-Datei sind `eventIds` von 3.119 Quellen, von denen sich pro Zyklus ein bis zwei
-ändern. Median-Größe einer einzelnen Quelle: 1,5 KB.
+Gelöst über ein Append-Journal statt Sidecars/Chunks, siehe Runde 4.
 
-Nur geänderte Quellen zu schreiben würde 14,1 MB → ~1,5 KB bedeuten (−99,99 %).
-Erfordert einen Formatwechsel (Sidecar oder Chunks) mit Kompatibilitätspfad.
-Kompaktes JSON allein bringt nur 12 % und lohnt den Eingriff nicht.
+### 9. Partition-Vollschreiben beim ersten Lauf nach Prozessstart — mittel
+
+Neu gefunden bei der Messung zu Runde 4: Der erste Ingest-Lauf eines Prozesses schrieb
+129–149 MB, obwohl nur 8–10 Events neu waren. Ursache: `appendableFiles` ist beim Start
+leer, also darf der Store an keine Partition anhängen und schreibt jeden betroffenen Monat
+komplett neu. Passiert bei jedem App-Start. Möglicher Ansatz: die Append-Vorbedingung beim
+ersten Lesen einer Partition aus deren tatsächlicher Größe ableiten, sofern die Datei
+vollständig und mit Zeilenende gelesen wurde.
 
 ### 2. Tages-Rollups persistieren — hoch, größerer Umbau
 
