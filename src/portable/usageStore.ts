@@ -219,8 +219,7 @@ export class PortableUsageStore {
   ): Promise<{ status: "applied" | "stale"; revision: string }> {
     return this.exclusive(async () => {
       await this.prepareStore();
-      const snapshots = await this.scanPartitions({ acceptMisplaced: false });
-      const revision = storeRevision(snapshotsToMaps(snapshots));
+      const revision = await this.currentRevision();
       if (revision !== expectedRevision) return { status: "stale", revision };
       await commit();
       return { status: "applied", revision };
@@ -289,7 +288,7 @@ export class PortableUsageStore {
   }
 
   reconcileLegacyDerived(
-    builder: (currentEvents: readonly PortableUsageEvent[], revision: string) => LegacyDerivedPlan,
+    builder: (currentEvents: readonly PortableUsageEvent[]) => LegacyDerivedPlan,
   ): Promise<LegacyDerivedResult> {
     return this.exclusive(async () => {
       await this.prepareStore();
@@ -297,7 +296,7 @@ export class PortableUsageStore {
       const storedByMonth = snapshotsToMaps(snapshots);
       const current = deduplicateGlobally(snapshots.flatMap(({ events }) => events));
       const storedById = new Map(current.map((event) => [event.id, event]));
-      const plan = builder(current.map(clonePortableEvent), storeRevision(storedByMonth));
+      const plan = builder(current.map(clonePortableEvent));
       if (!plan || !Array.isArray(plan.events) || !Array.isArray(plan.removeIds)) {
         throw new Error("Invalid derived reconciliation plan");
       }
@@ -373,8 +372,11 @@ export class PortableUsageStore {
         }
         writes.set(this.metadataPath(), `${JSON.stringify(buildMetadata(storedByMonth), null, 2)}\n`);
         await this.commitTransaction(writes, removals);
+        return { inserted, updated, removed, existing, revision: storeRevision(storedByMonth) };
       }
-      return { inserted, updated, removed, existing, revision: storeRevision(storedByMonth) };
+      // Nothing was written, so the memoized revision of the untouched partitions
+      // is exact and spares re-hashing every event on each reconciliation.
+      return { inserted, updated, removed, existing, revision: await this.currentRevision() };
     });
   }
 

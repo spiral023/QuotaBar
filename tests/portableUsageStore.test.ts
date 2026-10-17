@@ -82,6 +82,31 @@ describe("PortableUsageStore", () => {
     expect(committed).toHaveBeenCalledOnce();
   });
 
+  it("returns the same revision without writes as a full recomputation does", async () => {
+    await store.upsert([
+      event("july", "2026-07-01T00:00:00.000Z"),
+      event("august", "2026-08-01T00:00:00.000Z"),
+    ]);
+
+    const unchanged = await store.reconcileLegacyDerived(() => ({ events: [], removeIds: [] }));
+    const fresh = new PortableUsageStore(rootDir);
+
+    expect(unchanged).toMatchObject({ inserted: 0, updated: 0, removed: 0 });
+    expect(unchanged.revision).toBe(await fresh.getRevision());
+    await expect(store.commitIfRevision(unchanged.revision, async () => undefined))
+      .resolves.toMatchObject({ status: "applied" });
+  });
+
+  it("detects a partition changed behind its back before committing", async () => {
+    await store.upsert([event("base", "2026-07-01T00:00:00.000Z")]);
+    const revision = await store.getRevision();
+    await new PortableUsageStore(rootDir).upsert([event("foreign", "2026-07-02T00:00:00.000Z")]);
+    const committed = vi.fn(async () => undefined);
+
+    await expect(store.commitIfRevision(revision, committed)).resolves.toMatchObject({ status: "stale" });
+    expect(committed).not.toHaveBeenCalled();
+  });
+
   it("writes events to their UTC monthly partitions", async () => {
     await store.upsert([
       event("july-2", "2026-07-31T23:59:59.000Z"),
@@ -119,9 +144,8 @@ describe("PortableUsageStore", () => {
     await store.upsert([provider, legacy]);
 
     const updated = { ...legacy, inputTokens: 4 };
-    const result = await store.reconcileLegacyDerived((current, revision) => {
+    const result = await store.reconcileLegacyDerived((current) => {
       expect(current).toEqual([provider, legacy]);
-      expect(revision).toMatch(/^[a-f0-9]{64}$/);
       current[0].inputTokens = 999;
       return { events: [updated], removeIds: [] };
     });

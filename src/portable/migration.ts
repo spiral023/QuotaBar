@@ -220,8 +220,7 @@ async function migrateLegacyDataExclusive(
 
   let reconciled;
   try {
-    reconciled = await store.reconcileLegacyDerived((current, revision) => {
-      void revision;
+    reconciled = await store.reconcileLegacyDerived((current) => {
       let baseline: Map<string, Aggregate>;
       try {
         baseline = aggregateProviderEvents(current);

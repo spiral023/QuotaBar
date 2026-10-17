@@ -173,7 +173,7 @@ describe("migrateLegacyData", () => {
     const unsafeTimestamp = "private-invalid-timestamp-value";
     const invalid = providerEvent("invalid", unsafeTimestamp, "claude", "model");
     store.reconcileLegacyDerived = async (builder) => {
-      builder([invalid], "0".repeat(64));
+      builder([invalid]);
       throw new Error("builder unexpectedly accepted an invalid timestamp");
     };
 

@@ -12,7 +12,7 @@ const delayMs = Number(process.env.QUOTABAR_MIGRATION_CHILD_DELAY ?? 0);
 
 class DelayedPortableUsageStore extends PortableUsageStore {
   override async reconcileLegacyDerived(
-    builder: (currentEvents: readonly PortableUsageEvent[], revision: string) => LegacyDerivedPlan,
+    builder: (currentEvents: readonly PortableUsageEvent[]) => LegacyDerivedPlan,
   ): Promise<LegacyDerivedResult> {
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     return super.reconcileLegacyDerived(builder);
