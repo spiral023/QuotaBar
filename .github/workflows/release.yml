@@ -14,10 +14,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -50,20 +50,6 @@ jobs:
       - name: Build installer
         run: npx electron-builder --win --publish never
 
-      - name: Artefakte vermessen
-        shell: bash
-        run: |
-          # Trennt die beiden moeglichen Ursachen des Upload-Haengers: Ist schon das
-          # lokale Lesen der Datei langsam, liegt es am Runner. Ist es schnell, liegt es
-          # an der Uebertragung zu GitHub. Die setup.exe blieb dreimal haengen, waehrend
-          # die praktisch gleich grosse portable.exe jedes Mal durchlief.
-          ls -l package-output/
-          for file in package-output/QuotaBar-*-setup.exe package-output/QuotaBar-*-portable.exe; do
-            start=$SECONDS
-            cat "$file" > /dev/null
-            echo "Lesen von $file: $((SECONDS - start))s"
-          done
-
       - name: Collect builds (versioned + latest)
         shell: bash
         run: |
@@ -79,7 +65,7 @@ jobs:
           ls -la upload/
 
       - name: Upload builds as workflow artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: builds
           path: upload/
@@ -90,9 +76,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GIT_TAG: ${{ github.ref_name }}
-          # Protokolliert jeden HTTP-Aufruf der CLI, damit sichtbar wird, bei welchem
-          # API-Call der Upload stehenbleibt. Kann raus, sobald die Ursache klar ist.
-          GH_DEBUG: api
         run: |
           # electron-builder laedt nicht mehr selbst hoch: sein GitHub-Upload blieb bei
           # v2.2.2 zweimal reproduzierbar an QuotaBar-<version>-setup.exe haengen - ohne
@@ -121,9 +104,8 @@ jobs:
             echo "  -> Exitcode $rc nach $((SECONDS - start))s"
             return $rc
           }
-          # Kein Abbruch beim ersten Fehlschlag: Wir wollen wissen, welche Artefakte
-          # GitHub annimmt und welche nicht. Bisher endete der Lauf bei der setup.exe,
-          # bevor die uebrigen Dateien ueberhaupt versucht wurden.
+          # Every artifact is attempted even after a failure, so the log lists exactly
+          # which ones GitHub did not accept.
           failed=()
           for file in "${binaries[@]}"; do
             ok=0
@@ -142,14 +124,6 @@ jobs:
 
           if [ ${#failed[@]} -gt 0 ]; then
             echo "::warning::Nicht hochgeladen: ${failed[*]}"
-            # Gegenprobe mit der ersten gescheiterten Datei unter neutralem Namen und
-            # ohne .exe-Endung. Geht sie so durch, haengt es an Name oder Dateityp;
-            # haengt auch das, liegt es am Inhalt der Datei selbst.
-            cp "${failed[0]}" package-output/diagnose-probe.bin
-            echo "Gegenprobe: ${failed[0]} als diagnose-probe.bin"
-            probe_rc=0
-            timeout --signal=KILL 300 gh release upload "$GIT_TAG" package-output/diagnose-probe.bin --clobber || probe_rc=$?
-            echo "  -> Gegenprobe Exitcode $probe_rc"
             echo "::error::Upload unvollstaendig. latest.yml wird bewusst nicht hochgeladen, das Release bleibt Draft."
             exit 1
           fi
@@ -192,7 +166,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download builds
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: builds
           path: upload
