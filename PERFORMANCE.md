@@ -207,6 +207,43 @@ App im Leerlauf, `quotabar.log` → `stage=ingestion`:
   Wer den Leerlauf misst, darf in der Zeit nicht mit Claude Code arbeiten, sonst ist jeder
   Tick zu Recht „geändert“.
 
+### Runde 6 — Endlos-Retry unbepreister Events (2026-10-17)
+
+Gefunden per CPU-Profil des laufenden Main-Prozesses (`electron --inspect`, CDP-Profiler)
+und Abgleich Platte ↔ State: **133 von 2.367 Quellen** galten in jedem Lauf als geändert,
+wurden komplett gelesen und nie in den State übernommen. Dazu las jeder Lauf den gesamten
+Store (264k Events, 1,9 s), um ihn neu zu bepreisen.
+
+Ursache: Eine Quelle mit auch nur einem unbepreisten Event bleibt bewusst aus dem State, und
+`costEnrichmentVersion` bleibt leer, damit später ein Preis nachgetragen werden kann. Der
+Nachtrag wurde aber **bei jedem Tick** versucht. Auslöser waren fast nur `<synthetic>`-Einträge
+von Claude Code (API-Fehler wie „session limit“, „No response requested.“) mit 0 Tokens, für
+die es nie einen Preis gibt; 132 Session-Dateien enthielten mindestens einen davon.
+
+| Leerlauf-Lauf ohne Änderung (live) | vorher | nachher |
+| --- | --- | --- |
+| `stage=ingestion` | 5,5–8,5 s | **1,5–2,4 s** |
+| Quellen, die jeder Lauf neu liest | 133 | **3** (aktive Session + 2 mit echt unbepreisten Modellen) |
+| Store-Vollread zur Kostenreparatur | jeder Lauf | **≤ 1×/h** und beim Start |
+
+- **0 Tokens → 0 $** ([costEnrichment.ts](src/portable/costEnrichment.ts)) — Events ohne
+  Tokens gelten ohne Preis-Lookup als vollständig bepreist (`pricingVersion: "zero-tokens"`).
+  Ohne Versionserhöhung: Wo die Reparatur noch aussteht, holt der nächste Lauf das nach.
+- **Retries gedrosselt** ([ingestion.ts](src/portable/ingestion.ts)) — Eine Quelle, die nur
+  am fehlenden Preis hängt, wird bei unverändertem Fingerprint höchstens stündlich neu gelesen,
+  die Store-Reparatur ebenso. Gilt nur, solange die State-Dateien so sind, wie dieser Prozess
+  sie hinterlassen hat; Fremdschreiben (Import, anderer Prozess) setzt die Drossel zurück.
+  Rein im Speicher, kein Formatwechsel.
+- **Datenprüfung** gegen ein Backup vor dem Lauf: Events, Tokens und Kosten bis 10:00 und
+  11:00 UTC identisch; einzige Änderung sind 150 `<synthetic>`-Events mit jetzt 0 $.
+- **Weiter unbepreist** (684 Events): `gpt-5-codex-mini` (675), `codex-auto-review` (6),
+  `ag-gemini-pro` (3). Dafür fehlt ein Preis in LiteLLM und in `FALLBACK_PRICES`; solange
+  bleibt `costEnrichmentVersion` leer und die stündliche Reparatur aktiv.
+- **Profil-Fallstrick:** In async-Code zeigt die inklusive Zeit eines Aufrufers nur den
+  synchronen Teil bis zum ersten `await`. `readSource` erschien mit 0,3 s, obwohl die
+  JSONL-Reads darunter Sekunden kosteten. Lese-Hotspots über die Self-Time der Blätter
+  (`processJsonlFile`, Readline, `string_decoder`) zuordnen, nicht über Aufrufer.
+
 ## Feldbefunde aus v2.1.0
 
 Nach dem Rollout auf der Entwicklungsmaschine (184k Events) aufgetreten.
@@ -283,7 +320,11 @@ Priorisiert nach Nutzen/Aufwand. Zahlen aus den Messungen oben.
 
 Gelöst über ein Append-Journal statt Sidecars/Chunks, siehe Runde 4.
 
-### 10. Ingest live ~4 s langsamer als isoliert — hoch, erst profilieren
+### 10. ~~Ingest live ~4 s langsamer als isoliert~~ — Hauptursache behoben in Runde 6
+
+Ursache war der Endlos-Retry unbepreister Events. Live jetzt 1,5–2,4 s gegenüber ~1,4 s
+isoliert; der Rest ist im erwartbaren Rahmen für einen Prozess mit paralleler Last.
+Ursprünglicher Befund:
 
 Isoliert (frischer Prozess, ruhige Datenkopie) dauert ein Lauf ohne Änderung ~1,4 s; Listing
 und `stat` aller 2.367 Quellen machen davon ~1,4 s aus (Claude 2.182 Dateien: ~0,7 s Listing,

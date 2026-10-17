@@ -70,6 +70,9 @@ export interface IngestPortableUsageOptions {
   journalMinSnapshotBytes?: number;
   /** Journal size, relative to the snapshot, at which it is compacted into a new snapshot. */
   journalMaxSnapshotShare?: number;
+  /** Minimum time between attempts to price events that had no price last time. */
+  costRetryIntervalMs?: number;
+  now?: () => number;
 }
 
 export interface IngestPortableUsageResult extends ReconcileResult {
@@ -102,6 +105,8 @@ interface LoadedState {
   rewriteRequired: boolean;
   /** Present when the snapshot on disk can be extended by a journal. */
   journal?: LoadedJournal;
+  /** Identity of the state files this was read from, when it could be taken. */
+  identity?: string;
 }
 
 interface LoadedJournal {
@@ -131,6 +136,25 @@ const JOURNAL_MAX_SNAPSHOT_SHARE = 0.25;
  * else — an import, another process — is still picked up.
  */
 const stateCache = new Map<string, CachedState>();
+
+/**
+ * Events whose model has no price keep their source out of the state and the
+ * cost-enrichment version unset, so both are retried. Retrying on every pass
+ * re-read those source files and the entire store each time, seconds per pass
+ * for a price that will not appear between two ticks. Retries are therefore
+ * spaced out, but only while the state files are exactly as this process left
+ * them; anyone else writing them (an import, another process) resets the memo.
+ */
+interface CostRetryMemo {
+  stateIdentity?: string;
+  /** When pricing the stored events was last attempted without completing the repair. */
+  repairAttemptedAt?: number;
+  /** Sources read successfully but left unresolved, by the fingerprint they were read at. */
+  unresolved: Map<string, { fingerprint: string; attemptedAt: number }>;
+}
+
+const COST_RETRY_INTERVAL_MS = 60 * 60 * 1000;
+const costRetryMemos = new Map<string, CostRetryMemo>();
 
 export function ingestPortableUsage(options: IngestPortableUsageOptions = {}): Promise<IngestPortableUsageResult> {
   const store = options.store ?? getDefaultStore();
@@ -195,6 +219,15 @@ async function ingestExclusive(
   }
   const loaded = await readStateCached(statePath);
   const previousState = loaded.state;
+  const passStartedAt = (options.now ?? Date.now)();
+  const costRetryIntervalMs = options.costRetryIntervalMs ?? COST_RETRY_INTERVAL_MS;
+  const retryDue = (attemptedAt: number): boolean => passStartedAt - attemptedAt >= costRetryIntervalMs;
+  const memoKey = canonicalPath(statePath);
+  const costMemo = costRetryMemos.get(memoKey);
+  if (costMemo && (loaded.identity === undefined || costMemo.stateIdentity !== loaded.identity)) {
+    costRetryMemos.delete(memoKey);
+  }
+  const retryMemo = costRetryMemos.get(memoKey);
   if (options.enrichCosts
     && previousState.costEnrichmentVersion !== undefined
     && previousState.costEnrichmentVersion > PORTABLE_COST_ENRICHMENT_VERSION) {
@@ -213,7 +246,13 @@ async function ingestExclusive(
   const enrichCosts = options.enrichCosts;
   const costRepairRequired = enrichCosts !== undefined
     && previousState.costEnrichmentVersion !== PORTABLE_COST_ENRICHMENT_VERSION;
-  if (costRepairRequired && store.read) {
+  const repairThrottled = retryMemo?.repairAttemptedAt !== undefined && !retryDue(retryMemo.repairAttemptedAt);
+  let repairAttempted = false;
+  if (costRepairRequired && repairThrottled) {
+    // Not attempted this pass, so the repair cannot count as complete.
+    repairedCostsComplete = false;
+  } else if (costRepairRequired && store.read) {
+    repairAttempted = true;
     let stored: PortableUsageEvent[];
     try {
       stored = await store.read();
@@ -259,6 +298,10 @@ async function ingestExclusive(
     const value = { size: fingerprint.size, mtimeNs: fingerprint.mtimeNs, ctimeNs: fingerprint.ctimeNs };
     fingerprints.set(source.key, value);
     if (!previous || !previous.active || !sameFingerprint(previous, value)) {
+      // Already read at exactly this fingerprint and its events reconciled; only
+      // the missing price kept it out of the state, so reading it again is moot.
+      const pending = retryMemo?.unresolved.get(source.key);
+      if (pending && pending.fingerprint === fingerprintKey(value) && !retryDue(pending.attemptedAt)) continue;
       changed += 1;
       changedKeys.push(source.key);
     }
@@ -308,6 +351,7 @@ async function ingestExclusive(
     if (unavailableKeys.has(ownerKey)) protectedIds.add(id);
   }
   const incoming: PortableUsageEvent[] = [...repairedEvents];
+  const nextUnresolved = new Map([...retryMemo?.unresolved ?? []].filter(([key]) => sourceByKey.has(key)));
   let successfulChanged = 0;
   // Sources are normalized above by provider then canonical path. Later sources are authoritative for shared IDs,
   // both on the initial ingest and when collision owners are reread after an incremental change.
@@ -318,6 +362,12 @@ async function ingestExclusive(
     const wasChanged = changedKeys.includes(source.key);
     const intersectsProtected = events.some(({ id }) => protectedIds.has(id));
     if (wasChanged && !intersectsProtected) successfulChanged += 1;
+    const sourceFingerprint = fingerprints.get(source.key);
+    if (!intersectsProtected && unresolvedCostKeys.has(source.key) && sourceFingerprint) {
+      nextUnresolved.set(source.key, { fingerprint: fingerprintKey(sourceFingerprint), attemptedAt: passStartedAt });
+    } else {
+      nextUnresolved.delete(source.key);
+    }
     if (!intersectsProtected && !unresolvedCostKeys.has(source.key)) {
       const fingerprint = fingerprints.get(source.key);
       if (fingerprint) {
@@ -336,7 +386,18 @@ async function ingestExclusive(
 
   const allObservedCostsComplete = repairedCostsComplete && unresolvedCostKeys.size === 0;
   const costRepairCompleted = costRepairRequired && errors.length === 0 && allObservedCostsComplete;
+  const nextRepairAttemptedAt = !costRepairRequired || costRepairCompleted
+    ? undefined
+    : repairAttempted ? passStartedAt : retryMemo?.repairAttemptedAt;
+  const rememberCostRetries = (stateIdentity: string | undefined): void => {
+    if (stateIdentity === undefined || (nextUnresolved.size === 0 && nextRepairAttemptedAt === undefined)) {
+      costRetryMemos.delete(memoKey);
+      return;
+    }
+    costRetryMemos.set(memoKey, { stateIdentity, repairAttemptedAt: nextRepairAttemptedAt, unresolved: nextUnresolved });
+  };
   if (successfulChanged === 0 && incoming.length === 0 && !activityChanged && !costRepairCompleted) {
+    rememberCostRetries(loaded.identity);
     return emptyResult(knownSources.length, changed, errors, loaded.diagnostics);
   }
 
@@ -368,23 +429,25 @@ async function ingestExclusive(
   } catch {
     throw new Error("Portable usage reconciliation failed");
   }
+  let identity: { key: string; journalBytes: number } | undefined;
+  try {
+    identity = await stateFilesIdentity(statePath);
+  } catch {
+    // Without an identity the next pass simply reads the files again.
+  }
   // After a journal append the new state is known exactly. A full rewrite is
   // re-serialized by the store, so the next pass reads that back instead.
-  if (journalWrite && loaded.journal) {
-    try {
-      const identity = await stateFilesIdentity(statePath);
-      stateCache.set(cacheKey, {
-        identity: identity.key,
-        loaded: {
-          state: nextState,
-          rewriteRequired: false,
-          journal: { ...loaded.journal, usable: true, bytes: identity.journalBytes },
-        },
-      });
-    } catch {
-      // Without an identity the next pass simply reads the files again.
-    }
+  if (journalWrite && loaded.journal && identity) {
+    stateCache.set(cacheKey, {
+      identity: identity.key,
+      loaded: {
+        state: nextState,
+        rewriteRequired: false,
+        journal: { ...loaded.journal, usable: true, bytes: identity.journalBytes },
+      },
+    });
   }
+  rememberCostRetries(identity?.key);
   return {
     scanned: knownSources.length,
     changed,
@@ -579,7 +642,7 @@ async function readStateCached(statePath: string): Promise<LoadedState> {
     identity = undefined;
   }
   const cached = stateCache.get(cacheKey);
-  if (identity !== undefined && cached?.identity === identity) return { ...cached.loaded, diagnostics: [] };
+  if (identity !== undefined && cached?.identity === identity) return { ...cached.loaded, diagnostics: [], identity };
   stateCache.delete(cacheKey);
   const loaded = await readStateRecovering(statePath);
   // The identity was taken before reading, so a write in between only makes the
@@ -588,7 +651,8 @@ async function readStateCached(statePath: string): Promise<LoadedState> {
     const { diagnostics: _diagnostics, ...rest } = loaded;
     stateCache.set(cacheKey, { identity, loaded: rest });
   }
-  return loaded;
+  // Recovery may have rewritten the files, so only an untouched read keeps its identity.
+  return { ...loaded, identity: loaded.diagnostics.length === 0 ? identity : undefined };
 }
 
 async function stateFilesIdentity(statePath: string): Promise<{ key: string; journalBytes: number }> {
@@ -786,6 +850,10 @@ function sameFingerprint(
   fingerprint: { size: string; mtimeNs: string; ctimeNs: string },
 ): boolean {
   return state.size === fingerprint.size && state.mtimeNs === fingerprint.mtimeNs && state.ctimeNs === fingerprint.ctimeNs;
+}
+
+function fingerprintKey(fingerprint: Omit<PortableSourceFingerprint, "isFile">): string {
+  return `${fingerprint.size}:${fingerprint.mtimeNs}:${fingerprint.ctimeNs}`;
 }
 
 function emptyState(): PortableIngestState {

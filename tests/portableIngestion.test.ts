@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -153,8 +153,8 @@ describe("portable usage ingestion", () => {
     await ingestPortableUsage(base);
     const enrichCosts = vi.fn(async (events: readonly import("../src/portable/types").PortableUsageEvent[]) => events);
 
-    await ingestPortableUsage({ ...base, enrichCosts });
-    await ingestPortableUsage({ ...base, enrichCosts });
+    await ingestPortableUsage({ ...base, enrichCosts, costRetryIntervalMs: 0 });
+    await ingestPortableUsage({ ...base, enrichCosts, costRetryIntervalMs: 0 });
 
     expect(enrichCosts).toHaveBeenCalledTimes(2);
     expect(JSON.parse(await readFile(statePath, "utf8"))).not.toHaveProperty("costEnrichmentVersion");
@@ -202,8 +202,77 @@ describe("portable usage ingestion", () => {
     await ingestPortableUsage({ store, statePath, claudeRefs: [known, added], codexRefs: [], readClaude, enrichCosts });
     expect(JSON.parse(await readFile(statePath, "utf8"))).not.toHaveProperty("costEnrichmentVersion");
     readClaude.mockClear();
-    await ingestPortableUsage({ store, statePath, claudeRefs: [known, added], codexRefs: [], readClaude, enrichCosts });
+    await ingestPortableUsage({
+      store, statePath, claudeRefs: [known, added], codexRefs: [], readClaude, enrichCosts, costRetryIntervalMs: 0,
+    });
     expect(readClaude.mock.calls.some(([refs]) => refs[0].file === added.file)).toBe(true);
+  });
+
+  describe("spacing out retries for events without a price", () => {
+    async function unresolvedSetup() {
+      const known = await claudeRef(rootDir, "priced.jsonl", "priced");
+      const added = await claudeRef(rootDir, "unpriced.jsonl", "unpriced");
+      const readClaude = vi.fn(async ([ref]: SourceFileRef[]) => [claude({
+        sourceEventId: ref.file === known.file ? "priced" : "unpriced",
+        model: ref.file === known.file ? "known-model" : "unknown-model",
+        costUSD: undefined,
+      })]);
+      const enrichCosts = vi.fn(async (events: readonly import("../src/portable/types").PortableUsageEvent[]) =>
+        events.map((item) => item.model === "unknown-model" ? item : {
+          ...item,
+          costUSD: 1,
+          inputCostUSD: 1,
+          outputCostUSD: 0,
+          cacheCreationCostUSD: 0,
+          cacheReadCostUSD: 0,
+          pricingVersion: "litellm:test",
+        }));
+      let clock = 0;
+      const base = {
+        store, statePath, claudeRefs: [known, added], codexRefs: [], readClaude, enrichCosts, now: () => clock,
+      };
+      await ingestPortableUsage(base);
+      readClaude.mockClear();
+      enrichCosts.mockClear();
+      return { base, added, readClaude, enrichCosts, advance: (ms: number) => { clock += ms; } };
+    }
+
+    it("neither rereads the source nor reprices the store again within the interval", async () => {
+      const { base, readClaude, enrichCosts, advance } = await unresolvedSetup();
+      advance(60_000);
+
+      expect(await ingestPortableUsage(base)).toMatchObject({ changed: 0, inserted: 0, updated: 0 });
+      expect(readClaude).not.toHaveBeenCalled();
+      expect(enrichCosts).not.toHaveBeenCalled();
+      expect(JSON.parse(await readFile(statePath, "utf8"))).not.toHaveProperty("costEnrichmentVersion");
+    });
+
+    it("retries both once the interval has elapsed", async () => {
+      const { base, added, readClaude, enrichCosts, advance } = await unresolvedSetup();
+      advance(60 * 60 * 1000);
+
+      await ingestPortableUsage(base);
+      expect(readClaude.mock.calls.some(([refs]) => refs[0].file === added.file)).toBe(true);
+      expect(enrichCosts).toHaveBeenCalled();
+    });
+
+    it("rereads an unresolved source at once when its file changes", async () => {
+      const { base, added, readClaude } = await unresolvedSetup();
+      await appendFile(added.file, "{}\n");
+
+      await ingestPortableUsage(base);
+      expect(readClaude.mock.calls.some(([refs]) => refs[0].file === added.file)).toBe(true);
+    });
+
+    it("retries at once after someone else rewrote the state files", async () => {
+      const { base, added, readClaude, enrichCosts } = await unresolvedSetup();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await writeFile(statePath, await readFile(statePath));
+
+      await ingestPortableUsage(base);
+      expect(readClaude.mock.calls.some(([refs]) => refs[0].file === added.file)).toBe(true);
+      expect(enrichCosts).toHaveBeenCalled();
+    });
   });
 
   it("fails closed without modifying a future cost enrichment state", async () => {

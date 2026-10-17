@@ -21,6 +21,9 @@ const CODEX_MODEL_ALIASES: Readonly<Record<string, string>> = {
   "gpt-5.3-codex": "gpt-5.2-codex",
 };
 
+/** Marks costs that are zero because the event has no tokens, not because a price was found. */
+export const ZERO_TOKEN_PRICING_VERSION = "zero-tokens";
+
 export async function enrichPortableEventCosts(
   events: readonly PortableUsageEvent[],
   pricingResolver: PortablePricingResolver,
@@ -31,6 +34,21 @@ export async function enrichPortableEventCosts(
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
     if (event.source === "legacy-reconciliation" || hasCompleteStoredCost(event)) continue;
+    // Claude Code logs API errors and "No response requested." as <synthetic>
+    // messages with zero tokens. No price exists for them, and none is needed;
+    // leaving them unpriced kept their whole source file permanently unresolved.
+    if (hasNoTokens(event) && (event.costUSD ?? 0) === 0) {
+      result[index] = {
+        ...event,
+        costUSD: 0,
+        inputCostUSD: 0,
+        outputCostUSD: 0,
+        cacheCreationCostUSD: 0,
+        cacheReadCostUSD: 0,
+        pricingVersion: ZERO_TOKEN_PRICING_VERSION,
+      };
+      continue;
+    }
     const model = event.provider === "codex" ? (CODEX_MODEL_ALIASES[event.model] ?? event.model) : event.model;
     const key = JSON.stringify([event.provider, model]);
     const group = groups.get(key) ?? { model, indexes: [] };
@@ -82,6 +100,14 @@ function authoritativeComponents(calculated: CostBreakdown, costUSD: number): Co
     };
   }
   return scaleBreakdownTo(calculated, costUSD);
+}
+
+function hasNoTokens(event: PortableUsageEvent): boolean {
+  return event.inputTokens === 0
+    && event.outputTokens === 0
+    && event.cacheCreationTokens === 0
+    && event.cacheReadTokens === 0
+    && event.reasoningOutputTokens === 0;
 }
 
 function hasCompleteStoredCost(event: PortableUsageEvent): boolean {

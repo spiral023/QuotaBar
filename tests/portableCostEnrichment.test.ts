@@ -31,6 +31,37 @@ function resolver(pricing: ModelPricing | null) {
 }
 
 describe("portable cost enrichment", () => {
+  it("prices events without tokens at zero even when no price exists", async () => {
+    const synthetic = event({
+      model: "<synthetic>",
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    });
+    const pricing = resolver(null);
+
+    const [result] = await enrichPortableEventCosts([synthetic], pricing, "standard");
+
+    expect(result).toEqual({
+      ...synthetic,
+      costUSD: 0,
+      inputCostUSD: 0,
+      outputCostUSD: 0,
+      cacheCreationCostUSD: 0,
+      cacheReadCostUSD: 0,
+      pricingVersion: "zero-tokens",
+    });
+    expect(pricing.getModelPricingBatch).not.toHaveBeenCalled();
+  });
+
+  it("still requires a price for unknown models that have tokens", async () => {
+    const [result] = await enrichPortableEventCosts([event({ model: "unknown-model" })], resolver(null), "standard");
+
+    expect(result.costUSD).toBeUndefined();
+    expect(result.pricingVersion).toBeUndefined();
+  });
+
   it("stores Claude totals, components, and a stable price version without changing identity", async () => {
     const original = event();
     const pricing = resolver({
