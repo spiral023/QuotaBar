@@ -23,7 +23,7 @@ export class TrayController {
   constructor(
     private readonly providers: UsageProvider[],
     private readonly refreshLoop: RefreshLoop,
-    private readonly onRegenerateBackfill: () => Promise<void>,
+    private readonly onRescanUsageData: () => Promise<void>,
     providerOrder?: unknown,
   ) {
     this.providerOrder = normalizeProviderOrder(providerOrder);
@@ -91,7 +91,7 @@ export class TrayController {
           () => void this.refreshLoop.recomputeCost(),
         );
       },
-      regenerateBackfill: this.onRegenerateBackfill,
+      rescanUsageData: this.onRescanUsageData,
       updateReady: this.updateState?.status === "ready",
       updateVersion: this.updateState?.newVersion ?? null,
       installUpdate: () => quitAndInstall(),

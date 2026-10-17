@@ -230,7 +230,7 @@ async function _loadAndRender() {
     _renderResults(report, agg);
   } catch (e) {
     console.error('history:get failed', e);
-    results.innerHTML = '<div class="empty"><span style="color:var(--red)">Failed to load backfill data.</span></div>';
+    results.innerHTML = '<div class="empty"><span style="color:var(--red)">Failed to load usage history.</span></div>';
   } finally {
     if (loadBtn) { loadBtn.disabled = false; loadBtn.classList.remove('loading'); }
   }
@@ -340,8 +340,8 @@ function _renderResults(report, agg) {
             <path d="M8 15h5"/><path d="M8 19h3"/>
           </svg>
         </div>
-        <div class="hr-empty-text">No backfill data for this period</div>
-        <div class="hr-empty-sub">Start the app to generate backfill files</div>
+        <div class="hr-empty-text">No usage data for this period</div>
+        <div class="hr-empty-sub">Claude Code and Codex usage appears here as soon as it is recorded</div>
       </div>
     `;
     return;

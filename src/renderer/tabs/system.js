@@ -105,9 +105,9 @@ window.QB = window.QB || {};
       consequence: 'Window tracking and bonus detection reset on next restart.',
     },
     {
-      id: 'debug', label: 'Debug Logs', note: 'Backfill data, manifests',
+      id: 'debug', label: 'Debug Logs', note: 'Diagnostic logs, legacy history files',
       pathIds: ['app-debug'],
-      consequence: 'Backfill will be fully rebuilt on next start.',
+      consequence: 'Diagnostic logs are permanently removed. Usage history and quota data stay intact.',
     },
   ];
 

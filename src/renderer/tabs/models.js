@@ -937,7 +937,7 @@ window.QB = window.QB || {};
       </div>
       <div class="mod-cost-sub">Amount × own $/MTok = cost per type; Total $/MTok = cost per million tokens of actual usage</div>
       ${blocks}
-      ${anyStale ? '<div class="mod-cost-note">Per-type costs will be fully populated after the next backfill run.</div>' : ''}`;
+      ${anyStale ? '<div class="mod-cost-note">Some older days were recorded with a total cost only, so their per-type costs are missing.</div>' : ''}`;
   }
 
   const TOKEN_TYPE_META = [

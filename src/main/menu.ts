@@ -10,7 +10,7 @@ export interface MenuActions {
   refreshNow(): Promise<void>;
   rebuildMenu(): void;
   openDashboard(): void;
-  regenerateBackfill(): Promise<void>;
+  rescanUsageData(): Promise<void>;
   updateReady: boolean;
   updateVersion: string | null;
   installUpdate(): void;
@@ -54,7 +54,7 @@ export async function buildContextMenu(
       }
     },
     { label: "Open Log", click: () => void shell.openPath(getLogPath()) },
-    { label: "Regenerate Debug Backfill", click: () => void actions.regenerateBackfill() },
+    { label: "Rescan Usage Data", click: () => void actions.rescanUsageData() },
     { label: "Open Config Folder", click: () => void shell.openPath(getAppConfigDir()) },
   );
 

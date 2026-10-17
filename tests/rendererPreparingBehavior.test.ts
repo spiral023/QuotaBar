@@ -94,7 +94,7 @@ describe("portable renderer preparing behavior", () => {
     expect(h.timers.pendingCount()).toBe(1);
     h.timers.advanceBy(1_000); await flush();
     expect(h.calls.filter((call) => call === "reports:get")).toHaveLength(3);
-    expect(h.document.getElementById("hr-results").innerHTML).toContain("No backfill data");
+    expect(h.document.getElementById("hr-results").innerHTML).toContain("No usage data");
     expect(h.timers.pendingCount()).toBe(0);
   });
 
@@ -105,11 +105,11 @@ describe("portable renderer preparing behavior", () => {
     await h.QB.renderHistory();
 
     expect(h.document.getElementById("hr-results").innerHTML).toContain("Preparing data");
-    expect(h.document.getElementById("hr-results").innerHTML).not.toContain("No backfill data");
+    expect(h.document.getElementById("hr-results").innerHTML).not.toContain("No usage data");
     expect(h.timers.pendingCount()).toBe(1);
     h.timers.advanceBy(1_000); await flush();
     expect(h.calls.filter((call) => call === "reports:get")).toHaveLength(3);
-    expect(h.document.getElementById("hr-results").innerHTML).toContain("No backfill data");
+    expect(h.document.getElementById("hr-results").innerHTML).toContain("No usage data");
     expect(h.timers.pendingCount()).toBe(0);
   });
 
