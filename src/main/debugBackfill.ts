@@ -459,7 +459,7 @@ interface LegacyQuotaFileSystem {
 /** Reads the allowlisted legacy debug directory without following nested paths or links. */
 export async function readLegacyQuotaSnapshots(
   logDir: string,
-  options: { fileSystem?: LegacyQuotaFileSystem } = {},
+  options: { fileSystem?: LegacyQuotaFileSystem; include?: (fileName: string) => boolean } = {},
 ): Promise<SnapshotEvent[]> {
   const fileSystem = options.fileSystem ?? fs;
   let entries: Dirent[];
@@ -473,7 +473,8 @@ export async function readLegacyQuotaSnapshots(
   }
   const result: SnapshotEvent[] = [];
   for (const entry of entries
-    .filter((candidate) => candidate.isFile() && LEGACY_DEBUG_FILE.test(candidate.name))
+    .filter((candidate) => candidate.isFile() && LEGACY_DEBUG_FILE.test(candidate.name)
+      && (options.include?.(candidate.name) ?? true))
     .sort((left, right) => left.name.localeCompare(right.name))) {
     let contents: string;
     try {
@@ -492,6 +493,114 @@ export async function readLegacyQuotaSnapshots(
     }
   }
   return result;
+}
+
+export interface LegacyQuotaImport {
+  read(): Promise<SnapshotEvent[]>;
+  migrate(snapshots: readonly SnapshotEvent[]): Promise<void>;
+}
+
+const LEGACY_QUOTA_MANIFEST_VERSION = 1;
+
+/**
+ * The quota migration re-merges every legacy debug log on each start. Most of
+ * them never change again, yet reading and deduplicating them cost seconds of
+ * startup. Files are remembered by size and mtime once their snapshots have been
+ * merged, so only new or grown files are read. The import stays a healing path
+ * for failed live appends: the current day's file keeps growing and is re-read.
+ *
+ * The manifest is machine-local cache, deliberately outside the archived quota
+ * directory. It is ignored when the quota store holds no partitions, and the
+ * startup import path deletes it after applying an archive, so imported quota
+ * data still receives this machine's legacy snapshots.
+ */
+export function createIncrementalLegacyQuotaImport(options: {
+  logDir: string;
+  quotaDir: string;
+  manifestPath: string;
+  append: (root: string, snapshots: readonly SnapshotEvent[]) => Promise<void>;
+}): LegacyQuotaImport {
+  let pendingFiles: Record<string, string> | undefined;
+  return {
+    async read() {
+      pendingFiles = undefined;
+      const current = await legacyDebugFileIdentities(options.logDir);
+      const known = await hasQuotaPartitions(options.quotaDir)
+        ? await readLegacyQuotaManifest(options.manifestPath)
+        : {};
+      const snapshots = await readLegacyQuotaSnapshots(options.logDir, {
+        include: (fileName) => current[fileName] === undefined || known[fileName] !== current[fileName],
+      });
+      pendingFiles = current;
+      return snapshots;
+    },
+    async migrate(snapshots) {
+      await options.append(options.quotaDir, snapshots);
+      const files = pendingFiles;
+      pendingFiles = undefined;
+      if (!files) return;
+      try {
+        await writeLegacyQuotaManifest(options.manifestPath, files);
+      } catch {
+        // Without a manifest the next start merges every file again, as before.
+      }
+    },
+  };
+}
+
+/** Identities are taken before reading, so a file growing meanwhile differs next time and is re-read. */
+async function legacyDebugFileIdentities(logDir: string): Promise<Record<string, string>> {
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(logDir, { withFileTypes: true });
+  } catch {
+    return {};
+  }
+  const identities: Record<string, string> = {};
+  for (const entry of entries) {
+    if (!entry.isFile() || !LEGACY_DEBUG_FILE.test(entry.name)) continue;
+    try {
+      const info = await fs.lstat(path.join(logDir, entry.name), { bigint: true });
+      if (info.isFile()) identities[entry.name] = `${info.size}:${info.mtimeNs}`;
+    } catch {
+      // A file that vanished is simply not remembered.
+    }
+  }
+  return identities;
+}
+
+async function hasQuotaPartitions(quotaDir: string): Promise<boolean> {
+  try {
+    return (await fs.readdir(path.join(quotaDir, "snapshots"))).some((name) => name.endsWith(".jsonl"));
+  } catch {
+    return false;
+  }
+}
+
+async function readLegacyQuotaManifest(manifestPath: string): Promise<Record<string, string>> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(manifestPath, "utf8")) as { version?: unknown; files?: unknown };
+    if (parsed.version !== LEGACY_QUOTA_MANIFEST_VERSION || !parsed.files || typeof parsed.files !== "object") return {};
+    const files: Record<string, string> = {};
+    for (const [name, identity] of Object.entries(parsed.files as Record<string, unknown>)) {
+      if (LEGACY_DEBUG_FILE.test(name) && typeof identity === "string") files[name] = identity;
+    }
+    return files;
+  } catch {
+    return {};
+  }
+}
+
+async function writeLegacyQuotaManifest(manifestPath: string, files: Record<string, string>): Promise<void> {
+  await fs.mkdir(path.dirname(manifestPath), { recursive: true });
+  const temporary = `${manifestPath}.${process.pid}.tmp`;
+  await fs.writeFile(temporary, `${JSON.stringify({ version: LEGACY_QUOTA_MANIFEST_VERSION, files }, null, 2)}\n`, "utf8");
+  await fs.rename(temporary, manifestPath);
+}
+
+/** Forces the next start to merge every legacy debug log again, e.g. after quota data was replaced. */
+export async function resetLegacyQuotaImport(manifestPath: string): Promise<void> {
+  await fs.rm(manifestPath, { force: true });
 }
 
 export interface BackfillOptions {

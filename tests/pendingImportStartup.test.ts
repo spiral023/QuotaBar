@@ -24,6 +24,31 @@ describe("pending portable import startup", () => {
     expect(log.info).toHaveBeenCalledWith("Portable pending import applied files=4 bytes=128");
   });
 
+  it("forgets merged legacy quota files only when an import was applied", async () => {
+    const log = { info: vi.fn(), error: vi.fn() };
+    const base = {
+      isFirstRun: async () => false,
+      loadSettings: async () => defaultSettings,
+      log,
+    };
+    const resetApplied = vi.fn(async () => undefined);
+    const resetSkipped = vi.fn(async () => undefined);
+
+    await loadInitialStartupState({}, {
+      ...base,
+      applyPendingImport: async () => ({ applied: true, fileCount: 1, totalBytes: 1 }),
+      resetLegacyQuotaImport: resetApplied,
+    });
+    await loadInitialStartupState({}, {
+      ...base,
+      applyPendingImport: async () => ({ applied: false, fileCount: 0, totalBytes: 0 }),
+      resetLegacyQuotaImport: resetSkipped,
+    });
+
+    expect(resetApplied).toHaveBeenCalledOnce();
+    expect(resetSkipped).not.toHaveBeenCalled();
+  });
+
   it.each(["completed", "pending-recovery", "not-attempted"] as const)(
     "logs the actual %s rollback outcome and aborts normal reads",
     async (rollbackOutcome) => {

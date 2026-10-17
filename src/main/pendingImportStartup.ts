@@ -1,7 +1,8 @@
 import type { Settings } from "../config/settings";
 import { loadSettings } from "../config/settings";
 import { isFirstRun } from "../config/firstRun";
-import { getAppConfigDir } from "../config/paths";
+import { getAppConfigDir, getLegacyQuotaImportManifestPath } from "../config/paths";
+import { resetLegacyQuotaImport } from "./debugBackfill";
 import {
   applyPendingImport,
   PortableImportApplyError,
@@ -16,6 +17,8 @@ interface StartupLogger {
 
 export interface InitialStartupDependencies {
   applyPendingImport: () => Promise<AppliedImportResult>;
+  /** Imported quota data has not seen this machine's legacy debug logs yet. */
+  resetLegacyQuotaImport?: () => Promise<void>;
   isFirstRun: () => Promise<boolean>;
   loadSettings: (overrides: Partial<Settings>) => Promise<Settings>;
   log: StartupLogger;
@@ -23,6 +26,7 @@ export interface InitialStartupDependencies {
 
 const defaultDependencies: InitialStartupDependencies = {
   applyPendingImport: () => applyPendingImport(getAppConfigDir()),
+  resetLegacyQuotaImport: () => resetLegacyQuotaImport(getLegacyQuotaImportManifestPath()),
   isFirstRun,
   loadSettings,
   log,
@@ -48,6 +52,9 @@ export async function loadInitialStartupState(
     dependencies.log.info(
       `Portable pending import applied files=${pendingImport.fileCount} bytes=${pendingImport.totalBytes}`,
     );
+    await dependencies.resetLegacyQuotaImport?.().catch(() => {
+      dependencies.log.error("Legacy quota import reset failed");
+    });
   }
   const firstRun = await dependencies.isFirstRun();
   const settings = await dependencies.loadSettings(settingsOverrides);

@@ -5,11 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  createIncrementalLegacyQuotaImport,
   createPortableIngestionLifecycle,
   createPortableIngestionRunner,
   preparePortableData,
   readLegacyQuotaSnapshots,
   refreshPortableData,
+  resetLegacyQuotaImport,
 } from "../src/main/debugBackfill";
 import {
   beginMigrationRefresh,
@@ -732,6 +734,69 @@ describe("legacy quota compatibility", () => {
       fetchedAt: "2026-07-12T10:00:00.000Z", windows: [{ name: "weekly", usedPercent: 25 }],
     }]);
     expect(await readFile(file, "utf8")).toBe(original);
+  });
+
+  describe("incremental legacy quota import", () => {
+    function legacyLine(fetchedAt: string): string {
+      return `${JSON.stringify({ kind: "snapshot", provider: "claude", status: "ok", fetchedAt, windows: [] })}\n`;
+    }
+
+    async function setup() {
+      const root = await mkdtemp(path.join(os.tmpdir(), "quotabar-legacy-quota-"));
+      const logDir = path.join(root, "debug");
+      const quotaDir = path.join(root, "quota");
+      const manifestPath = path.join(root, "cache", "legacy-quota-import.json");
+      await nodeFs.mkdir(logDir, { recursive: true });
+      await writeFile(path.join(logDir, "2026-07-11.jsonl"), legacyLine("2026-07-11T10:00:00.000Z"), "utf8");
+      await writeFile(path.join(logDir, "2026-07-12.jsonl"), legacyLine("2026-07-12T10:00:00.000Z"), "utf8");
+      const append = vi.fn(appendQuotaSnapshots);
+      const create = () => createIncrementalLegacyQuotaImport({ logDir, quotaDir, manifestPath, append });
+      const run = async () => {
+        const importer = create();
+        const snapshots = await importer.read();
+        await importer.migrate(snapshots);
+        return snapshots.map(({ fetchedAt }) => fetchedAt);
+      };
+      return { logDir, quotaDir, manifestPath, append, create, run };
+    }
+
+    it("reads every file once, then only files that grew", async () => {
+      const { logDir, quotaDir, run } = await setup();
+
+      expect(await run()).toEqual(["2026-07-11T10:00:00.000Z", "2026-07-12T10:00:00.000Z"]);
+      expect(await run()).toEqual([]);
+
+      await nodeFs.appendFile(path.join(logDir, "2026-07-12.jsonl"), legacyLine("2026-07-12T11:00:00.000Z"), "utf8");
+      expect(await run()).toEqual(["2026-07-12T10:00:00.000Z", "2026-07-12T11:00:00.000Z"]);
+      expect((await readQuotaSnapshots(quotaDir)).map(({ fetchedAt }) => fetchedAt)).toEqual([
+        "2026-07-11T10:00:00.000Z", "2026-07-12T10:00:00.000Z", "2026-07-12T11:00:00.000Z",
+      ]);
+    });
+
+    it("merges everything again when the quota store has no partitions", async () => {
+      const { quotaDir, run } = await setup();
+      await run();
+      await nodeFs.rm(quotaDir, { recursive: true, force: true });
+
+      expect(await run()).toHaveLength(2);
+    });
+
+    it("keeps files unmerged when the append fails", async () => {
+      const { create, append, run } = await setup();
+      append.mockRejectedValueOnce(new Error("lock timeout"));
+      const failing = create();
+      await expect(failing.migrate(await failing.read())).rejects.toThrow("lock timeout");
+
+      expect(await run()).toHaveLength(2);
+    });
+
+    it("merges everything again after a reset", async () => {
+      const { manifestPath, run } = await setup();
+      await run();
+      await resetLegacyQuotaImport(manifestPath);
+
+      expect(await run()).toHaveLength(2);
+    });
   });
 
   it("treats a legacy quota file read error as fatal while preserving every source", async () => {

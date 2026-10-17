@@ -23,8 +23,8 @@ import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAge
 import { DebugRecorder } from "./debugRecorder";
 import { snapshotEvent } from "./debugEvents";
 import { watchSourceRoots, type SourceChangeWatcher } from "./sourceChangeWatcher";
-import { createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, readLegacyQuotaSnapshots, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
-import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath } from "../config/paths";
+import { createIncrementalLegacyQuotaImport, createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
+import { getDebugLogDir, getClaudeProjectsDirs, getCodexSessionsDirs, getCodexConfigPaths, getUsageSnapshotCachePath, getWindowRatioPath, getBonusStatePath, getPortableQuotaDir, getPortableUsageDir, getPortableIngestStatePath, getPortableMigrationPath, getLegacyQuotaImportManifestPath } from "../config/paths";
 import { WindowRatioTracker, clearTransients } from "../usage/windowRatio";
 import { loadWindowRatioFile, saveWindowRatioFile } from "../usage/windowRatioStore";
 import { BonusResetTracker } from "../usage/bonusReset";
@@ -198,6 +198,12 @@ if (!app.requestSingleInstanceLock()) {
       // wait for it. Shutdown waits for it instead of cutting a commit short.
       let portableStartupStopped = false;
       let portableStartup: Promise<void> = Promise.resolve();
+      const legacyQuotaImport = createIncrementalLegacyQuotaImport({
+        logDir: getDebugLogDir(),
+        quotaDir: getPortableQuotaDir(),
+        manifestPath: getLegacyQuotaImportManifestPath(),
+        append: appendQuotaSnapshots,
+      });
       const startPortableData = async (): Promise<void> => {
         let portableReady = false;
         await preparePortableData({
@@ -210,8 +216,8 @@ if (!app.requestSingleInstanceLock()) {
             statePath: getPortableMigrationPath(),
             finalizeState: false,
           }),
-          readLegacyQuota: () => readLegacyQuotaSnapshots(getDebugLogDir()),
-          migrateQuota: (snapshots) => appendQuotaSnapshots(getPortableQuotaDir(), snapshots),
+          readLegacyQuota: () => legacyQuotaImport.read(),
+          migrateQuota: (snapshots) => legacyQuotaImport.migrate(snapshots),
           completeMigration: (revision) => markMigrationComplete(getPortableMigrationPath(), revision, portableUsageStore),
           failMigration: (code, expectation) => markMigrationFailed(
             getPortableMigrationPath(),

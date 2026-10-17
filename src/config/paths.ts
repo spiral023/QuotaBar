@@ -69,6 +69,10 @@ export function getUsageSnapshotCachePath(): string {
   return path.join(getAppConfigDir(), "cache", "usage-snapshots.json");
 }
 
+export function getLegacyQuotaImportManifestPath(): string {
+  return path.join(getAppConfigDir(), "cache", "legacy-quota-import.json");
+}
+
 export function getFxCachePath(): string {
   return path.join(getAppConfigDir(), "cache", "fx-rates.json");
 }
