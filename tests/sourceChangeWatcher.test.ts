@@ -67,11 +67,43 @@ describe("watchSourceRoots", () => {
     expect(watcher.consume()).toBe(true);
   });
 
-  it("falls back to always scanning after a watcher errors at runtime", () => {
-    const { watcher, watchers } = harness();
+  it("covers an unwatchable root with forced scans while other roots stay watched", () => {
+    let clock = 0;
+    const listeners: Array<() => void> = [];
+    const watcher = watchSourceRoots(["/local", "\\\\wsl.localhost\\Ubuntu\\sessions"], {
+      now: () => clock,
+      watch: (path, _options, listener) => {
+        if (path.startsWith("\\\\wsl")) throw new Error("EISDIR");
+        listeners.push(listener);
+        return new FakeWatcher() as unknown as fs.FSWatcher;
+      },
+    });
+    expect(watcher.consume()).toBe(true);
+    expect(watcher.consume()).toBe(false);
+    clock += 59_999;
+    expect(watcher.consume()).toBe(false);
+    clock += 1;
+    expect(watcher.consume()).toBe(true);
+    expect(watcher.consume()).toBe(false);
+    listeners[0]();
+    expect(watcher.consume()).toBe(true);
+  });
+
+  it("scans once after a watcher errors and keeps the remaining roots watched", () => {
+    const { watcher, watchers } = harness(2);
     watcher.consume();
     expect(watcher.consume()).toBe(false);
     watchers[0].emit("error", new Error("ERROR_NOTIFY_ENUM_DIR"));
+    watchers[0].emit("error", new Error("ERROR_NOTIFY_ENUM_DIR"));
+    expect(watcher.consume()).toBe(true);
+    expect(watcher.consume()).toBe(false);
+  });
+
+  it("falls back to always scanning once every watcher has errored", () => {
+    const { watcher, watchers } = harness(2);
+    watcher.consume();
+    watchers[0].emit("error", new Error("ERROR_NOTIFY_ENUM_DIR"));
+    watchers[1].emit("error", new Error("ERROR_NOTIFY_ENUM_DIR"));
     expect(watcher.consume()).toBe(true);
     expect(watcher.consume()).toBe(true);
   });

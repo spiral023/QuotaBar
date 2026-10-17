@@ -185,6 +185,28 @@ eine geänderte Quelle (die jüngste Session-Datei), wie im aktiven Betrieb übl
   Records werden nur ersetzt, nie mutiert; eine flache Kopie reicht, und geänderte Records
   sind damit über die Objektidentität als Delta erkennbar.
 
+### Runde 5 — Watcher pro Root statt alles-oder-nichts (2026-10-17)
+
+Live gemessen in der Dev-Build mit echtem Datenbestand und WSL-Codex-Home (7 Dateien),
+App im Leerlauf, `quotabar.log` → `stage=ingestion`:
+
+| | vorher | nachher |
+| --- | --- | --- |
+| Ingest-Läufe im Leerlauf | alle ~15 s | **alle ~60 s** |
+| Main-Thread-Anteil für Ingest im Leerlauf | ~37 % (5,5 s / 15 s) | **~11 %** (6,5 s / 60 s) |
+
+- **[sourceChangeWatcher.ts](src/main/sourceChangeWatcher.ts)** — Ein nicht beobachtbarer
+  Root deaktiviert den Watcher nicht mehr für alle. Er wird über den ohnehin vorhandenen
+  Zwangsscan abgedeckt (höchstens alle 60 s). Nur wenn *kein* Root beobachtet werden kann,
+  wird weiter bei jedem Tick gescannt. Ein Watcher, der zur Laufzeit ausfällt, löst einmal
+  einen Scan aus, weil vor dem Fehler Events verloren gegangen sein können.
+- **Bewusster Kompromiss:** Änderungen unter einem nicht beobachtbaren Root (WSL) erscheinen
+  nach höchstens ~60 s statt ~15 s. Sobald ein lokaler Root eine Änderung meldet, wird ohnehin
+  alles gescannt, auch WSL.
+- **Testfalle:** Die laufende Claude-Code-Sitzung schreibt selbst in `~/.claude/projects`.
+  Wer den Leerlauf misst, darf in der Zeit nicht mit Claude Code arbeiten, sonst ist jeder
+  Tick zu Recht „geändert“.
+
 ## Feldbefunde aus v2.1.0
 
 Nach dem Rollout auf der Entwicklungsmaschine (184k Events) aufgetreten.
@@ -202,13 +224,14 @@ kommen keine Quota-Daten mehr.
 Der Bug war latent vorhanden und schlug zu, als die Zykluszeit über das Intervall stieg.
 Nachweis in den Logs: `refresh.start` und `snapshot` fehlen nach dem Start vollständig.
 
-### Watcher auf WSL-Pfaden wirkungslos
+### Watcher auf WSL-Pfaden wirkungslos (behoben in Runde 5)
 
 `fs.watch(..., { recursive: true })` scheitert auf UNC-Pfaden mit `EISDIR` (beobachtet für
-ein Codex-Home unter `\\wsl.localhost\...`). Der Fallback greift korrekt — es wird wie
-bisher bei jedem Tick gescannt — aber bei Setups mit WSL-Codex-Home entfällt die
-Listing-Ersparnis vollständig. Ein Teil-Watch nur für die lokalen Roots bringt nichts,
-weil der Scan ohnehin alle Roots listet.
+ein Codex-Home unter `\\wsl.localhost\...`). Damals schaltete schon *ein* solcher Root den
+ganzen Watcher ab, und es wurde bei jedem Tick gescannt. Die ursprüngliche Einschätzung,
+ein Teil-Watch bringe nichts, weil der Scan ohnehin alle Roots listet, übersah den
+eigentlichen Gewinn: Gespart wird nicht im Scan, sondern durch ausfallende Ticks. Siehe
+Runde 5.
 
 ### Ingest-Hotspot: Type-Guard validierte Event-IDs millionenfach (behoben in 2.1.2)
 
@@ -259,6 +282,16 @@ Priorisiert nach Nutzen/Aufwand. Zahlen aus den Messungen oben.
 ### 1. ~~`ingest-state.json` aufteilen~~ — erledigt in Runde 4
 
 Gelöst über ein Append-Journal statt Sidecars/Chunks, siehe Runde 4.
+
+### 10. Ingest live ~4 s langsamer als isoliert — hoch, erst profilieren
+
+Isoliert (frischer Prozess, ruhige Datenkopie) dauert ein Lauf ohne Änderung ~1,4 s; Listing
+und `stat` aller 2.367 Quellen machen davon ~1,4 s aus (Claude 2.182 Dateien: ~0,7 s Listing,
+~0,35 s stat; WSL: ~50 ms). In der laufenden App meldet `stage=ingestion` bei `count=0`
+aber 5,5–8,5 s, unverändert seit mindestens 07.10. WSL und das Lock-Polling (25 ms) sind
+ausgeschlossen. Vermutung: Konkurrenz auf dem Main-Thread bzw. im libuv-Threadpool mit
+Quota-Polling, Analytics-Worker-Kommunikation und Fenster. Nächster Schritt: CPU-Profil des
+Main-Prozesses (`--inspect`) während eines Leerlauf-Ticks.
 
 ### 9. Partition-Vollschreiben beim ersten Lauf nach Prozessstart — mittel
 
