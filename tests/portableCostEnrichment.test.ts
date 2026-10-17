@@ -55,6 +55,29 @@ describe("portable cost enrichment", () => {
     expect(pricing.getModelPricingBatch).not.toHaveBeenCalled();
   });
 
+  it("books models without a published price at zero on purpose", async () => {
+    const pricing = resolver(null);
+    const events = [
+      event({ provider: "codex", model: "codex-auto-review" }),
+      event({ provider: "claude", model: "ag-gemini-pro" }),
+    ];
+
+    const result = await enrichPortableEventCosts(events, pricing, "standard");
+
+    for (const item of result) {
+      expect(item).toMatchObject({ costUSD: 0, inputCostUSD: 0, outputCostUSD: 0, pricingVersion: "unpriced-model" });
+    }
+    expect(pricing.getModelPricingBatch).not.toHaveBeenCalled();
+  });
+
+  it("prices gpt-5-codex-mini as gpt-5.1-codex-mini", async () => {
+    const pricing = resolver({ input_cost_per_token: 1, output_cost_per_token: 2, cache_read_input_token_cost: 0.5 });
+
+    await enrichPortableEventCosts([event({ provider: "codex", model: "gpt-5-codex-mini" })], pricing, "standard");
+
+    expect(pricing.getModelPricingBatch).toHaveBeenCalledWith("gpt-5.1-codex-mini", expect.any(Array));
+  });
+
   it("still requires a price for unknown models that have tokens", async () => {
     const [result] = await enrichPortableEventCosts([event({ model: "unknown-model" })], resolver(null), "standard");
 

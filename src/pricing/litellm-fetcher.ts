@@ -75,6 +75,11 @@ const FALLBACK_PRICES: Record<string, ModelPricing> = {
     output_cost_per_token: 10e-6,
     cache_read_input_token_cost: 0.125e-6,
   },
+  "gpt-5.1-codex-mini": {
+    input_cost_per_token: 0.25e-6,
+    output_cost_per_token: 2e-6,
+    cache_read_input_token_cost: 0.025e-6,
+  },
 };
 
 export class LiteLLMFetcher {

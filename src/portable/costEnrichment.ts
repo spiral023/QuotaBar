@@ -19,10 +19,23 @@ export const PORTABLE_COST_ENRICHMENT_VERSION = 1 as const;
 
 const CODEX_MODEL_ALIASES: Readonly<Record<string, string>> = {
   "gpt-5.3-codex": "gpt-5.2-codex",
+  // Released Nov 2025 at gpt-5-mini rates; LiteLLM only lists its 5.1 successor.
+  "gpt-5-codex-mini": "gpt-5.1-codex-mini",
 };
+
+/**
+ * Models with no published price and no known underlying model, booked at zero
+ * on purpose. Left unpriced, they kept the cost-enrichment repair open forever.
+ */
+const ZERO_PRICED_MODELS: ReadonlySet<string> = new Set([
+  "codex:codex-auto-review",
+  "claude:ag-gemini-pro",
+]);
 
 /** Marks costs that are zero because the event has no tokens, not because a price was found. */
 export const ZERO_TOKEN_PRICING_VERSION = "zero-tokens";
+/** Marks costs that are zero because the model is deliberately booked without a price. */
+export const ZERO_PRICED_MODEL_PRICING_VERSION = "unpriced-model";
 
 export async function enrichPortableEventCosts(
   events: readonly PortableUsageEvent[],
@@ -37,17 +50,22 @@ export async function enrichPortableEventCosts(
     // Claude Code logs API errors and "No response requested." as <synthetic>
     // messages with zero tokens. No price exists for them, and none is needed;
     // leaving them unpriced kept their whole source file permanently unresolved.
-    if (hasNoTokens(event) && (event.costUSD ?? 0) === 0) {
-      result[index] = {
-        ...event,
-        costUSD: 0,
-        inputCostUSD: 0,
-        outputCostUSD: 0,
-        cacheCreationCostUSD: 0,
-        cacheReadCostUSD: 0,
-        pricingVersion: ZERO_TOKEN_PRICING_VERSION,
-      };
-      continue;
+    if ((event.costUSD ?? 0) === 0) {
+      const zeroReason = hasNoTokens(event)
+        ? ZERO_TOKEN_PRICING_VERSION
+        : ZERO_PRICED_MODELS.has(`${event.provider}:${event.model}`) ? ZERO_PRICED_MODEL_PRICING_VERSION : undefined;
+      if (zeroReason) {
+        result[index] = {
+          ...event,
+          costUSD: 0,
+          inputCostUSD: 0,
+          outputCostUSD: 0,
+          cacheCreationCostUSD: 0,
+          cacheReadCostUSD: 0,
+          pricingVersion: zeroReason,
+        };
+        continue;
+      }
     }
     const model = event.provider === "codex" ? (CODEX_MODEL_ALIASES[event.model] ?? event.model) : event.model;
     const key = JSON.stringify([event.provider, model]);
