@@ -32,13 +32,6 @@ export class DebugRecorder {
     this.append(filePath, line);
   }
 
-  writeBackfill(dateKey: string, event: DebugEvent): void {
-    if (!this.enabled) return;
-    const line = this.serialize(new Date(), event);
-    const filePath = path.join(this.logDir, `${dateKey}.backfill.jsonl`);
-    this.append(filePath, line);
-  }
-
   async flush(): Promise<void> {
     await this.chain;
   }

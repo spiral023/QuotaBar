@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "path";
 import { Worker } from "node:worker_threads";
-import { app, BrowserWindow, ipcMain, screen, Tray, clipboard, dialog, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, Tray, dialog, shell } from "electron";
 import { UsageSnapshot } from "../providers/types";
 import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
 import { log } from "./logging";
@@ -522,14 +522,6 @@ export class DetailsWindowController {
         { settings, usageEvents },
       )));
       return Object.fromEntries(providers.map((provider, index) => [provider, reports[index]]));
-    });
-
-    ipcMain.handle("reports:copy-json", async (_, request: ReportRequest) => {
-      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
-      const settings = await loadRuntimeSettings();
-      const report = await generateUsageReport({ ...request, source: "portable" }, { settings });
-      clipboard.writeText(JSON.stringify(report, null, 2));
-      return { ok: true };
     });
 
     ipcMain.handle("analytics:summary", async (_, request?: { costWindow?: string }) => {

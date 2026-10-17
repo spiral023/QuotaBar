@@ -136,7 +136,7 @@ function timeMarkerHtml(actual, expected) {
 
 function providerIconHtml(provider) {
   const cls = `prov-icon icon-${provider}`;
-  const logos = { claude: '../../logos/claude.png', codex: '../../logos/codex.png', gemini: '../../logos/gemini.webp' };
+  const logos = { claude: '../../logos/claude.png', codex: '../../logos/codex.png' };
   const src = logos[provider];
   if (!src) return `<div class="${cls}"></div>`;
   return `<div class="${cls}"><img class="prov-logo" src="${src}" alt="" aria-hidden="true" draggable="false"></div>`;
@@ -153,32 +153,6 @@ function effectiveUsageLabel(win) {
   const prefix = win.name === 'weekly' ? 'Wk' : win.name === 'fiveHour' ? '5h' : '';
   const pct = `${Math.round(win.usedPercent)}%`;
   return prefix ? `${prefix} ${pct}` : pct;
-}
-
-function tokenDetailInnerHtml(cf) {
-  if (!cf?.tokenUsage) return '';
-  const t = cf.tokenUsage;
-  const cells = [
-    ['Input',   QB.fmtTokens(t.inputTokens),        false],
-    ['Output',  QB.fmtTokens(t.outputTokens),       false],
-    ['Cache +', QB.fmtTokens(t.cacheCreationTokens),false],
-    ['Cache ▷', QB.fmtTokens(t.cacheReadTokens),    false],
-    ['Total',   QB.fmtTokens(t.totalTokens),         false],
-    ['Cost',    `$${(cf.apiCostUSD || 0).toFixed(2)}`, true],
-  ];
-  const cellsHtml = cells.map(([lbl, val, isCost]) =>
-    `<div class="token-cell">
-      <span class="token-cell-lbl">${lbl}</span>
-      <span class="token-cell-val${isCost ? ' is-cost' : ''}">${val}</span>
-    </div>`
-  ).join('');
-  const modelsHtml = t.models?.length > 0
-    ? `<div class="token-models">${QB.esc(t.models.join(', '))}</div>` : '';
-  const missing = cf.missingPricingModels;
-  const missingHtml = missing?.length > 0
-    ? `<div class="token-missing" title="Tokens for these models are not included in the cost — the total is a lower bound">⚠ unpriced: ${QB.esc(missing.join(', '))}</div>`
-    : '';
-  return `<div class="token-section"><div class="token-grid">${cellsHtml}</div>${modelsHtml}${missingHtml}</div>`;
 }
 
 function fmtWindows(n) {
@@ -472,28 +446,6 @@ function renderStandard(snap, name, delay, acctIdx) {
   </div>`;
 }
 
-function renderGemini(snap, name, delay) {
-  const label = snap.windows[0]?.label ?? (snap.status === 'error' ? 'Unavailable' : 'No local session data');
-  const bdgs = [];
-  if (snap.status === 'stale') bdgs.push(`<span class="badge b-stale">Stale</span>`);
-  if (snap.status === 'error') bdgs.push(`<span class="badge b-error">Error</span>`);
-  const costHtml = costBadgeHtml(snap.costFactor);
-  if (costHtml) bdgs.push(costHtml);
-  const winHtml = windowBadgeHtml(snap.costFactor);
-  if (winHtml) bdgs.push(winHtml);
-  return `<div class="card provider-card has-accent" ${providerCardAttrs(snap.provider)} style="--card-accent:var(--gray);${delay}">
-    <div class="card-body">
-      ${providerIconHtml('gemini')}
-      <div class="card-info">
-        <div class="card-head"><span class="prov-name">${QB.esc(name)}</span><span class="card-chevron">›</span></div>
-        <div class="gemini-lbl">${QB.esc(label)}</div>
-        ${bdgs.length ? `<div class="badges">${bdgs.join('')}</div>` : ''}
-        ${tokenDetailInnerHtml(snap.costFactor)}
-      </div>
-    </div>
-  </div>`;
-}
-
 function renderCard(snap, idx, acctIdx) {
   const name  = snap.provider.charAt(0).toUpperCase() + snap.provider.slice(1);
   const delay = `animation-delay:${idx * 65}ms`;
@@ -505,7 +457,6 @@ function renderCard(snap, idx, acctIdx) {
     const msg = (snap.errorMessage || 'Error').slice(0, 42);
     return `<div class="card provider-card card-status-row has-accent" ${providerCardAttrs(snap.provider)} style="--card-accent:var(--red);${delay}"><span class="prov-name">${QB.esc(name)}</span><span class="badge b-error">${QB.esc(msg)}</span></div>`;
   }
-  if (snap.provider === 'gemini') return renderGemini(snap, name, delay);
   return renderStandard(snap, name, delay, acctIdx);
 }
 

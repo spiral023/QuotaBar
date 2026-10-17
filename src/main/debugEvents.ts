@@ -11,11 +11,6 @@ export type DebugEvent =
   | DashboardOpenEvent
   | DashboardCloseEvent
   | DashboardRefreshRequestedEvent
-  | TokensUsageEvent
-  | TokensDaySummaryEvent
-  | BackfillStartEvent
-  | BackfillSkippedEvent
-  | BackfillDoneEvent
   | SystemSuspendEvent
   | SystemResumeEvent
   | SystemLockEvent
@@ -45,22 +40,10 @@ export interface DashboardOpenEvent { kind: "dashboard.open"; }
 export interface DashboardCloseEvent { kind: "dashboard.close"; }
 export interface DashboardRefreshRequestedEvent { kind: "dashboard.refreshRequested"; }
 
-export interface TokensUsageEvent {
-  kind: "tokens.usage";
-  provider: "claude" | "codex";
-  model: string;
-  session: string;
-  project?: string;
-  directory?: string;
-  input: number;
-  output: number;
-  cacheCreation?: number;
-  cacheRead?: number;
-  cachedInput?: number;
-  reasoningOutput?: number;
-  costUSD?: number;
-}
-
+/**
+ * Day summary line of the legacy `*.backfill.jsonl` files. Nothing writes them
+ * anymore; reports/backfill-reader.ts still reads them for legacy reconciliation.
+ */
 export interface TokensDaySummaryEvent {
   kind: "tokens.daySummary";
   provider: "claude" | "codex";
@@ -78,22 +61,12 @@ export interface TokensDaySummaryEvent {
   perModel: Record<string, {
     input: number; output: number; cacheCreation?: number; cacheRead?: number;
     cachedInput?: number; reasoningOutput?: number; costUSD: number;
-    // Kosten je Token-Typ (Summe == costUSD); seit BACKFILL_REPAIR_VERSION 2.
+    // Per-token-type costs (sum == costUSD); only present in files written by later backfill versions.
     inputCostUSD?: number; outputCostUSD?: number;
     cacheCreationCostUSD?: number; cacheReadCostUSD?: number;
   }>;
 }
 
-export interface BackfillStartEvent { kind: "backfill.start"; days: string[]; }
-export interface BackfillDoneEvent {
-  kind: "backfill.done";
-  daysWritten: number;
-  daysSkipped: number;
-  durationMs: number;
-  sourcesScanned?: number;
-  sourcesChanged?: number;
-}
-export interface BackfillSkippedEvent { kind: "backfill.skipped"; unchangedSources: number; }
 export interface SystemSuspendEvent { kind: "system.suspend"; }
 export interface SystemResumeEvent { kind: "system.resume"; sleepSeconds: number; }
 export interface SystemLockEvent { kind: "system.lock"; }

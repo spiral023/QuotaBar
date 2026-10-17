@@ -171,7 +171,6 @@ describe("portable analytics readiness", () => {
       ((event: unknown, request?: unknown) => Promise<unknown>);
     for (const channel of [
       "reports:get",
-      "reports:copy-json",
       "analytics:summary",
       "analytics:get",
       "models:get",

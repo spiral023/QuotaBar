@@ -42,10 +42,6 @@ const updaterLogger = {
   debug: (...a: unknown[]) => log.debug(`[updater] ${toMessage(a)}`),
 };
 
-export function getUpdateState(): UpdateUiState {
-  return state;
-}
-
 export function checkForUpdatesNow(): void {
   if (state.status === "disabled") return;
   autoUpdater.checkForUpdates().catch((err: unknown) => {

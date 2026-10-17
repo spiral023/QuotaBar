@@ -877,7 +877,7 @@ window.QB = window.QB || {};
     }));
   }
 
-  const PROVIDER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', other: 'Other' };
+  const PROVIDER_LABELS = { claude: 'Claude', codex: 'Codex', other: 'Other' };
   // Token-Typ → Akzentfarbe (identisch zur TOKEN-TYPEN-Sektion, visuell verzahnt).
   const COST_TYPE_COLORS = { input: '#6E8EE8', output: '#52d017', cacheRead: '#56C8D8', cacheCreation: '#E89B6F' };
 

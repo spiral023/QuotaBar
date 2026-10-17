@@ -64,14 +64,6 @@ describe("DebugRecorder", () => {
     expect(content).not.toContain("\"abc\"");
   });
 
-  it("writeBackfill writes to .backfill.jsonl with caller-supplied date", async () => {
-    const r = new DebugRecorder({ enabled: true, logDir: tmpDir });
-    r.writeBackfill("2026-05-20", { kind: "tokens.usage", provider: "claude", model: "x", session: "s", input: 1, output: 1 });
-    await r.flush();
-    const files = await fs.readdir(tmpDir);
-    expect(files).toContain("2026-05-20.backfill.jsonl");
-  });
-
   it("setEnabled(false) stops further writes", async () => {
     const r = new DebugRecorder({ enabled: true, logDir: tmpDir });
     r.write({ kind: "app.start", version: "x", pollIntervalSeconds: 60, noWindow: false, platform: "win32" });

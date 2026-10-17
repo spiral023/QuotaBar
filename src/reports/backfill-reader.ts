@@ -113,7 +113,7 @@ function parseDaySummary(
         reasoningOutputTokens,
         totalTokens,
         costUSD: num(p.costUSD),
-        // Per-Typ-Kosten: erst seit BACKFILL_REPAIR_VERSION 2 geschrieben; Altsätze → 0.
+        // Per-type costs exist only in files written by later backfill versions; older lines read as 0.
         inputCostUSD: num(p.inputCostUSD),
         outputCostUSD: num(p.outputCostUSD),
         cacheCreationCostUSD: num(p.cacheCreationCostUSD),

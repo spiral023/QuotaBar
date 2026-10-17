@@ -22,12 +22,6 @@ export function formatTimeRemaining(resetAt: string | number | Date): string {
   return `${Math.max(1, totalMinutes)}m`;
 }
 
-export function usageLine(provider: string, usedPercent?: number, resetsAt?: string): string {
-  const usage = typeof usedPercent === "number" ? `${Math.round(usedPercent)}%` : "unknown";
-  const reset = resetsAt ? ` (resets in ${formatTimeRemaining(resetsAt)})` : "";
-  return `${provider}: ${usage}${reset}`;
-}
-
 function normalizeDate(value: string | number | Date): Date {
   if (value instanceof Date) {
     return value;

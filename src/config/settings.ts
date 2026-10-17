@@ -9,11 +9,6 @@ export type CostWindow = "7d" | "30d" | "all";
 export type ViewMode = "dashboard" | "compact";
 
 /** @deprecated Legacy flat cost config — kept for reading old settings files only. Not part of Settings. */
-export interface SubscriptionCosts {
-  claude: number;
-  codex: number;
-}
-
 export type PlanCurrency = "USD" | "EUR";
 
 export interface PlanPeriod {

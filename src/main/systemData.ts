@@ -210,18 +210,6 @@ export function findOpenableSystemPath(report: SystemDataReport, requestedPath: 
   return null;
 }
 
-export async function suggestCodexHomes(): Promise<CodexHomeSuggestion[]> {
-  if (process.platform !== "win32") return [];
-  const hosts = ["\\\\wsl.localhost", "\\\\wsl$"];
-  return scanCodexWslHomes(await listWslDistros(hosts), hosts);
-}
-
-export async function suggestClaudeRoots(): Promise<ClaudeRootSuggestion[]> {
-  if (process.platform !== "win32") return [];
-  const hosts = ["\\\\wsl.localhost", "\\\\wsl$"];
-  return scanClaudeWslRoots(await listWslDistros(hosts), hosts);
-}
-
 export async function discoverWslAgentRoots(platform = process.platform): Promise<WslAgentDiscovery> {
   const startedAtMs = Date.now();
   if (platform !== "win32") {

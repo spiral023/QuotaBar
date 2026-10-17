@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(__dirname, "..");
 const ignoredDirs = new Set([".git", ".claude", ".superpowers", ".vscode", ".worktrees", "node_modules", "dist", "release", "package-output"]);
-const textExtensions = new Set([".json", ".md", ".ts", ".html", ".yml", ".yaml"]);
+const textExtensions = new Set([".json", ".md", ".ts", ".js", ".mjs", ".css", ".html", ".yml", ".yaml"]);
 
 function listTextFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

@@ -78,10 +78,6 @@ export async function resolveCodexCredentials(context: PathContext = {}, now = D
   return { state: "ok", credentials: best.credentials, path: best.path };
 }
 
-export async function loadCodexCredentials(context: PathContext = {}): Promise<CodexCredentials | null> {
-  return (await resolveCodexCredentials(context)).credentials;
-}
-
 function rank(credentials: CodexCredentials): number {
   // Bekannter, gültiger Ablauf schlägt unbekannten (nicht verifizierbaren) Ablauf.
   return credentials.expiresAt ?? -1;

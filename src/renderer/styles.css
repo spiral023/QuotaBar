@@ -653,55 +653,6 @@
     .save-btn:disabled { opacity: 0.55; cursor: default; }
     .save-note { font-size: 9.5px; color: var(--t400); text-align: center; margin-top: 6px; line-height: 1.4; }
 
-    /* ── Token detail ───────────────────────────────────────────── */
-    .token-section {
-      margin-top: 8px;
-      padding-top: 7px;
-      border-top: 1px solid var(--border);
-    }
-    .token-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 4px 8px;
-    }
-    .token-cell {
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-    }
-    .token-cell-lbl {
-      font-size: 8px;
-      font-weight: 600;
-      letter-spacing: 0.09em;
-      text-transform: uppercase;
-      color: var(--t400);
-    }
-    .token-cell-val {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 10.5px;
-      font-variant-numeric: tabular-nums;
-      color: var(--t200);
-    }
-    .token-cell-val.is-cost { color: var(--t100); }
-    .token-models {
-      margin-top: 5px;
-      font-size: 9px;
-      color: var(--t400);
-      font-family: 'IBM Plex Mono', monospace;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .token-missing {
-      margin-top: 5px;
-      font-size: 9px;
-      color: var(--warn, #e0a030);
-      font-family: 'IBM Plex Mono', monospace;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
     /* ── Window insight row ─────────────────────────────────────── */
     .bar-sub-row {
       display: flex;
@@ -829,10 +780,6 @@
       transition: max-height 220ms cubic-bezier(0.4, 0, 0.2, 1);
     }
     .token-collapse.open .token-body { max-height: 200px; }
-    .token-collapse .token-section {
-      border-top: none;
-      padding-top: 4px;
-    }
 
     /* ══ ANALYTICS ═════════════════════════════════════════════ */
     .analytics-wrap {

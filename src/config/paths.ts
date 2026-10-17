@@ -101,16 +101,8 @@ export function getInstalledMarkerPath(): string {
   return path.join(getAppConfigDir(), ".installed");
 }
 
-export function getCodexAuthPath(context: PathContext = {}): string {
-  return path.join(firstCodexHome(context), "auth.json");
-}
-
 export function getClaudeCredentialsPath(context: PathContext = {}): string {
   return firstExistingPath(getClaudeCredentialPaths(context)) ?? path.join(firstClaudeRoot(context), ".credentials.json");
-}
-
-export function getClaudeProjectsDir(): string {
-  return getClaudeProjectsDirs()[0] ?? path.join(getHomeDir(), ".claude", "projects");
 }
 
 export function getClaudeProjectsDirs(context: PathContext = {}): string[] {
@@ -151,24 +143,12 @@ export function getConfiguredCodexHomes(context: PathContext = {}): string[] {
   ]);
 }
 
-export function getCodexSessionsDir(): string {
-  return getCodexSessionsDirs()[0] ?? path.join(firstCodexHome(), "sessions");
-}
-
 export function getCodexSessionsDirs(context: PathContext = {}): string[] {
   return uniqueExisting(getCodexHomes(context).map((home) => path.join(home, "sessions")));
 }
 
-export function getCodexConfigPath(): string {
-  return getCodexConfigPaths()[0] ?? path.join(firstCodexHome(), "config.toml");
-}
-
 export function getCodexConfigPaths(context: PathContext = {}): string[] {
   return getCodexHomes(context).map((home) => path.join(home, "config.toml"));
-}
-
-function firstCodexHome(context: PathContext = {}): string {
-  return getCodexHomes(context)[0] ?? path.join(context.homeDir ?? getHomeDir(), ".codex");
 }
 
 export function getDebugLogDir(): string {
@@ -177,10 +157,6 @@ export function getDebugLogDir(): string {
 
 export function getDebugLogPath(date: Date): string {
   return path.join(getDebugLogDir(), `${utcDateKey(date)}.jsonl`);
-}
-
-export function getDebugBackfillPath(date: Date): string {
-  return path.join(getDebugLogDir(), `${utcDateKey(date)}.backfill.jsonl`);
 }
 
 function utcDateKey(date: Date): string {

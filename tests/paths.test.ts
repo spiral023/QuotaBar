@@ -13,7 +13,6 @@ import {
   getCodexSessionsDirs,
   getDebugLogDir,
   getDebugLogPath,
-  getDebugBackfillPath,
   getUsageSnapshotCachePath,
 } from "../src/config/paths";
 
@@ -125,11 +124,6 @@ describe("debug log paths", () => {
   it("returns YYYY-MM-DD.jsonl filename for a given date", () => {
     const d = new Date(Date.UTC(2026, 4, 26, 14, 23, 0));
     expect(getDebugLogPath(d)).toMatch(/[\\/]debug[\\/]2026-05-26\.jsonl$/);
-  });
-
-  it("returns YYYY-MM-DD.backfill.jsonl filename for a given date", () => {
-    const d = new Date(Date.UTC(2026, 4, 26, 14, 23, 0));
-    expect(getDebugBackfillPath(d)).toMatch(/[\\/]debug[\\/]2026-05-26\.backfill\.jsonl$/);
   });
 
   it("uses UTC day boundary, not local", () => {

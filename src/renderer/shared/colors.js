@@ -18,7 +18,7 @@ QB.accentVar = function accentVar(pct) {
 };
 
 QB.providerColor = function providerColor(name) {
-  const map = { claude: '#DA785B', codex: '#4B55C8', gemini: '#8b70f0' };
+  const map = { claude: '#DA785B', codex: '#4B55C8' };
   return map[name] || '#7a8999';
 };
 

@@ -66,11 +66,6 @@ export interface UsageSnapshot {
   windowBudget?: WindowBudgetInfo;
 }
 
-export interface ProviderContext {
-  timeoutMs?: number;
-  debug?: boolean;
-}
-
 export function errorSnapshot(provider: string, message: string, status: UsageStatus = "error"): UsageSnapshot {
   return {
     provider,
