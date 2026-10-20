@@ -1,0 +1,435 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Syne";
+      src: url("assets/fonts/syne-latin-700-normal.woff2") format("woff2");
+      font-weight: 700;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
+      font-family: "Syne";
+      src: url("assets/fonts/archivo-expanded-latin-800-normal.woff2") /* headline weight 800 renders Archivo Expanded: Syne g/y descenders read as clipped at display size */ format("woff2");
+      font-weight: 800;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
+      font-family: "DM Sans";
+      src: url("assets/fonts/dm-sans-latin-400-normal.woff2") format("woff2");
+      font-weight: 400;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
+      font-family: "DM Sans";
+      src: url("assets/fonts/dm-sans-latin-500-normal.woff2") format("woff2");
+      font-weight: 500;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
+      font-family: "IBM Plex Mono";
+      src: url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+      font-weight: 500;
+      font-style: normal;
+      font-display: block;
+    }
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #e6eff6;
+      font-family: "DM Sans", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Full-bleed ground: ink-black + faint 1px hairline grid (~4% white) */
+    .t09-ground {
+      position: absolute;
+      inset: 0;
+      background-color: #07090d;
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+      background-size: 5cqw 5cqw;
+      background-position: 5.5cqw 0;
+    }
+
+    .t09-stage {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* — Scene 1: kicker + headline, top-left — */
+    .t09-head {
+      position: absolute;
+      left: 5.5cqw;
+      top: 7.4cqw;
+    }
+    .t09-rule {
+      width: 36px;
+      height: 2px;
+      background: #52d017;
+      transform-origin: 0 50%;
+      margin-bottom: 1.1cqw;
+    }
+    .t09-kicker {
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 0.95cqw;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #52d017;
+      line-height: 1;
+    }
+    .t09-h2 {
+      margin-top: 1.3cqw;
+      font-family: "Syne", sans-serif;
+      font-weight: 800;
+      font-size: 5.2cqw;
+      line-height: 1.04;
+      letter-spacing: -0.03em;
+      text-transform: lowercase;
+      white-space: nowrap;
+    }
+    .t09-wmask {
+      display: inline-block;
+      overflow-x: visible; overflow-y: clip;
+      vertical-align: top;
+      padding: 0.2em 0 0.32em;
+      margin: -0.2em 0.22em -0.24em 0;
+    }
+    .t09-wmask:last-child {
+      margin-right: 0;
+    }
+    .t09-word {
+      display: inline-block;
+    }
+    .t09-accent {
+      color: #52d017;
+    }
+
+    /* — Scene 2: four top-border-only value cards, 4-across — */
+    .t09-row {
+      position: absolute;
+      left: 5.5cqw;
+      right: 5.5cqw;
+      top: 24.6cqw;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      column-gap: 2cqw;
+    }
+    .t09-card {
+      position: relative;
+      padding-top: 2.2cqw;
+    }
+    .t09-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 1px;
+      background: #1c232d;
+      transform-origin: 0 50%;
+    }
+    .t09-sweepclip {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: -1px;
+      height: 3px;
+      overflow: hidden;
+    }
+    .t09-sweep {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 55%;
+      height: 100%;
+      background: linear-gradient(
+        to right,
+        rgba(82, 208, 23, 0) 0%,
+        rgba(82, 208, 23, 0.55) 55%,
+        #b9f58f 88%,
+        rgba(82, 208, 23, 0) 100%
+      );
+    }
+    .t09-stub {
+      position: absolute;
+      left: 0;
+      top: -1px;
+      width: 36px;
+      height: 2px;
+      background: #52d017;
+      transform-origin: 0 50%;
+    }
+    .t09-num {
+      position: absolute;
+      right: 0;
+      top: 1.1cqw;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 0.85cqw;
+      letter-spacing: 0.14em;
+      color: #2a3441;
+      line-height: 1;
+    }
+    .t09-icon {
+      display: block;
+      width: 3.4cqw;
+      height: 3.4cqw;
+      overflow: visible;
+    }
+    .t09-icon * {
+      fill: none;
+      stroke: #52d017;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-dasharray: 1 2;
+      stroke-dashoffset: 1.05;
+    }
+    .t09-title {
+      margin-top: 1.6cqw;
+      min-height: 4.7cqw;
+      font-family: "Syne", sans-serif;
+      font-weight: 700;
+      font-size: 2.3cqw;
+      line-height: 1.02;
+      letter-spacing: -0.02em;
+      text-transform: lowercase;
+      color: #e6eff6;
+    }
+    .t09-body {
+      margin-top: 1cqw;
+      font-family: "DM Sans", sans-serif;
+      font-weight: 400;
+      font-size: 1.45cqw;
+      line-height: 1.42;
+      color: #8298aa;
+      max-width: 19cqw;
+    }
+  </style>
+
+  <div data-hf-id="hf-vowr" id="root" data-composition-id="09-trust" data-start="0" data-duration="4.77" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-m1sz" id="09-trust-ground" class="clip t09-ground" data-start="0" data-duration="4.77" data-track-index="0"></div>
+
+    <div data-hf-id="hf-awfg" id="09-trust-stage" class="clip t09-stage" data-start="0" data-duration="4.77" data-track-index="1">
+      <div data-hf-id="hf-fc3s" class="t09-head">
+        <div data-hf-id="hf-fcch" class="t09-rule" id="09-trust-rule"></div>
+        <div data-hf-id="hf-cudp" class="t09-kicker" id="09-trust-kicker">Built for developers</div>
+        <div data-hf-id="hf-1zkw" class="t09-h2">
+          <span data-hf-id="hf-i4da" class="t09-wmask"><span data-hf-id="hf-90r8" class="t09-word" id="09-trust-w1">yours.</span></span>
+          <span data-hf-id="hf-8lfm" class="t09-wmask"><span data-hf-id="hf-k8hy" class="t09-word" id="09-trust-w2">local.</span></span>
+          <span data-hf-id="hf-8zqn" class="t09-wmask"><span data-hf-id="hf-wyko" class="t09-word t09-accent" id="09-trust-w3">open.</span></span>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-7kvy" class="t09-row">
+        <!-- 01 privacy-first : lock -->
+        <div data-hf-id="hf-iabm" class="t09-card" id="09-trust-card-0">
+          <div data-hf-id="hf-lsos" class="t09-line"></div>
+          <div data-hf-id="hf-b1ec" class="t09-sweepclip"><div data-hf-id="hf-apq6" class="t09-sweep"></div></div>
+          <div data-hf-id="hf-jb9y" class="t09-stub"></div>
+          <div data-hf-id="hf-jxq5" class="t09-num">01</div>
+          <svg data-hf-id="hf-yw72" class="t09-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <rect data-hf-id="hf-jd26" class="t09-p1" x="11" y="21" width="26" height="20" rx="3" pathLength="1" />
+            <path data-hf-id="hf-x5xt" class="t09-p2" d="M16 21 V15 A8 8 0 0 1 32 15 V21" pathLength="1" />
+            <path data-hf-id="hf-qaps" class="t09-p3" d="M24 28.5 V33.5" pathLength="1" />
+          </svg>
+          <div data-hf-id="hf-5toj" class="t09-title">privacy-first</div>
+          <div data-hf-id="hf-wh5x" class="t09-body">reads only known local CLI paths</div>
+        </div>
+
+        <!-- 02 permanent history : database stack -->
+        <div data-hf-id="hf-m8fn" class="t09-card" id="09-trust-card-1">
+          <div data-hf-id="hf-upkk" class="t09-line"></div>
+          <div data-hf-id="hf-wyr0" class="t09-sweepclip"><div data-hf-id="hf-wxia" class="t09-sweep"></div></div>
+          <div data-hf-id="hf-z4qi" class="t09-stub"></div>
+          <div data-hf-id="hf-l4n8" class="t09-num">02</div>
+          <svg data-hf-id="hf-7xb6" class="t09-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <ellipse data-hf-id="hf-q0m5" class="t09-p1" cx="24" cy="12" rx="13" ry="5" pathLength="1" />
+            <path data-hf-id="hf-oh5h" class="t09-p2" d="M11 12 V36 A13 5 0 0 0 37 36 V12" pathLength="1" />
+            <path data-hf-id="hf-lvo8" class="t09-p3" d="M11 24 A13 5 0 0 0 37 24" pathLength="1" />
+          </svg>
+          <div data-hf-id="hf-gure" class="t09-title">permanent history</div>
+          <div data-hf-id="hf-yslw" class="t09-body">survives provider log cleanup</div>
+        </div>
+
+        <!-- 03 offline-first : shield with check -->
+        <div data-hf-id="hf-bcy0" class="t09-card" id="09-trust-card-2">
+          <div data-hf-id="hf-tinh" class="t09-line"></div>
+          <div data-hf-id="hf-vrtx" class="t09-sweepclip"><div data-hf-id="hf-xbtb" class="t09-sweep"></div></div>
+          <div data-hf-id="hf-zj1j" class="t09-stub"></div>
+          <div data-hf-id="hf-kqc7" class="t09-num">03</div>
+          <svg data-hf-id="hf-8bm7" class="t09-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <path data-hf-id="hf-yvy6" class="t09-p1" d="M24 6 L38 11 V22 C38 31 32 38 24 42 C16 38 10 31 10 22 V11 Z" pathLength="1" />
+            <path data-hf-id="hf-ixtp" class="t09-p2" d="M18 24 L22.5 28.5 L30.5 19.5" pathLength="1" />
+          </svg>
+          <div data-hf-id="hf-iixo" class="t09-title">offline-first</div>
+          <div data-hf-id="hf-8mnz" class="t09-body">works locally — your data stays yours</div>
+        </div>
+
+        <!-- 04 open source : code brackets -->
+        <div data-hf-id="hf-c4lt" class="t09-card" id="09-trust-card-3">
+          <div data-hf-id="hf-twyi" class="t09-line"></div>
+          <div data-hf-id="hf-w64y" class="t09-sweepclip"><div data-hf-id="hf-xq4c" class="t09-sweep"></div></div>
+          <div data-hf-id="hf-zxck" class="t09-stub"></div>
+          <div data-hf-id="hf-lx9a" class="t09-num">04</div>
+          <svg data-hf-id="hf-8px8" class="t09-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <path data-hf-id="hf-8z9m" class="t09-p1" d="M17 15 L8 24 L17 33" pathLength="1" />
+            <path data-hf-id="hf-9w43" class="t09-p2" d="M31 15 L40 24 L31 33" pathLength="1" />
+            <path data-hf-id="hf-0w0e" class="t09-p3" d="M27 12 L21 36" pathLength="1" />
+          </svg>
+          <div data-hf-id="hf-mubx" class="t09-title">open source</div>
+          <div data-hf-id="hf-sxtg" class="t09-body">free · MIT · Electron + TypeScript</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    (function () {
+      var ID = "09-trust";
+      var root = document.querySelector('[data-composition-id="' + ID + '"]');
+      var q = function (sel, scope) {
+        return (scope || root).querySelector(sel);
+      };
+      var byId = function (id) {
+        return root.querySelector('[id="' + id + '"]');
+      };
+      var qa = function (sel, scope) {
+        return Array.prototype.slice.call((scope || root).querySelectorAll(sel));
+      };
+
+      var BEAT = 0.3726;
+      var DUR = 4.47;
+      var tl = gsap.timeline({ paused: true });
+
+      // ── Scene 1 (0.00–0.75s): kicker + lowercase h2, top-left ──────────────
+      tl.fromTo(
+        byId("09-trust-rule"),
+        { scaleX: 0 },
+        { scaleX: 1, duration: 0.5, ease: "power3.out" },
+        0,
+      );
+      tl.fromTo(
+        byId("09-trust-kicker"),
+        { opacity: 0, x: -24 },
+        { opacity: 1, x: 0, duration: 0.55, ease: "power3.out" },
+        0.04,
+      );
+      // words rise out of their masks on half-beats
+      ["09-trust-w1", "09-trust-w2", "09-trust-w3"].forEach(function (id, i) {
+        tl.fromTo(
+          byId(id),
+          { yPercent: 155 },
+          { yPercent: 0, duration: 0.6, ease: "power3.out" },
+          0.08 + i * (BEAT / 2),
+        );
+      });
+
+      // ── Scene 2 (0.75–3.35s): cards assemble one per 2 beats from below ───
+      var cards = [0, 1, 2, 3].map(function (i) {
+        return byId("09-trust-card-" + i);
+      });
+      cards.forEach(function (card, i) {
+        var t = (2 + 2 * i) * BEAT; // beats 2, 4, 6, 8
+
+        tl.fromTo(
+          card,
+          { opacity: 0, y: 70 },
+          { opacity: 1, y: 0, duration: 0.75, ease: "power3.out" },
+          t,
+        );
+        // top hairline self-draws left -> right
+        tl.fromTo(
+          q(".t09-line", card),
+          { scaleX: 0 },
+          { scaleX: 1, duration: 0.7, ease: "power3.out" },
+          t + 0.05,
+        );
+        // green accent stub
+        tl.fromTo(
+          q(".t09-stub", card),
+          { scaleX: 0 },
+          { scaleX: 1, duration: 0.45, ease: "power3.out" },
+          t + 0.18,
+        );
+        tl.fromTo(
+          q(".t09-num", card),
+          { opacity: 0 },
+          { opacity: 1, duration: 0.4, ease: "power1.out" },
+          t + 0.2,
+        );
+        // icon draw-on (svg-path-draw): outline first, inner parts at ~75%
+        var DRAW = 0.55;
+        qa(".t09-icon > *", card).forEach(function (shape, k) {
+          var d = k === 0 ? DRAW : DRAW * 0.7;
+          tl.fromTo(
+            shape,
+            { strokeDashoffset: 1.05 },
+            { strokeDashoffset: 0, duration: d, ease: "power2.out" },
+            t + 0.12 + (k === 0 ? 0 : 0.75 * DRAW + (k - 1) * 0.75 * 0.7 * DRAW),
+          );
+        });
+        tl.fromTo(
+          q(".t09-title", card),
+          { opacity: 0, y: 18 },
+          { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" },
+          t + 0.14,
+        );
+        tl.fromTo(
+          q(".t09-body", card),
+          { opacity: 0, y: 14 },
+          { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" },
+          t + 0.26,
+        );
+      });
+
+      // ── Scene 3 (beat 9 → end): one green sweep along the top hairlines ────
+      // One virtual sweep travels the whole row at constant speed; each card's
+      // clipped segment is timed from its x position so the pass reads as one
+      // continuous highlight that only lights the hairlines (not the gaps).
+      // Geometry in cqw: row 89, gap 2, card w 20.75, sweep 0.55 * w.
+      var T0 = 9 * BEAT; // 3.353
+      var ROW = 89;
+      var GAP = 2;
+      var W = (ROW - 3 * GAP) / 4;
+      var SW = 0.55 * W;
+      var PASS = 1.0;
+      var V = (ROW + SW) / PASS;
+      cards.forEach(function (card, i) {
+        var L = i * (W + GAP);
+        var ta = T0 + L / V;
+        var tb = T0 + (L + W + SW) / V;
+        tl.fromTo(
+          q(".t09-sweep", card),
+          { xPercent: -100 },
+          { xPercent: (W / SW) * 100, duration: tb - ta, ease: "none" },
+          ta,
+        );
+        // the stub answers as the highlight crosses it
+        tl.fromTo(
+          q(".t09-stub", card),
+          { scaleX: 1 },
+          { scaleX: 2.2, duration: 0.35, ease: "power3.out", immediateRender: false },
+          ta,
+        );
+      });
+
+      // pin the timeline length to the frame duration (hold to the end)
+      tl.set({}, {}, DUR);
+
+      tl.seek(0);
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>

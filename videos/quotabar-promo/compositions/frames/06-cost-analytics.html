@@ -1,0 +1,569 @@
+<template>
+  <style>
+    @font-face { font-family: "Syne"; font-weight: 700; font-style: normal; font-display: block; src: url("assets/fonts/syne-latin-700-normal.woff2") format("woff2"); }
+    @font-face { font-family: "Syne"; font-weight: 800; font-style: normal; font-display: block; src: url("assets/fonts/archivo-expanded-latin-800-normal.woff2") /* headline weight 800 renders Archivo Expanded: Syne g/y descenders read as clipped at display size */ format("woff2"); }
+    @font-face { font-family: "DM Sans"; font-weight: 400; font-style: normal; font-display: block; src: url("assets/fonts/dm-sans-latin-400-normal.woff2") format("woff2"); }
+    @font-face { font-family: "DM Sans"; font-weight: 500; font-style: normal; font-display: block; src: url("assets/fonts/dm-sans-latin-500-normal.woff2") format("woff2"); }
+    @font-face { font-family: "DM Sans"; font-weight: 600; font-style: normal; font-display: block; src: url("assets/fonts/dm-sans-latin-600-normal.woff2") format("woff2"); }
+    @font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-style: normal; font-display: block; src: url("assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
+    @font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-style: normal; font-display: block; src: url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); }
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: #e6eff6;
+      font-family: "DM Sans", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* full-bleed ground: ink-black + 4% hairline grid */
+    .cost-bg {
+      position: absolute;
+      inset: 0;
+      background-color: #07090d;
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+      background-size: 80px 80px;
+      background-position: 40px 20px;
+    }
+    .cost-stage {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* ---------- left 40%: kicker + headline ---------- */
+    .cost-left {
+      position: absolute;
+      left: 104px;
+      top: 318px;
+      width: 650px;
+    }
+    .cost-rule {
+      width: 36px;
+      height: 2px;
+      background: #52d017;
+      transform-origin: left center;
+    }
+    .cost-kicker {
+      margin-top: 18px;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 19px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #52d017;
+    }
+    .cost-headline {
+      margin: 26px 0 0;
+      font-family: "Syne", sans-serif;
+      font-weight: 800;
+      font-size: 94px;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      text-transform: lowercase;
+      color: #e6eff6;
+    }
+    .cost-line {
+      display: block;
+      white-space: nowrap;
+    }
+    .cost-word {
+      display: inline-block;
+      will-change: transform, opacity, filter;
+    }
+    .cost-accent {
+      color: #52d017;
+    }
+
+    /* ---------- right 60%: rebuilt QuotaBar analytics ---------- */
+    .cost-right {
+      position: absolute;
+      left: 800px;
+      top: 0;
+      width: 1016px;
+      height: 900px;
+      transform-origin: 60% 32%;
+    }
+    .cost-card {
+      position: absolute;
+      background: #0f1319;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 11px;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    .cost-lbl {
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 16px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #8298aa;
+      white-space: nowrap;
+    }
+    .cost-tile .cost-lbl {
+      position: absolute;
+      left: 26px;
+      top: 24px;
+    }
+    .cost-val {
+      position: absolute;
+      left: 26px;
+      bottom: 22px;
+      display: flex;
+      align-items: baseline;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .cost-num {
+      display: inline-block;
+      font-variant-numeric: tabular-nums;
+      transform-origin: left bottom;
+    }
+
+    /* tile 1: API EQ. (30D) */
+    .cost-t1 {
+      left: 0;
+      top: 160px;
+      width: 372px;
+      height: 232px;
+    }
+    .cost-t1 .cost-val {
+      color: #e6eff6;
+      width: 320px;
+    }
+    .cost-t1 .cost-cur {
+      font-size: 56px;
+      color: #8298aa;
+      margin-right: 6px;
+    }
+    .cost-t1 .cost-num {
+      font-size: 98px;
+      letter-spacing: -0.02em;
+    }
+
+    /* tile 2: SUB ROI (hero) */
+    .cost-glow {
+      position: absolute;
+      left: 218px;
+      top: 6px;
+      width: 780px;
+      height: 540px;
+      border-radius: 50%;
+      background: radial-gradient(closest-side, rgba(82, 208, 23, 0.34), rgba(82, 208, 23, 0.12) 55%, rgba(82, 208, 23, 0) 100%);
+      pointer-events: none;
+    }
+    .cost-t2 {
+      left: 388px;
+      top: 160px;
+      width: 440px;
+      height: 232px;
+    }
+    .cost-t2-inner {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(120% 90% at 30% 100%, rgba(82, 208, 23, 0.16), rgba(82, 208, 23, 0) 70%);
+    }
+    .cost-t2-ring {
+      position: absolute;
+      inset: -1px;
+      border: 1px solid rgba(82, 208, 23, 0.45);
+      border-radius: 11px;
+    }
+    .cost-t2 .cost-val {
+      color: #52d017;
+      width: 390px;
+    }
+    .cost-t2 .cost-num {
+      font-size: 128px;
+      letter-spacing: -0.03em;
+    }
+    .cost-t2 .cost-suffix {
+      display: inline-block;
+      font-size: 76px;
+      margin-left: 4px;
+    }
+
+    /* chip: CACHE HIT */
+    .cost-chip {
+      left: 844px;
+      top: 280px;
+      width: 172px;
+      height: 112px;
+    }
+    .cost-chip .cost-lbl {
+      position: absolute;
+      left: 20px;
+      top: 20px;
+      font-size: 14px;
+    }
+    .cost-chip .cost-val {
+      left: 20px;
+      bottom: 18px;
+      color: #e6eff6;
+      font-size: 38px;
+    }
+
+    /* chart card */
+    .cost-chart {
+      left: 0;
+      top: 416px;
+      width: 1016px;
+      height: 468px;
+    }
+    .cost-chart-head {
+      position: absolute;
+      left: 28px;
+      top: 26px;
+    }
+    .cost-legend {
+      position: absolute;
+      right: 28px;
+      top: 24px;
+      display: flex;
+      gap: 26px;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 16px;
+      color: #e6eff6;
+    }
+    .cost-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .cost-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .cost-ylab {
+      position: absolute;
+      left: 0;
+      width: 62px;
+      text-align: right;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 14px;
+      color: #8298aa;
+      font-variant-numeric: tabular-nums;
+      line-height: 18px;
+    }
+    .cost-xlab {
+      position: absolute;
+      top: 420px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 14px;
+      color: #8298aa;
+      white-space: nowrap;
+      transform: translateX(-50%);
+    }
+    .cost-plot {
+      position: absolute;
+      left: 76px;
+      top: 78px;
+      width: 912px;
+      height: 326px;
+      overflow: visible;
+    }
+    .cost-plot .cost-grid {
+      stroke: rgba(255, 255, 255, 0.05);
+      stroke-width: 1;
+    }
+    .cost-plot .cost-base {
+      stroke: rgba(255, 255, 255, 0.12);
+      stroke-width: 1;
+    }
+    .cost-plot .cost-stroke {
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .cost-annot-line {
+      position: absolute;
+      left: 453px;
+      top: 78px;
+      width: 0;
+      height: 326px;
+      border-left: 2px dashed rgba(230, 239, 246, 0.38);
+      transform-origin: center top;
+    }
+    .cost-annot-tag {
+      position: absolute;
+      right: 571px;
+      top: 84px;
+      padding: 5px 10px;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 15px;
+      color: #e6eff6;
+      background: rgba(11, 14, 20, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .cost-arrow {
+      display: inline-block;
+      vertical-align: middle;
+      margin: -2px 2px 0;
+    }
+  </style>
+
+  <div data-hf-id="hf-ho08" id="root" data-composition-id="06-cost-analytics" data-start="0" data-duration="6.31" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-s7gu" id="06-cost-analytics-bg" class="clip cost-bg" data-start="0" data-duration="6.31" data-track-index="0"></div>
+
+    <div data-hf-id="hf-8elr" id="06-cost-analytics-stage" class="clip cost-stage" data-start="0" data-duration="6.31" data-track-index="1">
+      <!-- left: kicker + headline -->
+      <div data-hf-id="hf-4t63" class="cost-left">
+        <div data-hf-id="hf-zmm2" id="06-cost-analytics-rule" class="cost-rule"></div>
+        <div data-hf-id="hf-8t96" id="06-cost-analytics-kicker" class="cost-kicker">02 / Cost analytics</div>
+        <h2 data-hf-id="hf-ht59" class="cost-headline">
+          <span data-hf-id="hf-iyft" class="cost-line"><span data-hf-id="hf-uv1u" id="06-cost-analytics-w1" class="cost-word">know</span></span>
+          <span data-hf-id="hf-f25p" class="cost-line"><span data-hf-id="hf-z4zo" id="06-cost-analytics-w2" class="cost-word">what</span> <span data-hf-id="hf-3bwk" id="06-cost-analytics-w3" class="cost-word">it's</span></span>
+          <span data-hf-id="hf-g92s" class="cost-line"><span data-hf-id="hf-kxz0" id="06-cost-analytics-w4" class="cost-word cost-accent">worth.</span></span>
+        </h2>
+      </div>
+
+      <!-- right: rebuilt analytics UI -->
+      <div data-hf-id="hf-iqfu" id="06-cost-analytics-right" class="cost-right">
+        <div data-hf-id="hf-6g4a" id="06-cost-analytics-glow" class="cost-glow"></div>
+
+        <div data-hf-id="hf-dopg" id="06-cost-analytics-t1" class="cost-card cost-tile cost-t1">
+          <div data-hf-id="hf-vciy" class="cost-lbl">API Eq. (30D)</div>
+          <div data-hf-id="hf-90t1" class="cost-val"><span data-hf-id="hf-jchx" class="cost-cur">$</span><span data-hf-id="hf-vhyo" id="06-cost-analytics-n1" class="cost-num">0</span></div>
+        </div>
+
+        <div data-hf-id="hf-7xx0" id="06-cost-analytics-t2" class="cost-card cost-tile cost-t2">
+          <div data-hf-id="hf-8xti" id="06-cost-analytics-t2-inner" class="cost-t2-inner"></div>
+          <div data-hf-id="hf-73no" id="06-cost-analytics-t2-ring" class="cost-t2-ring"></div>
+          <div data-hf-id="hf-qtay" class="cost-lbl">Sub ROI</div>
+          <div data-hf-id="hf-5nhf" id="06-cost-analytics-v2" class="cost-val"><span data-hf-id="hf-e17b" id="06-cost-analytics-n2" class="cost-num">0.0</span><span data-hf-id="hf-ollp" id="06-cost-analytics-x2" class="cost-suffix">×</span></div>
+        </div>
+
+        <div data-hf-id="hf-bq70" id="06-cost-analytics-chip" class="cost-card cost-tile cost-chip">
+          <div data-hf-id="hf-3scp" class="cost-lbl">Cache hit</div>
+          <div data-hf-id="hf-j3wp" class="cost-val"><span data-hf-id="hf-0ekf" id="06-cost-analytics-n3">0.0</span><span data-hf-id="hf-nccs">%</span></div>
+        </div>
+
+        <div data-hf-id="hf-eqx4" id="06-cost-analytics-chart" class="cost-card cost-chart">
+          <div data-hf-id="hf-j484" class="cost-lbl cost-chart-head">API cost per day (30 days)</div>
+          <div data-hf-id="hf-dtmz" class="cost-legend">
+            <div data-hf-id="hf-cc0z" class="cost-legend-item"><span data-hf-id="hf-gr08" class="cost-dot" style="background:#DA785B"></span>Claude</div>
+            <div data-hf-id="hf-bq2i" id="06-cost-analytics-leg-codex" class="cost-legend-item"><span data-hf-id="hf-h01g" class="cost-dot" style="background:#4B55C8"></span>Codex</div>
+          </div>
+
+          <div data-hf-id="hf-nde1" class="cost-ylab" style="top:69px">$120</div>
+          <div data-hf-id="hf-ty0b" class="cost-ylab" style="top:178px">$80</div>
+          <div data-hf-id="hf-2xic" class="cost-ylab" style="top:287px">$40</div>
+          <div data-hf-id="hf-i5lw" class="cost-ylab" style="top:395px">$0</div>
+
+          <div data-hf-id="hf-4c1z" class="cost-xlab" style="left:76px">16 May</div>
+          <div data-hf-id="hf-u0ev" class="cost-xlab" style="left:296px">23 May</div>
+          <div data-hf-id="hf-f7gc" class="cost-xlab" style="left:516px">30 May</div>
+          <div data-hf-id="hf-ncqt" class="cost-xlab" style="left:736px">6 Jun</div>
+          <div data-hf-id="hf-g0gm" class="cost-xlab" style="left:957px">13 Jun</div>
+
+          <svg data-hf-id="hf-5eoh" id="06-cost-analytics-plot" class="cost-plot" viewBox="0 0 912 326" width="912" height="326" xmlns="http://www.w3.org/2000/svg">
+            <defs data-hf-id="hf-mh0t">
+              <lineargradient data-hf-id="hf-5sdf" id="06-cost-analytics-grad-claude" x1="0" y1="0" x2="0" y2="1">
+                <stop data-hf-id="hf-w5il" offset="0" stop-color="#DA785B" stop-opacity="0.34" />
+                <stop data-hf-id="hf-pwgn" offset="1" stop-color="#DA785B" stop-opacity="0" />
+              </lineargradient>
+              <lineargradient data-hf-id="hf-7v8s" id="06-cost-analytics-grad-codex" x1="0" y1="0" x2="0" y2="1">
+                <stop data-hf-id="hf-rk8l" offset="0" stop-color="#4B55C8" stop-opacity="0.30" />
+                <stop data-hf-id="hf-e1wr" offset="1" stop-color="#4B55C8" stop-opacity="0" />
+              </lineargradient>
+              <clippath data-hf-id="hf-6eka" id="06-cost-analytics-clip-claude"><rect data-hf-id="hf-k2o3" id="06-cost-analytics-clip-claude-r" x="0" y="-10" width="0" height="346" /></clippath>
+              <clippath data-hf-id="hf-2ecp" id="06-cost-analytics-clip-codex"><rect data-hf-id="hf-is7c" id="06-cost-analytics-clip-codex-r" x="0" y="-10" width="0" height="346" /></clippath>
+            </defs>
+            <line data-hf-id="hf-kh85" class="cost-grid" x1="0" y1="0.5" x2="912" y2="0.5" />
+            <line data-hf-id="hf-n7ib" class="cost-grid" x1="0" y1="109" x2="912" y2="109" />
+            <line data-hf-id="hf-4lxj" class="cost-grid" x1="0" y1="217" x2="912" y2="217" />
+            <line data-hf-id="hf-cj1m" class="cost-base" x1="0" y1="325.5" x2="912" y2="325.5" />
+
+            <g data-hf-id="hf-oorw" id="06-cost-analytics-codex">
+              <path data-hf-id="hf-oqmg" id="06-cost-analytics-codex-area" fill="url(#06-cost-analytics-grad-codex)" clip-path="url(#06-cost-analytics-clip-codex)" d="" />
+              <path data-hf-id="hf-ee9k" id="06-cost-analytics-codex-line" class="cost-stroke" stroke="#4B55C8" stroke-width="2.6" d="" />
+            </g>
+            <g data-hf-id="hf-l3hh" id="06-cost-analytics-claude">
+              <path data-hf-id="hf-jzwv" id="06-cost-analytics-claude-area" fill="url(#06-cost-analytics-grad-claude)" clip-path="url(#06-cost-analytics-clip-claude)" d="" />
+              <path data-hf-id="hf-qs8a" id="06-cost-analytics-claude-line" class="cost-stroke" stroke="#DA785B" stroke-width="3" d="" />
+              <g data-hf-id="hf-uepi" id="06-cost-analytics-claude-dots" />
+            </g>
+          </svg>
+
+          <div data-hf-id="hf-b086" id="06-cost-analytics-annot-line" class="cost-annot-line"></div>
+          <div data-hf-id="hf-1h1t" id="06-cost-analytics-annot-tag" class="cost-annot-tag">Pro <svg data-hf-id="hf-kqq6" class="cost-arrow" viewBox="0 0 18 10" width="18" height="10" aria-label="to"><path data-hf-id="hf-ac69" d="M1 5 H16 M12 1 L16 5 L12 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg> Max 5×</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    (function () {
+      var FID = "06-cost-analytics";
+      var $ = function (s) { return document.getElementById(FID + "-" + s); };
+      var B = 0.3726; // one beat of the 161 bpm bed
+      var SVGNS = "http://www.w3.org/2000/svg";
+
+      // ---- deterministic hand-authored 30-day series (16 May → 14 Jun) ----
+      var CLAUDE = [12, 26, 8, 31, 19, 4, 22, 38, 15, 29, 6, 34, 47, 62, 28, 104, 41, 17, 3, 36, 71, 24, 115, 49, 14, 33, 88, 27, 19, 56];
+      var CODEX  = [4, 9, 15, 6, 12, 21, 3, 0, 18, 26, 11, 7, 14, 31, 10, 19, 36, 8, 2, 16, 23, 9, 38, 17, 5, 22, 29, 13, 6, 24];
+      var W = 912, H = 326, YMAX = 120;
+      var step = W / (CLAUDE.length - 1);
+
+      function geom(series) {
+        var xs = [], ys = [], cum = [0], d = "";
+        for (var i = 0; i < series.length; i++) {
+          var x = +(i * step).toFixed(2);
+          var y = +(H - (series[i] / YMAX) * H).toFixed(2);
+          xs.push(x); ys.push(y);
+          d += (i === 0 ? "M" : " L") + x + " " + y;
+          if (i > 0) {
+            var dx = x - xs[i - 1], dy = y - ys[i - 1];
+            cum.push(cum[i - 1] + Math.sqrt(dx * dx + dy * dy));
+          }
+        }
+        return { xs: xs, ys: ys, cum: cum, total: cum[cum.length - 1], line: d, area: d + " L" + W + " " + H + " L0 " + H + " Z" };
+      }
+
+      function setupLine(prefix, g) {
+        var line = $(prefix + "-line");
+        line.setAttribute("d", g.line);
+        $(prefix + "-area").setAttribute("d", g.area);
+        var measured = line.getTotalLength ? line.getTotalLength() : 0;
+        var len = measured > 0 ? measured : g.total;
+        var pad = 12; // keeps the round cap fully hidden before the draw
+        line.style.strokeDasharray = len + " " + (len + pad * 2);
+        line.style.strokeDashoffset = String(len + pad);
+        return { line: line, clip: $("clip-" + prefix + "-r"), len: len, pad: pad, g: g };
+      }
+
+      var gClaude = geom(CLAUDE);
+      var gCodex = geom(CODEX);
+      var claude = setupLine("claude", gClaude);
+      var codex = setupLine("codex", gCodex);
+
+      // Claude dot markers (built once, synchronously)
+      var dotsG = $("claude-dots");
+      var dots = [];
+      for (var i = 0; i < gClaude.xs.length; i++) {
+        var c = document.createElementNS(SVGNS, "circle");
+        c.setAttribute("cx", gClaude.xs[i]);
+        c.setAttribute("cy", gClaude.ys[i]);
+        c.setAttribute("r", "0");
+        c.setAttribute("fill", "#DA785B");
+        c.setAttribute("stroke", "#0f1319");
+        c.setAttribute("stroke-width", "2");
+        dotsG.appendChild(c);
+        dots.push(c);
+      }
+
+      var tl = gsap.timeline({ paused: true });
+
+      // ===== Scene 1 (0.00–1.49): headline word-by-word + tile row + tile 1 count =====
+      tl.fromTo($("rule"), { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "expo.out" }, 0);
+      tl.fromTo($("kicker"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, 0.06);
+      ["w1", "w2", "w3", "w4"].forEach(function (id, k) {
+        tl.fromTo($(id),
+          { opacity: 0, y: 54, filter: "blur(10px)" },
+          { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.55, ease: "expo.out" },
+          k * B + 0.02);
+      });
+
+      // one-time gentle push-in on the UI, settles by ~1.6s then holds
+      tl.fromTo($("right"), { scale: 0.955 }, { scale: 1, duration: 1.6, ease: "power3.out" }, 0);
+
+      tl.fromTo($("t1"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0.04);
+      tl.fromTo($("t2"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0.12);
+      // tile 2 value waits dimmed until its beat
+      tl.fromTo($("v2"), { opacity: 0.28 }, { opacity: 0.28, duration: 0.01 }, 0);
+      tl.fromTo($("x2"), { opacity: 0, y: 20 }, { opacity: 0, y: 20, duration: 0.01 }, 0);
+      tl.fromTo($("glow"), { opacity: 0, scale: 0.8 }, { opacity: 0, scale: 0.8, duration: 0.01 }, 0);
+      tl.fromTo($("t2-inner"), { opacity: 0 }, { opacity: 0, duration: 0.01 }, 0);
+      tl.fromTo($("t2-ring"), { opacity: 0 }, { opacity: 0, duration: 0.01 }, 0);
+
+      // tile 1: $0 → $594, value + scale share timing and ease (counting-dynamic-scale)
+      var n1 = $("n1"), s1 = { v: 0 };
+      var C1_AT = 0.2, C1_DUR = 4 * B - 0.2; // lands on beat 4
+      tl.fromTo(s1, { v: 0 }, { v: 594, duration: C1_DUR, ease: "power3.out",
+        onUpdate: function () { n1.textContent = String(Math.round(s1.v)); } }, C1_AT);
+      tl.fromTo(n1, { scale: 0.55 }, { scale: 1, duration: C1_DUR, ease: "power3.out" }, C1_AT);
+
+      // ===== Scene 2 (beat 4): SUB ROI 0.0× → 21.2× (hero) + green bloom; beat 6 chip =====
+      var n2 = $("n2"), s2 = { v: 0 };
+      var C2_AT = 4 * B, C2_DUR = 1.3;
+      tl.to($("v2"), { opacity: 1, duration: 0.25, ease: "power2.out" }, C2_AT);
+      tl.fromTo(s2, { v: 0 }, { v: 21.2, duration: C2_DUR, ease: "power3.out",
+        onUpdate: function () { n2.textContent = (Math.round(s2.v * 10) / 10).toFixed(1); } }, C2_AT);
+      tl.fromTo(n2, { scale: 0.5 }, { scale: 1, duration: C2_DUR, ease: "power3.out" }, C2_AT);
+      var LAND = C2_AT + C2_DUR;
+      tl.to($("x2"), { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, LAND - 0.08);
+      // ambient glow bloom — fades up once on landing, then holds
+      tl.to($("glow"), { opacity: 1, scale: 1, duration: 0.9, ease: "power2.out" }, LAND - 0.15);
+      tl.to($("t2-inner"), { opacity: 1, duration: 0.7, ease: "power2.out" }, LAND - 0.15);
+      tl.to($("t2-ring"), { opacity: 1, duration: 0.5, ease: "power2.out" }, LAND - 0.1);
+
+      // chip: CACHE HIT 97.3% pops beside it on beat 6
+      var n3 = $("n3"), s3 = { v: 0 };
+      var CH_AT = 6 * B;
+      tl.fromTo($("chip"), { opacity: 0, scale: 0.86, y: 12 }, { opacity: 1, scale: 1, y: 0, duration: 0.45, ease: "power3.out" }, CH_AT);
+      tl.fromTo(s3, { v: 0 }, { v: 97.3, duration: 0.9, ease: "power3.out",
+        onUpdate: function () { n3.textContent = (Math.round(s3.v * 10) / 10).toFixed(1); } }, CH_AT + 0.05);
+
+      // ===== Scene 3 (beat 8): chart card, Claude draw, annotation, Codex draw on beat 11 =====
+      var CARD_AT = 8 * B;
+      tl.fromTo($("chart"), { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, CARD_AT);
+      tl.fromTo($("leg-codex"), { opacity: 0.32 }, { opacity: 0.32, duration: 0.01 }, 0);
+      tl.fromTo($("annot-line"), { scaleY: 0, opacity: 0 }, { scaleY: 0, opacity: 0, duration: 0.01 }, 0);
+      tl.fromTo($("annot-tag"), { opacity: 0, x: 10 }, { opacity: 0, x: 10, duration: 0.01 }, 0);
+
+      // inverse of GSAP power2.out (1 - (1 - p)^3): when the pen reaches length fraction f
+      function penTime(o, f, at, dur) {
+        var fl = Math.min(1, (f * o.len + o.pad) / (o.len + o.pad));
+        return at + dur * (1 - Math.cbrt(1 - fl));
+      }
+      // svg-path-draw: dashoffset (len + pad) → 0 on the measured length.
+      // The area fill's clip edge follows the pen tip vertex-by-vertex (callback-free, seek-safe).
+      function drawLine(o, at, dur) {
+        tl.fromTo(o.line, { strokeDashoffset: o.len + o.pad }, { strokeDashoffset: 0, duration: dur, ease: "power2.out" }, at);
+        var g = o.g, prevT = penTime(o, 0, at, dur);
+        for (var k = 1; k < g.xs.length; k++) {
+          var tk = penTime(o, g.cum[k] / g.total, at, dur);
+          tl.fromTo(o.clip,
+            { attr: { width: g.xs[k - 1] } },
+            { attr: { width: k === g.xs.length - 1 ? W + 4 : g.xs[k] }, duration: Math.max(0.001, tk - prevT), ease: "none", immediateRender: false },
+            prevT);
+          prevT = tk;
+        }
+      }
+
+      var CL_AT = CARD_AT + 0.12, CL_DUR = 1.7;
+      drawLine(claude, CL_AT, CL_DUR);
+      dots.forEach(function (dot, k) {
+        var t = penTime(claude, gClaude.cum[k] / gClaude.total, CL_AT, CL_DUR);
+        tl.fromTo(dot, { attr: { r: 0 } }, { attr: { r: 4 }, duration: 0.22, ease: "power2.out" }, t);
+      });
+
+      // dashed "Pro → Max 5×" annotation at ~41% x on beat 10 (pen has passed it)
+      var AN_AT = 10 * B;
+      tl.to($("annot-line"), { scaleY: 1, opacity: 1, duration: 0.45, ease: "power3.out" }, AN_AT);
+      tl.to($("annot-tag"), { opacity: 1, x: 0, duration: 0.4, ease: "power3.out" }, AN_AT + 0.1);
+
+      // Codex indigo line draws under it on beat 11
+      var CX_AT = 11 * B, CX_DUR = 1.2;
+      tl.to($("leg-codex"), { opacity: 1, duration: 0.3, ease: "power2.out" }, CX_AT);
+      drawLine(codex, CX_AT, CX_DUR);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[FID] = tl;
+    })();
+  </script>
+</template>

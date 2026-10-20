@@ -1,0 +1,394 @@
+<template>
+  <div data-hf-id="hf-vz1j" id="root" data-composition-id="10-lockup" data-start="0" data-duration="5.96" data-width="1920" data-height="1080">
+    <style>
+      @font-face {
+        font-family: "Syne";
+        src: url("assets/fonts/syne-latin-700-normal.woff2") format("woff2");
+        font-weight: 700;
+        font-style: normal;
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Syne";
+        src: url("assets/fonts/archivo-expanded-latin-800-normal.woff2") /* headline weight 800 renders Archivo Expanded: Syne g/y descenders read as clipped at display size */ format("woff2");
+        font-weight: 800;
+        font-style: normal;
+        font-display: block;
+      }
+      @font-face {
+        font-family: "DM Sans";
+        src: url("assets/fonts/dm-sans-latin-400-normal.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+      }
+      @font-face {
+        font-family: "DM Sans";
+        src: url("assets/fonts/dm-sans-latin-500-normal.woff2") format("woff2");
+        font-weight: 500;
+        font-style: normal;
+        font-display: block;
+      }
+      @font-face {
+        font-family: "IBM Plex Mono";
+        src: url("assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+      }
+      @font-face {
+        font-family: "IBM Plex Mono";
+        src: url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+        font-weight: 500;
+        font-style: normal;
+        font-display: block;
+      }
+
+      #root {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        container-type: size;
+        color: #e6eff6;
+        font-family: "DM Sans", sans-serif;
+      }
+      #root *,
+      #root *::before,
+      #root *::after {
+        box-sizing: border-box;
+      }
+
+      /* Full-bleed ground: ink-black + faint 1px hairline grid (~4% white). */
+      .\31 0-lockup-bg {
+        position: absolute;
+        inset: 0;
+        background-color: #07090d;
+      }
+      .\31 0-lockup-grid {
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+        background-size: 5cqw 5cqw;
+        background-position: center center;
+      }
+
+      /* Centered lockup stack: mark + wordmark row, tagline, CTA row. */
+      .\31 0-lockup-stack {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 23cqh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .\31 0-lockup-row {
+        position: relative;
+        display: flex;
+        align-items: center;
+        height: 12.5cqw;
+      }
+      .\31 0-lockup-spacer {
+        flex: none;
+        width: 10cqw;
+        height: 12.5cqw;
+      }
+      .\31 0-lockup-word {
+        flex: none;
+        display: flex;
+        align-items: center;
+        margin-left: 3cqw;
+        font-family: "Syne", sans-serif;
+        font-weight: 700;
+        font-size: 7.3cqw;
+        line-height: 1;
+        text-transform: uppercase;
+        color: #e6eff6;
+        white-space: nowrap;
+      }
+      .\31 0-lockup-chmask {
+        display: inline-block;
+        overflow-x: visible; overflow-y: clip;
+        padding: 0.2em 0 0.24em;
+        margin: -0.2em 0.18em -0.24em 0;
+      }
+      .\31 0-lockup-chmask:last-child {
+        margin-right: 0;
+      }
+      .\31 0-lockup-ch {
+        display: inline-block;
+      }
+
+      /* Slider spans the row; the mark rides inside it (see timeline). */
+      .\31 0-lockup-slider {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .\31 0-lockup-markbox {
+        position: absolute;
+        left: 0;
+        top: 50%;
+        width: 12.5cqw;
+        height: 12.5cqw;
+        margin-top: -6.25cqw;
+      }
+      .\31 0-lockup-glow {
+        position: absolute;
+        left: -70%;
+        top: -70%;
+        width: 240%;
+        height: 240%;
+        border-radius: 50%;
+        background: radial-gradient(circle at center, rgba(82, 208, 23, 0.34) 0%, rgba(82, 208, 23, 0.12) 34%, rgba(82, 208, 23, 0) 66%);
+      }
+      .\31 0-lockup-svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+
+      /* Tagline with clip-path wipe + green leading edge. */
+      .\31 0-lockup-tagwrap {
+        position: relative;
+        margin-top: 4.2cqw;
+      }
+      .\31 0-lockup-tag {
+        font-family: "DM Sans", sans-serif;
+        font-weight: 500;
+        font-size: 2.35cqw;
+        line-height: 1.25;
+        padding: 0.08em 0.02em 0.12em;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        color: #8298aa;
+      }
+      .\31 0-lockup-tag-accent {
+        color: #52d017;
+      }
+      .\31 0-lockup-edgetrack {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .\31 0-lockup-edge {
+        position: absolute;
+        left: 0;
+        top: -8%;
+        width: 3px;
+        height: 116%;
+        background: #52d017;
+      }
+
+      /* CTA row: outlined label + mono URL. */
+      .\31 0-lockup-cta {
+        display: flex;
+        align-items: center;
+        margin-top: 3cqw;
+        font-family: "IBM Plex Mono", monospace;
+      }
+      .\31 0-lockup-pill {
+        padding: 0.8cqw 1.5cqw;
+        border: 1px solid #52d017;
+        font-weight: 500;
+        font-size: 1.4cqw;
+        line-height: 1;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #52d017;
+        white-space: nowrap;
+      }
+      .\31 0-lockup-dot {
+        margin: 0 1.4cqw;
+        font-size: 1.5cqw;
+        color: #2a3441;
+      }
+      .\31 0-lockup-url {
+        font-weight: 400;
+        font-size: 1.55cqw;
+        line-height: 1;
+        letter-spacing: 0.02em;
+        color: #e6eff6;
+        white-space: nowrap;
+      }
+
+      /* Final exit: fade to black. */
+      .\31 0-lockup-black {
+        position: absolute;
+        inset: 0;
+        background: #000;
+      }
+    </style>
+
+    <div data-hf-id="hf-lwzs" id="10-lockup-bg" class="clip 10-lockup-bg" data-start="0" data-duration="5.96" data-track-index="0">
+      <div data-hf-id="hf-vbp6" id="10-lockup-grid" class="10-lockup-grid"></div>
+    </div>
+
+    <div data-hf-id="hf-uis9" class="10-lockup-stack">
+      <div data-hf-id="hf-8cx1" class="10-lockup-row">
+        <div data-hf-id="hf-s73f" class="10-lockup-spacer"></div>
+        <div data-hf-id="hf-c209" class="10-lockup-word" aria-label="QUOTABAR">
+          <span data-hf-id="hf-p6nz" class="10-lockup-chmask"><span data-hf-id="hf-05ke" class="10-lockup-ch">Q</span></span>
+          <span data-hf-id="hf-sw73" class="10-lockup-chmask"><span data-hf-id="hf-ykca" class="10-lockup-ch">U</span></span>
+          <span data-hf-id="hf-shw2" class="10-lockup-chmask"><span data-hf-id="hf-cya4" class="10-lockup-ch">O</span></span>
+          <span data-hf-id="hf-s3l1" class="10-lockup-chmask"><span data-hf-id="hf-y619" class="10-lockup-ch">T</span></span>
+          <span data-hf-id="hf-uvq8" class="10-lockup-chmask"><span data-hf-id="hf-6igu" class="10-lockup-ch">A</span></span>
+          <span data-hf-id="hf-uhf7" class="10-lockup-chmask"><span data-hf-id="hf-6wrv" class="10-lockup-ch">B</span></span>
+          <span data-hf-id="hf-u346" class="10-lockup-chmask"><span data-hf-id="hf-jeua" class="10-lockup-ch">A</span></span>
+          <span data-hf-id="hf-tot5" class="10-lockup-chmask"><span data-hf-id="hf-0jvf" class="10-lockup-ch">R</span></span>
+        </div>
+        <div data-hf-id="hf-tk4a" id="10-lockup-slider" class="10-lockup-slider">
+          <div data-hf-id="hf-xdb4" id="10-lockup-markbox" class="10-lockup-markbox">
+            <div data-hf-id="hf-6ud2" id="10-lockup-glow" class="10-lockup-glow"></div>
+            <svg data-hf-id="hf-2mfd" class="10-lockup-svg" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path data-hf-id="hf-skw5" id="10-lockup-outer" d="M9 1L17 9L9 17L1 9Z" fill="#52d017" opacity="0.85" stroke="#52d017" stroke-width="0.32" stroke-linejoin="miter" />
+              <path data-hf-id="hf-yq0p" id="10-lockup-inner" d="M9 4.5L13.5 9L9 13.5L4.5 9Z" fill="#07090d" />
+              <path data-hf-id="hf-hp00" id="10-lockup-core" d="M9 7L11 9L9 11L7 9Z" fill="#52d017" opacity="0.65" />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-9ze5" class="10-lockup-tagwrap">
+        <div data-hf-id="hf-389q" id="10-lockup-tag" class="10-lockup-tag">Know your AI spend. <span data-hf-id="hf-wj2x" class="10-lockup-tag-accent">At a glance.</span></div>
+        <div data-hf-id="hf-zv4w" id="10-lockup-edgetrack" class="10-lockup-edgetrack">
+          <div data-hf-id="hf-95om" id="10-lockup-edge" class="10-lockup-edge"></div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-1ob3" class="10-lockup-cta">
+        <div data-hf-id="hf-6hju" id="10-lockup-pill" class="10-lockup-pill">Free for Windows</div>
+        <div data-hf-id="hf-w39z" id="10-lockup-dot" class="10-lockup-dot">·</div>
+        <div data-hf-id="hf-u5gr" id="10-lockup-url" class="10-lockup-url">github.com/spiral023/QuotaBar</div>
+      </div>
+    </div>
+
+    <div data-hf-id="hf-k8ve" id="10-lockup-black" class="10-lockup-black"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var BEAT = 0.3726;
+        var DUR = 5.96;
+        var $ = function (id) {
+          return document.getElementById(id);
+        };
+
+        var grid = $("10-lockup-grid");
+        var outer = $("10-lockup-outer");
+        var inner = $("10-lockup-inner");
+        var core = $("10-lockup-core");
+        var glow = $("10-lockup-glow");
+        var slider = $("10-lockup-slider");
+        var markbox = $("10-lockup-markbox");
+        var tag = $("10-lockup-tag");
+        var edgeTrack = $("10-lockup-edgetrack");
+        var edge = $("10-lockup-edge");
+        var pill = $("10-lockup-pill");
+        var dot = $("10-lockup-dot");
+        var url = $("10-lockup-url");
+        var black = $("10-lockup-black");
+        var root = document.querySelector('[data-composition-id="10-lockup"]');
+        var chars = root ? root.querySelectorAll(".\\31 0-lockup-ch") : [];
+
+        // svg-path-draw: measured outline length (fallback = exact diamond perimeter).
+        var len = 45.255;
+        try {
+          var measured = outer.getTotalLength();
+          if (measured && isFinite(measured)) len = measured * 1.02;
+        } catch (e) {}
+
+        var tl = gsap.timeline({ paused: true });
+
+        // ── Scene 1 (0.00–1.49s): ground + grid, mark assembles from its three layers ──
+        tl.fromTo(grid, { opacity: 0 }, { opacity: 1, duration: 0.7, ease: "power1.out" }, 0);
+
+        // Outer diamond draws its outline, then fills.
+        outer.style.strokeDasharray = String(len);
+        tl.fromTo(outer, { strokeDashoffset: len }, { strokeDashoffset: 0, duration: 0.62, ease: "power2.out" }, 0.08);
+        tl.fromTo(outer, { fillOpacity: 0 }, { fillOpacity: 1, duration: 0.3, ease: "power1.out" }, 0.5);
+
+        // Beat 2: dark inner diamond scales in from 0 (cuts the hole).
+        tl.fromTo(
+          inner,
+          { scale: 0, transformOrigin: "50% 50%" },
+          { scale: 1, duration: 0.5, ease: "expo.out" },
+          2 * BEAT
+        );
+
+        // Beat 3: green core pops in; glow blooms once behind the mark.
+        tl.fromTo(
+          core,
+          { scale: 0, transformOrigin: "50% 50%" },
+          { scale: 1, duration: 0.4, ease: "expo.out" },
+          3 * BEAT
+        );
+        tl.fromTo(glow, { opacity: 0, scale: 0.55 }, { opacity: 1, scale: 1, duration: 0.42, ease: "power3.out" }, 3 * BEAT);
+        tl.fromTo(glow, { opacity: 1 }, { opacity: 0.5, immediateRender: false, duration: 0.9, ease: "power2.out" }, 3 * BEAT + 0.42);
+
+        // ── Scene 2 (beat 4 = 1.49s): mark slides left, wordmark reveals letter-by-letter ──
+        // Slider spans the row: xPercent 50 puts the markbox's left edge on the row
+        // center, markbox xPercent -50 centers it; both settle to 0 = final lockup slot.
+        var SLIDE_AT = 4 * BEAT;
+        tl.fromTo(slider, { xPercent: 50 }, { xPercent: 0, duration: 0.85, ease: "power3.out" }, SLIDE_AT);
+        tl.fromTo(
+          markbox,
+          { xPercent: -50, scale: 1, transformOrigin: "0% 50%" },
+          { xPercent: 0, scale: 0.8, duration: 0.85, ease: "power3.out" },
+          SLIDE_AT
+        );
+
+        // Letter windows pre-computed once (dynamic-content-sequencing): equal per-letter
+        // cadence, sequence starting as the mark clears the first letter.
+        var LETTER_START = 1.8;
+        var LETTER_GAP = 0.075;
+        var LETTER_DUR = 0.55;
+        var letterTimes = [];
+        for (var i = 0; i < chars.length; i++) letterTimes.push(LETTER_START + i * LETTER_GAP);
+        for (var j = 0; j < chars.length; j++) {
+          tl.fromTo(
+            chars[j],
+            { yPercent: 150, opacity: 0 },
+            { yPercent: 0, opacity: 1, duration: LETTER_DUR, ease: "expo.out" },
+            letterTimes[j]
+          );
+        }
+
+        // ── Scene 3 (beat 8 = 2.98s): tagline wipes in left→right with a green leading edge ──
+        var WIPE_AT = 8 * BEAT;
+        var WIPE_DUR = 0.75;
+        tl.fromTo(
+          tag,
+          { clipPath: "inset(0% 100% 0% 0%)" },
+          { clipPath: "inset(0% 0% 0% 0%)", duration: WIPE_DUR, ease: "power2.inOut" },
+          WIPE_AT
+        );
+        tl.fromTo(edgeTrack, { xPercent: 0 }, { xPercent: 100, duration: WIPE_DUR, ease: "power2.inOut" }, WIPE_AT);
+        tl.fromTo(edge, { opacity: 0 }, { opacity: 1, duration: 0.08, ease: "none" }, WIPE_AT);
+        tl.fromTo(edge, { opacity: 1 }, { opacity: 0, immediateRender: false, duration: 0.22, ease: "power1.out" }, WIPE_AT + WIPE_DUR);
+
+        // Beat 10: CTA label + URL fade up.
+        var CTA_AT = 10 * BEAT;
+        tl.fromTo(pill, { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, CTA_AT);
+        tl.fromTo(dot, { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, CTA_AT + 0.06);
+        tl.fromTo(url, { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, CTA_AT + 0.12);
+
+        // ── Scene 4 (4.47–5.96s): hold still, then fade everything to black (final exit) ──
+        tl.fromTo(black, { opacity: 0 }, { opacity: 1, duration: DUR - 5.2, ease: "power1.inOut" }, 5.2);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines["10-lockup"] = tl;
+      })();
+    </script>
+  </div>
+</template>

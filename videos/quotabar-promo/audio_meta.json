@@ -1,0 +1,159 @@
+{
+  "bgm": {
+    "path": "assets/bgm/track.mp3",
+    "volume": 0.9,
+    "query": "driving dark synthwave electronic, punchy modern tech launch, steady four-on-the-floor around 120 bpm, energetic build, no vocals",
+    "duration_s": 30
+  },
+  "bgm_pending": false,
+  "voices": [],
+  "sfx": [
+    {
+      "frame": 1,
+      "file": "assets/sfx/keyboard-typing.mp3",
+      "offset_s": 0.0,
+      "duration_s": 1.75,
+      "volume": 0.3
+    },
+    {
+      "frame": 1,
+      "file": "assets/sfx/error-glitch-impact.mp3",
+      "offset_s": 1.2,
+      "duration_s": 0.86,
+      "volume": 0.55
+    },
+    {
+      "frame": 2,
+      "file": "assets/sfx/bass-hit.mp3",
+      "offset_s": 0.0,
+      "duration_s": 1.4,
+      "volume": 0.45
+    },
+    {
+      "frame": 2,
+      "file": "assets/sfx/deep-impact-on-the-drop.mp3",
+      "offset_s": 1.46,
+      "duration_s": 1.59,
+      "volume": 0.55
+    },
+    {
+      "frame": 3,
+      "file": "assets/sfx/soft-pop.mp3",
+      "offset_s": 0.68,
+      "duration_s": 0.4,
+      "volume": 0.4
+    },
+    {
+      "frame": 3,
+      "file": "assets/sfx/whoosh.mp3",
+      "offset_s": 1.0,
+      "duration_s": 1.12,
+      "volume": 0.3
+    },
+    {
+      "frame": 4,
+      "file": "assets/sfx/bass-hit.mp3",
+      "offset_s": 1.05,
+      "duration_s": 1.6,
+      "volume": 0.45
+    },
+    {
+      "frame": 5,
+      "file": "assets/sfx/soft-whoosh.mp3",
+      "offset_s": 0.0,
+      "duration_s": 1.01,
+      "volume": 0.3
+    },
+    {
+      "frame": 5,
+      "file": "assets/sfx/ui-tick.mp3",
+      "offset_s": 4.4,
+      "duration_s": 0.25,
+      "volume": 0.35
+    },
+    {
+      "frame": 6,
+      "file": "assets/sfx/counter-ticks.mp3",
+      "offset_s": 0.0,
+      "duration_s": 2.35,
+      "volume": 0.22
+    },
+    {
+      "frame": 6,
+      "file": "assets/sfx/impact-on-the-roi-number.mp3",
+      "offset_s": 2.33,
+      "duration_s": 0.65,
+      "volume": 0.45
+    },
+    {
+      "frame": 7,
+      "file": "assets/sfx/soft-ticks-per-row.mp3",
+      "offset_s": 1.05,
+      "duration_s": 0.41,
+      "volume": 0.3
+    },
+    {
+      "frame": 7,
+      "file": "assets/sfx/soft-ticks-per-row.mp3",
+      "offset_s": 1.61,
+      "duration_s": 0.41,
+      "volume": 0.3
+    },
+    {
+      "frame": 7,
+      "file": "assets/sfx/soft-ticks-per-row.mp3",
+      "offset_s": 2.17,
+      "duration_s": 0.41,
+      "volume": 0.3
+    },
+    {
+      "frame": 7,
+      "file": "assets/sfx/soft-ticks-per-row.mp3",
+      "offset_s": 2.73,
+      "duration_s": 0.41,
+      "volume": 0.3
+    },
+    {
+      "frame": 8,
+      "file": "assets/sfx/notification-chime-2.mp3",
+      "offset_s": 1.05,
+      "duration_s": 1.4,
+      "volume": 0.4
+    },
+    {
+      "frame": 8,
+      "file": "assets/sfx/notification-chime-2.mp3",
+      "offset_s": 2.54,
+      "duration_s": 1.8,
+      "volume": 0.4
+    },
+    {
+      "frame": 9,
+      "file": "assets/sfx/soft-pops.mp3",
+      "offset_s": 0.7,
+      "duration_s": 0.87,
+      "volume": 0.3
+    },
+    {
+      "frame": 9,
+      "file": "assets/sfx/soft-pops.mp3",
+      "offset_s": 2.2,
+      "duration_s": 0.87,
+      "volume": 0.3
+    },
+    {
+      "frame": 9,
+      "file": "assets/sfx/riser-into-impact.mp3",
+      "offset_s": 2.0,
+      "duration_s": 2.79,
+      "volume": 0.45
+    },
+    {
+      "frame": 10,
+      "file": "assets/sfx/shimmer.mp3",
+      "offset_s": 2.98,
+      "duration_s": 2.06,
+      "volume": 0.3
+    }
+  ]
+}

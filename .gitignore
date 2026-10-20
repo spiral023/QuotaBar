@@ -56,3 +56,12 @@ scripts/
 
 # Temporäre Vorschau-Dateien
 tmp_*.html
+
+# HyperFrames video projects: keep sources, ignore renders and generated/local state
+videos/*/renders/
+videos/*/snapshots/
+videos/*/.thumbnails/
+videos/*/.waveform-cache/
+videos/*/.hyperframes/
+videos/*/.media/
+videos/*/capture/assets/

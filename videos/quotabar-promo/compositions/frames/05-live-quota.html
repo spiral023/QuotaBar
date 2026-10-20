@@ -1,0 +1,587 @@
+<template>
+  <style>
+    @font-face { font-family: "Syne"; font-weight: 700; font-style: normal; src: url("assets/fonts/syne-latin-700-normal.woff2") format("woff2"); }
+    @font-face { font-family: "Syne"; font-weight: 800; font-style: normal; src: url("assets/fonts/archivo-expanded-latin-800-normal.woff2") /* headline weight 800 renders Archivo Expanded: Syne g/y descenders read as clipped at display size */ format("woff2"); }
+    @font-face { font-family: "DM Sans"; font-weight: 400; font-style: normal; src: url("assets/fonts/dm-sans-latin-400-normal.woff2") format("woff2"); }
+    @font-face { font-family: "DM Sans"; font-weight: 500; font-style: normal; src: url("assets/fonts/dm-sans-latin-500-normal.woff2") format("woff2"); }
+    @font-face { font-family: "DM Sans"; font-weight: 600; font-style: normal; src: url("assets/fonts/dm-sans-latin-600-normal.woff2") format("woff2"); }
+    @font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-style: normal; src: url("assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
+    @font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-style: normal; src: url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); }
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: #e6eff6;
+      font-family: "DM Sans", sans-serif;
+      container-type: size;
+    }
+
+    /* full-bleed ground: ink-black + faint 1px hairline grid */
+    .lq5-bg {
+      position: absolute;
+      inset: 0;
+      background-color: #07090d;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+      background-size: 96px 96px;
+      background-position: -1px -1px;
+    }
+
+    /* ---------- left column: kicker + headline ---------- */
+    .lq5-copy {
+      position: absolute;
+      left: 104px;
+      top: 318px;
+      width: 640px;
+    }
+    .lq5-rule {
+      width: 36px;
+      height: 2px;
+      background: #52d017;
+      transform-origin: 0% 50%;
+    }
+    .lq5-kicker {
+      margin-top: 22px;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 22px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #52d017;
+    }
+    .lq5-head {
+      margin-top: 30px;
+      font-family: "Syne", sans-serif;
+      font-weight: 800;
+      font-size: 104px;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      text-transform: lowercase;
+      color: #e6eff6;
+    }
+    .lq5-line {
+      display: block;
+      overflow-x: visible; overflow-y: clip;
+      padding: 0.2em 0 0.32em;
+      margin: 0 0 -0.52em;
+      white-space: nowrap;
+    }
+    .lq5-line:first-child { margin-top: -0.2em; }
+    .lq5-w {
+      display: inline-block;
+      will-change: transform;
+    }
+    .lq5-accent { color: #52d017; }
+
+    /* ---------- QuotaBar window ---------- */
+    .lq5-cam {
+      position: absolute;
+      left: 808px;
+      top: 168px;
+      width: 1010px;
+      transform-origin: 40% 50%;
+    }
+    .lq5-win {
+      position: relative;
+      width: 1010px;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #07090d;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      box-shadow: 0 50px 120px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(0, 0, 0, 0.6);
+      transform-origin: 50% 50%;
+    }
+    .lq5-titlebar {
+      height: 64px;
+      background: #0b0e14;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 26px 0 24px;
+    }
+    .lq5-brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .lq5-mark { width: 26px; height: 26px; display: block; }
+    .lq5-wordmark {
+      font-family: "Syne", sans-serif;
+      font-weight: 700;
+      font-size: 21px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #e6eff6;
+    }
+    .lq5-icons {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+    }
+    .lq5-icons svg { width: 20px; height: 20px; display: block; }
+
+    .lq5-tabs {
+      height: 56px;
+      background: #0b0e14;
+      border-top: 1px solid rgba(255, 255, 255, 0.04);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      display: flex;
+      align-items: stretch;
+      gap: 34px;
+      padding: 0 26px;
+    }
+    .lq5-tab {
+      position: relative;
+      display: flex;
+      align-items: center;
+      font-family: "DM Sans", sans-serif;
+      font-weight: 600;
+      font-size: 15px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #7e92a4;
+    }
+    .lq5-tab-on { color: #52d017; }
+    .lq5-tab-on::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -1px;
+      height: 2px;
+      background: #52d017;
+    }
+
+    .lq5-content {
+      padding: 28px 28px 30px;
+      background: #07090d;
+    }
+
+    /* provider card */
+    .lq5-card {
+      position: relative;
+      background: #0f1319;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 11px;
+      overflow: hidden;
+      padding: 28px 34px 28px 38px;
+    }
+    .lq5-card-accent {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: #52d017;
+    }
+    .lq5-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .lq5-prov {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .lq5-tile {
+      width: 58px;
+      height: 58px;
+      border-radius: 12px;
+      background: rgba(218, 120, 91, 0.13);
+      border: 1px solid rgba(218, 120, 91, 0.22);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .lq5-tile img { width: 34px; height: 34px; display: block; object-fit: contain; }
+    .lq5-prov-name {
+      font-family: "Syne", sans-serif;
+      font-weight: 700;
+      font-size: 25px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #e6eff6;
+    }
+    .lq5-pct {
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 54px;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      color: #52d017;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .lq5-row { margin-top: 28px; }
+    .lq5-row-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+    .lq5-label {
+      font-family: "Syne", sans-serif;
+      font-weight: 700;
+      font-size: 17px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #7e92a4;
+    }
+    .lq5-count {
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 23px;
+      letter-spacing: 0.02em;
+      color: #e6eff6;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .lq5-bar {
+      position: relative;
+      margin-top: 14px;
+      height: 12px;
+    }
+    .lq5-track {
+      position: absolute;
+      inset: 0;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+    }
+    .lq5-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      border-radius: 6px;
+    }
+    .lq5-fill-5h { width: 68%; background: #52d017; }
+    .lq5-fill-wk { width: 92%; background: linear-gradient(90deg, #ff4444 0%, #ff8a2a 100%); }
+    .lq5-playhead {
+      position: absolute;
+      left: 38%;
+      top: -6px;
+      width: 3px;
+      height: 24px;
+      margin-left: -1px;
+      border-radius: 2px;
+      background: #ffd700;
+      box-shadow: 0 0 10px rgba(255, 215, 0, 0.55);
+      transform-origin: 50% 50%;
+    }
+    .lq5-pace {
+      margin-top: 12px;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 19px;
+      letter-spacing: 0.04em;
+      color: #b7c7d4;
+      font-variant-numeric: tabular-nums;
+    }
+    .lq5-segs {
+      margin-top: 14px;
+      display: flex;
+      gap: 6px;
+      height: 16px;
+    }
+    .lq5-seg {
+      flex: 1;
+      height: 16px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      transform-origin: 50% 100%;
+    }
+
+    .lq5-foot {
+      position: relative;
+      margin-top: 28px;
+      padding-top: 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 44px;
+    }
+    .lq5-glow {
+      position: absolute;
+      left: -70px;
+      top: -30px;
+      width: 300px;
+      height: 150px;
+      border-radius: 50%;
+      background: radial-gradient(closest-side, rgba(82, 208, 23, 0.34), rgba(82, 208, 23, 0.12) 55%, rgba(82, 208, 23, 0) 100%);
+      transform-origin: 50% 50%;
+      pointer-events: none;
+    }
+    .lq5-pill {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 20px 9px 16px;
+      border-radius: 999px;
+      background: rgba(82, 208, 23, 0.14);
+      border: 1px solid rgba(82, 208, 23, 0.5);
+      font-family: "DM Sans", sans-serif;
+      font-weight: 600;
+      font-size: 19px;
+      color: #52d017;
+      white-space: nowrap;
+      transform-origin: 50% 50%;
+    }
+    .lq5-pill-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #52d017;
+      box-shadow: 0 0 8px rgba(82, 208, 23, 0.8);
+    }
+    .lq5-fc {
+      position: relative;
+      display: inline-flex;
+      align-items: baseline;
+      min-width: 420px;
+      white-space: nowrap;
+      font-family: "DM Sans", sans-serif;
+      font-weight: 400;
+      font-size: 21px;
+      color: #c3d0db;
+    }
+    .lq5-caret {
+      display: inline-block;
+      width: 2px;
+      height: 22px;
+      margin-left: 3px;
+      background: #52d017;
+      transform: translateY(3px);
+    }
+  </style>
+
+  <div data-hf-id="hf-vk0g" id="root" data-composition-id="05-live-quota" data-start="0" data-duration="6.31" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-jc0z" id="05-live-quota-bg" class="lq5-bg clip" data-start="0" data-duration="6.31" data-track-index="0"></div>
+
+    <!-- left 40%: kicker + headline -->
+    <div data-hf-id="hf-i3uo" class="lq5-copy">
+      <div data-hf-id="hf-bxft" id="05-live-quota-rule" class="lq5-rule"></div>
+      <div data-hf-id="hf-y1gv" id="05-live-quota-kicker" class="lq5-kicker">01 / Live quota</div>
+      <div data-hf-id="hf-enlh" class="lq5-head">
+        <span data-hf-id="hf-un04" class="lq5-line"><span data-hf-id="hf-naqu" id="05-live-quota-w1" class="lq5-w">see</span> <span data-hf-id="hf-jusr" id="05-live-quota-w2" class="lq5-w">the</span></span>
+        <span data-hf-id="hf-4tn0" class="lq5-line"><span data-hf-id="hf-juy0" id="05-live-quota-w3" class="lq5-w">limit</span></span>
+        <span data-hf-id="hf-3mpx" class="lq5-line"><span data-hf-id="hf-6ct0" id="05-live-quota-w4" class="lq5-w lq5-accent">coming.</span></span>
+      </div>
+    </div>
+
+    <!-- right 60%: rebuilt QuotaBar window (Live tab) -->
+    <div data-hf-id="hf-onc7" id="05-live-quota-cam" class="lq5-cam">
+      <div data-hf-id="hf-pnc1" id="05-live-quota-win" class="lq5-win">
+        <div data-hf-id="hf-7zie" class="lq5-titlebar">
+          <div data-hf-id="hf-nt06" class="lq5-brand">
+            <img data-hf-id="hf-viqi" class="lq5-mark" src="assets/quotabar-mark.svg" alt="">
+            <span data-hf-id="hf-3h08" class="lq5-wordmark">QuotaBar</span>
+          </div>
+          <div data-hf-id="hf-4onr" class="lq5-icons">
+            <svg data-hf-id="hf-iupy" viewBox="0 0 20 20" fill="none" stroke="#5f7182" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path data-hf-id="hf-fbnk" d="M16 10a6 6 0 1 1-1.8-4.3" />
+              <path data-hf-id="hf-bd0t" d="M16 3.5v3.6h-3.6" />
+            </svg>
+            <svg data-hf-id="hf-f86a" viewBox="0 0 20 20" fill="none" stroke="#5f7182" stroke-width="1.7" stroke-linecap="round">
+              <path data-hf-id="hf-dstx" d="M4.5 10h11" />
+            </svg>
+            <svg data-hf-id="hf-5s7a" viewBox="0 0 20 20" fill="none" stroke="#5f7182" stroke-width="1.7" stroke-linecap="round">
+              <path data-hf-id="hf-i3us" d="M5 5l10 10M15 5L5 15" />
+            </svg>
+          </div>
+        </div>
+        <div data-hf-id="hf-f2e3" class="lq5-tabs">
+          <span data-hf-id="hf-3gm1" class="lq5-tab lq5-tab-on">Live</span>
+          <span data-hf-id="hf-0grp" class="lq5-tab">Analytics</span>
+          <span data-hf-id="hf-m5ph" class="lq5-tab">Models</span>
+          <span data-hf-id="hf-witk" class="lq5-tab">Alerts</span>
+          <span data-hf-id="hf-exih" class="lq5-tab">History</span>
+          <span data-hf-id="hf-ae2h" class="lq5-tab">Plans</span>
+          <span data-hf-id="hf-ayvq" class="lq5-tab">System</span>
+        </div>
+
+        <div data-hf-id="hf-dyz6" class="lq5-content">
+          <div data-hf-id="hf-ja41" class="lq5-card">
+            <div data-hf-id="hf-lrv0" class="lq5-card-accent"></div>
+
+            <div data-hf-id="hf-gwsc" class="lq5-card-head">
+              <div data-hf-id="hf-qn61" id="05-live-quota-prov" class="lq5-prov">
+                <div data-hf-id="hf-96mf" class="lq5-tile"><img data-hf-id="hf-iptp" src="assets/claude-logo.png" alt=""></div>
+                <span data-hf-id="hf-40q7" class="lq5-prov-name">Claude</span>
+              </div>
+              <div data-hf-id="hf-uulc" id="05-live-quota-pct" class="lq5-pct">68%</div>
+            </div>
+
+            <!-- 5-hour window -->
+            <div data-hf-id="hf-mcn1" class="lq5-row">
+              <div data-hf-id="hf-ahmk" id="05-live-quota-5h-head" class="lq5-row-head">
+                <span data-hf-id="hf-5p6o" class="lq5-label">5-Hour</span>
+                <span data-hf-id="hf-ubw7" id="05-live-quota-5h-count" class="lq5-count">03:04:46</span>
+              </div>
+              <div data-hf-id="hf-wfq2" class="lq5-bar">
+                <div data-hf-id="hf-emxk" class="lq5-track">
+                  <div data-hf-id="hf-n0ar" id="05-live-quota-5h-fill" class="lq5-fill lq5-fill-5h"></div>
+                </div>
+                <div data-hf-id="hf-rg0l" id="05-live-quota-playhead" class="lq5-playhead"></div>
+              </div>
+              <div data-hf-id="hf-p6nx" id="05-live-quota-pace" class="lq5-pace">+45 %/h</div>
+            </div>
+
+            <!-- weekly window -->
+            <div data-hf-id="hf-vdld" class="lq5-row">
+              <div data-hf-id="hf-bewv" id="05-live-quota-wk-head" class="lq5-row-head">
+                <span data-hf-id="hf-kbnb" class="lq5-label">Weekly</span>
+                <span data-hf-id="hf-iced" id="05-live-quota-wk-count" class="lq5-count">15:14:47</span>
+              </div>
+              <div data-hf-id="hf-8p1a" class="lq5-bar">
+                <div data-hf-id="hf-86b4" class="lq5-track">
+                  <div data-hf-id="hf-o5q7" id="05-live-quota-wk-fill" class="lq5-fill lq5-fill-wk"></div>
+                </div>
+              </div>
+              <div data-hf-id="hf-gvj5" id="05-live-quota-segs" class="lq5-segs">
+                <div data-hf-id="hf-834m" class="lq5-seg"></div><div data-hf-id="hf-q2ey" class="lq5-seg"></div><div data-hf-id="hf-qgpz" class="lq5-seg"></div><div data-hf-id="hf-qv10" class="lq5-seg"></div>
+                <div data-hf-id="hf-r9c1" class="lq5-seg"></div><div data-hf-id="hf-rnn2" class="lq5-seg"></div><div data-hf-id="hf-s1y3" class="lq5-seg"></div><div data-hf-id="hf-sg94" class="lq5-seg"></div>
+                <div data-hf-id="hf-suk5" class="lq5-seg"></div><div data-hf-id="hf-t8v6" class="lq5-seg"></div><div data-hf-id="hf-a3i6" class="lq5-seg"></div><div data-hf-id="hf-9p75" class="lq5-seg"></div>
+                <div data-hf-id="hf-aw48" class="lq5-seg"></div><div data-hf-id="hf-aht7" class="lq5-seg"></div>
+              </div>
+            </div>
+
+            <!-- forecast footer -->
+            <div data-hf-id="hf-w01j" class="lq5-foot">
+              <div data-hf-id="hf-oqo9" id="05-live-quota-glow" class="lq5-glow"></div>
+              <div data-hf-id="hf-pnrr" id="05-live-quota-pill" class="lq5-pill"><span data-hf-id="hf-4sjl" class="lq5-pill-dot"></span>On Track</div>
+              <div data-hf-id="hf-ncm1" id="05-live-quota-fc" class="lq5-fc"><span data-hf-id="hf-qsux" id="05-live-quota-fc-text"></span><span data-hf-id="hf-u9cq" id="05-live-quota-caret" class="lq5-caret"></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    (function () {
+      var ID = "05-live-quota";
+      var D = 5.96;
+      var B = 0.3726; // one beat at 161 bpm
+      var $ = function (s) { return document.getElementById(ID + "-" + s); };
+
+      var tl = gsap.timeline({ paused: true });
+
+      /* ---------- Scene 1 (0.00-1.49): copy + window establish ---------- */
+      tl.fromTo($("rule"), { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: "power3.out" }, 0);
+      tl.fromTo($("kicker"), { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, 0.05);
+      ["w1", "w2", "w3", "w4"].forEach(function (w, i) {
+        tl.fromTo($(w), { yPercent: 155 }, { yPercent: 0, duration: 0.6, ease: "power3.out" }, B + i * (B / 2));
+      });
+
+      // gentle one-time push-in on the UI hero (settles, then holds)
+      tl.fromTo($("cam"), { scale: 0.955 }, { scale: 1, duration: 4 * B, ease: "power2.out" }, 0);
+      // window slides in from the right, tilted rotateY -8, then settles to -4
+      tl.fromTo($("win"),
+        { x: 900, opacity: 0, rotationY: -8, transformPerspective: 2400 },
+        { x: 0, opacity: 1, rotationY: -8, transformPerspective: 2400, duration: 0.95, ease: "power3.out" }, 0);
+      tl.fromTo($("win"),
+        { rotationY: -8 },
+        { rotationY: -4, duration: 0.95, ease: "power2.inOut", immediateRender: false }, 0.95);
+
+      // card header pieces advance inside the held surface
+      tl.fromTo($("prov"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 1.5 * B);
+      tl.fromTo($("pct"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 2 * B);
+      tl.fromTo($("5h-head"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 3 * B);
+
+      /* ---------- Scene 2 (beat 4): 5-hour bar fills to 68%, pace marker, rate ---------- */
+      tl.fromTo($("5h-fill"),
+        { clipPath: "inset(0% 100% 0% 0%)" },
+        { clipPath: "inset(0% 0% 0% 0%)", duration: 1.12, ease: "power2.out" }, 4 * B);
+      tl.fromTo($("playhead"), { scaleY: 0, opacity: 0 }, { scaleY: 1, opacity: 1, duration: 0.4, ease: "power3.out" }, 5 * B);
+      tl.fromTo($("pace"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 6 * B);
+
+      /* ---------- Scene 3 (beat 8): weekly bar to 92%, segments step ---------- */
+      tl.fromTo($("wk-head"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 8 * B);
+      tl.fromTo($("wk-fill"),
+        { clipPath: "inset(0% 100% 0% 0%)" },
+        { clipPath: "inset(0% 0% 0% 0%)", duration: 1.12, ease: "power2.out" }, 8 * B);
+
+      /* ---------- Scene 4 (beat 12): On Track pop + glow + forecast types ---------- */
+      tl.fromTo($("glow"), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.9, ease: "power3.out" }, 12 * B);
+      tl.fromTo($("pill"), { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.5, ease: "power3.out" }, 12 * B);
+      tl.fromTo($("fc"), { opacity: 0 }, { opacity: 1, duration: 0.01, ease: "none" }, 12.5 * B);
+      // hold: subtle low-amplitude glow jitter from a fixed table (no randomness)
+      var JIT = [1, 0.86, 0.97, 0.9, 1];
+      for (var j = 1; j < JIT.length; j++) {
+        tl.fromTo($("glow"), { opacity: JIT[j - 1] }, { opacity: JIT[j], duration: 0.12, ease: "none", immediateRender: false }, 14.6 * B + (j - 1) * 0.12);
+      }
+
+      /* ---------- one deterministic driver: countdowns, segment steps, typing, caret ---------- */
+      var c5 = $("5h-count"), cWk = $("wk-count");
+      var fcText = $("fc-text"), caret = $("caret");
+      var segs = Array.prototype.slice.call($("segs").children);
+
+      var BASE_5H = 3 * 3600 + 4 * 60 + 46;        // 03:04:46 at frame start
+      var BASE_WK = 15 * 3600 + 14 * 60 + 47 + 3;  // reads 15:14:47 when the row lands (t ~ 2.98)
+      var PHASE = 0.4;                              // seconds tick at t = 0.6, 1.6, 2.6 ...
+      function pad(n) { return (n < 10 ? "0" : "") + n; }
+      function fmt(s) {
+        var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+        return pad(h) + ":" + pad(m) + ":" + pad(x);
+      }
+
+      // weekly window segments: 13 of 14 elapsed, one lit per half-beat; the newest stays bright
+      var SEG_START = 8.5 * B, SEG_STEP = B / 2, SEG_LIT = 13;
+      var C_TRACK = "rgba(255,255,255,0.06)", C_NOW = "#4a9ee0", C_SPENT = "#2a4a66";
+
+      var FC = "At current pace: lasts until reset";
+      var SEQ = [
+        { t: 0, text: "" },
+        { t: 12.5 * B + 0.0, text: "At" },
+        { t: 12.5 * B + 0.12, text: "At current" },
+        { t: 12.5 * B + 0.26, text: "At current pace:" },
+        { t: 14 * B, text: "At current pace: lasts" },
+        { t: 14 * B + 0.11, text: "At current pace: lasts until" },
+        { t: 14 * B + 0.23, text: FC }
+      ];
+      function textAt(t) {
+        for (var i = SEQ.length - 1; i >= 0; i--) { if (t >= SEQ[i].t) return SEQ[i].text; }
+        return "";
+      }
+
+      var drv = { t: 0 };
+      function render() {
+        var t = drv.t;
+        var k = Math.floor(t + PHASE);
+        c5.textContent = fmt(BASE_5H - k);
+        cWk.textContent = fmt(BASE_WK - k);
+
+        for (var i = 0; i < segs.length; i++) {
+          var ti = SEG_START + i * SEG_STEP;
+          var el = segs[i];
+          if (i >= SEG_LIT || t < ti) {
+            el.style.backgroundColor = C_TRACK;
+            el.style.transform = "scaleY(1)";
+          } else {
+            var newest = (i === SEG_LIT - 1) || t < ti + SEG_STEP;
+            el.style.backgroundColor = newest ? C_NOW : C_SPENT;
+            var p = Math.max(0, 1 - (t - ti) / 0.28);
+            el.style.transform = "scaleY(" + (1 + 0.35 * p * p).toFixed(4) + ")";
+          }
+        }
+
+        fcText.textContent = textAt(t);
+        // caret: deterministic square-wave blink (~0.6s cycle)
+        caret.style.opacity = Math.sin((t - 12.5 * B) * Math.PI * 2 / 0.6 + Math.PI / 2) > 0 ? "1" : "0";
+      }
+      tl.fromTo(drv, { t: 0 }, { t: D, duration: D, ease: "none", onUpdate: render }, 0);
+      render();
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>

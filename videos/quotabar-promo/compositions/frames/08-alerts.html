@@ -1,0 +1,407 @@
+<template>
+  <div data-hf-id="hf-i00l" id="root" data-composition-id="08-alerts" data-width="1920" data-height="1080" data-duration="4.77">
+    <style>
+      @font-face { font-family: "Syne"; src: url("assets/fonts/archivo-expanded-latin-800-normal.woff2") /* headline weight 800 renders Archivo Expanded: Syne g/y descenders read as clipped at display size */ format("woff2"); font-weight: 800; font-style: normal; }
+      @font-face { font-family: "DM Sans"; src: url("assets/fonts/dm-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+      @font-face { font-family: "DM Sans"; src: url("assets/fonts/dm-sans-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-style: normal; }
+      @font-face { font-family: "DM Sans"; src: url("assets/fonts/dm-sans-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-style: normal; }
+      @font-face { font-family: "IBM Plex Mono"; src: url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-style: normal; }
+
+      #root {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        container-type: size;
+        color: #e6eff6;
+        font-family: "DM Sans", sans-serif;
+        /* 1 design px on the 1920 canvas */
+        --u: calc(100cqw / 1920);
+      }
+      #root *, #root *::before, #root *::after { box-sizing: border-box; }
+
+      /* ---------- ground: ink-black + faint hairline grid ---------- */
+      .a08-bg {
+        position: absolute;
+        inset: 0;
+        background-color: #07090d;
+        background-image:
+          linear-gradient(to right, rgba(255,255,255,0.04) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(255,255,255,0.04) 1px, transparent 1px);
+        background-size: calc(var(--u) * 96) calc(var(--u) * 96);
+      }
+
+      /* ---------- left 40%: kicker + headline ---------- */
+      .a08-copy {
+        position: absolute;
+        left: calc(var(--u) * 106);
+        top: calc(var(--u) * 300);
+        width: calc(var(--u) * 700);
+      }
+      .a08-rule {
+        width: calc(var(--u) * 36);
+        height: 2px;
+        background: #52d017;
+        transform-origin: left center;
+      }
+      .a08-kicker {
+        margin-top: calc(var(--u) * 20);
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 500;
+        font-size: calc(var(--u) * 16);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #52d017;
+      }
+      .a08-h2 {
+        margin: calc(var(--u) * 26) 0 0;
+        font-family: "Syne", sans-serif;
+        font-weight: 800;
+        font-size: 4.5cqw;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+        text-transform: lowercase;
+        color: #e6eff6;
+      }
+      .a08-line { display: block; overflow-x: visible; overflow-y: clip; padding: 0.2em 0 0.32em; margin: 0 0 -0.46em; }
+      .a08-line:first-child { margin-top: -0.2em; }
+      .a08-word { display: inline-block; }
+      .a08-accent { color: #52d017; }
+
+      /* ---------- Windows 11 taskbar (bottom-edge product reconstruction) ---------- */
+      .a08-taskbar {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(var(--u) * 1020);
+        height: calc(var(--u) * 60);
+        background: #1a1d24;
+        border-top: 1px solid rgba(255,255,255,0.07);
+      }
+      .a08-apps {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: calc(var(--u) * 14);
+      }
+      .a08-app {
+        position: relative;
+        width: calc(var(--u) * 36);
+        height: calc(var(--u) * 36);
+        border-radius: calc(var(--u) * 7);
+        background: rgba(230,239,246,0.16);
+      }
+      .a08-app.is-dim { background: rgba(230,239,246,0.09); }
+      .a08-app.is-active::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        bottom: calc(var(--u) * -9);
+        width: calc(var(--u) * 6);
+        height: calc(var(--u) * 3);
+        margin-left: calc(var(--u) * -3);
+        border-radius: calc(var(--u) * 2);
+        background: #8298aa;
+      }
+      .a08-win {
+        background: transparent;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: calc(var(--u) * 3);
+        padding: calc(var(--u) * 6);
+      }
+      .a08-win span { background: rgba(230,239,246,0.82); border-radius: 1px; }
+
+      .a08-tray {
+        position: absolute;
+        right: calc(var(--u) * 22);
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        gap: calc(var(--u) * 18);
+      }
+      .a08-chev { width: calc(var(--u) * 16); height: calc(var(--u) * 16); display: block; }
+      .a08-traymark {
+        position: relative;
+        width: calc(var(--u) * 28);
+        height: calc(var(--u) * 28);
+      }
+      .a08-traymark svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+      .a08-halo {
+        position: absolute;
+        left: calc(var(--u) * -14);
+        top: calc(var(--u) * -14);
+        width: calc(var(--u) * 56);
+        height: calc(var(--u) * 56);
+        border-radius: 50%;
+        border: calc(var(--u) * 2) solid #52d017;
+        opacity: 0;
+      }
+      .a08-sys {
+        width: calc(var(--u) * 18);
+        height: calc(var(--u) * 14);
+        border-radius: calc(var(--u) * 3);
+        background: rgba(230,239,246,0.22);
+      }
+      .a08-clock {
+        font-family: "DM Sans", sans-serif;
+        font-weight: 500;
+        font-size: calc(var(--u) * 18);
+        color: #e6eff6;
+        font-variant-numeric: tabular-nums;
+        padding-left: calc(var(--u) * 4);
+      }
+
+      /* ---------- Windows 11 toasts ---------- */
+      .a08-toast {
+        position: absolute;
+        right: calc(var(--u) * 28);
+        top: calc(var(--u) * 804);
+        width: calc(var(--u) * 660);
+        height: calc(var(--u) * 196);
+        padding: calc(var(--u) * 22) calc(var(--u) * 26) 0;
+        border-radius: 8px;
+        background: #1b1f27;
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 calc(var(--u) * 16) calc(var(--u) * 44) rgba(0,0,0,0.5);
+      }
+      #a08-toast1 { z-index: 1; }
+      #a08-toast2 { z-index: 2; }
+      .a08-head {
+        display: flex;
+        align-items: center;
+        gap: calc(var(--u) * 10);
+        height: calc(var(--u) * 26);
+      }
+      .a08-head .a08-mark { width: calc(var(--u) * 20); height: calc(var(--u) * 20); display: block; }
+      .a08-app-name {
+        font-weight: 500;
+        font-size: calc(var(--u) * 16);
+        color: #b8c5d1;
+        flex: 1;
+      }
+      .a08-chrome { width: calc(var(--u) * 16); height: calc(var(--u) * 16); display: block; margin-left: calc(var(--u) * 18); }
+      .a08-body-row { display: flex; align-items: center; gap: calc(var(--u) * 18); margin-top: calc(var(--u) * 14); }
+      .a08-text { flex: 1; min-width: 0; }
+      .a08-title {
+        font-weight: 600;
+        font-size: calc(var(--u) * 23);
+        line-height: 1.25;
+        color: #e6eff6;
+        white-space: nowrap;
+      }
+      .a08-body {
+        margin-top: calc(var(--u) * 6);
+        font-weight: 400;
+        font-size: calc(var(--u) * 18);
+        line-height: 1.3;
+        color: #8298aa;
+        white-space: nowrap;
+      }
+      .a08-check { width: calc(var(--u) * 46); height: calc(var(--u) * 46); flex: 0 0 auto; display: block; }
+      .a08-check circle, .a08-check path {
+        fill: none;
+        stroke: #52d017;
+        stroke-width: 2.4;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .a08-prog { display: flex; align-items: center; gap: calc(var(--u) * 16); margin-top: calc(var(--u) * 18); }
+      .a08-track {
+        position: relative;
+        flex: 1;
+        height: calc(var(--u) * 6);
+        border-radius: calc(var(--u) * 3);
+        background-color: rgba(255,255,255,0.08);
+        overflow: hidden;
+      }
+      .a08-fill {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 100%;
+        border-radius: calc(var(--u) * 3);
+        background-color: #ff4444;
+        transform-origin: left center;
+      }
+      .a08-pct {
+        width: calc(var(--u) * 58);
+        text-align: right;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 500;
+        font-size: calc(var(--u) * 17);
+        font-variant-numeric: tabular-nums;
+        color: #ff4444;
+      }
+    </style>
+
+    <!-- full-bleed ground -->
+    <div data-hf-id="hf-obog" id="a08-bg" class="a08-bg clip" data-start="0" data-duration="4.77" data-track-index="0"></div>
+
+    <!-- stage -->
+    <div data-hf-id="hf-1cv0" id="a08-stage" class="clip" data-start="0" data-duration="4.77" data-track-index="1" style="position:absolute;inset:0;">
+
+      <div data-hf-id="hf-ultp" class="a08-copy">
+        <div data-hf-id="hf-6uoq" id="a08-rule" class="a08-rule"></div>
+        <div data-hf-id="hf-g8wd" id="a08-kicker" class="a08-kicker">04 / Smart alerts</div>
+        <h2 data-hf-id="hf-shir" class="a08-h2">
+          <span data-hf-id="hf-vflx" class="a08-line"><span data-hf-id="hf-o1fz" id="a08-w1" class="a08-word">never get</span></span>
+          <span data-hf-id="hf-bhg9" class="a08-line"><span data-hf-id="hf-jf45" id="a08-w2" class="a08-word">surprised</span></span>
+          <span data-hf-id="hf-codc" class="a08-line"><span data-hf-id="hf-gzbl" id="a08-w3" class="a08-word a08-accent">again.</span></span>
+        </h2>
+      </div>
+
+      <!-- toast 1: 5-hour warning -->
+      <div data-hf-id="hf-7dwt" id="a08-toast1" class="a08-toast">
+        <div data-hf-id="hf-x8mk" class="a08-head">
+          <svg data-hf-id="hf-uxig" class="a08-mark" viewBox="0 0 18 18" aria-hidden="true"><path data-hf-id="hf-npw6" d="M9 1L17 9L9 17L1 9Z" fill="#52d017" opacity="0.85" /><path data-hf-id="hf-xlwa" d="M9 4.5L13.5 9L9 13.5L4.5 9Z" fill="#07090d" /><path data-hf-id="hf-7xg4" d="M9 7L11 9L9 11L7 9Z" fill="#52d017" opacity="0.65" /></svg>
+          <span data-hf-id="hf-r1f9" class="a08-app-name">QuotaBar</span>
+          <svg data-hf-id="hf-mum1" class="a08-chrome" viewBox="0 0 16 16" aria-hidden="true"><circle data-hf-id="hf-vw6b" cx="3" cy="8" r="1.3" fill="#8298aa" /><circle data-hf-id="hf-nn2g" cx="8" cy="8" r="1.3" fill="#8298aa" /><circle data-hf-id="hf-t5u0" cx="13" cy="8" r="1.3" fill="#8298aa" /></svg>
+          <svg data-hf-id="hf-35u5" class="a08-chrome" viewBox="0 0 16 16" aria-hidden="true"><path data-hf-id="hf-dh7y" d="M3.5 3.5L12.5 12.5M12.5 3.5L3.5 12.5" stroke="#8298aa" stroke-width="1.4" stroke-linecap="round" /></svg>
+        </div>
+        <div data-hf-id="hf-ski5" class="a08-body-row">
+          <div data-hf-id="hf-w62b" class="a08-text">
+            <div data-hf-id="hf-erk8" class="a08-title">Claude · 5-hour window at 90%</div>
+            <div data-hf-id="hf-4w84" class="a08-body">Resets in 41 min · slow down or switch model</div>
+          </div>
+        </div>
+        <div data-hf-id="hf-4sy6" class="a08-prog">
+          <div data-hf-id="hf-pi8z" class="a08-track"><div data-hf-id="hf-royz" id="a08-fill1" class="a08-fill"></div></div>
+          <div data-hf-id="hf-imh4" class="a08-pct a08-pct1"><span data-hf-id="hf-xq07" id="a08-num1">0</span>%</div>
+        </div>
+      </div>
+
+      <!-- toast 2: weekly reset -->
+      <div data-hf-id="hf-bc0u" id="a08-toast2" class="a08-toast">
+        <div data-hf-id="hf-ximc" class="a08-head">
+          <svg data-hf-id="hf-y6n4" class="a08-mark" viewBox="0 0 18 18" aria-hidden="true"><path data-hf-id="hf-elru" d="M9 1L17 9L9 17L1 9Z" fill="#52d017" opacity="0.85" /><path data-hf-id="hf-fwam" d="M9 4.5L13.5 9L9 13.5L4.5 9Z" fill="#07090d" /><path data-hf-id="hf-aq7g" d="M9 7L11 9L9 11L7 9Z" fill="#52d017" opacity="0.65" /></svg>
+          <span data-hf-id="hf-6drd" class="a08-app-name">QuotaBar</span>
+          <svg data-hf-id="hf-4cr8" class="a08-chrome" viewBox="0 0 16 16" aria-hidden="true"><circle data-hf-id="hf-v0df" cx="3" cy="8" r="1.3" fill="#8298aa" /><circle data-hf-id="hf-a5mo" cx="8" cy="8" r="1.3" fill="#8298aa" /><circle data-hf-id="hf-6udc" cx="13" cy="8" r="1.3" fill="#8298aa" /></svg>
+          <svg data-hf-id="hf-3yg7" class="a08-chrome" viewBox="0 0 16 16" aria-hidden="true"><path data-hf-id="hf-njw2" d="M3.5 3.5L12.5 12.5M12.5 3.5L3.5 12.5" stroke="#8298aa" stroke-width="1.4" stroke-linecap="round" /></svg>
+        </div>
+        <div data-hf-id="hf-0oht" class="a08-body-row">
+          <div data-hf-id="hf-0opf" class="a08-text">
+            <div data-hf-id="hf-qhot" class="a08-title">Claude · weekly window reset</div>
+            <div data-hf-id="hf-vqt2" class="a08-body">Fresh window — 0% used</div>
+          </div>
+          <svg data-hf-id="hf-ecp3" class="a08-check" viewBox="0 0 36 36" aria-hidden="true">
+            <circle data-hf-id="hf-kg2w" id="a08-check-ring" cx="18" cy="18" r="15" transform="rotate(-90 18 18)" />
+            <path data-hf-id="hf-l1by" id="a08-check-tick" d="M11.5 18.5L16 23L24.5 13.5" />
+          </svg>
+        </div>
+        <div data-hf-id="hf-jl3m" class="a08-prog">
+          <div data-hf-id="hf-387a" id="a08-track2" class="a08-track"><div data-hf-id="hf-j134" id="a08-fill2" class="a08-fill"></div></div>
+          <div data-hf-id="hf-0fut" id="a08-pct2" class="a08-pct"><span data-hf-id="hf-dij3" id="a08-num2">90</span>%</div>
+        </div>
+      </div>
+
+      <!-- taskbar -->
+      <div data-hf-id="hf-gqds" class="a08-taskbar">
+        <div data-hf-id="hf-mb6y" class="a08-apps">
+          <div data-hf-id="hf-8ayv" class="a08-app a08-win"><span data-hf-id="hf-uckh"></span><span data-hf-id="hf-l73p"></span><span data-hf-id="hf-me0s"></span><span data-hf-id="hf-lzpr"></span></div>
+          <div data-hf-id="hf-arxs" class="a08-app is-dim"></div>
+          <div data-hf-id="hf-onw0" class="a08-app is-active"></div>
+          <div data-hf-id="hf-wqtk" class="a08-app is-active"></div>
+          <div data-hf-id="hf-3mq0" class="a08-app is-dim"></div>
+          <div data-hf-id="hf-vjwh" class="a08-app is-active"></div>
+          <div data-hf-id="hf-2fsx" class="a08-app is-dim"></div>
+        </div>
+        <div data-hf-id="hf-e5t6" class="a08-tray">
+          <svg data-hf-id="hf-0civ" class="a08-chev" viewBox="0 0 16 16" aria-hidden="true"><path data-hf-id="hf-5ma4" d="M3.5 10.5L8 6L12.5 10.5" fill="none" stroke="#c7d2dc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          <div data-hf-id="hf-bt2u" id="a08-traymark" class="a08-traymark">
+            <div data-hf-id="hf-hpyi" id="a08-halo" class="a08-halo"></div>
+            <svg data-hf-id="hf-jegi" viewBox="0 0 18 18" aria-hidden="true"><path data-hf-id="hf-f02v" d="M9 1L17 9L9 17L1 9Z" fill="#52d017" opacity="0.85" /><path data-hf-id="hf-galn" d="M9 4.5L13.5 9L9 13.5L4.5 9Z" fill="#07090d" /><path data-hf-id="hf-9jad" d="M9 7L11 9L9 11L7 9Z" fill="#52d017" opacity="0.65" /></svg>
+          </div>
+          <div data-hf-id="hf-dghx" class="a08-sys"></div>
+          <div data-hf-id="hf-iu55" class="a08-sys"></div>
+          <div data-hf-id="hf-8bht" class="a08-clock">10:48</div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        "use strict";
+        var ID = "08-alerts";
+        var B = 0.3726; // one beat at 161 bpm
+        var $ = function (id) { return document.getElementById(id); };
+
+        var root = $("a08-stage");
+        var W = (root && root.offsetWidth) || 1920;
+        var U = W / 1920; // design px -> rendered px for transform tweens
+
+        var TOAST_SLIDE = 680 * U;            // fully off the right edge
+        var STACK_SHIFT = -(196 + 16) * U;    // one toast height + gap
+
+        // svg-path-draw setup: measured lengths (with geometric fallback).
+        function prepDraw(el, fallback) {
+          var len = 0;
+          try { len = el.getTotalLength(); } catch (e) { len = 0; }
+          if (!(len > 0)) len = fallback;
+          len = len * 1.05;
+          el.style.strokeDasharray = String(len);
+          el.style.strokeDashoffset = String(len);
+          return len;
+        }
+        var ring = $("a08-check-ring");
+        var tick = $("a08-check-tick");
+        var ringLen = prepDraw(ring, 2 * Math.PI * 15);
+        var tickLen = prepDraw(tick, 19.1);
+
+
+        var tl = gsap.timeline({ paused: true });
+
+        // ---- Scene 1 (0.00-1.12s): kicker + headline slam on the beat ----
+        tl.fromTo("#a08-rule", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "expo.out" }, 0);
+        tl.fromTo("#a08-kicker", { opacity: 0, x: -24 * U }, { opacity: 1, x: 0, duration: 0.5, ease: "expo.out" }, 0.04);
+        tl.fromTo("#a08-w1", { yPercent: 155 }, { yPercent: 0, duration: 0.55, ease: "expo.out" }, 0.06);
+        tl.fromTo("#a08-w2", { yPercent: 155 }, { yPercent: 0, duration: 0.55, ease: "expo.out" }, B * 1);
+        tl.fromTo("#a08-w3", { yPercent: 155 }, { yPercent: 0, duration: 0.55, ease: "expo.out" }, B * 2);
+
+        // ---- Scene 2 (beat 3): toast 1 slides in, tray icon pulses once ----
+        var T1 = B * 3;
+        tl.fromTo("#a08-toast1", { x: TOAST_SLIDE, opacity: 0 }, { x: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, T1);
+        // single finite glow: quick rise, then expand + fade (contiguous, seek-safe)
+        tl.fromTo("#a08-halo", { scale: 0.45, opacity: 0 }, { scale: 0.6, opacity: 0.9, duration: 0.08, ease: "none" }, T1);
+        tl.fromTo("#a08-halo", { scale: 0.6, opacity: 0.9 }, { scale: 2.1, opacity: 0, duration: 0.7, ease: "power2.out", immediateRender: false }, T1 + 0.08);
+        tl.fromTo("#a08-traymark", { scale: 1 }, { scale: 1.22, duration: 0.18, ease: "power2.out" }, T1);
+        tl.fromTo("#a08-traymark", { scale: 1.22 }, { scale: 1, duration: 0.45, ease: "power3.out", immediateRender: false }, T1 + 0.18);
+        // beat 4: alarm bar fills to 90% while the number counts
+        tl.fromTo("#a08-fill1", { scaleX: 0 }, { scaleX: 0.9, duration: 0.7, ease: "power3.out" }, B * 4);
+        // property tween (not a callback) so the number is correct under any seek
+        tl.fromTo("#a08-num1", { innerText: 0 }, { innerText: 90, snap: { innerText: 1 }, duration: 0.7, ease: "power3.out" }, B * 4);
+
+        // ---- Scene 3 (beat 7): toast 2 stacks in, pushes toast 1 up ----
+        var T2 = B * 7;
+        tl.fromTo("#a08-toast2", { x: TOAST_SLIDE, opacity: 0 }, { x: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, T2);
+        tl.fromTo("#a08-toast1", { y: 0 }, { y: STACK_SHIFT, duration: 0.55, ease: "power3.out", immediateRender: false }, T2);
+        tl.fromTo("#a08-toast1", { opacity: 1 }, { opacity: 0.72, duration: 0.5, ease: "power2.out", immediateRender: false }, B * 9);
+        // beat 8: bar sweeps 90% -> 0% and turns green; the empty track reads green
+        // (immediateRender keeps the bar parked at 90% red until the sweep)
+        var S = B * 8;
+        tl.fromTo("#a08-fill2", { scaleX: 0.9, backgroundColor: "#ff4444" }, { scaleX: 0, backgroundColor: "#52d017", duration: 0.8, ease: "power3.inOut" }, S);
+        tl.fromTo("#a08-track2", { backgroundColor: "rgba(255,255,255,0.08)" }, { backgroundColor: "rgba(82,208,23,0.30)", duration: 0.8, ease: "power2.inOut" }, S);
+        tl.fromTo("#a08-pct2", { color: "#ff4444" }, { color: "#52d017", duration: 0.8, ease: "power2.inOut" }, S);
+        tl.fromTo("#a08-num2", { innerText: 90 }, { innerText: 0, snap: { innerText: 1 }, duration: 0.8, ease: "power3.inOut" }, S);
+        // beat 9: green check draws in (ring, then tick at ~75%)
+        var D = B * 9;
+        tl.fromTo(ring, { strokeDashoffset: ringLen }, { strokeDashoffset: 0, duration: 0.5, ease: "power2.out" }, D);
+        tl.fromTo(tick, { strokeDashoffset: tickLen }, { strokeDashoffset: 0, duration: 0.35, ease: "power2.out" }, D + 0.375);
+        // beat 10: tray icon answers once more in green, then hold still
+        tl.fromTo("#a08-halo", { scale: 0.45, opacity: 0 }, { scale: 0.6, opacity: 0.6, duration: 0.08, ease: "none", immediateRender: false }, B * 10);
+        tl.fromTo("#a08-halo", { scale: 0.6, opacity: 0.6 }, { scale: 1.8, opacity: 0, duration: 0.62, ease: "power2.out", immediateRender: false }, B * 10 + 0.08);
+
+        tl.seek(0);
+        window.__timelines = window.__timelines || {};
+        window.__timelines[ID] = tl;
+      })();
+    </script>
+  </div>
+</template>

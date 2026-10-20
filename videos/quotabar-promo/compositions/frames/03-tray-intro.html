@@ -1,0 +1,600 @@
+<template>
+  <style>
+    @font-face { font-family: "Syne"; font-weight: 700; font-style: normal; src: url("assets/fonts/syne-latin-700-normal.woff2") format("woff2"); }
+    @font-face { font-family: "Syne"; font-weight: 800; font-style: normal; src: url("assets/fonts/archivo-expanded-latin-800-normal.woff2") /* headline weight 800 renders Archivo Expanded: Syne g/y descenders read as clipped at display size */ format("woff2"); }
+    @font-face { font-family: "DM Sans"; font-weight: 400; font-style: normal; src: url("assets/fonts/dm-sans-latin-400-normal.woff2") format("woff2"); }
+    @font-face { font-family: "DM Sans"; font-weight: 500; font-style: normal; src: url("assets/fonts/dm-sans-latin-500-normal.woff2") format("woff2"); }
+    @font-face { font-family: "DM Sans"; font-weight: 600; font-style: normal; src: url("assets/fonts/dm-sans-latin-600-normal.woff2") format("woff2"); }
+    @font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-style: normal; src: url("assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
+    @font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-style: normal; src: url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); }
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: #e6eff6;
+      font-family: "DM Sans", sans-serif;
+    }
+
+    /* ── Ground: ink-black + faint hairline grid ───────────────── */
+    [id="03-tray-intro-bg"] {
+      position: absolute;
+      inset: 0;
+      background-color: #07090d;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+      background-size: 96px 96px;
+      background-position: -1px -1px;
+    }
+    [id="03-tray-intro-stage"] {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* ── Drop: bloom + shockwave ring ─────────────────────────── */
+    [id="03-tray-intro-bloom"] {
+      position: absolute;
+      left: 1180px;
+      top: 594px;
+      width: 900px;
+      height: 900px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(82,208,23,0.32) 0%, rgba(82,208,23,0.10) 38%, rgba(82,208,23,0) 70%);
+      opacity: 0;
+    }
+    [id="03-tray-intro-ring"] {
+      position: absolute;
+      left: 1550px;
+      top: 964px;
+      width: 160px;
+      height: 160px;
+      border-radius: 50%;
+      border: 2px solid #52d017;
+      box-shadow: 0 0 16px rgba(82,208,23,0.5), inset 0 0 12px rgba(82,208,23,0.3);
+      opacity: 0;
+    }
+
+    /* ── Windows 11 taskbar (product reconstruction) ──────────── */
+    [id="03-tray-intro-taskbar"] {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 72px;
+      background: rgba(22,26,33,0.97);
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+    [id="03-tray-intro-apps"] {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      height: 72px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transform: translateX(-50%);
+    }
+    [class~="03-tray-intro-app"] {
+      position: relative;
+      width: 52px;
+      height: 52px;
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    [class~="03-tray-intro-app"][data-active="1"] { background: rgba(255,255,255,0.06); }
+    [class~="03-tray-intro-app"][data-active="1"]::after {
+      content: "";
+      position: absolute;
+      left: 19px;
+      bottom: 1px;
+      width: 14px;
+      height: 3px;
+      border-radius: 2px;
+      background: #8298aa;
+    }
+    [class~="03-tray-intro-tile"] {
+      width: 32px;
+      height: 32px;
+      border-radius: 7px;
+    }
+    [class~="03-tray-intro-tray"] {
+      position: absolute;
+      top: 0;
+      height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    [id="03-tray-intro-chev"] { left: 1556px; width: 36px; }
+    [id="03-tray-intro-hover"] {
+      position: absolute;
+      left: 1606px;
+      top: 12px;
+      width: 48px;
+      height: 48px;
+      border-radius: 7px;
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    [id="03-tray-intro-halo"] {
+      position: absolute;
+      left: 1560px;
+      top: -34px;
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(82,208,23,0.55) 0%, rgba(82,208,23,0.18) 35%, rgba(82,208,23,0) 68%);
+      opacity: 0.45;
+    }
+    [id="03-tray-intro-icon"] {
+      position: absolute;
+      left: 1612px;
+      top: 18px;
+      width: 36px;
+      height: 36px;
+      filter: drop-shadow(0 0 6px rgba(82,208,23,0.55));
+    }
+    [id="03-tray-intro-sys"] {
+      left: 1672px;
+      gap: 14px;
+    }
+    [id="03-tray-intro-clock"] {
+      right: 38px;
+      font-family: "DM Sans", sans-serif;
+      font-weight: 500;
+      font-size: 21px;
+      color: #e6eff6;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.01em;
+    }
+
+    /* ── Tray popup: authored at app scale (1x), shown at 2x ──── */
+    [id="03-tray-intro-popwrap"] {
+      position: absolute;
+      left: 1256px;
+      bottom: 88px;
+      width: 320px;
+      transform: scale(2);
+      transform-origin: 0 100%;
+    }
+    [id="03-tray-intro-pop"] {
+      background: #0b0e14;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 11px;
+      padding: 8px;
+      box-shadow: 0 14px 34px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.45);
+    }
+    [id="03-tray-intro-pophead"] {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 18px;
+      padding: 0 5px;
+      margin-bottom: 6px;
+    }
+    [id="03-tray-intro-livedot"] {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #52d017;
+      box-shadow: 0 0 6px rgba(82,208,23,0.7);
+    }
+    [class~="03-tray-intro-card"] {
+      background: #0f1319;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 11px;
+      padding: 11px 12px;
+      margin-bottom: 5px;
+    }
+    [class~="03-tray-intro-card"]:last-child { margin-bottom: 0; }
+    [class~="03-tray-intro-body"] {
+      display: flex;
+      gap: 11px;
+      align-items: center;
+    }
+    [class~="03-tray-intro-picon"] {
+      width: 42px;
+      height: 42px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    [class~="03-tray-intro-picon"][data-p="claude"] {
+      background: linear-gradient(145deg, rgba(255,255,255,0.095) 0%, rgba(255,255,255,0.035) 100%);
+      border: 1px solid rgba(245,152,48,0.28);
+      box-shadow: 0 2px 12px rgba(245,152,48,0.16), inset 0 0 0 1px rgba(0,0,0,0.16);
+    }
+    [class~="03-tray-intro-picon"][data-p="codex"] {
+      background: linear-gradient(145deg, #0c1e13 0%, #172d1e 100%);
+      border: 1px solid rgba(82,208,23,0.22);
+      box-shadow: 0 2px 12px rgba(82,208,23,0.12);
+    }
+    [class~="03-tray-intro-plogo"] {
+      width: 26px;
+      height: 26px;
+      object-fit: contain;
+      display: block;
+      filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
+    }
+    [class~="03-tray-intro-info"] { flex: 1; min-width: 0; }
+    [class~="03-tray-intro-head"] {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    [class~="03-tray-intro-pname"] {
+      font-family: "Syne", sans-serif;
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #e6eff6;
+    }
+    [class~="03-tray-intro-pct"] {
+      width: 60px;
+      display: flex;
+      align-items: baseline;
+      justify-content: flex-end;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 20px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      color: #52d017;
+    }
+    [class~="03-tray-intro-num"] {
+      display: inline-block;
+      transform-origin: 100% 85%;
+    }
+    [class~="03-tray-intro-suf"] { display: inline-block; }
+    [class~="03-tray-intro-meta"] {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 5px;
+    }
+    [class~="03-tray-intro-tag"] {
+      font-family: "DM Sans", sans-serif;
+      font-weight: 600;
+      font-size: 10px;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: #8298aa;
+    }
+    [class~="03-tray-intro-cd"] {
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 400;
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      color: #7e92a4;
+    }
+    [class~="03-tray-intro-track"] {
+      position: relative;
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.06);
+    }
+    [class~="03-tray-intro-fill"] {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 3px;
+      transform-origin: 0 50%;
+    }
+    /* no box-shadow on fills: a blurred shadow under scaleX ≈ 0 renders as a stray vertical line */
+    [class~="03-tray-intro-fill"][data-p="claude"] { background: #DA785B; }
+    [class~="03-tray-intro-fill"][data-p="codex"]  { background: #4B55C8; }
+
+    /* ── Introducing lockup (left third) ───────────────────────── */
+    [id="03-tray-intro-intro"] {
+      position: absolute;
+      left: 106px;
+      top: 336px;
+    }
+    [id="03-tray-intro-kicker"] {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      height: 28px;
+    }
+    [id="03-tray-intro-rule"] {
+      width: 36px;
+      height: 2px;
+      background: #52d017;
+      transform-origin: 0 50%;
+    }
+    [id="03-tray-intro-kicktext"] {
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 20px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #52d017;
+    }
+    [id="03-tray-intro-wordrow"] {
+      display: flex;
+      align-items: center;
+      gap: 34px;
+      margin-top: 26px;
+      height: 124px;
+    }
+    [id="03-tray-intro-bigmark"] {
+      width: 104px;
+      height: 104px;
+      flex-shrink: 0;
+      filter: drop-shadow(0 0 18px rgba(82,208,23,0.35));
+    }
+    [id="03-tray-intro-word"] {
+      font-family: "Syne", sans-serif;
+      font-weight: 700;
+      font-size: 116px;
+      line-height: 1;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #e6eff6;
+      white-space: nowrap;
+    }
+    [class~="03-tray-intro-ch"] { display: inline-block; }
+    [id="03-tray-intro-lead"] {
+      margin-top: 30px;
+      font-family: "DM Sans", sans-serif;
+      font-weight: 400;
+      font-size: 34px;
+      line-height: 1.4;
+      color: #8298aa;
+      white-space: nowrap;
+    }
+  </style>
+
+  <div data-hf-id="hf-vyfk" id="root" data-composition-id="03-tray-intro" data-width="1920" data-height="1080" data-duration="6.26">
+
+    <div data-hf-id="hf-iyxb" id="03-tray-intro-bg" class="clip" data-start="0" data-duration="6.26" data-track-index="0"></div>
+
+    <div data-hf-id="hf-13oj" id="03-tray-intro-stage" class="clip" data-start="0" data-duration="6.26" data-track-index="1">
+
+      <div data-hf-id="hf-o3u4" id="03-tray-intro-bloom"></div>
+      <div data-hf-id="hf-lhux" id="03-tray-intro-ring"></div>
+
+      <!-- Introducing lockup -->
+      <div data-hf-id="hf-wdln" id="03-tray-intro-intro">
+        <div data-hf-id="hf-z9ok" id="03-tray-intro-kicker">
+          <div data-hf-id="hf-cdi1" id="03-tray-intro-rule"></div>
+          <div data-hf-id="hf-2bie" id="03-tray-intro-kicktext">Introducing</div>
+        </div>
+        <div data-hf-id="hf-mr1d" id="03-tray-intro-wordrow">
+          <svg data-hf-id="hf-vice" id="03-tray-intro-bigmark" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path data-hf-id="hf-npw6" d="M9 1L17 9L9 17L1 9Z" fill="#52d017" opacity="0.85" />
+            <path data-hf-id="hf-xlwa" d="M9 4.5L13.5 9L9 13.5L4.5 9Z" fill="#07090d" />
+            <path data-hf-id="hf-7xg4" d="M9 7L11 9L9 11L7 9Z" fill="#52d017" opacity="0.65" />
+          </svg>
+          <div data-hf-id="hf-h8mn" id="03-tray-intro-word"><span data-hf-id="hf-gnrt" class="03-tray-intro-ch">Q</span><span data-hf-id="hf-f2jp" class="03-tray-intro-ch">U</span><span data-hf-id="hf-6bt3" class="03-tray-intro-ch">O</span><span data-hf-id="hf-fguq" class="03-tray-intro-ch">T</span><span data-hf-id="hf-aavd" class="03-tray-intro-ch">A</span><span data-hf-id="hf-bhsg" class="03-tray-intro-ch">B</span><span data-hf-id="hf-kcjh" class="03-tray-intro-ch">A</span><span data-hf-id="hf-huow" class="03-tray-intro-ch">R</span></div>
+        </div>
+        <div data-hf-id="hf-oxm1" id="03-tray-intro-lead">Claude &amp; Codex limits — live in your Windows tray.</div>
+      </div>
+
+      <!-- Tray popup -->
+      <div data-hf-id="hf-ylkk" id="03-tray-intro-popwrap">
+        <div data-hf-id="hf-wg54" id="03-tray-intro-pop">
+          <div data-hf-id="hf-zx8u" id="03-tray-intro-pophead">
+            <svg data-hf-id="hf-eqs8" width="13" height="13" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path data-hf-id="hf-elru" d="M9 1L17 9L9 17L1 9Z" fill="#52d017" opacity="0.85" />
+              <path data-hf-id="hf-fwam" d="M9 4.5L13.5 9L9 13.5L4.5 9Z" fill="#07090d" />
+              <path data-hf-id="hf-aq7g" d="M9 7L11 9L9 11L7 9Z" fill="#52d017" opacity="0.65" />
+            </svg>
+            <div data-hf-id="hf-h3v2" id="03-tray-intro-livedot"></div>
+          </div>
+
+          <div data-hf-id="hf-lbnd" class="03-tray-intro-card" id="03-tray-intro-card-claude">
+            <div data-hf-id="hf-j3va" class="03-tray-intro-body">
+              <div data-hf-id="hf-7ugt" class="03-tray-intro-picon" data-p="claude"><img data-hf-id="hf-7yg9" class="03-tray-intro-plogo" src="assets/claude-logo.png" alt=""></div>
+              <div data-hf-id="hf-pxvu" class="03-tray-intro-info">
+                <div data-hf-id="hf-sr1k" class="03-tray-intro-head">
+                  <span data-hf-id="hf-eo46" class="03-tray-intro-pname">Claude</span>
+                  <span data-hf-id="hf-xngw" class="03-tray-intro-pct"><span data-hf-id="hf-wgp8" class="03-tray-intro-num" id="03-tray-intro-num-claude">68</span><span data-hf-id="hf-fvnp" class="03-tray-intro-suf" id="03-tray-intro-suf-claude">%</span></span>
+                </div>
+                <div data-hf-id="hf-hrr5" class="03-tray-intro-meta">
+                  <span data-hf-id="hf-0at9" class="03-tray-intro-tag">5-Hour</span>
+                  <span data-hf-id="hf-741h" class="03-tray-intro-cd" id="03-tray-intro-cd-claude">03:04:46</span>
+                </div>
+                <div data-hf-id="hf-qtxb" class="03-tray-intro-track"><div data-hf-id="hf-bot1" class="03-tray-intro-fill" data-p="claude" id="03-tray-intro-fill-claude"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <div data-hf-id="hf-rt00" class="03-tray-intro-card" id="03-tray-intro-card-codex">
+            <div data-hf-id="hf-yu62" class="03-tray-intro-body">
+              <div data-hf-id="hf-fup0" class="03-tray-intro-picon" data-p="codex"><img data-hf-id="hf-ramk" class="03-tray-intro-plogo" src="assets/codex-logo.png" alt=""></div>
+              <div data-hf-id="hf-86tq" class="03-tray-intro-info">
+                <div data-hf-id="hf-9cyo" class="03-tray-intro-head">
+                  <span data-hf-id="hf-u17n" class="03-tray-intro-pname">Codex</span>
+                  <span data-hf-id="hf-7ox4" class="03-tray-intro-pct"><span data-hf-id="hf-m3s0" class="03-tray-intro-num" id="03-tray-intro-num-codex">1</span><span data-hf-id="hf-tpcs" class="03-tray-intro-suf" id="03-tray-intro-suf-codex">%</span></span>
+                </div>
+                <div data-hf-id="hf-ravp" class="03-tray-intro-meta">
+                  <span data-hf-id="hf-tz9t" class="03-tray-intro-tag">5-Hour</span>
+                  <span data-hf-id="hf-j8w6" class="03-tray-intro-cd" id="03-tray-intro-cd-codex">04:58:04</span>
+                </div>
+                <div data-hf-id="hf-ghkv" class="03-tray-intro-track"><div data-hf-id="hf-phpx" class="03-tray-intro-fill" data-p="codex" id="03-tray-intro-fill-codex"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Windows 11 taskbar -->
+      <div data-hf-id="hf-t5df" id="03-tray-intro-taskbar">
+        <div data-hf-id="hf-6b47" id="03-tray-intro-apps">
+          <!-- start: generic 2x2 glyph -->
+          <div data-hf-id="hf-9za7" class="03-tray-intro-app">
+            <svg data-hf-id="hf-h4wu" width="26" height="26" viewBox="0 0 26 26"><rect data-hf-id="hf-d5as" x="1" y="1" width="11" height="11" rx="1.5" fill="#a9bccb" /><rect data-hf-id="hf-1hpi" x="14" y="1" width="11" height="11" rx="1.5" fill="#a9bccb" /><rect data-hf-id="hf-x6m8" x="1" y="14" width="11" height="11" rx="1.5" fill="#a9bccb" /><rect data-hf-id="hf-6d7q" x="14" y="14" width="11" height="11" rx="1.5" fill="#a9bccb" /></svg>
+          </div>
+          <!-- search -->
+          <div data-hf-id="hf-yli7" class="03-tray-intro-app">
+            <svg data-hf-id="hf-4md6" width="26" height="26" viewBox="0 0 26 26" fill="none"><circle data-hf-id="hf-hngk" cx="11" cy="11" r="7.5" stroke="#c8d2dc" stroke-width="2.2" /><path data-hf-id="hf-9oe9" d="M16.5 16.5L23 23" stroke="#c8d2dc" stroke-width="2.4" stroke-linecap="round" /></svg>
+          </div>
+          <!-- files -->
+          <div data-hf-id="hf-y776" class="03-tray-intro-app">
+            <svg data-hf-id="hf-yyr2" width="32" height="32" viewBox="0 0 32 32"><path data-hf-id="hf-s9lc" d="M3 9a2 2 0 0 1 2-2h8l3 3h11a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" fill="#8a7a4e" /><rect data-hf-id="hf-pwsg" x="3" y="12" width="26" height="14" rx="2" fill="#b39a5c" /></svg>
+          </div>
+          <!-- browser -->
+          <div data-hf-id="hf-xsw5" class="03-tray-intro-app">
+            <svg data-hf-id="hf-x8ca" width="32" height="32" viewBox="0 0 32 32" fill="none"><circle data-hf-id="hf-lyrr" cx="16" cy="16" r="12" fill="#2a3441" /><circle data-hf-id="hf-09f3" cx="16" cy="16" r="12" stroke="#5f7486" stroke-width="2" /><path data-hf-id="hf-bv11" d="M4 16h24M16 4c4 4 4 20 0 24M16 4c-4 4-4 20 0 24" stroke="#5f7486" stroke-width="1.6" /></svg>
+          </div>
+          <!-- terminal (active) -->
+          <div data-hf-id="hf-zmg6" class="03-tray-intro-app" data-active="1">
+            <svg data-hf-id="hf-5fdq" width="32" height="32" viewBox="0 0 32 32" fill="none"><rect data-hf-id="hf-qkj7" x="2" y="5" width="28" height="22" rx="4" fill="#0f1319" stroke="#3a4756" stroke-width="1.5" /><path data-hf-id="hf-i970" d="M8 12l5 4-5 4" stroke="#52d017" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /><path data-hf-id="hf-09iu" d="M15 21h8" stroke="#c8d2dc" stroke-width="2.2" stroke-linecap="round" /></svg>
+          </div>
+          <!-- editor -->
+          <div data-hf-id="hf-0l1c" class="03-tray-intro-app">
+            <svg data-hf-id="hf-5tor" width="32" height="32" viewBox="0 0 32 32" fill="none"><rect data-hf-id="hf-8afn" x="3" y="3" width="26" height="26" rx="6" fill="#1c232d" stroke="#3a4756" stroke-width="1.5" /><path data-hf-id="hf-c7pw" d="M12 11l-5 5 5 5M20 11l5 5-5 5" stroke="#8298aa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </div>
+          <!-- settings -->
+          <div data-hf-id="hf-06qb" class="03-tray-intro-app">
+            <svg data-hf-id="hf-zlna" width="30" height="30" viewBox="0 0 30 30" fill="none"><circle data-hf-id="hf-obva" cx="15" cy="15" r="10" stroke="#8298aa" stroke-width="2.4" stroke-dasharray="4 2.3" /><circle data-hf-id="hf-dgvv" cx="15" cy="15" r="4.5" stroke="#c8d2dc" stroke-width="2.2" /></svg>
+          </div>
+        </div>
+
+        <div data-hf-id="hf-beju" class="03-tray-intro-tray" id="03-tray-intro-chev">
+          <svg data-hf-id="hf-wpfe" width="18" height="18" viewBox="0 0 18 18" fill="none"><path data-hf-id="hf-dex1" d="M4 11.5L9 6.5L14 11.5" stroke="#c8d2dc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </div>
+        <div data-hf-id="hf-qs4n" id="03-tray-intro-hover"></div>
+        <div data-hf-id="hf-bffx" id="03-tray-intro-halo"></div>
+        <svg data-hf-id="hf-9fmc" id="03-tray-intro-icon" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path data-hf-id="hf-f02v" d="M9 1L17 9L9 17L1 9Z" fill="#52d017" opacity="0.85" />
+          <path data-hf-id="hf-galn" d="M9 4.5L13.5 9L9 13.5L4.5 9Z" fill="#07090d" />
+          <path data-hf-id="hf-9jad" d="M9 7L11 9L9 11L7 9Z" fill="#52d017" opacity="0.65" />
+        </svg>
+        <div data-hf-id="hf-fte5" class="03-tray-intro-tray" id="03-tray-intro-sys">
+          <svg data-hf-id="hf-xc06" width="24" height="24" viewBox="0 0 24 24" fill="none"><path data-hf-id="hf-jjcs" d="M3 9.5a13 13 0 0 1 18 0M6 13a8.5 8.5 0 0 1 12 0M9 16.5a4 4 0 0 1 6 0" stroke="#c8d2dc" stroke-width="1.8" stroke-linecap="round" /><circle data-hf-id="hf-4j8m" cx="12" cy="19.5" r="1.4" fill="#c8d2dc" /></svg>
+          <svg data-hf-id="hf-o9ai" width="24" height="24" viewBox="0 0 24 24" fill="none"><path data-hf-id="hf-ogrb" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4Z" stroke="#c8d2dc" stroke-width="1.7" stroke-linejoin="round" /><path data-hf-id="hf-zcxq" d="M15.5 9a4.5 4.5 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11" stroke="#c8d2dc" stroke-width="1.7" stroke-linecap="round" /></svg>
+          <svg data-hf-id="hf-5voi" width="26" height="24" viewBox="0 0 26 24" fill="none"><rect data-hf-id="hf-jc18" x="2" y="7" width="19" height="10" rx="2.5" stroke="#c8d2dc" stroke-width="1.7" /><rect data-hf-id="hf-tsft" x="4.5" y="9.5" width="11" height="5" rx="1" fill="#c8d2dc" /><path data-hf-id="hf-bfym" d="M23 10.5v3" stroke="#c8d2dc" stroke-width="1.8" stroke-linecap="round" /></svg>
+        </div>
+        <div data-hf-id="hf-2j0p" class="03-tray-intro-tray" id="03-tray-intro-clock">10:48</div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    (function () {
+      const FID = "03-tray-intro";
+      const DUR = 5.96;
+      const B = 0.3726; // one beat at 161 bpm; "beat N" = N * B after frame start
+      const root = document.querySelector('[data-composition-id="03-tray-intro"]');
+      const $ = (id) => document.getElementById(FID + "-" + id);
+      const $$ = (cls) => Array.from(root.querySelectorAll('[class~="' + FID + "-" + cls + '"]'));
+
+      const tl = gsap.timeline({ paused: true });
+
+      // ── Scene 1 (0.00–1.49s) — the DROP ─────────────────────────
+      // Shockwave ring from the tray corner, landing on the downbeat.
+      tl.fromTo($("ring"), { scale: 0.15 }, { scale: 6, duration: 1.3, ease: "expo.out" }, 0);
+      tl.fromTo($("ring"), { opacity: 1 }, { opacity: 0, duration: 1.3, ease: "power2.in" }, 0);
+      tl.fromTo($("bloom"), { opacity: 0.9, scale: 0.6 }, { opacity: 0, scale: 1.15, duration: 1.4, ease: "power2.out" }, 0);
+
+      // Taskbar rises from the bottom edge.
+      tl.fromTo($("taskbar"), { y: 72 }, { y: 0, duration: 0.6, ease: "power3.out" }, 0);
+      tl.fromTo($$("app"), { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: "power3.out", stagger: 0.035 }, 0.12);
+      tl.fromTo([$("chev"), $("sys"), $("clock")], { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: "power3.out", stagger: 0.05 }, 0.2);
+
+      // Beat 2 — the QuotaBar diamond pops into the tray (no overshoot).
+      tl.fromTo($("icon"), { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.5, ease: "power3.out" }, 2 * B);
+      tl.fromTo($("halo"), { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.5, ease: "power3.out" }, 2 * B);
+      tl.to($("halo"), { opacity: 0.45, duration: 0.6, ease: "power2.out" }, 2 * B + 0.55);
+
+      // Icon click: hover plate + press dip, released on beat 4.
+      tl.fromTo($("hover"), { opacity: 0 }, { opacity: 1, duration: 0.15, ease: "power2.out" }, 3.5 * B);
+      tl.to($("icon"), { scale: 0.86, duration: 0.12, ease: "power2.in" }, 4 * B - 0.16);
+      tl.to($("icon"), { scale: 1, duration: 0.35, ease: "power3.out" }, 4 * B);
+
+      // ── Scene 2 (1.49–3.35s) — popup opens, bars fill ──────────
+      // Origin = the tray icon (canvas x 1630 → popup-local 187px at 1x).
+      tl.fromTo($("pop"),
+        { scale: 0.6, opacity: 0, transformOrigin: "187px 100%" },
+        { scale: 1, opacity: 1, duration: 0.55, ease: "power3.out" }, 4 * B);
+      tl.fromTo($("pophead"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out" }, 4 * B + 0.06);
+      tl.fromTo([$("card-claude"), $("card-codex")], { y: 10, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power3.out", stagger: 0.08 }, 4 * B + 0.1);
+
+      // Paired stat: bar fill + count-up + dynamic scale share start, duration and ease.
+      function stat(p, target, fillTo, at, dur) {
+        const num = $("num-" + p);
+        const state = { v: 0 };
+        let last = -1;
+        tl.fromTo(state, { v: 0 }, {
+          v: target, duration: dur, ease: "power3.out",
+          onUpdate: () => {
+            const r = Math.round(state.v);
+            if (r !== last) { num.textContent = String(r); last = r; }
+          }
+        }, at);
+        tl.fromTo(num, { scale: 0.55 }, { scale: 1, duration: dur, ease: "power3.out" }, at);
+        tl.fromTo($("fill-" + p), { scaleX: 0 }, { scaleX: fillTo, duration: dur, ease: "power3.out" }, at);
+        // Suffix lands after the count.
+        tl.fromTo($("suf-" + p), { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, at + dur);
+      }
+      stat("claude", 68, 0.68, 6 * B, 1.1);  // beat 6
+      stat("codex", 1, 0.01, 7 * B, 0.9);    // beat 7
+
+      // Countdowns tick down second by second, derived from timeline time.
+      const CD = [
+        { el: $("cd-claude"), base: 3 * 3600 + 4 * 60 + 46 },
+        { el: $("cd-codex"), base: 4 * 3600 + 58 * 60 + 4 }
+      ];
+      const pad = (n) => (n < 10 ? "0" : "") + n;
+      const fmt = (s) => pad(Math.floor(s / 3600)) + ":" + pad(Math.floor((s % 3600) / 60)) + ":" + pad(s % 60);
+      const clock = { t: 0 };
+      let lastSec = -1;
+      tl.fromTo(clock, { t: 0 }, {
+        t: DUR, duration: DUR, ease: "none",
+        onUpdate: () => {
+          const s = Math.floor(clock.t + 1e-6);
+          if (s !== lastSec) {
+            CD.forEach((c) => { c.el.textContent = fmt(c.base - s); });
+            lastSec = s;
+          }
+        }
+      }, 0);
+
+      // ── Scene 3 (3.35–5.96s) — Introducing / QUOTABAR ──────────
+      tl.fromTo($("rule"), { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: "power3.out" }, 9 * B);
+      tl.fromTo($("kicktext"), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, 9 * B + 0.05);
+
+      // Beat 11 — mark, then the wordmark letter by letter.
+      const WORD_AT = 11 * B;
+      tl.fromTo($("bigmark"), { scale: 0.3, rotation: -45, opacity: 0 }, { scale: 1, rotation: 0, opacity: 1, duration: 0.55, ease: "power3.out" }, WORD_AT);
+
+      // Content-driven sequencing: per-letter start times computed once from the word.
+      const SEC_PER_CHAR = 0.055;
+      const LETTER_DUR = 0.42;
+      const SEQ = $$("ch").map((el, i) => ({ el, start: WORD_AT + 0.06 + i * SEC_PER_CHAR }));
+      SEQ.forEach((s) => {
+        tl.fromTo(s.el,
+          { opacity: 0, y: 40, filter: "blur(8px)" },
+          { opacity: 1, y: 0, filter: "blur(0px)", duration: LETTER_DUR, ease: "power3.out" }, s.start);
+      });
+
+      // Beat 13 — lead line (never before the last letter has started).
+      const LEAD_AT = Math.max(13 * B, SEQ[SEQ.length - 1].start);
+      tl.fromTo($("lead"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, LEAD_AT);
+
+      // Hold — subtle jitter from a fixed table on beats 14 and 15.
+      const JITTER = [[14 * B, 3], [15 * B, -2]];
+      JITTER.forEach(([t, dx]) => {
+        tl.fromTo($("wordrow"), { x: dx }, { x: 0, duration: 0.12, ease: "power2.out", immediateRender: false }, t);
+      });
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[FID] = tl;
+    })();
+  </script>
+</template>

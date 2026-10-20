@@ -1,0 +1,178 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Syne";
+      src: url("assets/fonts/archivo-expanded-latin-800-normal.woff2") /* headline weight 800 renders Archivo Expanded: Syne g/y descenders read as clipped at display size */ format("woff2");
+      font-weight: 800;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
+      font-family: "IBM Plex Mono";
+      src: url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+      font-weight: 500;
+      font-style: normal;
+      font-display: block;
+    }
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      color: #07090d;
+    }
+
+    /* Full-bleed green register ground (clip layer, not on #root) */
+    #p04-ground {
+      position: absolute;
+      inset: 0;
+      background: #52d017;
+    }
+
+    /* Mono catalogue mark, top-left, 55% ink */
+    #p04-num {
+      position: absolute;
+      left: 5.5cqw;
+      top: 5.5cqw;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 0.9cqw;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(7, 9, 13, 0.55);
+      white-space: nowrap;
+    }
+
+    /* Statement block, left-anchored in the upper half */
+    #p04-block {
+      position: absolute;
+      left: 5.5cqw;
+      top: 20cqh;
+      width: 82cqw;
+    }
+
+    .p04-line {
+      font-family: "Syne", sans-serif;
+      font-weight: 800;
+      font-size: 7.5cqw;
+      line-height: 0.96;
+      letter-spacing: -0.03em;
+      text-transform: lowercase;
+      color: #07090d;
+      white-space: nowrap;
+    }
+
+    .p04-word {
+      display: inline-block;
+      will-change: transform, opacity, filter;
+    }
+
+    #p04-line2 {
+      display: inline-block;
+      transform-origin: 0% 60%;
+      will-change: transform, opacity, filter;
+    }
+
+    #p04-rule {
+      width: 5cqw;
+      height: 0.28cqw;
+      margin-top: 2.4cqw;
+      background: #07090d;
+      transform-origin: 0% 50%;
+    }
+  </style>
+
+  <div data-hf-id="hf-dp4c" id="root" data-composition-id="04-promise" data-width="1920" data-height="1080" data-duration="3.33">
+    <div data-hf-id="hf-pvux" id="p04-ground" class="clip" data-start="0" data-duration="3.33" data-track-index="0"></div>
+
+    <div data-hf-id="hf-t2pz" id="p04-num">QUOTABAR / 01</div>
+
+    <div data-hf-id="hf-d293" id="p04-block">
+      <div data-hf-id="hf-ck4n" id="p04-line1">
+        <div data-hf-id="hf-znbn" class="p04-line">
+          <span data-hf-id="hf-90pc" class="p04-word" id="p04-w1">know</span>
+          <span data-hf-id="hf-7kpv" class="p04-word" id="p04-w2">your</span>
+        </div>
+        <div data-hf-id="hf-sa43" class="p04-line">
+          <span data-hf-id="hf-vgl7" class="p04-word" id="p04-w3">ai</span>
+          <span data-hf-id="hf-nqlw" class="p04-word" id="p04-w4">spend.</span>
+        </div>
+      </div>
+      <div data-hf-id="hf-rvt2" class="p04-line"><span data-hf-id="hf-k5w1" id="p04-line2">at a glance.</span></div>
+      <div data-hf-id="hf-z6l2" id="p04-rule"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    (function () {
+      window.__timelines = window.__timelines || {};
+
+      // Music grid: 161 bpm -> 1 beat = 0.3726 s. Every onset reads from this grid.
+      var BEAT = 0.3726;
+      var b = function (n) {
+        return +(n * BEAT).toFixed(4);
+      };
+
+      var tl = gsap.timeline({ paused: true });
+
+      // Scene 1 (0.00-1.12s): "know your ai spend." builds word by word on the grid.
+      // know @ beat 0, your @ beat 1, then a syncopated "ai" @ beat 1.5 and "spend." @ beat 2.
+      var WORD_ONSETS = [
+        { id: "#p04-w1", t: b(0) },
+        { id: "#p04-w2", t: b(1) },
+        { id: "#p04-w3", t: b(1.5) },
+        { id: "#p04-w4", t: b(2) }
+      ];
+      WORD_ONSETS.forEach(function (w) {
+        tl.fromTo(
+          w.id,
+          { y: 30, opacity: 0, filter: "blur(10px)" },
+          { y: 0, opacity: 1, filter: "blur(0px)", duration: 0.5, ease: "power3.out" },
+          w.t
+        );
+      });
+
+      // Scene 2 (beat 3 = 1.118s): "at a glance." beat-slams in beneath (scale + blur slam).
+      var SLAM = b(3);
+      tl.fromTo(
+        "#p04-line2",
+        { scale: 1.42, opacity: 0, filter: "blur(18px)" },
+        { scale: 1, opacity: 1, filter: "blur(0px)", duration: 0.42, ease: "expo.out" },
+        SLAM
+      );
+      // Impact: line 1 takes a small hit on the slam, then settles (no exit).
+      tl.fromTo(
+        "#p04-line1",
+        { y: 0 },
+        { y: 7, duration: 0.05, ease: "power2.out", immediateRender: false },
+        SLAM + 0.02
+      );
+      tl.to("#p04-line1", { y: 0, duration: 0.34, ease: "power3.out" }, SLAM + 0.07);
+
+      // Beat 4: thin ink rule stub draws under the payoff line.
+      tl.fromTo(
+        "#p04-rule",
+        { scaleX: 0 },
+        { scaleX: 1, duration: 0.42, ease: "expo.out" },
+        b(4)
+      );
+
+      // Beat 5: mono catalogue mark settles in top-left at 55% ink.
+      tl.fromTo(
+        "#p04-num",
+        { opacity: 0, y: -8 },
+        { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" },
+        b(5)
+      );
+
+      // Deliberate hold: everything is still from ~2.3s to the end of the frame (2.98s).
+      tl.set({}, {}, 2.98);
+
+      window.__timelines["04-promise"] = tl;
+    })();
+  </script>
+</template>

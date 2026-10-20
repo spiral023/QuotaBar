@@ -1,0 +1,17 @@
+QuotaBar for Windows
+Tagline: Know your AI spend. At a glance.
+Real-time quota tracking, cost analytics & usage history for Claude & Codex.
+
+Problem: you hit "Rate limit reached" mid-session in Claude Code / Codex, with no warning.
+
+Features:
+- Lives in your Windows tray: stacked per-provider progress bars (Claude orange, Codex indigo).
+- Live quota progress: 5-hour and weekly windows, countdown to reset, burn rate (%/h), "On Track" pace badge, window budget forecast ("At current pace: will last until reset").
+- Cost analytics & reports: API-equivalent USD cost (e.g. "API EQ. (30D) $594"), subscription ROI (e.g. "SUB ROI 21.2x"), daily/weekly/monthly cost charts, cache hit 97.3%, active days, avg session.
+- Model insights: top models by cost (opus, sonnet, gpt, haiku), cost share %, cost vs intelligence scatter, token types.
+- Smart alerts: Windows notifications before a quota limit and when windows reset ("Claude weekly window reset — 0% used").
+- Permanent history: backfills daily, survives provider log cleanup.
+- Privacy-first: reads only known local CLI paths (~/.claude, ~/.codex), redacts secrets. Offline-first, your data stays yours.
+- Built for developers: Electron, TypeScript, open source (MIT). Free.
+
+Download: quotabar-installer.sp23.online · github.com/spiral023/QuotaBar

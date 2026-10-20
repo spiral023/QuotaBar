@@ -1,0 +1,407 @@
+<template>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    @font-face { font-family: "Syne"; src: url("assets/fonts/archivo-expanded-latin-800-normal.woff2") /* headline weight 800 renders Archivo Expanded: Syne g/y descenders read as clipped at display size */ format("woff2"); font-weight: 800; font-style: normal; font-display: block; }
+    @font-face { font-family: "DM Sans"; src: url("assets/fonts/dm-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: block; }
+    @font-face { font-family: "DM Sans"; src: url("assets/fonts/dm-sans-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: block; }
+    @font-face { font-family: "IBM Plex Mono"; src: url("assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: block; }
+    @font-face { font-family: "IBM Plex Mono"; src: url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: block; }
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: #e6eff6;
+      font-family: "DM Sans", sans-serif;
+    }
+
+    /* full-bleed ground: ink-black + faint 1px hairline grid */
+    #\30 7-models-bg {
+      position: absolute;
+      inset: 0;
+      background-color: #07090d;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+      background-size: 120px 120px;
+      background-position: -1px -1px;
+    }
+
+    /* ---------- left 40%: kicker + h2 ---------- */
+    #\30 7-models-left {
+      position: absolute;
+      left: 106px;
+      top: 330px;
+      width: 660px;
+    }
+    #\30 7-models-kicker {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 18px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #52d017;
+    }
+    #\30 7-models-rule {
+      width: 36px;
+      height: 2px;
+      background: #52d017;
+      transform-origin: left center;
+    }
+    #\30 7-models-h2 {
+      margin-top: 30px;
+      font-family: "Syne", sans-serif;
+      font-weight: 800;
+      font-size: 102px;
+      line-height: 0.98;
+      letter-spacing: -0.03em;
+      text-transform: lowercase;
+    }
+    .\30 7-models-line {
+      display: block;
+      overflow-x: visible; overflow-y: clip;
+      padding: 0.2em 0 0.32em;
+      margin: 0 0 calc(6px - 0.52em);
+      white-space: nowrap;
+    }
+    .\30 7-models-line:first-child { margin-top: -0.2em; }
+    .\30 7-models-line-in {
+      display: block;
+    }
+    .\30 7-models-accent {
+      color: #52d017;
+    }
+
+    /* ---------- right 60%: QuotaBar card ---------- */
+    #\30 7-models-card {
+      position: absolute;
+      left: 802px;
+      top: 236px;
+      width: 1012px;
+      height: 560px;
+      background: #0f1319;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 11px;
+      transform-origin: 50% 50%;
+    }
+    #\30 7-models-title {
+      position: absolute;
+      left: 40px;
+      top: 36px;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 17px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #e6eff6;
+    }
+    .\30 7-models-hdr {
+      position: absolute;
+      top: 102px;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 14px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #8298aa;
+    }
+    #\30 7-models-hdr-model { left: 40px; }
+    #\30 7-models-hdr-cost { left: 40px; width: 430px; text-align: right; }
+    #\30 7-models-hdr-pct { left: 40px; width: 560px; text-align: right; }
+    #\30 7-models-hdr-split { left: 680px; width: 332px; text-align: center; }
+    #\30 7-models-hdr-sep {
+      position: absolute;
+      left: 40px;
+      top: 136px;
+      width: 560px;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.06);
+      transform-origin: left center;
+    }
+    #\30 7-models-vsep {
+      position: absolute;
+      left: 680px;
+      top: 96px;
+      width: 1px;
+      height: 412px;
+      background: rgba(255, 255, 255, 0.06);
+      transform-origin: center top;
+    }
+
+    .\30 7-models-row {
+      position: absolute;
+      left: 40px;
+      width: 560px;
+      height: 92px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .\30 7-models-row.\30 7-models-last { border-bottom: none; }
+    .\30 7-models-name {
+      position: absolute;
+      left: 0;
+      top: 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: "DM Sans", sans-serif;
+      font-weight: 500;
+      font-size: 29px;
+      line-height: 36px;
+      color: #e6eff6;
+    }
+    .\30 7-models-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+    }
+    .\30 7-models-cost,
+    .\30 7-models-pct {
+      position: absolute;
+      top: 20px;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 27px;
+      line-height: 36px;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .\30 7-models-cost {
+      left: 230px;
+      width: 200px;
+      color: #e6eff6;
+      transform-origin: right center;
+    }
+    .\30 7-models-pct {
+      left: 460px;
+      width: 100px;
+      color: #8298aa;
+      transform-origin: right center;
+    }
+    .\30 7-models-track {
+      position: absolute;
+      left: 0;
+      top: 68px;
+      width: 560px;
+      height: 5px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+    }
+    .\30 7-models-fill {
+      width: 100%;
+      height: 100%;
+      border-radius: 3px;
+      transform-origin: left center;
+    }
+    .\30 7-models-claude { background: #DA785B; }
+    .\30 7-models-codex { background: #4B55C8; }
+
+    /* donut panel */
+    #\30 7-models-donut {
+      position: absolute;
+      left: 736px;
+      top: 156px;
+      width: 220px;
+      height: 220px;
+    }
+    #\30 7-models-donut circle {
+      fill: none;
+      stroke-width: 22;
+      stroke-linecap: butt;
+    }
+    #\30 7-models-ring-track { stroke: rgba(255, 255, 255, 0.06); }
+    #\30 7-models-ring-claude { stroke: #DA785B; }
+    #\30 7-models-ring-codex { stroke: #4B55C8; }
+    #\30 7-models-legend {
+      position: absolute;
+      left: 680px;
+      top: 410px;
+      width: 332px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 22px;
+    }
+    .\30 7-models-leg {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    .\30 7-models-leg-val {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 28px;
+      line-height: 32px;
+      font-variant-numeric: tabular-nums;
+      color: #e6eff6;
+    }
+    .\30 7-models-leg-lbl {
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 500;
+      font-size: 13px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #8298aa;
+    }
+    #\30 7-models-leg-sep {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 28px;
+      line-height: 32px;
+      color: #8298aa;
+    }
+  </style>
+
+  <div data-hf-id="hf-6cmr" id="root" data-composition-id="07-models" data-start="0" data-duration="4.82" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-ydve" id="07-models-bg" class="clip" data-start="0" data-duration="4.82" data-track-index="0"></div>
+
+    <div data-hf-id="hf-a78p" id="07-models-left">
+      <div data-hf-id="hf-3qet" id="07-models-kicker"><span data-hf-id="hf-0i4n" id="07-models-rule"></span><span data-hf-id="hf-zgsk" id="07-models-kicker-text">03 / Models</span></div>
+      <div data-hf-id="hf-ftvs" id="07-models-h2">
+        <span data-hf-id="hf-8zik" class="07-models-line"><span data-hf-id="hf-bt87" class="07-models-line-in" id="07-models-l1">every</span></span>
+        <span data-hf-id="hf-eaxw" class="07-models-line"><span data-hf-id="hf-6l5s" class="07-models-line-in" id="07-models-l2">model,</span></span>
+        <span data-hf-id="hf-d40t" class="07-models-line"><span data-hf-id="hf-ijni" class="07-models-line-in 07-models-accent" id="07-models-l3">ranked.</span></span>
+      </div>
+    </div>
+
+    <div data-hf-id="hf-p3ws" id="07-models-card">
+      <div data-hf-id="hf-lqr8" id="07-models-title">Top models by cost (30 days)</div>
+
+      <div data-hf-id="hf-mswp" class="07-models-hdr" id="07-models-hdr-model">Model</div>
+      <div data-hf-id="hf-x38r" class="07-models-hdr" id="07-models-hdr-cost">Cost</div>
+      <div data-hf-id="hf-g3ox" class="07-models-hdr" id="07-models-hdr-pct">%</div>
+      <div data-hf-id="hf-hb8z" class="07-models-hdr" id="07-models-hdr-split">By provider</div>
+      <div data-hf-id="hf-aaob" id="07-models-hdr-sep"></div>
+      <div data-hf-id="hf-gsgs" id="07-models-vsep"></div>
+
+      <div data-hf-id="hf-k9w7" class="07-models-row" id="07-models-r0" style="top: 137px;">
+        <div data-hf-id="hf-nhq5" class="07-models-name"><span data-hf-id="hf-hn6s" class="07-models-dot 07-models-claude"></span>opus-4-8</div>
+        <div data-hf-id="hf-md4e" class="07-models-cost" id="07-models-c0">$0.00</div>
+        <div data-hf-id="hf-qgi2" class="07-models-pct" id="07-models-p0">0%</div>
+        <div data-hf-id="hf-kgec" class="07-models-track"><div data-hf-id="hf-a82i" class="07-models-fill 07-models-claude" id="07-models-f0"></div></div>
+      </div>
+      <div data-hf-id="hf-zezc" class="07-models-row" id="07-models-r1" style="top: 229px;">
+        <div data-hf-id="hf-wtdw" class="07-models-name"><span data-hf-id="hf-438b" class="07-models-dot 07-models-codex"></span>gpt-5.5</div>
+        <div data-hf-id="hf-6xl5" class="07-models-cost" id="07-models-c1">$0.00</div>
+        <div data-hf-id="hf-ycsf" class="07-models-pct" id="07-models-p1">0%</div>
+        <div data-hf-id="hf-rvp8" class="07-models-track"><div data-hf-id="hf-xwdu" class="07-models-fill 07-models-codex" id="07-models-f1"></div></div>
+      </div>
+      <div data-hf-id="hf-mcy8" class="07-models-row" id="07-models-r2" style="top: 321px;">
+        <div data-hf-id="hf-0ql7" class="07-models-name"><span data-hf-id="hf-y998" class="07-models-dot 07-models-claude"></span>sonnet-4-6</div>
+        <div data-hf-id="hf-b99c" class="07-models-cost" id="07-models-c2">$0.00</div>
+        <div data-hf-id="hf-9eyk" class="07-models-pct" id="07-models-p2">0%</div>
+        <div data-hf-id="hf-qos5" class="07-models-track"><div data-hf-id="hf-3aow" class="07-models-fill 07-models-claude" id="07-models-f2"></div></div>
+      </div>
+      <div data-hf-id="hf-wku8" class="07-models-row 07-models-last" id="07-models-r3" style="top: 413px;">
+        <div data-hf-id="hf-jxoj" class="07-models-name"><span data-hf-id="hf-x2c5" class="07-models-dot 07-models-claude"></span>haiku-4-5</div>
+        <div data-hf-id="hf-ogn7" class="07-models-cost" id="07-models-c3">$0.00</div>
+        <div data-hf-id="hf-rjtd" class="07-models-pct" id="07-models-p3">0%</div>
+        <div data-hf-id="hf-r336" class="07-models-track"><div data-hf-id="hf-42cp" class="07-models-fill 07-models-claude" id="07-models-f3"></div></div>
+      </div>
+
+      <svg data-hf-id="hf-52xa" id="07-models-donut" viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg">
+        <circle data-hf-id="hf-v0wr" id="07-models-ring-track" cx="110" cy="110" r="88" />
+        <circle data-hf-id="hf-2eix" id="07-models-ring-claude" cx="110" cy="110" r="88" transform="rotate(-89 110 110)" />
+        <circle data-hf-id="hf-yqfp" id="07-models-ring-codex" cx="110" cy="110" r="88" transform="rotate(188.2 110 110)" />
+      </svg>
+
+      <div data-hf-id="hf-kqid" id="07-models-legend">
+        <div data-hf-id="hf-4gre" class="07-models-leg" id="07-models-leg-a">
+          <div data-hf-id="hf-gvww" class="07-models-leg-val"><span data-hf-id="hf-xgn6" class="07-models-dot 07-models-claude"></span>77%</div>
+          <div data-hf-id="hf-m2kq" class="07-models-leg-lbl">Claude</div>
+        </div>
+        <div data-hf-id="hf-k4em" id="07-models-leg-sep">·</div>
+        <div data-hf-id="hf-yb1l" class="07-models-leg" id="07-models-leg-b">
+          <div data-hf-id="hf-glwz" class="07-models-leg-val"><span data-hf-id="hf-wk9n" class="07-models-dot 07-models-codex"></span>23%</div>
+          <div data-hf-id="hf-wdqv" class="07-models-leg-lbl">Codex</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var FID = "07-models";
+      var $ = function (id) { return document.getElementById(FID + "-" + id); };
+      var B = 0.3726; // one beat at 161 bpm
+      var tl = gsap.timeline({ paused: true });
+
+      // ---------- Scene 1 (0.00–1.12s): headline + card shell ----------
+      tl.fromTo($("rule"), { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power3.out" }, 0);
+      tl.fromTo($("kicker-text"), { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, 0.04);
+      tl.fromTo($("l1"), { yPercent: 160 }, { yPercent: 0, duration: 0.7, ease: "expo.out" }, 0);
+      tl.fromTo($("l2"), { yPercent: 160 }, { yPercent: 0, duration: 0.7, ease: "expo.out" }, B);
+      tl.fromTo($("l3"), { yPercent: 160 }, { yPercent: 0, duration: 0.7, ease: "expo.out" }, 2 * B);
+
+      // card arrives + one-time gentle push-in over the first bar, then holds
+      tl.fromTo($("card"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 0);
+      tl.fromTo($("card"), { scale: 0.965 }, { scale: 1, duration: 1.49, ease: "expo.out" }, 0);
+      tl.fromTo($("title"), { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, B);
+      tl.fromTo([$("hdr-model"), $("hdr-cost"), $("hdr-pct"), $("hdr-split")],
+        { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out", stagger: 0.05 }, 2 * B);
+      tl.fromTo($("hdr-sep"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: "power3.out" }, 2 * B);
+      tl.fromTo($("vsep"), { scaleY: 0 }, { scaleY: 1, duration: 0.6, ease: "power3.out" }, 2 * B);
+      tl.fromTo($("ring-track"), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.out" }, 2 * B);
+
+      // ---------- Scene 2 (1.12–3.35s): rows cascade, one per 1.5 beats ----------
+      var rows = [
+        { cost: 231.39, pct: 39 },
+        { cost: 104.05, pct: 18 },
+        { cost: 101.27, pct: 17 },
+        { cost: 5.70, pct: 1 }
+      ];
+      var COUNT_DUR = 1.0;
+      rows.forEach(function (r, i) {
+        var at = (3 + i * 1.5) * B;
+        var costEl = $("c" + i);
+        var pctEl = $("p" + i);
+
+        tl.fromTo($("r" + i), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, at);
+        // share bar grows to its % as the row lands (shares the count's ease + duration)
+        tl.fromTo($("f" + i), { scaleX: 0 }, { scaleX: r.pct / 100, duration: COUNT_DUR, ease: "power3.out" }, at);
+        // cost + % count up; transform scale grows with the count (counting-dynamic-scale)
+        // innerText tweens + formatting modifiers: no callbacks, so seeks render correctly
+        tl.fromTo(costEl, { innerText: 0 }, {
+          innerText: r.cost, duration: COUNT_DUR, ease: "power3.out",
+          modifiers: { innerText: function (v) { return "$" + (+v).toFixed(2); } }
+        }, at);
+        tl.fromTo(pctEl, { innerText: 0 }, {
+          innerText: r.pct, duration: COUNT_DUR, ease: "power3.out",
+          modifiers: { innerText: function (v) { return Math.round(+v) + "%"; } }
+        }, at);
+        tl.fromTo([costEl, pctEl], { scale: 0.82 }, { scale: 1, duration: COUNT_DUR, ease: "power3.out" }, at);
+      });
+
+      // ---------- Scene 3 (3.35–4.47s): donut sweeps closed + legend ----------
+      var claudeRing = $("ring-claude");
+      var codexRing = $("ring-codex");
+      var LEN = claudeRing.getTotalLength();
+      var GAP = LEN * (2 / 360);
+      var claudeLen = LEN * 0.77 - GAP;
+      var codexLen = LEN * 0.23 - GAP;
+      claudeRing.style.strokeDasharray = claudeLen + " " + (LEN * 2); // long gap: no wrap-around sliver
+      codexRing.style.strokeDasharray = codexLen + " " + (LEN * 2);
+
+      var D0 = 9 * B; // beat 9
+      var SEG1 = 0.6;
+      tl.fromTo(claudeRing, { strokeDashoffset: claudeLen + 2 }, { strokeDashoffset: 0, duration: SEG1, ease: "power2.out" }, D0);
+      tl.fromTo(codexRing, { strokeDashoffset: codexLen + 2 }, { strokeDashoffset: 0, duration: 0.42, ease: "power2.out" }, D0 + SEG1 * 0.75);
+
+      tl.fromTo($("leg-a"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 10 * B);
+      tl.fromTo($("leg-sep"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" }, 10 * B + 0.1);
+      tl.fromTo($("leg-b"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.36, ease: "power3.out" }, 11 * B);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[FID] = tl;
+    })();
+  </script>
+</template>

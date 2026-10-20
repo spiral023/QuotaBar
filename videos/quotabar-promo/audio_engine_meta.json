@@ -1,0 +1,167 @@
+{
+  "tts_provider": null,
+  "voice_id": null,
+  "bgm": {
+    "path": "assets/bgm/track.mp3",
+    "volume": 0.9,
+    "query": "driving dark synthwave electronic, punchy modern tech launch, steady four-on-the-floor around 120 bpm, energetic build, no vocals",
+    "mode": "retrieve",
+    "duration_s": 30
+  },
+  "bgm_pending": false,
+  "bgm_provider": "heygen",
+  "bgm_pid": null,
+  "bgm_log": null,
+  "bgm_mode": "retrieve",
+  "bgm_target_duration_s": null,
+  "bgm_seed_duration_s": null,
+  "bgm_loop_count": null,
+  "voices": [],
+  "sfx": [
+    {
+      "id": "01",
+      "name": "keyboard typing",
+      "file": "assets/sfx/keyboard-typing.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 44.382,
+      "volume": 0.35
+    },
+    {
+      "id": "01",
+      "name": "error glitch impact",
+      "file": "assets/sfx/error-glitch-impact.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 1.372,
+      "volume": 0.35
+    },
+    {
+      "id": "02",
+      "name": "bass hit",
+      "file": "assets/sfx/bass-hit.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 3.058,
+      "volume": 0.35
+    },
+    {
+      "id": "03",
+      "name": "deep impact on the drop",
+      "file": "assets/sfx/deep-impact-on-the-drop.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 2.386,
+      "volume": 0.35
+    },
+    {
+      "id": "03",
+      "name": "soft pop",
+      "file": "assets/sfx/soft-pop.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 0.696,
+      "volume": 0.35
+    },
+    {
+      "id": "03",
+      "name": "whoosh",
+      "file": "assets/sfx/whoosh.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 1.58,
+      "volume": 0.35
+    },
+    {
+      "id": "04",
+      "name": "bass hit",
+      "file": "assets/sfx/bass-hit.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 3.058,
+      "volume": 0.35
+    },
+    {
+      "id": "05",
+      "name": "ui tick",
+      "file": "assets/sfx/ui-tick.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 0.576,
+      "volume": 0.35
+    },
+    {
+      "id": "05",
+      "name": "soft whoosh",
+      "file": "assets/sfx/soft-whoosh.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 1.834,
+      "volume": 0.35
+    },
+    {
+      "id": "06",
+      "name": "counter ticks",
+      "file": "assets/sfx/counter-ticks.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 7.778,
+      "volume": 0.35
+    },
+    {
+      "id": "06",
+      "name": "impact on the ROI number",
+      "file": "assets/sfx/impact-on-the-roi-number.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 1.152,
+      "volume": 0.35
+    },
+    {
+      "id": "07",
+      "name": "soft ticks per row",
+      "file": "assets/sfx/soft-ticks-per-row.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 0.768,
+      "volume": 0.35
+    },
+    {
+      "id": "08",
+      "name": "notification chime ×2",
+      "file": "assets/sfx/notification-chime-2.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 5.488,
+      "volume": 0.35
+    },
+    {
+      "id": "09",
+      "name": "soft pops",
+      "file": "assets/sfx/soft-pops.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 1.308,
+      "volume": 0.35
+    },
+    {
+      "id": "10",
+      "name": "riser into impact",
+      "file": "assets/sfx/riser-into-impact.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 4.364,
+      "volume": 0.35
+    },
+    {
+      "id": "10",
+      "name": "shimmer",
+      "file": "assets/sfx/shimmer.mp3",
+      "source": "heygen",
+      "offset_s": 0,
+      "duration_s": 3.329,
+      "volume": 0.35
+    }
+  ],
+  "total_duration_s": 0
+}

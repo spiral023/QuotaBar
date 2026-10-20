@@ -1,0 +1,73 @@
+{
+  "lines": [
+    {
+      "id": "01",
+      "sfx": [
+        "keyboard typing",
+        "error glitch impact"
+      ]
+    },
+    {
+      "id": "02",
+      "sfx": [
+        "bass hit"
+      ]
+    },
+    {
+      "id": "03",
+      "sfx": [
+        "deep impact on the drop",
+        "soft pop",
+        "whoosh"
+      ]
+    },
+    {
+      "id": "04",
+      "sfx": [
+        "bass hit"
+      ]
+    },
+    {
+      "id": "05",
+      "sfx": [
+        "ui tick",
+        "soft whoosh"
+      ]
+    },
+    {
+      "id": "06",
+      "sfx": [
+        "counter ticks",
+        "impact on the ROI number"
+      ]
+    },
+    {
+      "id": "07",
+      "sfx": [
+        "soft ticks per row"
+      ]
+    },
+    {
+      "id": "08",
+      "sfx": [
+        "notification chime ×2"
+      ]
+    },
+    {
+      "id": "09",
+      "sfx": [
+        "soft pops"
+      ]
+    },
+    {
+      "id": "10",
+      "sfx": [
+        "riser into impact",
+        "shimmer"
+      ]
+    }
+  ],
+  "bgm": {
+    "mode": "none"
+  }
+}
