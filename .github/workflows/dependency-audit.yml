@@ -1,0 +1,67 @@
+name: Dependency audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '15 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: npm dependency audit
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Install declared npm
+        shell: bash
+        run: |
+          manager="$(node -p "require('./package.json').packageManager")"
+          [[ "$manager" =~ ^npm@[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          npm install --global "$manager" --ignore-scripts --no-audit --no-fund
+          test "$(npm --version)" = "${manager#npm@}"
+      - name: Collect committed lockfile audits
+        id: audit
+        shell: bash
+        run: |
+          set +e
+          npm audit --ignore-scripts --json --audit-level=high > audit-all.json
+          all_status=$?
+          npm audit --ignore-scripts --omit=dev --json --audit-level=high > audit-production.json
+          production_status=$?
+          echo "all_status=$all_status" >> "$GITHUB_OUTPUT"
+          echo "production_status=$production_status" >> "$GITHUB_OUTPUT"
+          echo "Full dependency audit exit: $all_status; production audit exit: $production_status" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dependency-audits
+          path: |
+            audit-all.json
+            audit-production.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Enforce audit results
+        if: always()
+        shell: bash
+        env:
+          ALL_STATUS: ${{ steps.audit.outputs.all_status }}
+          PRODUCTION_STATUS: ${{ steps.audit.outputs.production_status }}
+        run: |
+          test "$ALL_STATUS" = 0 && test "$PRODUCTION_STATUS" = 0
+          node tools/ci/check-audits.mjs npm audit-all.json audit-production.json
