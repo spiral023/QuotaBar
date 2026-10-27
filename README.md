@@ -357,12 +357,11 @@ git checkout main
 git pull
 npm version patch        # bumps package.json, creates commit + tag vX.Y.Z
 git push --follow-tags   # triggers the GitHub release workflow
-npm run release:local    # builds artifacts locally and uploads them to the SFTP server
 ```
 
 Use `npm version minor` or `npm version major` for larger bumps.
 
-`git push --follow-tags` kicks off the GitHub Actions workflow that creates the GitHub Release and attaches the auto-update metadata. `npm run release:local` runs `npm run package` followed by `npm run upload:ftp` to publish the installer, portable, and ZIP to the SFTP server behind the stable download links. Both steps are required for a full release; they can run in parallel. SFTP credentials are read from a `.env` file — see `.env.example` for the required keys.
+`git push --follow-tags` starts the GitHub Actions release workflow. It builds the Windows artifacts, uploads the installer and auto-update metadata to a draft GitHub Release, publishes the completed release, and then uploads the same builds to the SFTP server behind the stable download links. Both workflow jobs must pass for a complete release. The optional `npm run release:local` command is a manual build/SFTP fallback; it reads credentials from `.env` as described in `.env.example`.
 
 Installed clients check for updates on startup and every 6 hours. An available update is downloaded silently and installed on the next app exit. The tray menu also shows "Update ready — restart now" when an update is waiting.
 
