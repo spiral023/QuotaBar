@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.3.1 - 2026-10-27
+
+### Security
+
+- Refresh locked dependencies, including Electron and affected archive, process and build tooling. Full and production npm audits reported no known vulnerabilities at release validation.
+
+### Changed
+
+- Correct outdated backfill status wording and remove unused legacy provider code.
+- Limit packaged logos to the files used by the app.
+- Add Windows tests, installer checks and dependency audits for future maintenance updates.
+
 ## 2.3.0 - 2026-10-17
 
 ### Changed
