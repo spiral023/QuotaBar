@@ -105,7 +105,8 @@
         "jsonwebtoken"
       ],
       "automerge": false,
-      "dependencyDashboardApproval": true
+      "dependencyDashboardApproval": true,
+      "groupName": "authentication dependencies"
     },
     {
       "description": "Review minor upgrades of pre-1.0 packages explicitly.",
@@ -114,7 +115,8 @@
         "minor"
       ],
       "dependencyDashboardApproval": true,
-      "automerge": false
+      "automerge": false,
+      "groupName": null
     }
   ],
   "vulnerabilityAlerts": {
