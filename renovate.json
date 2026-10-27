@@ -1,0 +1,140 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "enabledManagers": [
+    "npm",
+    "nvm",
+    "github-actions"
+  ],
+  "timezone": "Europe/Vienna",
+  "schedule": [
+    "* 4-7 * * 1"
+  ],
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 2,
+  "automerge": false,
+  "dependencyDashboard": true,
+  "minimumReleaseAge": "3 days",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "* 4-7 1 * *"
+    ],
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "description": "Automerge compatible updates only after all available CI checks pass on an up-to-date branch.",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest",
+        "pinDigest",
+        "lockFileMaintenance"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Keep CI and release builds on the validated Node 22 line.",
+      "matchPackageNames": [
+        "node",
+        "@types/node"
+      ],
+      "allowedVersions": ">=22 <23"
+    },
+    {
+      "description": "Keep npm on the validated npm 11 line.",
+      "matchPackageNames": [
+        "npm"
+      ],
+      "allowedVersions": ">=11 <12"
+    },
+    {
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    },
+    {
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "dependencies"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "runtime dependencies (non-major)"
+    },
+    {
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "development dependencies (non-major)"
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "groupName": "GitHub Actions (non-major)"
+    },
+    {
+      "description": "Keep security-sensitive authentication dependencies under explicit review.",
+      "matchPackageNames": [
+        "better-auth",
+        "@better-auth/**",
+        "jose",
+        "jsonwebtoken"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Review minor upgrades of pre-1.0 packages explicitly.",
+      "matchCurrentVersion": "/^0\\./",
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": [
+      "at any time"
+    ],
+    "minimumReleaseAge": "0 days",
+    "dependencyDashboardApproval": false
+  },
+  "platformAutomerge": false,
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "ignoreTests": false,
+  "internalChecksAsSuccess": false,
+  "rebaseWhen": "behind-base-branch",
+  "updateNotScheduled": true,
+  "ignorePaths": [
+    "**/node_modules/**",
+    "videos/**",
+    "video/**"
+  ]
+}

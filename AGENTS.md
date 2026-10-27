@@ -34,3 +34,7 @@ Neue Tooltips werden als **Portal-Elemente** direkt an `<body>` gehängt (nicht 
 
 - Die LiteLLM-Preisdatei (`model_prices_and_context_window.json`) ist ca. **1,5 MB** groß und enthält hunderte Einträge. Nicht vollständig einlesen oder parsen, wenn nur einzelne Modelle gesucht werden – gezielt suchen oder die bereits implementierte `LiteLLMFetcher`-Klasse nutzen.
 - Fallback-Preise sind in `src/pricing/litellm-fetcher.ts` unter `FALLBACK_PRICES` hinterlegt und werden verwendet, wenn das Netz nicht erreichbar ist oder ein Modell in LiteLLM fehlt.
+
+## Dependency maintenance
+
+Read [docs/dependency-maintenance.md](docs/dependency-maintenance.md) before dependency, CI or release changes. Keep npm as the authoritative package manager and verify the Windows installer before enabling an update merge.

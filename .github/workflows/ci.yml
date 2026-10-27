@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows tests, lint and installer
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install declared npm
+        shell: bash
+        run: |
+          manager="$(node -p "require('./package.json').packageManager")"
+          [[ "$manager" =~ ^npm@[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          npm install --global "$manager" --ignore-scripts --no-audit --no-fund
+          test "$(npm --version)" = "${manager#npm@}"
+      - run: npm ci
+      - run: npm test -- --reporter=default --reporter=junit --outputFile=test-results.xml
+      - run: npm run lint
+      - run: npm run build
+      - name: Build Windows installer without publishing
+        run: npm run package
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-test-results
+          path: test-results.xml
+          if-no-files-found: warn
+          retention-days: 14
