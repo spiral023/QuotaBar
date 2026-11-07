@@ -180,7 +180,7 @@ jobs:
           path: upload
 
       - name: Upload portable to IONOS via SFTP
-        uses: wlixcc/SFTP-Deploy-Action@v1.2.5
+        uses: wlixcc/SFTP-Deploy-Action@v1.2.6
         with:
           server: ${{ secrets.SFTP_HOST }}
           port: ${{ secrets.SFTP_PORT }}
