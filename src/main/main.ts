@@ -1,3 +1,4 @@
+import { parseRuntimeCliArgs } from "./cli";
 import path from "node:path";
 import { app, shell } from "electron";
 import { configureAppIdentity, ensureWindowsNotificationShortcut, detectAppVariant } from "./appIdentity";
@@ -40,15 +41,7 @@ import { beginMigrationRefresh, beginMigrationRefreshRecovery, markMigrationComp
 import { readBackfillDayRecords } from "../reports/backfill-reader";
 import { loadInitialStartupState } from "./pendingImportStartup";
 
-interface CliOptions {
-  debug: boolean;
-  noWindow: boolean;
-  openWindow: boolean;
-  pollIntervalSeconds?: number;
-  startupAction: "install" | "uninstall" | null;
-}
-
-const cli = parseCliArgs(process.argv.slice(2));
+const cli = parseRuntimeCliArgs(process.argv, app.isPackaged);
 initializeLogging(cli.debug);
 log.info("--- QuotaBar session start ---");
 configureAppIdentity();
@@ -396,7 +389,10 @@ if (!app.requestSingleInstanceLock()) {
       // Nur die installierte Variante kann sich selbst aktualisieren. ZIP/Portable
       // erhalten nur eine Benachrichtigung mit Verweis auf GitHub.
       await initializeUpdater({
-        onStateChange: (updateState) => tray.setUpdateState(updateState),
+        onStateChange: (updateState) => {
+          tray.setUpdateState(updateState);
+          detailsWindow.notifyUpdateState(updateState);
+        },
         canAutoUpdate: appVariant.id === "installed",
       });
       setUpdateReadyCallback((version: string) => {
@@ -417,25 +413,6 @@ app.on("window-all-closed", () => {
   // Keep the tray app alive even if Electron ever creates/closes an auxiliary window.
 });
 
-function parseCliArgs(args: string[]): CliOptions {
-  const options: CliOptions = { debug: false, noWindow: false, openWindow: false, startupAction: null };
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index];
-    if (arg === "--log-debug" || arg === "--debug") options.debug = true;
-    else if (arg === "--no-window") options.noWindow = true;
-    else if (arg === "--open-window") options.openWindow = true;
-    else if (arg === "--install-startup") options.startupAction = "install";
-    else if (arg === "--uninstall-startup") options.startupAction = "uninstall";
-    else if (arg === "--poll-interval-seconds") {
-      const value = Number(args[index + 1]);
-      if (Number.isFinite(value) && value > 0) {
-        options.pollIntervalSeconds = value;
-      }
-      index++;
-    }
-  }
-  return options;
-}
 
 function runtimeRootContext(): { wslClaudeRoots: string[]; wslCodexHomes: string[] } {
   const roots = getRuntimeAgentRoots();

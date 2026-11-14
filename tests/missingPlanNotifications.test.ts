@@ -9,7 +9,7 @@ function reportWithLocalData(providers: Array<"claude" | "codex">): SystemDataRe
     generatedAt: "2026-06-29T10:00:00.000Z",
     scanDurationMs: 5,
     quickStatsLoadDurationMs: null,
-    app: { name: "QuotaBar", paths: [], totals: { fileCount: 0, totalBytes: 0, lastModifiedAt: null } },
+    app: { name: "QuotaBar", variant: { id: "development", label: "Development" }, portableMigrationStatus: "complete", portableDataReady: true, paths: [], totals: { fileCount: 0, totalBytes: 0, lastModifiedAt: null } },
     categories: [],
     totals: { fileCount: 0, totalBytes: 0, lastModifiedAt: null },
     agents: (["claude", "codex"] as const).map((provider) => ({

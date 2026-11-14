@@ -13,7 +13,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("analytics summary portable isolation", () => {
   it("reuses one module-level portable store across prewarm and summary tasks", async () => {
     const receivers: unknown[] = [];
-    const read = vi.spyOn(PortableUsageStore.prototype, "read").mockImplementation(async function () { receivers.push(this); return []; });
+    const read = vi.spyOn(PortableUsageStore.prototype, "read").mockImplementation(async function (this: PortableUsageStore) { receivers.push(this); return []; });
     const range = { since: "2026-07-01T00:00:00.000Z", until: "2026-07-31T23:59:59.999Z" };
     await runAnalyticsTask({ task: "prewarm", usageRange: range, quotaRange: range });
     await runAnalyticsTask({ task: "summary", periodStartMs: Date.parse(range.since), periodEndMs: Date.parse(range.until), windowDays: 30, since: "2026-07-01", until: "2026-07-31", settings: defaultSettings, cacheHitRate: { claude: 0, codex: 0 }, usageRange: range, quotaRange: range });

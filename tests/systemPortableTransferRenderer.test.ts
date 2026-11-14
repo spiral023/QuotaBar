@@ -1,9 +1,11 @@
+import { rendererStyles } from "./helpers/rendererStyles";
+vi.mock("../src/main/rendererSecurity", async () => ({ rendererIpc: (await import("electron")).ipcMain, hardenRendererWindow: vi.fn() }));
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { flush, rendererHarness } from "./helpers/rendererHarness";
 
 const script = fs.readFileSync("src/renderer/tabs/system.js", "utf8");
-const styles = fs.readFileSync("src/renderer/styles.css", "utf8");
+const styles = rendererStyles();
 const readme = fs.readFileSync("README.md", "utf8");
 const calculationGuide = fs.readFileSync("docs/how-quotabar-calculates.md", "utf8");
 const testingGuide = fs.readFileSync("TESTING.md", "utf8");
@@ -39,12 +41,32 @@ function transferHarness(extraResponses: Record<string, unknown[]>) {
 }
 
 function byId(h: ReturnType<typeof transferHarness>, id: string) {
-  const element = h.document.getElementById(id);
+  const element = h.document.requireElementById(id);
   if (!element) throw new Error(`Missing test element #${id}`);
   return element;
 }
 
 describe("System portable data transfer controls", () => {
+  it("updates download progress and install controls without replacing edited settings", async () => {
+    const h = transferHarness({
+      "system:get": [systemReport({ status: "complete", ready: true })],
+      "settings:get": [{}],
+      "update:get-state": [{ status: "idle", currentVersion: "2.3.1", newVersion: null }],
+    });
+    await h.QB.renderSystem();
+    const input = byId(h, "sys-codex-root-new");
+    input.value = "C:\\draft-root";
+    const update = h.handlers.get("update:state");
+    expect(update).toBeTypeOf("function");
+    update!({ status: "downloading", currentVersion: "2.3.1", newVersion: "2.3.2", downloadPercent: 42 });
+    expect(byId(h, "sys-update-check").disabled).toBe(true);
+    update!({ status: "ready", currentVersion: "2.3.1", newVersion: "2.3.2", downloadPercent: 100 });
+    expect(byId(h, "sys-codex-root-new")).toBe(input);
+    expect(input.value).toBe("C:\\draft-root");
+    await byId(h, "sys-update-install").click();
+    expect(h.calls).toContain("update:quit-and-install");
+  });
+
   it("documents portable imports separately from private same-machine backups", () => {
     expect(readme).toContain("System Import accepts only ZIPs created by **Export data**");
     expect(readme).toContain("private full same-machine safety backup");
@@ -152,19 +174,19 @@ describe("System portable data transfer controls", () => {
     const h = transferHarness({ "system:export-portable-data": [pendingExport] });
     await h.QB.renderSystem();
 
-    const exportButton = h.document.getElementById("sys-export-portable-data");
+    const exportButton = h.document.requireElementById("sys-export-portable-data");
     const click = exportButton.emit("click");
     await flush();
 
-    expect(h.document.getElementById("sys-transfer-result").textContent).toBe("Preparing archive…");
+    expect(h.document.requireElementById("sys-transfer-result").textContent).toBe("Preparing archive…");
     for (const id of ["sys-export-portable-data", "sys-import-portable-data", "sys-delete-toggle", "sys-import-portable-confirm"]) {
-      expect(h.document.getElementById(id).disabled).toBe(true);
+      expect(h.document.requireElementById(id).disabled).toBe(true);
     }
 
     finishExport({ ok: true, path: "C:\\Exports\\portable.zip" });
     await click;
 
-    expect(h.document.getElementById("sys-transfer-result").textContent).toBe("Exported to C:\\Exports\\portable.zip");
+    expect(h.document.requireElementById("sys-transfer-result").textContent).toBe("Exported to C:\\Exports\\portable.zip");
     expect(exportButton.disabled).toBe(false);
     expect(h.calls).toContain("system:export-portable-data");
   });
@@ -185,10 +207,10 @@ describe("System portable data transfer controls", () => {
     };
     await h.QB.renderSystem();
 
-    const click = h.document.getElementById("sys-import-portable-confirm").emit("click");
+    const click = h.document.requireElementById("sys-import-portable-confirm").emit("click");
     await flush();
 
-    expect(h.document.getElementById("sys-transfer-result").textContent).toBe("Backup created at C:\\Backups\\before-import.zip");
+    expect(h.document.requireElementById("sys-transfer-result").textContent).toBe("Backup created at C:\\Backups\\before-import.zip");
     expect(h.calls.at(-1)).toBe("system:import-portable-data");
 
     frames.shift()?.();

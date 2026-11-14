@@ -524,3 +524,128 @@ und 2 trotzdem lohnen.
   Offsetwechsel den lokalen *Tag* verschiebt. Der Code bleibt als Absicherung gegen
   künftige tzdata-Änderungen und pre-1900-LMT-Offsets, ist im Quelltext aber als
   nicht testabgedeckt markiert.
+
+## Audit measurements — 2026-11-14
+
+This audit did not change application code or implement an optimization. The
+existing measurements above remain historical observations, not measurements
+of the current release. In particular, the ingestion journal, watcher fallback,
+unpriced-event retry throttle and startup decoupling are already implemented.
+
+### Synthetic analytics baseline
+
+Measured the current compiled `runAnalyticsTask({ task: "get", ... })` with a
+365-day range, `Europe/Vienna`, no subscription plans, offline pricing, and an
+empty injected quota-snapshot reader. Each dataset ran once in a fresh Node
+process. All events were synthetic, split equally between Claude and Codex,
+with stored token costs; no provider credentials or production store were read.
+
+| Synthetic events | Analytics task duration | Process RSS after task |
+| --- | --- | --- |
+| 10,000 | 195 ms | 121 MiB |
+| 100,000 | 1,477 ms | 308 MiB |
+
+Environment: Windows, Node v26.13.1, installed TypeScript 5.9.3, QuotaBar 2.3.1
+source. The repository declares Node 22.23.4; these numbers are therefore a
+development-host baseline, not a validated Node 22 or Electron benchmark. Timing
+excludes module loading, event generation, disk reads and renderer painting.
+RSS includes the synthetic input array and module state. A single sample does
+not establish a latency distribution or isolate a bottleneck.
+
+### Follow-up priorities
+
+- Add a repeatable synthetic benchmark with multiple fresh-process samples,
+  fixed input, result-equivalence checks and stage timings before optimizing.
+- Consolidate repeated event filtering, adaptation and provider aggregation in
+  `analyticsWorker.ts`; then evaluate persisted daily rollups for additive
+  metrics. Session duration, overlapping active time and timezone boundaries
+  need richer intermediate data or an event-based fallback.
+- Re-measure first-ingest partition rewrites and legacy reconciliation before
+  applying the still-open changes described above.
+- Measure cache retention and main-thread stalls. Partition reads still clone
+  events, analytics result caches have no size limit, and application logging
+  performs synchronous filesystem operations.
+
+### Implemented maintenance and validated baseline — 2026-11-14
+
+- Analytics result caches now retain at most 32 entries, evicting the least
+  recently used key. A rejected request from an older cache generation cannot
+  remove its replacement. Regression tests cover both behaviors.
+- Model pricing groups events by normalized model once instead of filtering the
+  entire history for every model. Existing stored-cost and missing-component
+  tests verify the resulting pricing behavior.
+- Worker requests have a 60-second deadline and a limit of 16 outstanding
+  requests. A timed-out worker is terminated and can be recreated on demand.
+- Daily rollups were implemented in the follow-up below. Consolidation of full
+  activity/session analytics, partition cloning and asynchronous logging remain
+  follow-up work.
+
+Run `npm run build` followed by `node tools/benchmark-analytics.cjs` using the
+Node version in `.nvmrc`. The benchmark injects synthetic input and an empty
+quota reader, uses three fresh processes for each size, checks identical result
+hashes within each size, and cleans its disposable home. No production store or
+provider credentials are used.
+
+| Events | Three task samples | Median | Process RSS range |
+| --- | --- | --- | --- |
+| 10,000 | 336 / 344 / 335 ms | 336 ms | 95 MiB |
+| 100,000 | 2,280 / 2,375 / 2,269 ms | 2,280 ms | 238–242 MiB |
+
+Environment: Windows, Node 22.23.4, TypeScript 5.9.3, updated dependencies and
+the maintenance source. No other QuotaBar test/build ran concurrently with this
+recorded benchmark. These results are not directly comparable with the earlier
+Node 26 single samples. Timing still excludes input construction, filesystem
+reads and renderer painting; RSS includes input and module state.
+
+
+### Persisted daily rollups — 2026-11-14
+
+Daily/weekly/monthly portable reports and Models now consume persisted additive
+provider/model/day rows. The snapshot is scoped by timezone and format version,
+checksummed, atomically replaced and guarded by the existing portable root lock.
+Source identities include size, nanosecond timestamps, device and inode. A durable
+write generation invalidates all timezone snapshots before append, replacement,
+removal and transaction recovery, covering same-stat writes. Metadata-only
+checkpoints preserve it. Corruption or unavailable cache storage falls back to
+canonical events. Portable exports exclude the derived files.
+
+Cost reconciliation runs per source event before summing; Models keeps the raw
+component totals and separate missing-pricing evidence. Exact instant ranges
+fall back to canonical reads for partially included boundary groups. Activity,
+hourly, project and session analytics continue to use events because their
+non-additive semantics require them.
+
+The append invalidation test freezes every partition stat and asserts that the
+actual append path ran. A mutation check disabling append invalidation produced
+the expected stale one-event total instead of two and failed that test. Restoring
+the invalidation passes. Additional regressions cover transaction recovery,
+replacement/removal, external import, DST/month boundaries, corrupt files,
+pricing completeness and archive exclusion.
+
+The first read after any source mutation still rebuilds a full daily snapshot.
+Incremental per-partition rollups, full activity/session aggregation, source
+cloning and asynchronous logging remain separate measured follow-ups.
+
+
+#### Measured daily report comparison
+
+`node tools/benchmark-rollups.cjs`, Windows, Node 22.23.4, native TypeScript
+7.0.2 build, Europe/Vienna, 100,000 synthetic events across 12 partitions.
+Each sample ran in a fresh process. No QuotaBar build, test or Sandbox VM ran
+concurrently. Input generation/module loading and renderer painting are excluded;
+timed work includes the portable lock, source/cache reads and report generation.
+Filesystem pages may already be cached by Windows; "cold" means no daily snapshot,
+not a cold physical disk. RSS is measured after the task.
+
+| Path | Samples | Median | JSONL reads per sample | RSS |
+| --- | --- | --- | --- | --- |
+| Canonical events | 1,015 / 1,063 / 1,032 ms | 1,032 ms | 12 | 188–206 MiB |
+| First snapshot build | 1,489 ms | one sample | 12 | 170 MiB |
+| Persisted snapshot, fresh process | 72 / 74 / 74 ms | 74 ms | 0 | 58 MiB |
+
+The cached daily report was about 14 times faster in this fixture. The first
+snapshot build was slower than a raw report and still scales with full history.
+All seven reports had identical row/total hashes after rounding numerical values
+to six decimal places. The warm-path assertion also requires zero JSONL reads.
+These measurements describe additive daily reports, not the full activity/session
+Analytics screen or end-to-end UI latency.

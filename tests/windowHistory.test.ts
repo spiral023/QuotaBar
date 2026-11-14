@@ -3,9 +3,10 @@ import {
   buildWindowHistory,
   buildFiveHourPressure,
   type HistoryObservation,
+  type WindowHistoryEntry,
   type PressureDist,
 } from "../src/usage/windowHistory";
-import { mergeWindowHistory, type WindowHistoryEntry } from "../src/usage/windowHistoryStore";
+import { mergeWindowHistory } from "../src/usage/windowHistoryStore";
 
 const R1 = "2026-06-08T00:00:00.000Z";
 const R2 = "2026-06-15T00:00:00.000Z";

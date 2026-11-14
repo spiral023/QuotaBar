@@ -1,4 +1,5 @@
 import AdmZip from "adm-zip";
+import { appVersion } from "../src/shared/appVersion";
 import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import * as fsPromises from "node:fs/promises";
@@ -23,6 +24,7 @@ import {
   stagePortableImport,
 } from "../src/portable/archiveService";
 import { preflightPortableZip } from "../src/portable/streamingZip";
+import { PortableUsageStore } from "../src/portable/usageStore";
 import { MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE } from "../src/portable/streamingZip";
 
 const roots: string[] = [];
@@ -108,6 +110,19 @@ function fakeZipEntry(
 }
 
 describe("portable archive service", () => {
+  it("exports canonical usage without derived daily rollups or their invalidation marker", async () => {
+    const root = await tempRoot();
+    const appDir = path.join(root, ".quotabar-win");
+    await put(appDir, "settings.json", "{}");
+    await put(appDir, "usage/events/2026-01.jsonl", portableEventLine("daily-cache", "2026-01-01T01:00:00.000Z"));
+    expect(await new PortableUsageStore(path.join(appDir, "usage")).readDaily("UTC")).toHaveLength(1);
+    const archive = path.join(root, "portable.zip");
+    await exportPortableData(appDir, archive);
+    const names = new AdmZip(archive).getEntries().map((entry) => entry.entryName);
+    expect(names).toContain("usage/events/2026-01.jsonl");
+    expect(names.some((name) => name.includes("daily-rollups"))).toBe(false);
+  });
+
   it("removes proxy credentials and machine-bound proxy configuration from portable settings", async () => {
     const root = await tempRoot();
     const appDir = path.join(root, ".quotabar-win");
@@ -183,6 +198,7 @@ describe("portable archive service", () => {
       "usage/store-metadata.json",
     ]);
     const manifest = parseArchiveManifest(zip.getEntry("manifest.json")!.getData());
+    expect(manifest.quotaBarVersion).toBe(appVersion);
     for (const entry of manifest.entries) {
       verifyArchiveEntryBytes(entry, zip.getEntry(entry.path)!.getData());
     }
@@ -1103,7 +1119,7 @@ describe("portable archive service", () => {
     const comment = "x".repeat(60_000);
     await writeSyntheticZip(archivePath, (zip) => {
       for (let index = 0; index < 300; index += 1) {
-        zip.addBuffer(Buffer.alloc(0), `quota/${index}.jsonl`, { compress: false, fileComment: comment });
+        zip.addBuffer(Buffer.alloc(0), `quota/${index}.jsonl`, { compress: false, fileComment: comment } as Partial<import("yazl").FileOptions>);
       }
     });
     let payloadChunks = 0;
@@ -1259,7 +1275,7 @@ describe("portable archive service", () => {
   });
 
   it("selects ZIP64 for a synthetic private snapshot above four GiB without allocating it", () => {
-    expect(privateBackupWriterPolicy([{ size: 0x1_0000_0000, path: "huge.bin" }])).toEqual({
+    expect(privateBackupWriterPolicy([{ size: 0x1_0000_0000 }])).toEqual({
       maximumArchiveBytes: undefined,
       forceZip64Format: true,
     });

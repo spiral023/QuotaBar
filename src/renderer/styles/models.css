@@ -1,0 +1,249 @@
+    /* ══ MODELS TAB ════════════════════════════════════════════ */
+    .mod-kpi-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-bottom: 6px;
+    }
+    .mod-kpi-lead {
+      border-color: color-mix(in srgb, var(--green) 28%, var(--border));
+      background: color-mix(in srgb, var(--green) 4%, var(--bg-surface));
+    }
+    .mod-kpi-lead .an-stat-val {
+      font-size: 22px;
+    }
+    .mod-kpi-trend {
+      display: inline-block; margin-left: 6px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .mod-kpi-trend.good { color: var(--green); }
+    .mod-kpi-trend.bad  { color: var(--orange); }
+    .mod-kpi-trend.flat { color: var(--t300); }
+    .mod-kpi-sub { font-size: 8.5px; color: var(--t400); margin-top: 3px; }
+
+    .mod-hero-wrap { height: 200px; position: relative; }
+    .view-compact .mod-hero-wrap { height: 160px; }
+    .view-compact .mod-scatter-wrap { height: 175px; }
+    .mod-ribbon { display: flex; gap: 1px; height: 3px; margin-top: 4px; }
+    .mod-ribbon-cell { flex: 1; display: flex; border-radius: 1px; overflow: hidden; }
+    .mod-ribbon-claude { background: var(--claude-col); height: 100%; }
+    .mod-ribbon-codex  { background: var(--codex-col);  height: 100%; }
+
+    .mod-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 7px; }
+    .mod-legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--t300); white-space: nowrap; }
+    .mod-legend-swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+
+    .mod-head-rows { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+    .mod-pills { display: flex; gap: 3px; flex-wrap: wrap; }
+    .mod-pills .pill { padding: 3px 10px; font-size: 10px; height: auto; position: relative; }
+    .mod-pills .pill::before { content: ''; position: absolute; inset: -4px 0; }
+
+    /* Kompakte Controls-Leiste (ersetzt mod-head-rows im neuen Template) */
+    .mod-ctrl { margin-bottom: 8px; }
+    .mod-ctrl-row {
+      display: flex; gap: 6px; margin-bottom: 5px;
+      align-items: center; justify-content: space-between; flex-wrap: wrap;
+    }
+    .mod-ctrl-row .mod-pills { flex-shrink: 0; }
+    .view-compact .mod-adopt-lbl { width: 110px; }
+    .view-compact .mod-cache-lbl { width: 100px; }
+    .view-compact .mod-cache-val { width: 80px; }
+
+    .mod-scatter-wrap { height: 220px; position: relative; }
+    .mod-scatter-note { font-size: 8.5px; color: var(--t400); margin-top: 6px; }
+    .mod-scatter-methodology { font-size: 8.5px; line-height: 1.45; color: var(--t400); margin-top: 4px; text-wrap: pretty; }
+    .mod-scatter-reasoning { font-size: 8.5px; line-height: 1.45; color: var(--t400); margin-top: 2px; text-wrap: pretty; }
+    .mod-methodology-link {
+      padding: 0; border: 0; background: none; color: var(--green); cursor: pointer;
+      font: inherit; text-decoration: none;
+    }
+    .mod-methodology-link:hover { text-decoration: underline; }
+    .mod-methodology-link:focus-visible { outline: 1px solid var(--green); outline-offset: 2px; border-radius: 2px; }
+    .mod-scatter-head { gap: 8px; }
+    .mod-benchmark-switch { margin-left: auto; flex-shrink: 0; }
+    .mod-benchmark-switch .hr-seg-btn { font-size: 8.5px; }
+    .view-compact .mod-scatter-head { align-items: flex-start; flex-direction: column; }
+    .view-compact .mod-benchmark-switch { margin-left: 0; }
+
+    .mod-table-scroll { overflow-x: auto; }
+    .mod-table { width: 100%; border-collapse: collapse; font-size: 10px; white-space: nowrap; }
+    .mod-table th {
+      font-size: 8px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--t400); text-align: right; padding: 4px 7px;
+      border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
+      transition-property: color; transition-duration: 120ms;
+    }
+    .mod-table th:hover { color: var(--t200); }
+    .mod-table th:active { scale: 0.96; }
+    .mod-table th.txt { text-align: left; }
+    .mod-table .sort-caret {
+      display: inline-block; margin-left: 3px;
+      transition-property: rotate; transition-duration: 120ms;
+      transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+    }
+    .mod-table th.sorted-asc .sort-caret { rotate: 180deg; }
+    .mod-table td {
+      padding: 4px 7px; border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums;
+      text-align: right; color: var(--t200);
+      transition-property: background; transition-duration: 120ms;
+    }
+    .mod-table td.txt { text-align: left; font-family: 'DM Sans', system-ui, sans-serif; color: var(--t100); }
+    .mod-table tbody tr:hover td { background: var(--bg-card-hover); }
+    .mod-table tr.mod-total td { border-bottom: none; color: var(--t100); font-weight: 500; }
+    .mod-table tr.mod-total:hover td { background: none; }
+    .mod-dot { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 5px; }
+
+    .mod-adopt-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .mod-adopt-lbl {
+      width: 130px; flex-shrink: 0; font-size: 9.5px; color: var(--t300);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .mod-adopt-track { flex: 1; display: flex; gap: 1px; height: 8px; }
+    .mod-adopt-seg { flex: 1; border-radius: 1px; }
+
+    .mod-cache-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .mod-cache-lbl {
+      width: 130px; flex-shrink: 0; font-size: 9.5px; color: var(--t300);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .mod-cache-track { flex: 1; height: 7px; background: rgba(255,255,255,0.04); border-radius: 2px; }
+    .mod-cache-fill { height: 100%; border-radius: 2px; }
+    .mod-cache-val {
+      width: 92px; flex-shrink: 0; text-align: right;
+      font-family: 'IBM Plex Mono', monospace; font-size: 8.5px;
+      font-variant-numeric: tabular-nums; color: var(--t400);
+    }
+
+    .mod-note { font-size: 9.5px; color: var(--t400); padding: 4px 0; }
+
+    /* ── Models: segmentierte Controls ──────────────────────── */
+    .mod-chart-sec { padding: 8px 10px; }
+    .mod-chart-hd {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px; margin-bottom: 6px; flex-wrap: wrap;
+    }
+    .mod-chart-ttl {
+      font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--t300);
+    }
+    .mod-chart-segs { display: flex; gap: 4px; flex-shrink: 0; }
+
+    .mod-seg {
+      display: inline-flex;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border); border-radius: 5px; overflow: hidden;
+    }
+    .mod-seg button {
+      padding: 3px 9px;
+      font-size: 9.5px; font-weight: 600; letter-spacing: 0.03em;
+      font-family: 'IBM Plex Mono', monospace;
+      background: none; border: none; color: var(--t300); cursor: pointer;
+      transition-property: color, background; transition-duration: 100ms;
+      white-space: nowrap;
+    }
+    .mod-seg button + button { border-left: 1px solid var(--border); }
+    .mod-seg button:hover { color: var(--t100); background: rgba(255,255,255,0.05); }
+    .mod-seg button.active { color: var(--green); background: rgba(82,208,23,0.1); }
+    .mod-seg button:active { scale: 0.95; }
+
+    .mod-metric-seg { display: flex; width: 100%; margin-bottom: 8px; }
+    .mod-metric-seg button { flex: 1; text-align: center; }
+
+    /* Compact: KPI als Dense Key-Value (2 Spalten × 3 Reihen) */
+    .kv-fill { display: none; }
+    .view-compact .mod-kpi-grid { grid-template-columns: 1fr 1fr; gap: 3px; margin-bottom: 4px; }
+    .view-compact .mod-kpi-grid .an-stat-tile { padding: 5px 8px; display: flex; align-items: baseline; min-width: 0; overflow: hidden; }
+    .view-compact .mod-kpi-grid .an-stat-lbl { flex-shrink: 0; font-size: 7.5px; margin-bottom: 0; white-space: nowrap; }
+    .view-compact .mod-kpi-grid .kv-fill { display: block; flex: 1; min-width: 6px; height: 0; border-bottom: 1px dotted rgba(255,255,255,0.11); margin: 0 5px 2px; align-self: flex-end; }
+    .view-compact .mod-kpi-grid .an-stat-val { flex-shrink: 0; font-size: 11px; white-space: nowrap; }
+    .view-compact .mod-kpi-trend { display: none; }
+    .view-compact .mod-kpi-sub { display: none; }
+
+    @keyframes modEnter { from { opacity: 0; translate: 0 4px; } to { opacity: 1; translate: 0 0; } }
+    .mod-stagger > * { animation: modEnter 360ms cubic-bezier(0.2, 0, 0, 1) both; }
+    .mod-stagger > *:nth-child(1) { animation-delay: 0ms; }
+    .mod-stagger > *:nth-child(2) { animation-delay: 70ms; }
+    .mod-stagger > *:nth-child(3) { animation-delay: 140ms; }
+    .mod-stagger > *:nth-child(4) { animation-delay: 210ms; }
+    .mod-stagger > *:nth-child(5) { animation-delay: 280ms; }
+
+    /* ── Models: Token-Typ-Kacheln ──────────────────────────── */
+    .mod-tt-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px;
+    }
+    .mod-tt-tile {
+      border-color: color-mix(in srgb, var(--tt-col) 22%, var(--border));
+      background: color-mix(in srgb, var(--tt-col) 4%, var(--bg-surface));
+    }
+    .mod-tt-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--tt-col); margin-right: 4px; vertical-align: middle; margin-bottom: 1px;
+    }
+    .mod-tt-abs {
+      font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--t400); margin-top: 2px;
+    }
+    .view-compact .mod-tt-grid { grid-template-columns: repeat(2, 1fr); gap: 3px; }
+    .view-compact .mod-tt-grid .an-stat-tile { display: flex; align-items: baseline; min-width: 0; overflow: hidden; }
+    .view-compact .mod-tt-grid .an-stat-lbl { flex-shrink: 0; font-size: 7.5px; margin-bottom: 0; white-space: nowrap; }
+    .view-compact .mod-tt-grid .kv-fill { display: block; flex: 1; min-width: 6px; height: 0; border-bottom: 1px dotted rgba(255,255,255,0.11); margin: 0 5px 2px; align-self: flex-end; }
+    .view-compact .mod-tt-grid .an-stat-val { flex-shrink: 0; font-size: 11px; white-space: nowrap; }
+    .view-compact .mod-tt-abs { display: none; }
+
+    /* ── Models: Echte Nutzung · Kosten je Token-Typ ────────── */
+    .mod-cost-sub { font-size: 9.5px; color: var(--t400); margin: -3px 0 9px; line-height: 1.4; }
+    .mod-cost-provider {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-left: 2px solid var(--prov-col);
+      border-radius: var(--r-inner);
+      padding: 8px 11px 6px; margin-bottom: 7px;
+    }
+    .mod-cost-provider:last-of-type { margin-bottom: 0; }
+    .mod-cost-hd {
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: 8px; margin-bottom: 5px;
+    }
+    .mod-cost-name {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12px; font-weight: 600; color: var(--t100);
+    }
+    .mod-cost-dot { width: 8px; height: 8px; border-radius: 2px; background: var(--prov-col); flex-shrink: 0; }
+    .mod-cost-spend {
+      font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums;
+      font-size: 12px; font-weight: 600; color: var(--t200); white-space: nowrap;
+    }
+    .mod-cost-table { width: 100%; border-collapse: collapse; }
+    .mod-cost-table th {
+      font-size: 7.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--t400); text-align: right; padding: 1px 0 4px; white-space: nowrap;
+    }
+    .mod-cost-table th:first-child { text-align: left; }
+    .mod-cost-table td {
+      font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums;
+      font-size: 10.5px; color: var(--t200); text-align: right;
+      padding: 3px 0; white-space: nowrap;
+      border-top: 1px solid rgba(255,255,255,0.035);
+    }
+    .mod-cost-type {
+      font-family: inherit !important; text-align: left !important; color: var(--t300) !important;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .mod-cost-tdot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .mod-cost-perm { color: var(--t400); }
+    .mod-cost-share { color: var(--t400); }
+    .mod-cost-total td {
+      border-top: 1px solid var(--border-mid); padding-top: 6px;
+      color: var(--t100); font-weight: 600;
+    }
+    .mod-cost-total td:first-child {
+      font-family: inherit; text-align: left; color: var(--t100);
+      text-transform: uppercase; letter-spacing: 0.06em; font-size: 9.5px;
+    }
+    .mod-cost-total .mod-cost-effcell {
+      color: var(--green);
+      text-shadow: 0 0 10px color-mix(in srgb, var(--green) 28%, transparent);
+    }
+    .mod-cost-note { font-size: 9px; color: var(--t400); font-style: italic; margin-top: 6px; line-height: 1.4; }
+    /* Compact: $/MTok-Spalte entfällt, engere Abstände */
+    .view-compact .mod-cost-perm { display: none; }
+    .view-compact .mod-cost-provider { padding: 7px 9px 5px; }
+    .view-compact .mod-cost-table td { font-size: 10px; }

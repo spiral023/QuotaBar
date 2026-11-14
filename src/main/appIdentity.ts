@@ -75,11 +75,21 @@ export function detectAppVariant(context: AppVariantContext = {}): AppVariantInf
   if (env.PORTABLE_EXECUTABLE_DIR) return { id: "portable", label: "Portable" };
 
   const exePath = context.exePath ?? app.getPath("exe");
-  if (process.platform === "win32" && isKnownWindowsInstallPath(exePath, env)) {
+  if (process.platform === "win32" && (isKnownWindowsInstallPath(exePath, env) || hasNsisUninstaller(exePath))) {
     return { id: "installed", label: "Installed" };
   }
 
   return { id: "zip", label: "ZIP" };
+}
+
+/** NSIS permits custom destinations; ZIP/portable archives have no uninstaller. */
+function hasNsisUninstaller(exePath: string): boolean {
+  try {
+    const info = fsSync.lstatSync(path.join(path.dirname(exePath), `Uninstall ${APP_DISPLAY_NAME}.exe`));
+    return info.isFile() && !info.isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 function windowsShortcutNeedsUpdate(shortcutPath: string, expected: ShortcutDetails): boolean {

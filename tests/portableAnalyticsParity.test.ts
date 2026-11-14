@@ -73,7 +73,7 @@ describe("portable models and analytics parity", () => {
     const syntheticOtherDay = { ...events[2], id: "synthetic-other", source: "legacy-reconciliation" as const, synthetic: true };
     const result = await runAnalyticsTask({ task: "get", periodStartMs: Date.parse("2026-07-10T00:00:00Z"), windowDays: 2, since: "2026-07-10", until: "2026-07-11", settings, cacheHitRate: { claude: 0, codex: 0 }, nowMs: Date.parse("2026-07-11T23:59:59.999Z") }, { usageEvents: [real, syntheticSameDay, syntheticOtherDay] });
     if (!("sessionStats" in result)) throw new Error("expected analytics data");
-    expect(result.apiCostUSD.claude).toBe(real.costUSD + syntheticSameDay.costUSD + syntheticOtherDay.costUSD);
+    expect(result.apiCostUSD.claude).toBe(real.costUSD! + syntheticSameDay.costUSD! + syntheticOtherDay.costUSD!);
     expect(result.activeDays).toBe(1);
     expect(result.sessionStats.claude.sessionsPerActiveDay).toBe(1);
   });

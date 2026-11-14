@@ -2,10 +2,18 @@ import { describe, expect, it, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { calculateCodexApiCost, calculateCodexApiCostBreakdown, readCodexSpeedTier, readCodexSpeedTierFromPaths } from "../src/pricing/codex-cost-calculator";
+import {
+  calculateCodexApiCost,
+  calculateCodexApiCostBreakdown,
+  readCodexSpeedTier,
+  readCodexSpeedTierFromPaths,
+} from "../src/pricing/codex-cost-calculator";
 import { sumBreakdown } from "../src/pricing/cost-calculator";
 import { LiteLLMFetcher } from "../src/pricing/litellm-fetcher";
-import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests } from "../src/pricing/historical-pricing-resolver";
+import {
+  HistoricalPricingResolver,
+  resetHistoricalPricingResolverCacheForTests,
+} from "../src/pricing/historical-pricing-resolver";
 import type { CodexTokenEvent } from "../src/pricing/codex-log-reader";
 
 const tmpDir = path.join(os.tmpdir(), `quotabar-codex-calc-test-${process.pid}`);
@@ -21,6 +29,7 @@ function makeEvent(overrides: Partial<CodexTokenEvent> = {}): CodexTokenEvent {
     timestamp: "2026-05-18T10:00:00.000Z",
     model: "gpt-4o",
     isFallback: false,
+    session: "fixture-session", directory: "fixture-project",
     inputTokens: 1000,
     cachedInputTokens: 0,
     outputTokens: 100,

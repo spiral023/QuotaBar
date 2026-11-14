@@ -35,8 +35,17 @@ jobs:
           test "$(npm --version)" = "${manager#npm@}"
       - run: npm ci
       - run: npm test -- --reporter=default --reporter=junit --outputFile=test-results.xml
+      - run: npm run typecheck
       - run: npm run lint
       - run: npm run build
+      - run: npm run test:electron
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: electron-smoke-screenshots
+          path: package-output/smoke/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build Windows installer without publishing
         run: npm run package
       - uses: actions/upload-artifact@v7

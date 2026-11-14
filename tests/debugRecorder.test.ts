@@ -26,7 +26,7 @@ describe("DebugRecorder", () => {
   it("writes one JSONL line per event with ts and kind", async () => {
     const r = new DebugRecorder({ enabled: true, logDir: tmpDir });
     r.write({ kind: "app.start", version: "x", pollIntervalSeconds: 60, noWindow: false, platform: "win32" });
-    r.write({ kind: "refresh.start", providers: ["claude"], trigger: "interval" });
+    r.write({ kind: "refresh.start", tick: 1, providers: ["claude"], trigger: "interval" });
     await r.flush();
     const files = await fs.readdir(tmpDir);
     expect(files).toHaveLength(1);
@@ -69,7 +69,7 @@ describe("DebugRecorder", () => {
     r.write({ kind: "app.start", version: "x", pollIntervalSeconds: 60, noWindow: false, platform: "win32" });
     await r.flush();
     r.setEnabled(false);
-    r.write({ kind: "refresh.start", providers: ["claude"], trigger: "interval" });
+    r.write({ kind: "refresh.start", tick: 1, providers: ["claude"], trigger: "interval" });
     await r.flush();
     const files = await fs.readdir(tmpDir);
     const content = await fs.readFile(path.join(tmpDir, files[0]), "utf8");

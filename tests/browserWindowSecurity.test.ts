@@ -24,7 +24,7 @@ describe("BrowserWindow renderer security", () => {
 
     vi.doMock("electron", () => ({
       BrowserWindow: class {
-        public webContents = { send: vi.fn() };
+        public webContents = { send: vi.fn(), on: vi.fn(), setWindowOpenHandler: vi.fn() };
         constructor(options: BrowserWindowOptions) {
           windows.push(options);
         }
@@ -48,7 +48,7 @@ describe("BrowserWindow renderer security", () => {
       const actual = await importOriginal<typeof import("../src/config/settings")>();
       return {
         ...actual,
-        loadSettings: vi.fn().mockResolvedValue({ ...actual.DEFAULT_SETTINGS, viewMode: "dashboard", pinned: false }),
+        loadSettings: vi.fn().mockResolvedValue({ ...actual.defaultSettings, viewMode: "dashboard", pinned: false }),
       };
     });
 
@@ -68,6 +68,7 @@ describe("BrowserWindow renderer security", () => {
     vi.doMock("electron", () => ({
       app: { setLoginItemSettings: vi.fn() },
       BrowserWindow: class {
+        public webContents = { send: vi.fn(), on: vi.fn(), setWindowOpenHandler: vi.fn() };
         constructor(options: BrowserWindowOptions) {
           windows.push(options);
         }

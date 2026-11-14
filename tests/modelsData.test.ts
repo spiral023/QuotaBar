@@ -12,9 +12,9 @@ const benchmarksFile = path.join(__dirname, "..", "src", "config", "model-benchm
 describe("buildModelsData portable aggregation", () => {
   it("reads an explicitly bounded portable range and never needs provider history", async () => {
     const store = new PortableUsageStore("unused");
-    const read = vi.spyOn(store, "read").mockResolvedValue([]);
+    const read = vi.spyOn(store, "readDaily").mockResolvedValue([]);
     await buildModelsData({ settings, usageStore: store, usageRange: { since: "2026-01-01T00:00:00.000Z", until: "2026-01-31T23:59:59.999Z" }, benchmarksFile });
-    expect(read).toHaveBeenCalledWith({ since: "2026-01-01T00:00:00.000Z", until: "2026-01-31T23:59:59.999Z" });
+    expect(read).toHaveBeenCalledWith("UTC", { since: "2026-01-01T00:00:00.000Z", until: "2026-01-31T23:59:59.999Z" });
   });
 
   it("normalizes models, filters internal models and sorts UTC provider days", async () => {

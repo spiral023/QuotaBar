@@ -1,52 +1,46 @@
+import type { UpdateUiState } from "./updateState";
+import { formatPathListForLog } from "./pathDiagnostics";
+import { app, BrowserWindow, screen, Tray } from "electron";
 import fs from "node:fs/promises";
-import path from "path";
 import { Worker } from "node:worker_threads";
-import { app, BrowserWindow, ipcMain, screen, Tray, dialog, shell } from "electron";
-import { UsageSnapshot } from "../providers/types";
-import { loadSettings, saveSettings, normalizeNotificationSettings } from "../config/settings";
-import { log } from "./logging";
-import { generateUsageReport, portableReadRange } from "../reports/reportService";
-import type { ReportRequest } from "../reports/types";
+import path from "path";
 import {
-  getWindowHistoryPath, getPortableMigrationPath,
-  getAppConfigDir, getHomeDir, getLogPath, getNotificationLogPath, getUsageSnapshotCachePath,
-  getFxCachePath, getLiteLLMModelPricesPath, getWindowRatioPath, getBonusStatePath, getNotificationStatePath,
+  getFxCachePath, getLiteLLMModelPricesPath,
+  getPortableMigrationPath,
+  getWindowHistoryPath
 } from "../config/paths";
-import { loadWindowHistoryFile, saveWindowHistoryFile, mergeWindowHistory } from "../usage/windowHistoryStore";
-import type { CostWindow, ViewMode, Settings } from "../config/settings";
-import { computeCacheHitRate, type AnalyticsSummary, type AnalyticsData } from "./analyticsSummary";
-import type { ModelsData } from "./modelsData";
-import type { AnalyticsWorkerSettings, WindowBudgetData, WindowHistoryData } from "./analyticsWorker";
-import type { NotificationService } from "./notifications";
-import type { DebugRecorder } from "./debugRecorder";
-import { AsyncResultCache } from "./asyncResultCache";
-import { PersistentWorkerClient } from "./workerClient";
+import type { CostWindow, Settings, ViewMode } from "../config/settings";
 import {
-  collectSystemData,
-  findOpenableSystemPath,
-  formatWslDiscoveryDiagnostics,
-} from "./systemData";
-import { sharedFxFetcher } from "../pricing/fx-fetcher";
-import { planChangePoints } from "../pricing/plan-cost";
-import { readDataSourceInfo } from "./dataSourceStatus";
-import { configureHttpProxy, getActiveProxyUrl, httpFetch } from "./httpClient";
-import { normalizeProxySettings, type ProxySettings } from "../config/settings";
-import { QuickStatsLoadMetric } from "./quickStatsLoadMetric";
-import { detectAppVariant } from "./appIdentity";
-import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
-import { mergeAndSaveSettings } from "./settingsSave";
+  loadSettings,
+  normalizeNotificationSettings,
+  normalizeProxySettings,
+  saveSettings,
+  type ProxySettings,
+} from "../config/settings";
 import { parseMigrationState } from "../portable/migration";
 import { getSharedUsageStore } from "../portable/usageStore";
-import { exportPortableData, stagePortableImport } from "../portable/archiveService";
-
-let archiveOperation: "export" | "import" | null = null;
-let portableImportRestart: "pending" | "exiting" | null = null;
-
-const ARCHIVE_BUSY_RESULT = Object.freeze({
-  ok: false,
-  error: "archive_operation_in_progress",
-  message: "Another portable archive operation is already in progress.",
-});
+import { sharedFxFetcher } from "../pricing/fx-fetcher";
+import { planChangePoints } from "../pricing/plan-cost";
+import { UsageSnapshot } from "../providers/types";
+import { generateUsageReport, portableReadRange } from "../reports/reportService";
+import type { ReportRequest } from "../reports/types";
+import { loadWindowHistoryFile, mergeWindowHistory, saveWindowHistoryFile } from "../usage/windowHistoryStore";
+import { mergeSettingsWithAgentRoots } from "./agentRootDiscovery";
+import { computeCacheHitRate, type AnalyticsData, type AnalyticsSummary } from "./analyticsSummary";
+import type { AnalyticsWorkerSettings, WindowBudgetData, WindowHistoryData } from "./analyticsWorker";
+import { detectAppVariant } from "./appIdentity";
+import { AsyncResultCache } from "./asyncResultCache";
+import { readDataSourceInfo } from "./dataSourceStatus";
+import type { DebugRecorder } from "./debugRecorder";
+import { configureHttpProxy, getActiveProxyUrl, httpFetch } from "./httpClient";
+import { log } from "./logging";
+import type { ModelsData } from "./modelsData";
+import type { NotificationService } from "./notifications";
+import { QuickStatsLoadMetric } from "./quickStatsLoadMetric";
+import { hardenRendererWindow, rendererIpc } from "./rendererSecurity";
+import { mergeAndSaveSettings } from "./settingsSave";
+import { registerSystemIpc } from "./systemIpc";
+import { PersistentWorkerClient } from "./workerClient";
 
 // One long-lived worker instead of a fresh one per request: its module-level
 // FileParseCaches stay warm, so repeat requests (cost-window switch, poll
@@ -167,14 +161,6 @@ async function loadRuntimeSettings(): Promise<Settings> {
   return mergeSettingsWithAgentRoots(await loadSettings());
 }
 
-function runtimeRootContext(): { wslClaudeRoots: string[]; wslCodexHomes: string[] } {
-  const roots = getRuntimeAgentRoots();
-  return {
-    wslClaudeRoots: roots.claudeRoots,
-    wslCodexHomes: roots.codexHomes,
-  };
-}
-
 export class DetailsWindowController {
   private win: BrowserWindow | null = null;
   private lastSnapshots: UsageSnapshot[] | null = null;
@@ -247,11 +233,13 @@ export class DetailsWindowController {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          sandbox: true,
           preload: path.join(__dirname, "preload.js"),
         },
       });
 
       const htmlPath = path.join(__dirname, "../../src/renderer/index.html");
+      hardenRendererWindow(this.win, htmlPath, "dashboard");
       void this.win.loadFile(htmlPath);
 
       this.win.once("ready-to-show", () => {
@@ -277,6 +265,10 @@ export class DetailsWindowController {
 
   hide(): void {
     if (this.win && !this.win.isDestroyed()) this.win.hide();
+  }
+
+  notifyUpdateState(state: UpdateUiState): void {
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.send("update:state", state);
   }
 
   /** Called by RefreshLoop listener — push new data to the open window. */
@@ -404,7 +396,8 @@ export class DetailsWindowController {
   }
 
   private registerIpcHandlers(): void {
-    ipcMain.on("quota:ready", async () => {
+    registerSystemIpc(() => this.quickStatsLoadMetric.valueMs);
+    rendererIpc.on("quota:ready", async () => {
       log.debug("Dashboard window ready, pushing current data");
       if (this.win && !this.win.isDestroyed()) {
         this.win.webContents.send("quota:update", {
@@ -418,7 +411,7 @@ export class DetailsWindowController {
       this.sendPendingTab();
     });
 
-    ipcMain.on("window:toggle-pin", () => {
+    rendererIpc.on("window:toggle-pin", () => {
       this.isPinned = !this.isPinned;
       log.debug(`Dashboard pin toggled: ${this.isPinned}`);
       if (this.win && !this.win.isDestroyed()) {
@@ -427,30 +420,30 @@ export class DetailsWindowController {
       void loadSettings().then(s => saveSettings({ ...s, pinned: this.isPinned }));
     });
 
-    ipcMain.on("quota:refresh", () => {
+    rendererIpc.on("quota:refresh", () => {
       log.debug("Dashboard window requested refresh");
       this.handleDashboardRefresh(this._onRefreshRequest ?? (() => {}));
     });
 
-    ipcMain.on("quota:recompute-cost", () => {
+    rendererIpc.on("quota:recompute-cost", () => {
       log.debug("Dashboard window requested cost recompute");
       (this._onRecomputeRequest ?? (() => {}))();
     });
 
-    ipcMain.on("window:close", () => {
+    rendererIpc.on("window:close", () => {
       this.hide();
     });
 
-    ipcMain.handle("settings:get", async () => {
+    rendererIpc.handle("settings:get", async () => {
       return await loadSettings();
     });
 
-    ipcMain.handle("app:meta", () => ({
+    rendererIpc.handle("app:meta", () => ({
       version: app.getVersion(),
       variant: detectAppVariant(),
     }));
 
-    ipcMain.handle("settings:save", async (_, partial: Record<string, unknown>) => {
+    rendererIpc.handle("settings:save", async (_, partial: Record<string, unknown>) => {
       const saved = await mergeAndSaveSettings(partial, this.onSettingsSaved);
       log.info(`Dashboard action: settings:save keys=${Object.keys(partial).join(",") || "none"}`);
       if (Object.prototype.hasOwnProperty.call(partial, "claudeRoots")) {
@@ -473,7 +466,7 @@ export class DetailsWindowController {
     // Applies pending proxy settings and checks live API reachability. Any HTTP
     // response, including 4xx, means the connection path works; network, TLS,
     // and timeout errors count as failures.
-    ipcMain.handle("settings:test-proxy", async (_, raw: unknown) => {
+    rendererIpc.handle("settings:test-proxy", async (_, raw: unknown) => {
       const proxy: ProxySettings = normalizeProxySettings(raw as Partial<ProxySettings>);
       try {
         const proxyUrl = await configureHttpProxy(proxy);
@@ -492,7 +485,7 @@ export class DetailsWindowController {
       }
     });
 
-    ipcMain.handle("reports:get", async (_, request: ReportRequest) => {
+    rendererIpc.handle("reports:get", async (_, request: ReportRequest) => {
       if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadRuntimeSettings();
       const report = await generateUsageReport({ ...request, source: "portable" }, { settings });
@@ -508,7 +501,7 @@ export class DetailsWindowController {
     // The analytics tab needs the same time range split by provider. Asking
     // twice re-reads and re-adapts the whole range for each call; reading the
     // events once and building both reports from them is several times faster.
-    ipcMain.handle("reports:get-batch", async (_, request: ReportRequest & { providers?: unknown }) => {
+    rendererIpc.handle("reports:get-batch", async (_, request: ReportRequest & { providers?: unknown }) => {
       if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadRuntimeSettings();
       const providers = Array.isArray(request.providers)
@@ -524,14 +517,14 @@ export class DetailsWindowController {
       return Object.fromEntries(providers.map((provider, index) => [provider, reports[index]]));
     });
 
-    ipcMain.handle("analytics:summary", async (_, request?: { costWindow?: string }) => {
+    rendererIpc.handle("analytics:summary", async (_, request?: { costWindow?: string }) => {
       if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await this.runtimeSettings();
       const costWindow = normalizeCostWindow(request?.costWindow) ?? settings.costWindow;
       return this.computeSummary(settings, costWindow);
     });
 
-    ipcMain.handle("analytics:get", async (_, request?: { since?: string; until?: string; timeZone?: string }) => {
+    rendererIpc.handle("analytics:get", async (_, request?: { since?: string; until?: string; timeZone?: string }) => {
       if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings     = await this.runtimeSettings();
       const { since, until } = resolveAnalyticsGetWindow(request, this.nowMs());
@@ -548,12 +541,12 @@ export class DetailsWindowController {
       ) as Promise<AnalyticsData>);
     });
 
-    ipcMain.handle("plans:get", async () => {
+    rendererIpc.handle("plans:get", async () => {
       const settings = await loadSettings();
       return settings.plans;
     });
 
-    ipcMain.handle("plans:save", async (_, plans: unknown) => {
+    rendererIpc.handle("plans:save", async (_, plans: unknown) => {
       const current = await loadSettings();
       await saveSettings({ ...current, plans: Array.isArray(plans) ? (plans as typeof current.plans) : [] });
       this.clearAnalyticsCaches();
@@ -561,14 +554,14 @@ export class DetailsWindowController {
       return { ok: true };
     });
 
-    ipcMain.handle("fx:status", () => ({ estimated: sharedFxFetcher.estimated }));
+    rendererIpc.handle("fx:status", () => ({ estimated: sharedFxFetcher.estimated }));
 
-    ipcMain.handle("dataSources:get", () => ({
+    rendererIpc.handle("dataSources:get", () => ({
       litellm: readDataSourceInfo("litellm", getLiteLLMModelPricesPath()),
       fx: readDataSourceInfo("fx", getFxCachePath()),
     }));
 
-    ipcMain.handle("models:get", async () => {
+    rendererIpc.handle("models:get", async () => {
       if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadSettings();
       return this.modelsDataCache.get("models", () => this.requestAnalyticsWorker({
@@ -578,7 +571,7 @@ export class DetailsWindowController {
       }) as Promise<ModelsData>);
     });
 
-    ipcMain.handle("windowBudget:get", async () => {
+    rendererIpc.handle("windowBudget:get", async () => {
       if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const snapshots = this.lastSnapshots ?? [];
       const providers = snapshots
@@ -613,7 +606,7 @@ export class DetailsWindowController {
       );
     });
 
-    ipcMain.handle("windowHistory:get", async () => {
+    rendererIpc.handle("windowHistory:get", async () => {
       if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
       const settings = await loadSettings();
       // Aus den Logs berechnete, abgeschlossene 7d-Fenster (gecached).
@@ -640,167 +633,7 @@ export class DetailsWindowController {
       return { entries, planChanges };
     });
 
-    ipcMain.handle("system:get", async () => {
-      return await collectSystemData({
-        quickStatsLoadDurationMs: this.quickStatsLoadMetric.valueMs,
-        appVariant: detectAppVariant(),
-        ...runtimeRootContext(),
-      });
-    });
-
-    ipcMain.handle("system:export-portable-data", async () => {
-      if (archiveOperation !== null || portableImportRestart !== null) return ARCHIVE_BUSY_RESULT;
-      archiveOperation = "export";
-      try {
-        const selected = await dialog.showSaveDialog({
-          title: "Export portable data",
-          defaultPath: path.join(getHomeDir(), "QuotaBar-portable-data.zip"),
-          filters: [{ name: "ZIP archives", extensions: ["zip"] }],
-          properties: ["showOverwriteConfirmation"],
-        });
-        if (selected.canceled || !selected.filePath) return { ok: false, cancelled: true };
-        const result = await exportPortableData(getAppConfigDir(), selected.filePath);
-        log.info(`Portable archive action=export result=success files=${result.fileCount} bytes=${result.totalBytes}`);
-        return { ok: true, ...result };
-      } catch {
-        const message = "Portable data export failed.";
-        log.warn(`Portable archive action=export error=${message}`);
-        return { ok: false, error: "portable_export_failed", message };
-      } finally {
-        archiveOperation = null;
-      }
-    });
-
-    ipcMain.handle("system:import-portable-data", async () => {
-      if (archiveOperation !== null || portableImportRestart !== null) return ARCHIVE_BUSY_RESULT;
-      archiveOperation = "import";
-      try {
-        const selected = await dialog.showOpenDialog({
-          title: "Import portable data",
-          filters: [{ name: "ZIP archives", extensions: ["zip"] }],
-          properties: ["openFile"],
-        });
-        const source = selected.filePaths[0];
-        if (selected.canceled || !source) return { ok: false, cancelled: true };
-        const result = await stagePortableImport(source, getAppConfigDir(), getHomeDir());
-        log.info(`Portable archive action=import result=success files=${result.fileCount} bytes=${result.totalBytes}`);
-        portableImportRestart = "pending";
-        return {
-          ok: true,
-          backupPath: result.backupPath,
-          fileCount: result.fileCount,
-          totalBytes: result.totalBytes,
-          restartScheduled: true,
-        };
-      } catch {
-        const message = "Portable data import failed.";
-        log.warn(`Portable archive action=import error=${message}`);
-        return { ok: false, error: "portable_import_failed", message };
-      } finally {
-        archiveOperation = null;
-      }
-    });
-
-    ipcMain.handle("system:confirm-portable-import-restart", async () => {
-      if (portableImportRestart !== "pending") {
-        return {
-          ok: false,
-          error: "portable_import_restart_not_pending",
-          message: "No portable import restart is pending.",
-        };
-      }
-      portableImportRestart = "exiting";
-      app.relaunch();
-      app.exit(0);
-      return { ok: true };
-    });
-
-    ipcMain.handle("system:codex-homes:suggest", async () => {
-      log.info("Dashboard action: Detect WSL clicked for Codex homes");
-      const { discovery, roots } = await refreshRuntimeWslAgentRoots();
-      for (const line of formatWslDiscoveryDiagnostics(discovery)) log.info(line);
-      log.info(`WSL discovery: runtime roots claudeRoots=${formatPathListForLog(roots.claudeRoots)} codexHomes=${formatPathListForLog(roots.codexHomes)}`);
-      return discovery.codexHomes;
-    });
-
-    ipcMain.handle("system:claude-roots:suggest", async () => {
-      log.info("Dashboard action: Detect WSL clicked for Claude roots");
-      const { discovery, roots } = await refreshRuntimeWslAgentRoots();
-      for (const line of formatWslDiscoveryDiagnostics(discovery)) log.info(line);
-      log.info(`WSL discovery: runtime roots claudeRoots=${formatPathListForLog(roots.claudeRoots)} codexHomes=${formatPathListForLog(roots.codexHomes)}`);
-      return discovery.claudeRoots;
-    });
-
-    ipcMain.handle("shell:open-url", async (_, url: unknown) => {
-      const ALLOWED = new Set([
-        "https://github.com/spiral023/QuotaBar",
-        "https://github.com/spiral023/QuotaBar/releases/latest",
-        "https://artificialanalysis.ai/methodology/intelligence-benchmarking",
-        "https://artificialanalysis.ai/methodology/coding-agents-benchmarking",
-      ]);
-      if (typeof url !== "string" || !ALLOWED.has(url)) return { ok: false, error: "not_allowed" };
-      await shell.openExternal(url);
-      return { ok: true };
-    });
-
-    ipcMain.handle("system:open-path", async (_, requestedPath: unknown) => {
-      if (typeof requestedPath !== "string" || requestedPath.trim().length === 0) {
-        return { ok: false, error: "invalid_path" };
-      }
-      const report = await collectSystemData(runtimeRootContext());
-      const openPath = findOpenableSystemPath(report, requestedPath);
-      if (!openPath) return { ok: false, error: "path_not_allowed" };
-      const error = await shell.openPath(openPath);
-      return error ? { ok: false, error } : { ok: true };
-    });
-
-    ipcMain.handle("system:delete-app-data", async (_, groups: unknown) => {
-      if (!Array.isArray(groups)) return { ok: false, error: "invalid_groups" };
-      const allowed = new Set(["cache", "logs", "state", "debug"]);
-      const validGroups = groups.filter((g): g is string => typeof g === "string" && allowed.has(g));
-      if (validGroups.length === 0) return { ok: true, deleted: [], errors: [] };
-
-      const appDir = getAppConfigDir();
-      const targets: Array<{ path: string; recursive: boolean }> = [];
-      for (const group of validGroups) {
-        switch (group) {
-          case "cache":
-            targets.push({ path: getUsageSnapshotCachePath(), recursive: false });
-            targets.push({ path: getFxCachePath(), recursive: false });
-            break;
-          case "logs":
-            targets.push({ path: getLogPath(), recursive: false });
-            targets.push({ path: getNotificationLogPath(), recursive: false });
-            break;
-          case "state":
-            targets.push({ path: getWindowHistoryPath(), recursive: false });
-            targets.push({ path: getWindowRatioPath(), recursive: false });
-            targets.push({ path: getBonusStatePath(), recursive: false });
-            targets.push({ path: getNotificationStatePath(), recursive: false });
-            break;
-          case "debug":
-            targets.push({ path: path.join(appDir, "debug"), recursive: true });
-            break;
-        }
-      }
-
-      const deleted: string[] = [];
-      const errors: string[] = [];
-      for (const target of targets) {
-        try {
-          await fs.rm(target.path, { recursive: target.recursive, force: true });
-          deleted.push(target.path);
-          log.info(`system:delete-app-data removed ${target.path}`);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          errors.push(msg);
-          log.warn(`system:delete-app-data failed for ${target.path}: ${msg}`);
-        }
-      }
-      return { ok: errors.length === 0, deleted, errors };
-    });
-
-    ipcMain.handle("window:set-view", async (_, mode: string) => {
+    rendererIpc.handle("window:set-view", async (_, mode: string) => {
       if (mode !== "dashboard" && mode !== "compact") return;
       const settings = await loadSettings();
       await saveSettings({ ...settings, viewMode: mode as ViewMode });
@@ -813,16 +646,16 @@ export class DetailsWindowController {
       }
     });
 
-    ipcMain.handle("notification:history", () => {
+    rendererIpc.handle("notification:history", () => {
       return this.notificationService?.history.getRecent(20) ?? [];
     });
 
-    ipcMain.handle("notification:test", () => {
+    rendererIpc.handle("notification:test", () => {
       this.notificationService?.sendTest();
       return { ok: true };
     });
 
-    ipcMain.handle("notification:settings:save", async (_, partial: Record<string, unknown>) => {
+    rendererIpc.handle("notification:settings:save", async (_, partial: Record<string, unknown>) => {
       const current = await loadSettings();
       const merged = normalizeNotificationSettings({
         ...current.notifications,
@@ -851,11 +684,7 @@ function formatSeconds(durationMs: number): string {
   return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)}s`;
 }
 
-function formatPathListForLog(value: unknown): string {
-  if (!Array.isArray(value)) return "[]";
-  const paths = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-  return paths.length ? `[${paths.join(", ")}]` : "[]";
-}
+
 
 // Datumsbereich für den Analytics-Tab. Akzeptiert ein konkretes {since, until}
 // (YYYY-MM-DD) aus der Steuerleiste; fällt auf die letzten 30 Kalendertage

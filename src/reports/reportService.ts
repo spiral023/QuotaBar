@@ -1,3 +1,4 @@
+import { reconcileStoredCost } from "../pricing/stored-cost";
 import { getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs, getDebugLogDir } from "../config/paths";
 import type { Settings } from "../config/settings";
 import { defaultSettings } from "../config/settings";
@@ -79,7 +80,9 @@ export async function generateUsageReport(request: ReportRequest, deps: ReportDe
   };
 
   const portableEvents = sourceMode === "portable"
-    ? deps.usageEvents ?? await (deps.usageStore ?? getSharedUsageStore()).read(portableReadRange(normalized.since, normalized.until))
+    ? deps.usageEvents ?? (normalized.type !== "session" && normalized.type !== "hourly" && !normalized.project && !normalized.instances
+      ? (await (deps.usageStore ?? getSharedUsageStore()).readDaily(normalized.timezone)).map((row) => row.reportEvent)
+      : await (deps.usageStore ?? getSharedUsageStore()).read(portableReadRange(normalized.since, normalized.until)))
     : undefined;
 
   if (normalized.provider === "all" || normalized.provider === "claude") {
@@ -413,48 +416,6 @@ function normalizeSourceMode(source: ReportRequest["source"]): NormalizedSourceM
 
 type StoredCost = ReturnType<typeof reconcileStoredCost>;
 
-function reconcileStoredCost(item: CostComponents & { costUSD?: number }): {
-  costUSD: number;
-  inputCostUSD: number;
-  outputCostUSD: number;
-  cacheCreationCostUSD: number;
-  cacheReadCostUSD: number;
-} {
-  const input = Math.max(0, item.inputCostUSD ?? 0);
-  const output = Math.max(0, item.outputCostUSD ?? 0);
-  const creation = Math.max(0, item.cacheCreationCostUSD ?? 0);
-  const read = Math.max(0, item.cacheReadCostUSD ?? 0);
-  const componentSum = input + output + creation + read;
-  const total = Math.max(0, item.costUSD ?? componentSum);
-  if (total === 0) {
-    return { costUSD: 0, ...ZERO_BREAKDOWN };
-  }
-  if (componentSum === 0) {
-    return { costUSD: total, ...ZERO_BREAKDOWN, outputCostUSD: total };
-  }
-  if (componentSum === total) {
-    return {
-      costUSD: total,
-      inputCostUSD: input,
-      outputCostUSD: output,
-      cacheCreationCostUSD: creation,
-      cacheReadCostUSD: read,
-    };
-  }
-  if (componentSum > total) {
-    const scale = total / componentSum;
-    const inputCostUSD = input * scale;
-    const outputCostUSD = output * scale;
-    const cacheCreationCostUSD = creation * scale;
-    const cacheReadCostUSD = Math.max(0, total - inputCostUSD - outputCostUSD - cacheCreationCostUSD);
-    return { costUSD: total, inputCostUSD, outputCostUSD, cacheCreationCostUSD, cacheReadCostUSD };
-  }
-  const inputCostUSD = input;
-  const cacheCreationCostUSD = creation;
-  const cacheReadCostUSD = read;
-  const outputCostUSD = Math.max(0, total - inputCostUSD - cacheCreationCostUSD - cacheReadCostUSD);
-  return { costUSD: total, inputCostUSD, outputCostUSD, cacheCreationCostUSD, cacheReadCostUSD };
-}
 
 function addCostComponents(
   target: CostComponents & { inputCostUSD: number; outputCostUSD: number; cacheCreationCostUSD: number; cacheReadCostUSD: number },

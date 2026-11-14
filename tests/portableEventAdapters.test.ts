@@ -252,7 +252,7 @@ describe("portable event adapters", () => {
   it("emits only the exact portable allowlist and omits undefined optionals", () => {
     expect(PORTABLE_USAGE_EVENT_KEYS).toEqual(portableKeys);
     const [event] = fromClaudeEntries([claude({ projectName: undefined, costUSD: undefined })]);
-    expect(Object.keys(event).every((key) => PORTABLE_USAGE_EVENT_KEYS.includes(key))).toBe(true);
+    expect(Object.keys(event).every((key) => (PORTABLE_USAGE_EVENT_KEYS as readonly string[]).includes(key))).toBe(true);
     expect(event.projectName).toBe("legacy-project");
     expect(event).not.toHaveProperty("costUSD");
     expect(event).not.toHaveProperty("project");

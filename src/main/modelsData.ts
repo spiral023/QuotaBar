@@ -1,3 +1,4 @@
+import { aggregateDaily, type DailyUsageRollup } from "../portable/dailyRollups";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Settings } from "../config/settings";
@@ -67,7 +68,10 @@ export async function buildModelsData(deps: ModelsDataDeps = {}): Promise<Models
     since: "1970-01-01T00:00:00.000Z",
     until: new Date().toISOString(),
   };
-  const events = deps.usageEvents ?? await (deps.usageStore ?? getSharedUsageStore()).read(usageRange);
+  const rollups = deps.usageEvents !== undefined
+    ? aggregateDaily(deps.usageEvents, "UTC")
+    : await (deps.usageStore ?? getSharedUsageStore()).readDaily("UTC", usageRange);
+  const events = rollups.map((row) => row.rawEvent);
 
   const dayMap = new Map<string, ModelDay>();
   for (const event of events) {
@@ -90,7 +94,7 @@ export async function buildModelsData(deps: ModelsDataDeps = {}): Promise<Models
     .sort((a, b) => a.date.localeCompare(b.date) || a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
 
   const { benchmarks, benchmarksAsOf, benchmarkIndexes } = await readBenchmarks(deps.benchmarksFile ?? DEFAULT_BENCHMARKS_FILE);
-  const pricing = collectPricing(events);
+  const pricing = collectPricing(rollups);
 
   return {
     days, benchmarks, benchmarksAsOf, benchmarkIndexes, pricing,
@@ -184,27 +188,28 @@ async function readBenchmarks(file: string): Promise<{
   }
 }
 
-function collectPricing(events: readonly PortableUsageEvent[]): Record<string, ModelPricingRate> {
+function collectPricing(rows: readonly DailyUsageRollup[]): Record<string, ModelPricingRate> {
   const result: Record<string, ModelPricingRate> = {};
-  const models = [...new Set(events
-    .filter((event) => !isNeutralInternalMarker(event) && !isIgnoredModel(event.model))
-    .map((event) => normalizeModelName(event.model)))];
-  for (const model of models) {
-    const rows = events.filter((event) => normalizeModelName(event.model) === model);
-    const inputTokenRows = rows.filter((event) => event.inputTokens > 0);
-    const cacheTokenRows = rows.filter((event) => event.cacheReadTokens > 0);
-    if (inputTokenRows.some((event) => event.inputCostUSD === undefined)
-      || cacheTokenRows.some((event) => event.cacheReadCostUSD === undefined)) continue;
-    const inputRows = inputTokenRows.filter((event) => event.inputCostUSD !== undefined);
-    const cacheRows = cacheTokenRows.filter((event) => event.cacheReadCostUSD !== undefined);
-    const inputTokens = inputRows.reduce((sum, event) => sum + event.inputTokens, 0);
-    const cacheReadTokens = cacheRows.reduce((sum, event) => sum + event.cacheReadTokens, 0);
-    if (inputTokens === 0) continue;
+  const grouped = new Map<string, DailyUsageRollup["pricing"]>();
+  for (const row of rows) {
+    if (isIgnoredModel(row.rawEvent.model)) continue;
+    const model = normalizeModelName(row.rawEvent.model);
+    const current = grouped.get(model);
+    if (!current) grouped.set(model, { ...row.pricing });
+    else {
+      current.inputComplete &&= row.pricing.inputComplete;
+      current.cacheComplete &&= row.pricing.cacheComplete;
+      current.inputTokens += row.pricing.inputTokens;
+      current.cacheTokens += row.pricing.cacheTokens;
+      current.inputCost += row.pricing.inputCost;
+      current.cacheCost += row.pricing.cacheCost;
+    }
+  }
+  for (const [model, pricing] of grouped) {
+    if (!pricing.inputComplete || !pricing.cacheComplete || pricing.inputTokens === 0) continue;
     result[model] = {
-      inputPerMTok: inputRows.reduce((sum, event) => sum + (event.inputCostUSD ?? 0), 0) / inputTokens * 1e6,
-      cacheReadPerMTok: cacheReadTokens > 0
-        ? cacheRows.reduce((sum, event) => sum + (event.cacheReadCostUSD ?? 0), 0) / cacheReadTokens * 1e6
-        : 0,
+      inputPerMTok: pricing.inputCost / pricing.inputTokens * 1e6,
+      cacheReadPerMTok: pricing.cacheTokens > 0 ? pricing.cacheCost / pricing.cacheTokens * 1e6 : 0,
     };
   }
   return result;

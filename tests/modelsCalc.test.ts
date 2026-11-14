@@ -83,7 +83,7 @@ describe("buildStack", () => {
     const s = calc.buildStack(days, "output", "daily", 0);
     expect(s.buckets).toEqual(["2026-01-05", "2026-01-12"]);
     const opus = s.series.find((x: any) => x.model === "claude-opus-4-8");
-    expect(opus.values).toEqual([80, 50]);
+    expect(opus!.values).toEqual([80, 50]);
   });
 
   it("groups by ISO week when granularity is 'weekly'", () => {
@@ -221,9 +221,9 @@ describe("computeKpis", () => {
 
   it("identifies top model by cost and by output", () => {
     const k = calc.computeKpis(cur, prev, BENCH);
-    expect(k.topCost.model).toBe("claude-opus-4-8");
-    expect(k.topCost.sharePct).toBeCloseTo(75);
-    expect(k.topOutput.model).toBe("gpt-5.5");
+    expect(k.topCost!.model).toBe("claude-opus-4-8");
+    expect(k.topCost!.sharePct).toBeCloseTo(75);
+    expect(k.topOutput!.model).toBe("gpt-5.5");
   });
 
   it("computes effective $/MTok and delta vs previous window", () => {
@@ -241,7 +241,7 @@ describe("computeKpis", () => {
   it("picks best value model (score per effective $/MTok)", () => {
     const k = calc.computeKpis(cur, prev, BENCH);
     // opus: 61 / 3 ≈ 20.3 — gpt-5.5: 59 / 1 = 59 → gpt-5.5
-    expect(k.bestValue.model).toBe("gpt-5.5");
+    expect(k.bestValue!.model).toBe("gpt-5.5");
   });
 
   it("computes top-3 cost concentration", () => {
@@ -260,18 +260,18 @@ describe("computeKpis", () => {
 
     it("ohne Schwelle gewinnt das kaum genutzte Haiku auf Score/$", () => {
       const k = calc.computeKpis(days, [], bench);
-      expect(k.bestValue.model).toBe("claude-haiku-4-5");
+      expect(k.bestValue!.model).toBe("claude-haiku-4-5");
     });
 
     it("ab 5 % Schwelle fällt Haiku raus → Opus gewinnt", () => {
       const k = calc.computeKpis(days, [], bench, 5);
-      expect(k.bestValue.model).toBe("claude-opus-4-8");
+      expect(k.bestValue!.model).toBe("claude-opus-4-8");
     });
 
     it("Schwelle 0 verhält sich wie ohne Filter (Default)", () => {
       const k0 = calc.computeKpis(days, [], bench, 0);
       const kDef = calc.computeKpis(days, [], bench);
-      expect(k0.bestValue.model).toBe(kDef.bestValue.model);
+      expect(k0.bestValue!.model).toBe(kDef.bestValue!.model);
     });
   });
 });
@@ -352,9 +352,9 @@ describe("scatterPoints", () => {
 
   it("colors visible points by value: cheap high-score green, expensive low-score red", () => {
     const pts = calc.scatterPoints([
-      { model: "best", provider: "codex", effPerMTok: 1, score: 90, sharePct: 10 },
-      { model: "mixed", provider: "codex", effPerMTok: 5, score: 70, sharePct: 10 },
-      { model: "worst", provider: "codex", effPerMTok: 9, score: 50, sharePct: 10 },
+      { model: "best", provider: "codex", effPerMTok: 1, score: 90, sharePct: 10, tokenSharePct: 10 },
+      { model: "mixed", provider: "codex", effPerMTok: 5, score: 70, sharePct: 10, tokenSharePct: 10 },
+      { model: "worst", provider: "codex", effPerMTok: 9, score: 50, sharePct: 10, tokenSharePct: 10 },
     ]);
 
     expect(pts.map((p: any) => p.valueColor)).toEqual(["#52d017", "#ff9f1a", "#ff4b5c"]);

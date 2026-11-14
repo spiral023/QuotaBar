@@ -18,6 +18,7 @@ function loadAnalyticsHelpers(): {
     console,
   });
   const script = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "tabs", "analytics.js"), "utf8");
+  for (const file of ["analytics-helpers.js", "analytics-activity.js"]) vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "tabs", file), "utf8"), context);
   vm.runInContext(script, context);
   return (context.QB as any).__analyticsTest;
 }

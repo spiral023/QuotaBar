@@ -173,4 +173,24 @@ describe("app identity", () => {
       env: { LOCALAPPDATA: "C:\\Users\\Asi\\AppData\\Local" },
     })).toEqual({ id: "installed", label: "Installed" });
   });
+
+  it("recognizes custom NSIS destinations only with a regular adjacent uninstaller", async () => {
+    const destination = fs.mkdtempSync(path.join(os.tmpdir(), "qb-custom-install-"));
+    try {
+      setPlatform("win32");
+      const exePath = path.join(destination, "QuotaBar.exe");
+      vi.doMock("electron", () => ({ app: { isPackaged: true, getPath: () => exePath }, shell: {} }));
+      const { detectAppVariant } = await import("../src/main/appIdentity");
+      expect(detectAppVariant({ env: {} }).id).toBe("zip");
+      const uninstaller = path.join(destination, "Uninstall QuotaBar.exe");
+      fs.mkdirSync(uninstaller);
+      expect(detectAppVariant({ env: {} }).id).toBe("zip");
+      fs.rmdirSync(uninstaller);
+      fs.writeFileSync(uninstaller, "synthetic NSIS footprint");
+      expect(detectAppVariant({ env: {} }).id).toBe("installed");
+      expect(detectAppVariant({ env: { PORTABLE_EXECUTABLE_DIR: destination } }).id).toBe("portable");
+    } finally {
+      fs.rmSync(destination, { recursive: true, force: true });
+    }
+  });
 });

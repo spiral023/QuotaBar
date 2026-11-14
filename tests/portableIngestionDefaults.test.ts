@@ -80,7 +80,7 @@ describe("portable ingestion production defaults", () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "quotabar-default-store-reuse-"));
     mocks.usageDir = rootDir;
     const recoveredBy: PortableUsageStore[] = [];
-    vi.spyOn(PortableUsageStore.prototype, "recoverPending").mockImplementation(async function recoverPending() {
+    vi.spyOn(PortableUsageStore.prototype, "recoverPending").mockImplementation(async function recoverPending(this: PortableUsageStore) {
       recoveredBy.push(this);
     });
     try {

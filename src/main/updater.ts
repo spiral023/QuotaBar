@@ -1,4 +1,5 @@
-import { app, ipcMain } from "electron";
+import { rendererIpc } from "./rendererSecurity";
+import { app } from "electron";
 import { autoUpdater } from "electron-updater";
 import { log } from "./logging";
 import { initialUpdateState, reduceUpdateState, UpdateUiState } from "./updateState";
@@ -62,12 +63,12 @@ export async function initializeUpdater(
   canAutoUpdate = opts.canAutoUpdate ?? true;
 
   // IPC-Handler IMMER registrieren, damit der System-Tab auch im Dev funktioniert.
-  ipcMain.handle("update:get-state", () => state);
-  ipcMain.handle("update:check", () => {
+  rendererIpc.handle("update:get-state", () => state);
+  rendererIpc.handle("update:check", () => {
     checkForUpdatesNow();
     return state;
   });
-  ipcMain.handle("update:quit-and-install", () => {
+  rendererIpc.handle("update:quit-and-install", () => {
     quitAndInstall();
     return state;
   });

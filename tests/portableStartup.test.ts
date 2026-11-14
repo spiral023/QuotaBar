@@ -189,6 +189,7 @@ describe("portable startup preparation", () => {
 
     const first = await preparePortableData(deps);
     const second = await preparePortableData(deps);
+    if (first.status !== "complete" || second.status !== "complete") throw new Error("Preparation did not complete");
     expect(first.ingested).toBe(1);
     expect(second.ingested).toBe(0);
     expect(second.legacyInserted).toBe(0);
@@ -329,6 +330,7 @@ describe("portable ingestion lifecycle", () => {
     const refreshConsumers = vi.fn();
 
     const result = await refreshPortableData({
+      recoverRefresh: async () => ({ status: "not_running" }),
       readCompleteRevision: () => readCompleteMigrationRevision(statePath),
       readStoreRevision: () => store.getRevision(),
       ingestProviderEvents: async () => {
@@ -386,6 +388,7 @@ describe("portable ingestion lifecycle", () => {
     const calls: string[] = [];
 
     const result = await refreshPortableData({
+      recoverRefresh: async () => ({ status: "not_running" }),
       readCompleteRevision: async () => { calls.push("read-revision"); return oldRevision; },
       readStoreRevision: async () => newRevision,
       ingestProviderEvents: async () => { calls.push("ingest"); return { inserted: 1, updated: 0 }; },
@@ -422,6 +425,7 @@ describe("portable ingestion lifecycle", () => {
     const beginRefresh = vi.fn();
     const refreshConsumers = vi.fn();
     const result = await refreshPortableData({
+      recoverRefresh: async () => ({ status: "not_running" }),
       readCompleteRevision: async () => "a".repeat(64),
       readStoreRevision: async () => "a".repeat(64),
       ingestProviderEvents: async () => ({ inserted: 0, updated: 0 }),
@@ -456,6 +460,7 @@ describe("portable ingestion lifecycle", () => {
     const refreshConsumers = vi.fn();
 
     const result = await refreshPortableData({
+      recoverRefresh: async () => ({ status: "not_running" }),
       readCompleteRevision: async () => oldRevision,
       readStoreRevision: async () => newRevision,
       ingestProviderEvents: async () => ({ inserted: 0, updated: 0 }),
@@ -490,6 +495,7 @@ describe("portable ingestion lifecycle", () => {
     const refreshConsumers = vi.fn();
 
     const result = await refreshPortableData({
+      recoverRefresh: async () => ({ status: "not_running" }),
       readCompleteRevision: async () => "a".repeat(64),
       readStoreRevision: async () => "b".repeat(64),
       ingestProviderEvents: async () => ({ inserted: 1, updated: 0 }),

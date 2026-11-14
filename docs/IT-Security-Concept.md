@@ -6,11 +6,11 @@
 |---|---|
 | Document title | Technical IT Security Concept — QuotaBar for Windows |
 | Product | QuotaBar for Windows |
-| Product version assessed | 1.0.2 |
+| Product version assessed | 2.3.1 |
 | Application type | Local Electron desktop tray application (single user, no server backend) |
 | Vendor / source | Open source, MIT License — GitHub `spiral023/QuotaBar` |
-| Document version | 1.0 |
-| Date | 2026-06-23 |
+| Document version | 1.1 |
+| Date | 2026-11-14 |
 | Author | Philipp Asanger |
 | Classification | Internal |
 | Status | Draft for IT Security review |
@@ -18,7 +18,7 @@
 
 > This document is a security architecture description intended to support an
 > enterprise installation approval. It is based on a direct review of the
-> QuotaBar source code (version 1.0.2). File and line references are provided so
+> QuotaBar source code (version 2.3.1). File and line references are provided so
 > that every statement can be independently verified.
 
 ---
@@ -29,7 +29,7 @@ QuotaBar is a **local, single-user Windows desktop application** (Electron tray
 app) that visualizes the **quota and cost usage of AI coding assistants** —
 specifically Anthropic **Claude Code** and OpenAI **Codex/ChatGPT**. It reads
 usage telemetry that those tools already store locally on the developer's
-machine, queries the official provider quota endpoints to display remaining
+machine, queries the provider-operated quota endpoints (unofficial usage interfaces) to display remaining
 allowances, and renders charts and notifications in a tray-based dashboard.
 
 Key security characteristics:
@@ -37,12 +37,12 @@ Key security characteristics:
 - **No vendor telemetry.** QuotaBar sends **no analytics, usage data, prompts,
   or source code to its own developers or to any third party**. There is no
   QuotaBar backend server.
-- **No content access.** It reads only **metadata** (token counts, model names,
-  timestamps, computed cost). It does **not** read or transmit prompt text or
-  user source code.
+- **Metadata extraction.** Local JSONL records can contain prompt or response
+  text. QuotaBar parses those records to extract token counts, model names,
+  timestamps and costs; it does not persist or transmit prompt/source content.
 - **Reuses existing credentials.** It does not create new credentials. It reads
   the OAuth tokens that the Claude Code CLI and Codex CLI already place on disk,
-  and uses them only to call the **official provider endpoints**
+  and uses them only to call the **provider-operated, unofficial usage interfaces**
   (`api.anthropic.com`, `chatgpt.com`).
 - **Local-only data storage.** All application data (settings, caches, logs) is
   stored locally under the user profile. Secrets are redacted from logs.
@@ -55,15 +55,16 @@ through deployment policy (detailed in sections 9–12):
 1. The application binary is **not Authenticode code-signed** by the vendor.
 2. **Auto-update** pulls from the public GitHub release of the open-source
    project and is enabled by default (download + install-on-quit).
-3. The UI **loads web fonts from Google Fonts** (`fonts.googleapis.com`),
-   creating an outbound connection to Google and a GDPR-relevant data flow (IP
-   address).
-4. The IPC preload bridge is a **generic pass-through** without an explicit
-   channel allow-list (defense-in-depth gap, low real-world exposure because the
-   renderer loads only local, bundled content).
+3. UI fonts are now bundled locally with their OFL licenses; opening a window
+   does not contact Google Fonts.
+4. IPC channels and payloads are checked in the preload and main process.
+   Privileged calls require a registered window, its exact local URL and its
+   main frame. Navigation, webviews and new renderer windows are blocked.
+5. Both renderer documents apply a CSP with local scripts/fonts, no renderer
+   network connections and no frames. Inline styles remain allowed for the
+   existing chart/layout implementation; inline scripts are prohibited.
 
-None of these are remote-exploitable by default, but each is addressable through
-the hardening recommendations in section 12.
+The binary signing and update-distribution choices remain deployment decisions.
 
 ---
 
@@ -77,7 +78,7 @@ managed company workstations.
 
 ### 2.2 In scope
 
-- The QuotaBar Windows desktop application, version 1.0.2.
+- The QuotaBar Windows desktop application, version 2.3.1.
 - Its local file access, network communication, credential handling, update
   mechanism, and process/runtime architecture.
 
@@ -112,7 +113,6 @@ flowchart LR
     QB -. "model prices (optional)" .-> GH1["raw.githubusercontent.com"]
     QB -. "FX rates (optional)" .-> FX["api.frankfurter.dev"]
     QB -. "app updates" .-> GH2["github.com / api.github.com"]
-    QB -. "UI web fonts" .-> GF["fonts.googleapis.com / gstatic.com"]
 
     style QB fill:#1b3a1b,stroke:#52d017,color:#fff
 ```
@@ -183,9 +183,9 @@ flowchart TB
 |---|---|---|
 | `contextIsolation` | `true` | `src/main/detailsWindow.ts`, `src/main/onboardingWindow.ts` |
 | `nodeIntegration` | `false` | same |
-| `sandbox` | not explicitly set → **Electron default (enabled since Electron 20)** applies; the preload only uses `contextBridge`/`ipcRenderer`, which are sandbox-compatible | preload uses no Node built-ins |
+| `sandbox` | Explicitly enabled | The preload is bundled with Electron as its only external module |
 | Preload bridge | `contextBridge.exposeInMainWorld("__QB_IPC_BRIDGE__", …)` | `src/main/preload.ts` |
-| Remote content | Renderer HTML/JS is **bundled locally**; chart.js is bundled (no CDN). Only web fonts are remote. | `src/renderer/**` |
+| Remote content | Renderer HTML/JS is **bundled locally**; chart.js is bundled (no CDN). Fonts and their licenses are local too. | `src/renderer/**` |
 
 ---
 
@@ -195,7 +195,7 @@ flowchart TB
 
 | # | Data | Classification | Source | Leaves the machine? |
 |---|---|---|---|---|
-| D1 | OAuth access/refresh tokens (Claude, Codex) | **Secret / highly sensitive** | `~/.claude/.credentials.json`, `~/.codex/auth.json` | Only to the **official provider** (Bearer header / refresh request). Never to vendor or third parties. |
+| D1 | OAuth access/refresh tokens (Claude, Codex) | **Secret / highly sensitive** | `~/.claude/.credentials.json`, `~/.codex/auth.json` | Only to the **provider** (Bearer header / refresh request). Never to vendor or third parties. |
 | D2 | Account e-mail + account UUID | **Personal data (PII)** | Claude profile API / Codex `id_token` (JWT) | Retrieved from the provider; held in memory/cache; **redacted** in logs |
 | D3 | Usage metadata: token counts, model names, timestamps, session IDs, computed cost | Internal / low sensitivity | Local JSONL usage logs of the AI CLIs | No (used locally for charts/cost) |
 | D4 | App settings, caches, notification history | Internal / low sensitivity | Generated by QuotaBar | No |
@@ -235,13 +235,9 @@ sequenceDiagram
 - The only **personal data** processed is the developer's own AI-account
   **e-mail address and account ID** (D2), processed **locally** for display.
   It is **redacted from all log files** (`src/shared/redaction.ts`).
-- One **outbound personal-data flow to a third party exists by default**:
-  loading **Google Fonts** transmits the workstation's **IP address to Google**
-  (`fonts.googleapis.com` / `fonts.gstatic.com`,
-  `src/renderer/index.html`). In an EU/Austrian context this is the same
-  category of flow that has been challenged under GDPR for web Google Fonts
-  usage. **Recommendation: self-host the fonts** (see section 12) to remove the
-  flow entirely.
+- UI fonts are self-hosted under `assets/fonts/`. The renderer CSP blocks
+  outbound connections and remote scripts/fonts. Provider, pricing and update
+  requests still disclose the workstation's IP address to their destinations.
 
 ---
 
@@ -260,7 +256,6 @@ listening ports**. There is **no peer-to-peer or LAN communication**.
 | `raw.githubusercontent.com` | Model price table (LiteLLM) | Cost features, online mode | None | ~once per process, cached | `src/pricing/litellm-fetcher.ts` |
 | `api.frankfurter.dev` | EUR/USD FX rate | Cost in non-USD, online mode | None | On demand, cached | `src/pricing/fx-fetcher.ts` |
 | `github.com` / `api.github.com` / `objects.githubusercontent.com` | App auto-update feed + artifacts | Auto-update enabled | None (public repo); app version compared locally | First check ~20s after start, then every 6h | `src/main/updater.ts`, `electron-builder.yml` |
-| `fonts.googleapis.com` / `fonts.gstatic.com` | UI web fonts | Dashboard/onboarding window opened | None except request (IP address) | On window open | `src/renderer/index.html`, `src/renderer/onboarding.html` |
 
 > **Note on tokens:** Bearer tokens are sent **only to the provider that issued
 > them** (Anthropic token → Anthropic; Codex token → ChatGPT backend). Tokens
@@ -273,13 +268,13 @@ listening ports**. There is **no peer-to-peer or LAN communication**.
   `api.frankfurter.dev` (`src/pricing/litellm-fetcher.ts`,
   `src/pricing/fx-fetcher.ts`).
 - **Auto-update can be disabled** for managed deployments (section 12).
-- **Google Fonts can be removed** by self-hosting (section 12).
+- **Google Fonts have been removed**; UI font files are bundled locally.
 - The **provider endpoints** are the only ones strictly required for the core
   function, and only for the provider(s) actually in use.
 
 ### 6.3 Minimal allow-list
 
-For a Claude-only deployment with auto-update disabled and fonts self-hosted,
+For a Claude-only deployment with auto-update disabled,
 the **only required egress** is:
 
 - `api.anthropic.com`
@@ -430,10 +425,10 @@ context (standard user, OS hardening, EDR, egress proxy assumed present).
 | T2 | Malicious app update (supply chain) | Medium | HTTPS + SHA512; **but unsigned** and auto-install-on-quit | **Low** (disable auto-update, distribute via managed channel, verify hash) |
 | T3 | Exfiltration of code/prompts by QuotaBar | Low | Code reads **metadata only**; no content access; no vendor telemetry | Low |
 | T4 | Tampered/spoofed binary at install time | Medium | Unsigned binary; SmartScreen warning likely | **Low** (sign internally or distribute via trusted repackaging) |
-| T5 | PII leak to Google via web fonts | Low–Medium (privacy/GDPR) | IP sent to Google on window open | **None** (self-host fonts) |
-| T6 | Renderer compromise → privileged IPC abuse | Low | `contextIsolation`/`nodeIntegration` correct; renderer loads only local bundled content; **but** preload bridge has no channel allow-list | **Low** (add IPC channel allow-list + input validation) |
+| T5 | Remote font requests | None for current UI | Fonts are local; remote fonts are blocked by CSP | None |
+| T6 | Renderer compromise → privileged IPC abuse | Medium | Channel/payload allowlists, registered sender/main-frame/URL checks, sandbox, CSP and navigation restrictions | Low; trusted renderer XSS still needs prevention |
 | T7 | Local debug logs reveal sensitive data | Low | PII redacted, tokens not recorded, local only | Low (optionally disable debug log by policy) |
-| T8 | Dependency vulnerability (Electron/Chromium CVEs) | Medium (generic) | Small dependency surface; Electron 42 | Low (keep current via update policy) |
+| T8 | Dependency vulnerability (Electron/Chromium CVEs) | Medium (generic) | Small dependency surface; Electron 45 | Low (keep current via update policy) |
 | T9 | Inbound network attack | None | No listening sockets | None |
 
 ### 11.1 Attack surface summary
@@ -443,7 +438,7 @@ flowchart TB
     A["Attack surface"]
     A --> N["Network: outbound HTTPS only<br/>(no inbound ports)"]
     A --> U["Update channel: public GitHub, unsigned"]
-    A --> R["Renderer: hardened, local content + Google Fonts"]
+    A --> R["Renderer: hardened, local content + local fonts"]
     A --> F["Files: user-profile only, secrets redacted"]
     A --> C["Credentials: reused from AI CLIs (plaintext on disk)"]
 
@@ -468,32 +463,24 @@ Ordered by priority. Items 1–3 are the highest-value controls.
    distribution. This removes SmartScreen warnings and establishes
    publisher-identity integrity.
 
-3. **Remove the Google Fonts dependency (T5 / GDPR).**
-   Self-host the three fonts (Syne, IBM Plex Mono, DM Sans) as local files and
-   drop the `fonts.googleapis.com`/`gstatic.com` links in
-   `src/renderer/index.html` and `src/renderer/onboarding.html`. This removes the
-   third-party IP-address flow. (Alternatively, block these domains at the
-   proxy — the UI will fall back to system fonts.)
+3. **Keep fonts local.** The three fonts and OFL licenses are bundled in
+   `assets/fonts/`. Preserve the CSP when editing renderer documents.
 
 4. **Restrict egress at the proxy/firewall (defense-in-depth).**
    Allow only the endpoints in section 6.3 that match the providers actually in
    use. Block the optional pricing/FX endpoints if offline cost fallback is
    acceptable.
 
-5. **Add an IPC channel allow-list and input validation (T6).**
-   Constrain `preload.ts` to a fixed set of channels and validate payloads on
-   privileged handlers (`settings:save`, `plans:save`,
-   `notification:settings:save`, `system:open-path`, `system:delete-app-data`).
-   This is a code-level improvement; until adopted, the existing renderer
-   hardening keeps real-world exposure low.
+5. **Preserve the IPC trust checks.** New channels need an entry and input
+   validation in `src/shared/ipcContract.ts`. Privileged registrations must use
+   `rendererIpc` from `src/main/rendererSecurity.ts`, including sender checks.
 
 6. **Disable debug logging by policy if desired (T7).**
    Set `debugLog.enabled = false` in the deployed `settings.json` template.
 
-7. **Verify Content-Security-Policy.**
-   Add a restrictive CSP meta/header to the renderer HTML (local sources +
-   self-hosted fonts only) once fonts are self-hosted, to harden against any
-   future content-injection path.
+7. **Preserve Content Security Policy.** Both documents allow local scripts
+   and fonts, block renderer connections/frames, and allow existing inline
+   styles. Tests exercise these restrictions in the real Electron runtime.
 
 8. **Keep Electron current (T8).**
    Track Electron/Chromium security releases through the update policy.
@@ -505,9 +492,9 @@ Ordered by priority. Items 1–3 are the highest-value controls.
 | Question | Answer |
 |---|---|
 | Does the vendor receive any usage/telemetry data? | **No.** No vendor backend; no analytics. |
-| Are prompts or source code read or transmitted? | **No.** Metadata only. |
+| Are prompts or source code read or transmitted? | Source JSONL records may contain content; only usage metadata is extracted. Content is not persisted or transmitted. |
 | Is personal data processed? | Only the user's own AI-account e-mail/ID, locally, redacted in logs. |
-| Any third-party data flow by default? | Yes — **Google Fonts (IP address)**; removable (section 12.3). |
+| Any third-party data flow by default? | Provider, pricing/FX and update requests as configured; UI fonts are local. |
 | Where is data stored? | Locally, under the user profile; no cloud storage by QuotaBar. |
 | Network exposure? | Outbound HTTPS only; no inbound ports. |
 | Admin rights required? | No (per-user install). |
@@ -516,19 +503,15 @@ Ordered by priority. Items 1–3 are the highest-value controls.
 
 ## 14. Conclusion / Recommendation
 
-QuotaBar is architecturally **low-risk for enterprise use**: it is a local,
-per-user, no-admin desktop tool with a hardened Electron configuration, a
-minimal dependency surface, **no vendor telemetry**, and **no access to prompt
-or source-code content**. Its sensitive interactions are limited to reusing the
-already-approved AI CLI credentials against the **official provider endpoints**.
+QuotaBar is a local, per-user desktop tool. The current implementation uses
+Electron 45, sandboxed renderers, local assets, constrained IPC and explicit
+sender checks. It extracts usage metadata from local session records and queries
+provider-operated usage interfaces, which are unofficial and can change.
 
-The items warranting a deployment decision are operational rather than
-architectural: **manage updates centrally** (and code-sign), and **remove the
-Google Fonts flow** for GDPR cleanliness. With the section-12 controls applied,
-QuotaBar can be recommended for approval.
-
-**Recommendation:** _Approve for deployment, conditional on items 1–3 of section
-12._ — _(final decision by IT Security)_
+Enterprise approval remains an organisational decision. Review binary signing,
+update distribution, local diagnostic retention and access to the provider CLI
+credentials. The automated smoke test does not prove installer/update acceptance
+or grant IT Security approval.
 
 ---
 
@@ -548,10 +531,11 @@ QuotaBar can be recommended for approval.
 | Settings + defaults | `src/config/settings.ts` |
 | Updater | `src/main/updater.ts`, `electron-builder.yml` |
 | Autostart | `src/main/autostart.ts` |
-| Web fonts (Google) | `src/renderer/index.html`, `src/renderer/onboarding.html` |
+| Local fonts and CSP | `src/renderer/index.html`, `src/renderer/onboarding.html` |
 
 ## Appendix B — Document history
 
 | Version | Date | Author | Change |
 |---|---|---|---|
 | 1.0 | 2026-06-23 | Philipp Asanger | Initial draft based on source review of QuotaBar 1.0.2 |
+| 1.1 | 2026-11-14 | QuotaBar maintainers | Electron 45, constrained IPC, local fonts/CSP and corrected data-access scope |

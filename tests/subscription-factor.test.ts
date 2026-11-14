@@ -3,12 +3,16 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PricingEngine } from "../src/pricing/subscription-factor";
-import type { Settings } from "../src/config/settings";
+import { defaultSettings, type Settings } from "../src/config/settings";
 import type { ModelPricing } from "../src/pricing/cost-calculator";
-import { HistoricalPricingResolver, resetHistoricalPricingResolverCacheForTests } from "../src/pricing/historical-pricing-resolver";
+import {
+  HistoricalPricingResolver,
+  resetHistoricalPricingResolverCacheForTests,
+} from "../src/pricing/historical-pricing-resolver";
 import type { UsageSnapshot } from "../src/providers/types";
 
 const settings: Settings = {
+  ...defaultSettings,
   pollIntervalSeconds: 60,
   providerTimeoutMs: 10_000,
   plans: [
@@ -16,7 +20,7 @@ const settings: Settings = {
     { id: "codex-team", provider: "codex",  name: "Team", amount: 10, currency: "USD", startsAt: "2020-01-01T00:00:00.000Z", endsAt: null },
   ],
   pricingOfflineMode: true,
-  costWindow: "billing",
+  costWindow: "all",
 };
 
 function makeSnapshot(provider: string, overrides: Partial<UsageSnapshot> = {}): UsageSnapshot {

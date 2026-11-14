@@ -180,7 +180,7 @@ export function weeklyOnlyBudget(): WindowBudgetWeeklyOnly {
   return { learning: false, weeklyOnly: true };
 }
 
-export function computeBudget(state: ProviderRatioState | undefined, weeklyUsedPercent: number): WindowBudgetInfo {
+export function computeBudget(state: ProviderRatioState | undefined, weeklyUsedPercent: number): WindowBudget | WindowBudgetLearning {
   if (!state || state.sumFivePct < MIN_SAMPLE_FIVE_PCT || state.sumWeeklyPct < MIN_SAMPLE_WEEKLY_PCT) {
     return { learning: true, sampleFivePct: state?.sumFivePct ?? 0 };
   }
@@ -218,7 +218,7 @@ export class WindowRatioTracker {
     this.file.providers[key] = recordObservation(prev, obs);
   }
 
-  getBudget(provider: string, planType: string | null | undefined, weeklyUsedPercent: number): WindowBudgetInfo {
+  getBudget(provider: string, planType: string | null | undefined, weeklyUsedPercent: number): WindowBudget | WindowBudgetLearning {
     return computeBudget(this.file.providers[ratioKey(provider, planType)], weeklyUsedPercent);
   }
 

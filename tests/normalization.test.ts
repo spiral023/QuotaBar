@@ -148,3 +148,12 @@ describe("provider snapshot normalization", () => {
     expect(snapshot.windows[1]).toMatchObject({ name: "weekly", usedPercent: 0.5 });
   });
 });
+
+
+describe("unknown provider response schemas", () => {
+  it.each([normalizeClaudeUsageResponse, normalizeCodexUsageResponse])("reports an unknown schema as an error", normalize => {
+    const result = normalize({ unexpectedSchema: true });
+    expect(result.status).toBe("error");
+    expect(result.windows).toEqual([]);
+  });
+});

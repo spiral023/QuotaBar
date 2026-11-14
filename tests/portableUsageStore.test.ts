@@ -679,7 +679,7 @@ describe("PortableUsageStore", () => {
       },
     };
 
-    await new PortableUsageStore(rootDir, replacingFs).upsert([
+    await new PortableUsageStore(rootDir, { ...replacingFs, readFile: replacingFs.readFile as typeof nodeFs.readFile }).upsert([
       event("marker", "2026-07-01T00:00:00.000Z"),
     ]);
 
@@ -783,7 +783,7 @@ describe("PortableUsageStore", () => {
     const originalPartition = await readFile(path.join(rootDir, "events", "2026-07.jsonl"), "utf8");
     const failingFs = {
       ...nodeFs,
-      async writeFile(file: PathLike | FileHandle, data: string | Uint8Array, options?: unknown) {
+      async writeFile(file: PathLike | FileHandle, data: Parameters<typeof nodeFs.writeFile>[1], options?: Parameters<typeof nodeFs.writeFile>[2]) {
         if (String(file).includes("store-metadata.json.") && String(file).endsWith(".tmp")) {
           await nodeFs.writeFile(file, "partial", "utf8");
           throw Object.assign(new Error("injected metadata stage failure"), { code: "EIO" });
@@ -860,7 +860,7 @@ describe("PortableUsageStore", () => {
       },
     };
 
-    await new PortableUsageStore(rootDir, countingFs).upsert([
+    await new PortableUsageStore(rootDir, { ...countingFs, readFile: countingFs.readFile as typeof nodeFs.readFile }).upsert([
       event("september", "2026-09-01T00:00:00.000Z"),
     ]);
 
@@ -881,7 +881,7 @@ describe("PortableUsageStore", () => {
         return nodeFs.readFile(file, options as Parameters<typeof nodeFs.readFile>[1]);
       },
     };
-    const cachedStore = new PortableUsageStore(rootDir, countingFs);
+    const cachedStore = new PortableUsageStore(rootDir, { ...countingFs, readFile: countingFs.readFile as typeof nodeFs.readFile });
 
     await cachedStore.reconcile([event("september", "2026-09-01T00:00:00.000Z")]);
     await cachedStore.reconcile([event("october", "2026-10-01T00:00:00.000Z")]);

@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.4.0 - 2026-11-14
+
+### Security
+
+- Upgrade Electron to 45 and refresh runtime/build dependencies.
+- Restrict renderer IPC to known channels, validated arguments, trusted windows and the main frame.
+- Bundle the sandboxed preload, apply local content security policies and ship fonts locally.
+
+### Improvements
+
+- Persist additive daily usage totals for daily, weekly and monthly reports and Models, with timezone-aware boundaries, source-write invalidation and safe recovery from stale or corrupt caches.
+- Reduce cached daily report generation from 1,032 ms to 74 ms in the documented 100,000-event synthetic benchmark. The first cache build still reads the full history.
+- Split large renderer styles/scripts and portable archive/store helpers into focused modules.
+- Bound analytics result caches and worker queues; recover workers that exceed their deadline.
+- Upgrade build/typechecking to native TypeScript 7 and tests to Vitest 5, retaining the supported TypeScript 6 API for ESLint.
+
+### Fixes
+
+- Recognize NSIS installations in custom directories so they can auto-update.
+- Preserve the first packaged command-line argument, including `--open-window`.
+- Update the System panel as downloads progress and expose Install update immediately while preserving edited settings.
+- Handle unknown provider response schemas defensively and preserve Codex identity on errors.
+
+### Validation
+
+- Strict typechecking, lint, 1,519 tests, production build, dependency audits and live Electron checks passed during maintenance validation.
+- A real installed NSIS update passed in Windows Sandbox, including checksum rejection, download retry, automatic relaunch and retained settings/usage.
+- Installer, portable executable and ZIP are provided. Installed builds use the built-in updater; portable/ZIP builds require a manual download.
+
+
 ## 2.3.1 - 2026-10-27
 
 ### Security

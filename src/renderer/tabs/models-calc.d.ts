@@ -44,6 +44,7 @@ export interface ProviderCostRow {
   tokens: number;
   costUSD: number;
   perMTok: number | null;
+  tokenPct: number;
 }
 
 export interface ProviderCostBreakdown {
@@ -90,3 +91,27 @@ export function scatterAxisColorScale(
 export function scatterOptimumRegion(
   points: Array<Pick<ScatterPoint, 'x' | 'y'>>,
 ): { xMin: number; xMax: number; yMin: number; yMax: number } | null;
+
+export type Metric = Parameters<typeof metricOf>[1];
+export interface ModelAggregate extends Omit<Day, 'date'> { firstUsed: string; lastUsed: string }
+export interface TrendFit { a: number; b: number; samples: Array<{ x: number; y: number }> }
+export function nextBucket(bucket: string, granularity: Granularity): string;
+export function bucketAxis(days: Day[], granularity: Granularity, fillGaps?: boolean): string[];
+export function buildStack(days: Day[], metric: Metric, granularity: Granularity, othersThreshold?: number, fillGaps?: boolean): {
+  buckets: string[]; series: Array<{ model: string; provider: string; values: number[] }>; othersGrouped: string[];
+};
+export function modelColorOrder(days: Day[]): string[];
+export function aggregateByModel(days: Day[]): ModelAggregate[];
+export function computeKpis(days: Day[], previousDays: Day[], benchmarks: Record<string, number>, minTokenSharePct?: number): {
+  activeModels: number; activeModelsDelta: number | null;
+  topCost: { model: string; provider: string; costUSD: number; sharePct: number } | null;
+  topOutput: { model: string; provider: string; outputTokens: number } | null;
+  effPerMTok: number | null; effPerMTokDeltaPct: number | null;
+  bestValue: { model: string; provider: string; scorePerDollar: number } | null; top3SharePct: number;
+};
+export function scatterTrendCurve(points: Array<{ x: number; y: number }>, sampleCount?: number): TrendFit | null;
+export function trendResidual(point: { x: number; y: number } | null, fit: Pick<TrendFit, 'a' | 'b'> | null): number | null;
+export function adoptionTimeline(days: Day[]): Array<{ model: string; provider: string; first: string; last: string; months: Array<{ month: string; intensity: number }> }>;
+export function cacheEfficiency(days: Day[], pricing: Record<string, { inputPerMTok: number; cacheReadPerMTok: number }>): Array<{ model: string; provider: string; hitRate: number; savedUSD: number }>;
+export function providerRibbon(days: Day[], metric: Metric, granularity: Granularity): Array<{ bucket: string; claudeShare: number }>;
+export function tokenTypeBreakdown(days: Day[]): { input: number; output: number; cacheRead: number; cacheCreation: number; total: number; inputPct: number; outputPct: number; cacheReadPct: number; cacheCreationPct: number };

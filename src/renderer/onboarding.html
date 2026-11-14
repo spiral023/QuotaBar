@@ -3,10 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <link rel="stylesheet" href="fonts.css">
   <title>Welcome to QuotaBar</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg-base:       #07090d;
@@ -446,52 +445,6 @@
     <div class="footer-note">QuotaBar will then run quietly in the taskbar — click the icon to open the dashboard.</div>
   </div>
 
-  <script>
-    const STATUS_BADGES = {
-      connected: { cls: 'b-connected', label: 'Connected' },
-      detected:  { cls: 'b-detected',  label: 'Detected — not signed in' },
-      not_found: { cls: 'b-missing',   label: 'Not found' },
-    };
-
-    function esc(s) {
-      return String(s).replace(/[&<>"']/g, c => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-      })[c]);
-    }
-
-    async function loadAgents() {
-      const list = document.getElementById('agents-list');
-      try {
-        const agents = await QB.ipc.invoke('onboarding:agents');
-        list.classList.add('stagger');
-        list.innerHTML = agents.map(a => {
-          const badge = STATUS_BADGES[a.status] ?? STATUS_BADGES.not_found;
-          const muted = a.status === 'not_found' ? ' is-muted' : '';
-          return `<div class="agent-card${muted}">
-            <div class="agent-icon icon-${esc(a.id)}"><img src="${esc(a.logo)}" alt="" draggable="false"></div>
-            <div class="agent-info">
-              <div class="agent-name">${esc(a.name)}</div>
-              <div class="agent-vendor">${esc(a.vendor)}</div>
-            </div>
-            <span class="badge ${badge.cls}"><span class="badge-dot"></span>${badge.label}</span>
-          </div>`;
-        }).join('');
-      } catch (e) {
-        console.error('onboarding:agents failed', e);
-        list.innerHTML = '<div class="agents-loading">Could not detect agents.</div>';
-      }
-    }
-
-    function complete() {
-      QB.ipc.send('onboarding:complete', {
-        autostart: document.getElementById('tog-autostart').checked,
-      });
-    }
-
-    document.getElementById('btn-start').addEventListener('click', complete);
-    document.getElementById('btn-close').addEventListener('click', () => window.close());
-
-    void loadAgents();
-  </script>
+  <script src="onboarding.js"></script>
 </body>
 </html>

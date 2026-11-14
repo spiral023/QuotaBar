@@ -376,7 +376,7 @@ describe("RefreshLoop windowBudget", () => {
     const [snap] = await loop.refreshNow();
     expect(snap.windowBudget).toBeDefined();
     expect(snap.windowBudget?.learning).toBe(false);
-    if (snap.windowBudget && !snap.windowBudget.learning) {
+    if (snap.windowBudget && !snap.windowBudget.learning && !snap.windowBudget.weeklyOnly) {
       expect(snap.windowBudget.windowsPerWeek).toBeCloseTo(3);
       expect(snap.windowBudget.usedWindows).toBeCloseTo(1.86);
     }
@@ -433,9 +433,9 @@ describe("RefreshLoop windowBudget", () => {
     weeklyPct = 1;
     const [snap] = await loop.refreshNow();
 
-    expect(snap.windowBudget?.bonus?.active).toBe(true);
+    expect((snap.windowBudget && !snap.windowBudget.learning ? snap.windowBudget.bonus : undefined)?.active).toBe(true);
     // Ohne windowsPerWeek gibt es keine Fenster-Zahl zu schätzen.
-    expect(snap.windowBudget?.bonus?.estimatedExtraWindows).toBe(0);
+    expect((snap.windowBudget && !snap.windowBudget.learning ? snap.windowBudget.bonus : undefined)?.estimatedExtraWindows).toBe(0);
   });
 
   it("wertet einen selbst eingelösten Reset ohne 5h-Fenster nicht als Bonus", async () => {
@@ -471,7 +471,7 @@ describe("RefreshLoop windowBudget", () => {
 
     const [snap] = await loop.refreshNow();
     expect(snap.windowBudget?.learning).toBe(false);
-    if (snap.windowBudget && !snap.windowBudget.learning) {
+    if (snap.windowBudget && !snap.windowBudget.learning && !snap.windowBudget.weeklyOnly) {
       expect(snap.windowBudget.windowsPerWeek).toBeCloseTo(3);
     }
   });

@@ -102,6 +102,8 @@ export function normalizeCodexUsageResponse(input: unknown, identity: { accountI
     windows.push({ name: "credits", label: "Credits", remainingPercent: undefined });
   }
 
+  if (windows.length === 0) return { ...errorSnapshot("codex", "Codex usage response format is not supported", "error"), identity: identity.accountId || identity.email ? identity : undefined };
+
   return {
     provider: "codex",
     status: "ok",

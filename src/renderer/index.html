@@ -3,10 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <link rel="stylesheet" href="fonts.css">
   <title>QuotaBar</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
   <script src="../../assets/vendor/chart.min.js"></script>
   <script src="shared/ipc.js"></script>
@@ -15,11 +14,14 @@
   <script src="shared/charts.js"></script>
   <script src="shared/provider-order.js"></script>
   <script src="tabs/live.js"></script>
+  <script src="tabs/analytics-helpers.js"></script>
+  <script src="tabs/analytics-activity.js"></script>
   <script src="tabs/analytics.js"></script>
   <script src="tabs/models-calc.js"></script>
   <script src="tabs/models.js"></script>
   <script src="tabs/notifications.js"></script>
   <script src="tabs/history.js"></script>
+  <script src="tabs/system-view.js"></script>
   <script src="tabs/system.js"></script>
   <script src="tabs/plans.js"></script>
 </head>

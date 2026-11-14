@@ -4,7 +4,7 @@ import { normalizeSettings, defaultSettings, type Settings } from "../src/config
 describe("settings plans migration", () => {
   it("ergänzt plans: [] wenn nicht vorhanden", () => {
     const raw = { ...defaultSettings } as Partial<Settings>;
-    delete (raw as Record<string, unknown>).plans;
+    delete (raw as unknown as Record<string, unknown>).plans;
     const s = normalizeSettings(raw as Settings);
     expect(Array.isArray(s.plans)).toBe(true);
     expect(s.plans).toHaveLength(0);
@@ -12,7 +12,7 @@ describe("settings plans migration", () => {
 
   it("erfindet KEINE Pläne aus Legacy-subscriptionCosts", () => {
     const raw = { ...defaultSettings, subscriptionCosts: { claude: 100, codex: 20 } } as unknown as Settings;
-    delete (raw as Record<string, unknown>).plans;
+    delete (raw as unknown as Record<string, unknown>).plans;
     const s = normalizeSettings(raw);
     expect(s.plans).toHaveLength(0);
   });

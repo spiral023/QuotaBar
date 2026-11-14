@@ -1,5 +1,6 @@
+import { rendererIpc, hardenRendererWindow } from "./rendererSecurity";
 import path from "path";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow } from "electron";
 import { markFirstRunComplete } from "../config/firstRun";
 import type { UsageProvider } from "../providers/types";
 import { defaultAgentProbes, detectAgents } from "./onboarding";
@@ -28,11 +29,14 @@ export function openOnboardingWindow(providers: UsageProvider[]): void {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       preload: path.join(__dirname, "preload.js"),
     },
   });
 
-  void win.loadFile(path.join(__dirname, "../../src/renderer/onboarding.html"));
+  const htmlPath = path.join(__dirname, "../../src/renderer/onboarding.html");
+  hardenRendererWindow(win, htmlPath, "onboarding");
+  void win.loadFile(htmlPath);
 
   win.once("ready-to-show", () => {
     if (!win.isDestroyed()) win.show();
@@ -51,11 +55,11 @@ function registerIpcHandlers(providers: UsageProvider[]): void {
   if (ipcRegistered) return;
   ipcRegistered = true;
 
-  ipcMain.handle("onboarding:agents", async () => {
+  rendererIpc.handle("onboarding:agents", async () => {
     return detectAgents(defaultAgentProbes(providers));
   });
 
-  ipcMain.on("onboarding:complete", (event, payload: { autostart?: boolean }) => {
+  rendererIpc.on("onboarding:complete", (event, payload: { autostart?: boolean }) => {
     if (payload?.autostart) {
       app.setLoginItemSettings({ openAtLogin: true });
       log.info("Autostart enabled via onboarding");

@@ -97,14 +97,14 @@ Node.js is **not** required — the installer bundles its own runtime.
 
 **For development (building from source):**
 
-- Node.js and npm
+- Node.js 22 (see `.nvmrc`) and the npm version in `package.json`
 
 > **Early MVP:** Provider quota data depends on unofficial endpoints that may change without notice. QuotaBar handles failures defensively and keeps stale data visible when live refreshes fail.
 
 ## Quick Start
 
 ```powershell
-npm install
+npm ci
 npm run build
 npm run dev          # Electron opens with a tray icon in the system tray
 ```
@@ -284,7 +284,7 @@ Token details (input, output, cache creation, cache read, total) are shown per p
 ### Setup
 
 ```powershell
-npm install
+npm ci
 ```
 
 ### Commands
@@ -295,6 +295,9 @@ npm install
 | `npm run dev` | One-shot: build once and start Electron |
 | `npm run build` | Compile TypeScript into `dist/` (required before running after TS changes) |
 | `npm test` | Run the Vitest test suite |
+| `npm run typecheck` | Strictly check application and test types |
+| `npm run verify` | Typecheck, lint, tests and build |
+| `npm run test:electron` | Run the isolated live Electron smoke test |
 | `npm run package` | Build Windows installer and portable artifacts into `package-output/` |
 | `npm run upload:ftp` | Upload artifacts from `package-output/` to the SFTP server (requires `.env`) |
 | `npm run release:local` | **Full local release** — `package` + `upload:ftp` in one step |
@@ -308,7 +311,7 @@ npm install
 
 ### Development workflow
 
-`npm run dev:watch` is the fastest inner loop: it runs `tsc --watch` and `nodemon` in parallel. TypeScript compiles on every save; Electron restarts automatically ~2 seconds after a `.ts` change. For renderer-only changes, skip the restart entirely with `location.reload()` in DevTools.
+`npm run dev:watch` is the fastest inner loop: it runs `nodemon` with a full build before each restart, so the sandboxed preload is always bundled. Electron restarts after source changes. For renderer-only changes, skip the restart entirely with `location.reload()` in DevTools.
 
 ## Project Structure
 

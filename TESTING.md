@@ -5,9 +5,43 @@ How to run unit tests and verify QuotaBar in a real Electron window.
 ## Unit tests
 
 ```bash
+npm run typecheck # strict source and test typecheck
 npm test          # vitest run
 npm run build     # tsc — always run both before completion
 ```
+
+## Automated Electron smoke test
+
+Use the Node version in `.nvmrc` and the npm version declared in `package.json`.
+
+```bash
+npm ci
+npm run verify
+npm run test:electron
+npm run package
+```
+
+`test:electron` launches the actual Electron runtime with real IPC handlers and
+synthetic usage in a disposable home. It checks seven tabs at 900×660 and
+750×520, the compact window, portable Ready/Preparing/Needs attention states,
+import/export cancellation, renderer sandbox settings, blocked navigation and
+window creation, invalid inputs, and rejection of an unregistered window.
+Screenshots are written to ignored `package-output/smoke/` for visual review.
+The fixture is removed in `finally`. It never starts provider polling or reads
+production credentials. Installer and auto-update installation still need a
+separate acceptance test; building an installer alone does not prove installation.
+
+Maintenance validation on 2026-11-14 used Node 22.23.4, npm 11.21.1 and Electron
+45.3.2. The full suite passed 1,491 tests (seven subprocess fixtures skipped in
+the ordinary parent run), plus strict typecheck, lint, build and the live smoke
+test including onboarding. Setup, portable and ZIP builds succeeded. Fifty
+runtime files in `app.asar` matched the working build, including the bundled
+preload, renderer modules, CSS, Chart.js and local font assets/licenses.
+
+The setup installer was also installed, launched and silently uninstalled in a
+network-isolated Windows Sandbox. Product version was 2.3.1.0 and user settings
+survived the default uninstall. The host installation was not used for this
+acceptance test. A real auto-update installation was not exercised.
 
 ## Live renderer verification in Electron
 
@@ -132,6 +166,92 @@ When launching fixture Electron processes, override both `USERPROFILE` and `HOME
 ### Verification conditions
 
 - Run `npm run build` first when `src/main/` changed. Renderer files are loaded directly.
-- Check Dashboard at 900×660 and 750×520, and Compact at 340×560.
+- Check Dashboard at 900×660 and 750×520, and Compact at its current minimum size, 411×672.
 - In the System panel, visually verify `Portable data: Ready`, `Portable data: Preparing`, and `Portable data: Needs attention` with synthetic states. Confirm the status does not expose migration-file contents.
 - Temporary harnesses, fixture data, ZIP files, and screenshots are disposable artifacts and must not be committed.
+
+
+### Persisted daily metrics
+
+`PortableUsageStore.readDaily(timeZone, range)` caches additive provider/model
+metrics by local calendar day. Daily, weekly and monthly portable reports and
+Models consume these rows. Hourly, project, instance and session reports, plus
+detailed activity/session analytics, retain canonical event reads.
+
+The cache is disposable (`usage/daily-rollups/` and
+`usage/daily-rollups-revision`), excluded from portable exports, and scoped by
+schema version, timezone, partition identities and a durable write generation.
+The generation changes under the portable root lock before source writes,
+including append and interrupted-transaction recovery. Metadata-only ingestion
+checkpoints preserve the cache. A corrupt/stale/unwritable cache falls back to
+canonical data. Partial instant ranges read the affected boundary groups from
+canonical events; stored cost components are reconciled per event before summing.
+Missing pricing evidence remains unavailable in Models.
+
+Run `node tools/benchmark-rollups.cjs` after building, with the declared Node
+runtime. It compares raw, first-cache and fresh-process cached daily reports on
+100,000 synthetic events, checks numerical equivalence at six decimal places,
+and asserts zero JSONL reads on cache hits. It cleans its own disposable home.
+The first read after a source change still rebuilds the entire daily snapshot;
+this is not an incremental per-partition materialized view.
+
+### Real installed auto-update test
+
+Run `npm run test:update` on Windows with Windows Sandbox enabled. The test
+builds NSIS versions 2.3.1 and 2.3.2 from the current source with a guest-local
+generic update feed. The repository version, public releases and host
+installation remain unchanged. Publishing is disabled.
+
+The guest installs into a custom directory, seeds synthetic settings/usage,
+starts the production packaged app, and controls its real renderer over CDP.
+It verifies rejection of a deliberately wrong SHA-512, retries a valid download,
+clicks **Install update**, and observes the new executable version and automatic
+relaunch. Only after that observation does it reopen with CDP to verify the new
+version, retained settings and identical canonical usage bytes, plus an idle
+update check with no newer version. Development updater stubs are not used.
+
+Builds and result JSON/screenshots are under `package-output/update-smoke/`.
+The read-only guest mapping contains only those fixture builds; the writable
+mapping contains only that run's results. Guest networking, clipboard, camera
+and microphone are disabled. The HTTP server listens on guest loopback.
+The guest shuts down afterward. A failed run reports its artifact directory.
+The test does not cover public GitHub/CDN delivery, certificate signing or
+SmartScreen reputation. It must not be added as an unattended CI release step.
+
+The installed test also exercises custom-directory NSIS detection and the
+first packaged CLI argument (`--open-window`). These regressions have focused
+unit coverage in `appIdentity.test.ts` and `cli.test.ts`.
+
+The live updater pushes `update:state` to the existing System panel. Only the
+version/update panel is replaced, preserving drafts and transfer dialogs. The
+Electron smoke test checks progress, the install button and an edited root field;
+the installed test requires the button to appear without navigation or reload.
+The usage checksum baseline is captured after the original app finishes startup
+migration/cost enrichment, with the seeded token and cost values checked before
+installing. This separates normal initial serialization from update retention.
+Imported ISO timestamps with offsets remain individual derived rows so lexical
+ordering cannot distort exact instant ranges.
+
+
+### Maintenance verification — 2026-11-14
+
+Validated on Node 22.23.4/npm 11.21.1 after a clean `npm ci`: strict TypeScript
+7 checks, ESLint, 1,519 passing tests (seven subprocess fixture placeholders
+skipped), build, isolated live Electron 45.3.2 smoke and all Windows package
+targets (NSIS, portable EXE, ZIP). Full and production npm audits both reported
+zero vulnerabilities. No first-party source file exceeds 1,500 lines.
+
+The real installed update 2.3.1 → 2.3.2 passed in Windows Sandbox, including bad
+SHA-512 rejection, retry, the live Install button, NSIS replacement, automatic
+relaunch, retained settings and byte-identical canonical usage after the settled
+baseline. The updated System UI reported 2.3.2/Installed/Up to date; its final
+check found no newer version. Missing old blockmap metadata exercised the real
+full-download fallback. Differential patch download itself was not validated.
+Both fixture ASARs matched 170 current runtime files. The standard package build
+retains the GitHub provider; guest-local feed configuration is fixture-only.
+
+This run's local evidence is `package-output/update-smoke/results-1794671170124/`
+(`result.json`, `verified.json` and the checksum-error/ready/updated screenshots).
+These disposable files are ignored by Git. No public release was published and
+no host installation was replaced. GitHub/CDN delivery, signing and SmartScreen
+remain outside this isolated validation.

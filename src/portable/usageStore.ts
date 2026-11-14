@@ -1,15 +1,9 @@
+import { aggregateDaily, invalidateDailyRollups, loadDailyRollups, type DailyUsageRollup } from "./dailyRollups";
 import { createHash, randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import * as nodeFs from "node:fs/promises";
 import path from "node:path";
 import { getPortableUsageDir } from "../config/paths";
-import {
-  PORTABLE_STORE_VERSION,
-  type PortableIngestState,
-  type PortableLegacyTarget,
-  type PortableStoreMetadata,
-  type PortableUsageEvent,
-} from "./types";
 import {
   PORTABLE_INGEST_JOURNAL_FILE,
   sanitizePortableIngestState,
@@ -18,35 +12,31 @@ import {
   type PortableIngestJournalBase,
 } from "./ingestState";
 import { withPortableRootLock } from "./rootLock";
+import {
+  PORTABLE_STORE_VERSION,
+  type PortableIngestState,
+  type PortableStoreMetadata,
+  type PortableUsageEvent
+} from "./types";
+import {
+  canonicalSerialize,
+  clonePortableEvent,
+  compareCanonicalEvents,
+  compareText,
+  isIsoTimestamp,
+  isNonEmptyString,
+  monthKey,
+  monthKeyOf,
+  requirePortableEvent,
+  sanitizePortableEvent,
+} from "./usageEventCodec";
+export { validatePortableEventForArchive } from "./usageEventCodec";
 
 const PARTITION_FILE = /^(\d{4}-\d{2})\.jsonl$/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
-const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 const TRANSACTION_FILE = "pending-store-transaction.json";
 const TEMP_FILE = /^(?:store-metadata\.json|ingest-state\.json|pending-store-transaction\.json|\d{4}-\d{2}\.jsonl)\.\d+\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/i;
 const STALE_TEMP_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
-const TOKEN_FIELDS = [
-  "inputTokens",
-  "outputTokens",
-  "cacheCreationTokens",
-  "cacheReadTokens",
-  "reasoningOutputTokens",
-] as const;
-const COST_FIELDS = [
-  "costUSD",
-  "inputCostUSD",
-  "outputCostUSD",
-  "cacheCreationCostUSD",
-  "cacheReadCostUSD",
-] as const;
-const LEGACY_TARGET_KEYS = [
-  ...TOKEN_FIELDS,
-  "costUSD",
-  "inputCostUSD",
-  "outputCostUSD",
-  "cacheCreationCostUSD",
-  "cacheReadCostUSD",
-] as const;
 
 type Range = { since?: string; until?: string };
 type StoreFileSystem = Pick<
@@ -84,11 +74,6 @@ interface PendingTransaction {
   transactionId: string;
   entries: TransactionEntry[];
   remove: string[];
-}
-
-interface SanitizedResult {
-  event?: PortableUsageEvent;
-  problem?: string;
 }
 
 interface RepairCandidate {
@@ -206,7 +191,7 @@ export class PortableUsageStore {
   private async partitionIdentity(filePath: string): Promise<string> {
     try {
       const info = await this.fileSystem.lstat(filePath, { bigint: true });
-      return info.isFile() ? `${info.size}:${info.mtimeNs}:${info.ctimeNs}` : "non-file";
+      return info.isFile() ? `${info.size}:${info.mtimeNs}:${info.ctimeNs}:${info.dev}:${info.ino}` : "non-file";
     } catch (error) {
       if (isMissingFile(error)) return "missing";
       throw error;
@@ -229,20 +214,55 @@ export class PortableUsageStore {
   read(range: Range = {}): Promise<PortableUsageEvent[]> {
     return this.exclusive(async () => {
       await this.prepareStore();
-      const bounds = parseRange(range);
-      const firstMonth = bounds.since === undefined ? undefined : monthKey(new Date(bounds.since));
-      const lastMonth = bounds.until === undefined ? undefined : monthKey(new Date(bounds.until));
-      const snapshots = await this.scanPartitions({
-        include: (month) => (!firstMonth || month >= firstMonth) && (!lastMonth || month <= lastMonth),
-        acceptMisplaced: false,
-      });
-      const unique = deduplicateGlobally(snapshots.flatMap(({ events }) => events));
-      return unique.filter((item) => {
-        const occurredAt = Date.parse(item.occurredAt);
-        return (bounds.since === undefined || occurredAt >= bounds.since)
-          && (bounds.until === undefined || occurredAt <= bounds.until);
-      });
+      return this.readUnlocked(range);
     });
+  }
+
+  /** Compact additive metrics; partial boundary groups fall back to canonical events. */
+  readDaily(timeZone: string, range: Range = {}): Promise<DailyUsageRollup[]> {
+    return this.exclusive(async () => {
+      await this.prepareStore();
+      const bounds = parseRange(range);
+      const files = await this.listPartitions();
+      const identities = await Promise.all(files.map(async (file) => {
+        const stat = await this.fileSystem.lstat(file.filePath, { bigint: true });
+        return [file.month, stat.size.toString(), stat.mtimeNs.toString(), stat.ctimeNs.toString(), stat.dev.toString(), stat.ino.toString()];
+      }));
+      const rows = await loadDailyRollups(this.rootDir, timeZone, JSON.stringify(identities), () => this.readUnlocked({}));
+      const result: DailyUsageRollup[] = [];
+      for (const row of rows) {
+        const first = Date.parse(row.firstActivity);
+        const last = Date.parse(row.reportEvent.occurredAt);
+        if ((bounds.since !== undefined && last < bounds.since) || (bounds.until !== undefined && first > bounds.until)) continue;
+        if ((bounds.since === undefined || first >= bounds.since) && (bounds.until === undefined || last <= bounds.until)) {
+          result.push(row);
+        } else {
+          const events = await this.readUnlocked({
+            since: new Date(Math.max(first, bounds.since ?? first)).toISOString(),
+            until: new Date(Math.min(last, bounds.until ?? last)).toISOString(),
+          });
+          result.push(...aggregateDaily(events.filter((event) => event.provider === row.reportEvent.provider
+            && event.model === row.reportEvent.model), timeZone));
+        }
+      }
+      return result.sort((a, b) => a.firstActivity.localeCompare(b.firstActivity));
+    });
+  }
+
+  private async readUnlocked(range: Range): Promise<PortableUsageEvent[]> {
+  const bounds = parseRange(range);
+  const firstMonth = bounds.since === undefined ? undefined : monthKey(new Date(bounds.since));
+  const lastMonth = bounds.until === undefined ? undefined : monthKey(new Date(bounds.until));
+  const snapshots = await this.scanPartitions({
+    include: (month) => (!firstMonth || month >= firstMonth) && (!lastMonth || month <= lastMonth),
+    acceptMisplaced: false,
+  });
+  const unique = deduplicateGlobally(snapshots.flatMap(({ events }) => events));
+  return unique.filter((item) => {
+    const occurredAt = Date.parse(item.occurredAt);
+    return (bounds.since === undefined || occurredAt >= bounds.since)
+      && (bounds.until === undefined || occurredAt <= bounds.until);
+  });
   }
 
   async upsert(events: readonly PortableUsageEvent[]): Promise<{ inserted: number; existing: number }> {
@@ -632,6 +652,7 @@ export class PortableUsageStore {
    * time, many times per minute during active use.
    */
   private async commitAppends(appends: ReadonlyMap<string, AppendPlan>): Promise<void> {
+    if (appends.size > 0) await invalidateDailyRollups(this.rootDir);
     for (const [filePath, plan] of appends) {
       const key = canonicalPath(filePath);
       const cached = this.partitionCache.get(key);
@@ -642,7 +663,7 @@ export class PortableUsageStore {
       try {
         const info = await this.fileSystem.lstat(filePath, { bigint: true });
         if (info.isFile()) {
-          identity = `${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+          identity = `${info.size}:${info.mtimeNs}:${info.ctimeNs}:${info.dev}:${info.ino}`;
           size = info.size;
         }
       } catch {
@@ -668,7 +689,7 @@ export class PortableUsageStore {
     try {
       const info = await this.fileSystem.lstat(filePath, { bigint: true });
       if (!info.isFile()) return [];
-      identity = `${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+      identity = `${info.size}:${info.mtimeNs}:${info.ctimeNs}:${info.dev}:${info.ino}`;
     } catch (error) {
       if (isMissingFile(error)) {
         this.partitionCache.delete(canonicalPath(filePath));
@@ -784,7 +805,7 @@ export class PortableUsageStore {
   private async readMetadataIdentity(): Promise<string> {
     try {
       const info = await this.fileSystem.lstat(this.metadataPath(), { bigint: true });
-      return info.isFile() ? `${info.size}:${info.mtimeNs}:${info.ctimeNs}` : "non-file";
+      return info.isFile() ? `${info.size}:${info.mtimeNs}:${info.ctimeNs}:${info.dev}:${info.ino}` : "non-file";
     } catch (error) {
       if (isMissingFile(error)) return "missing";
       throw error;
@@ -813,6 +834,10 @@ export class PortableUsageStore {
   }
 
   private async rollForward(transaction: PendingTransaction): Promise<void> {
+    if (transaction.entries.some(({ target }) => canonicalPath(path.dirname(this.resolveRelative(target))) === canonicalPath(this.eventsDir()))
+      || transaction.remove.length > 0) {
+      await invalidateDailyRollups(this.rootDir);
+    }
     // Every write path funnels through here (commit and startup recovery), so
     // this is the one place that can drop cached state deterministically.
     // File identities alone cannot: NTFS timestamp granularity lets two writes
@@ -1037,137 +1062,6 @@ export class PortableUsageStore {
   }
 }
 
-function sanitizePortableEvent(value: unknown): SanitizedResult {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return { problem: "expected an object" };
-  const item = value as Record<string, unknown>;
-  if (item.schemaVersion !== PORTABLE_STORE_VERSION) return { problem: "schemaVersion must be 1" };
-  if (item.provider !== "claude" && item.provider !== "codex") return { problem: "provider is not supported" };
-  if (!isNonEmptyString(item.id)) return { problem: "id must be a non-empty string" };
-  if (!isIsoTimestamp(item.occurredAt)) return { problem: "occurredAt must be an ISO timestamp" };
-  if (!isNonEmptyString(item.model)) return { problem: "model must be a non-empty string" };
-  if (!isNonEmptyString(item.sessionKey)) return { problem: "sessionKey must be a non-empty string" };
-  if (item.source !== "claude-log" && item.source !== "codex-log" && item.source !== "legacy-reconciliation") {
-    return { problem: "source is not supported" };
-  }
-  if (typeof item.synthetic !== "boolean") return { problem: "synthetic must be a boolean" };
-  for (const field of TOKEN_FIELDS) {
-    if (!isNonNegativeFiniteNumber(item[field])) return { problem: `${field} must be finite and non-negative` };
-  }
-  for (const field of COST_FIELDS) {
-    if (item[field] !== undefined && !isNonNegativeFiniteNumber(item[field])) {
-      return { problem: `${field} must be finite and non-negative` };
-    }
-  }
-  if (item.projectName !== undefined && typeof item.projectName !== "string") {
-    return { problem: "projectName must be a string" };
-  }
-  if (item.pricingVersion !== undefined && !isNonEmptyString(item.pricingVersion)) {
-    return { problem: "pricingVersion must be a non-empty string" };
-  }
-  let legacyTarget: PortableLegacyTarget | undefined;
-  if (item.legacyTarget !== undefined) {
-    if (item.source !== "legacy-reconciliation") {
-      return { problem: "legacyTarget is allowed only for legacy reconciliation events" };
-    }
-    const sanitizedTarget = sanitizeLegacyTarget(item.legacyTarget);
-    if (typeof sanitizedTarget === "string") return { problem: sanitizedTarget };
-    legacyTarget = sanitizedTarget;
-  }
-
-  const event: PortableUsageEvent = {
-    schemaVersion: PORTABLE_STORE_VERSION,
-    id: item.id,
-    provider: item.provider,
-    occurredAt: item.occurredAt,
-    model: item.model,
-    sessionKey: item.sessionKey,
-    source: item.source,
-    synthetic: item.synthetic,
-    inputTokens: item.inputTokens as number,
-    outputTokens: item.outputTokens as number,
-    cacheCreationTokens: item.cacheCreationTokens as number,
-    cacheReadTokens: item.cacheReadTokens as number,
-    reasoningOutputTokens: item.reasoningOutputTokens as number,
-  };
-  if (item.projectName !== undefined) event.projectName = item.projectName;
-  for (const field of COST_FIELDS) {
-    if (item[field] !== undefined) event[field] = item[field] as number;
-  }
-  if (item.pricingVersion !== undefined) event.pricingVersion = item.pricingVersion;
-  if (legacyTarget !== undefined) event.legacyTarget = legacyTarget;
-  return { event };
-}
-
-/** Strict archive boundary: stored events must already be canonical and private. */
-export function validatePortableEventForArchive(value: unknown): PortableUsageEvent {
-  const event = requirePortableEvent(value);
-  const raw = value as Record<string, unknown>;
-  const optional = [
-    "projectName", "costUSD", "inputCostUSD", "outputCostUSD",
-    "cacheCreationCostUSD", "cacheReadCostUSD", "pricingVersion", "legacyTarget",
-  ].filter((key) => raw[key] !== undefined);
-  const required = [
-    "schemaVersion", "id", "provider", "occurredAt", "model", "sessionKey", "source", "synthetic",
-    "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "reasoningOutputTokens",
-  ];
-  if (!hasExactRecordKeys(raw, [...required, ...optional])
-    || !/^[a-f0-9]{64}$/.test(event.id)
-    || !/^[a-f0-9]{64}$/.test(event.sessionKey)
-    || event.occurredAt !== new Date(event.occurredAt).toISOString()
-    || (event.projectName !== undefined
-      && (!event.projectName.trim() || /[\\/\0\r\n]/.test(event.projectName)))
-    || (event.source === "legacy-reconciliation") !== event.synthetic) {
-    throw new Error("Invalid portable usage event");
-  }
-  return event;
-}
-
-function hasExactRecordKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const keys = Object.keys(value).sort();
-  const canonical = [...expected].sort();
-  return keys.length === canonical.length && keys.every((key, index) => key === canonical[index]);
-}
-
-function sanitizeLegacyTarget(value: unknown): PortableLegacyTarget | string {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return "legacyTarget must be an object";
-  }
-  const item = value as Record<string, unknown>;
-  const keys = Object.keys(item);
-  if (keys.length !== LEGACY_TARGET_KEYS.length || keys.some((key) =>
-    !(LEGACY_TARGET_KEYS as readonly string[]).includes(key))) {
-    return "legacyTarget has invalid fields";
-  }
-  for (const field of TOKEN_FIELDS) {
-    if (!isNonNegativeFiniteNumber(item[field])) {
-      return "legacyTarget tokens must be finite and non-negative";
-    }
-  }
-  for (const field of COST_FIELDS) {
-    if (!isNonNegativeFiniteNumber(item[field])) {
-      return "legacyTarget costs must be finite and non-negative";
-    }
-  }
-  return {
-    inputTokens: item.inputTokens as number,
-    outputTokens: item.outputTokens as number,
-    cacheCreationTokens: item.cacheCreationTokens as number,
-    cacheReadTokens: item.cacheReadTokens as number,
-    reasoningOutputTokens: item.reasoningOutputTokens as number,
-    costUSD: item.costUSD as number,
-    inputCostUSD: item.inputCostUSD as number,
-    outputCostUSD: item.outputCostUSD as number,
-    cacheCreationCostUSD: item.cacheCreationCostUSD as number,
-    cacheReadCostUSD: item.cacheReadCostUSD as number,
-  };
-}
-
-function requirePortableEvent(value: unknown): PortableUsageEvent {
-  const result = sanitizePortableEvent(value);
-  if (!result.event) throw new Error(`Invalid portable usage event: ${result.problem}`);
-  return result.event;
-}
-
 function snapshotsToMaps(snapshots: readonly PartitionSnapshot[]): Map<string, Map<string, PortableUsageEvent>> {
   const result = new Map<string, Map<string, PortableUsageEvent>>();
   for (const snapshot of snapshots) {
@@ -1243,40 +1137,6 @@ function serializeEvents(events: Iterable<PortableUsageEvent>): string {
   return `${lines.join("\n")}\n`;
 }
 
-function canonicalSerialize(event: PortableUsageEvent): string {
-  return JSON.stringify(event);
-}
-
-function clonePortableEvent(event: PortableUsageEvent): PortableUsageEvent {
-  return {
-    ...event,
-    ...(event.legacyTarget ? { legacyTarget: { ...event.legacyTarget } } : {}),
-  };
-}
-
-function compareCanonicalEvents(left: PortableUsageEvent, right: PortableUsageEvent): number {
-  return compareOccurredAt(left.occurredAt, right.occurredAt)
-    || compareText(left.id, right.id)
-    || compareText(canonicalSerialize(left), canonicalSerialize(right));
-}
-
-/**
- * Sorting the whole history re-parsed both timestamps on every comparison.
- * Stored timestamps are canonical UTC — sanitizePortableEvent rejects anything
- * that differs from `new Date(value).toISOString()` — so they are fixed-width
- * and compare lexicographically in chronological order. Differing lengths can
- * only come from non-canonical input, which falls back to parsing.
- */
-function compareOccurredAt(left: string, right: string): number {
-  if (left === right) return 0;
-  if (left.length === right.length) return left < right ? -1 : 1;
-  return Date.parse(left) - Date.parse(right);
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 function parseTransaction(value: unknown): PendingTransaction {
   if (!value || typeof value !== "object") throw new Error("invalid transaction");
   const item = value as Record<string, unknown>;
@@ -1327,53 +1187,9 @@ function parseBoundary(value: string, endOfDay: boolean): number | null {
   return isIsoTimestamp(value) ? Date.parse(value) : null;
 }
 
-function isIsoTimestamp(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  const match = ISO_TIMESTAMP.exec(value);
-  if (!match || !Number.isFinite(Date.parse(value))) return false;
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText, , offsetHourText, offsetMinuteText] = match;
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-  const second = Number(secondText);
-  const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText);
-  const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText);
-  return month >= 1 && month <= 12
-    && day >= 1 && day <= daysInMonth(year, month)
-    && hour <= 23
-    && minute <= 59
-    && second <= 59
-    && offsetHour <= 23
-    && offsetMinute <= 59;
-}
-
-function daysInMonth(year: number, month: number): number {
-  if (month === 2) return isLeapYear(year) ? 29 : 28;
-  return [4, 6, 9, 11].includes(month) ? 30 : 31;
-}
-
-function isLeapYear(year: number): boolean {
-  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-}
-
 function isValidMonth(month: string): boolean {
   const monthNumber = Number(month.slice(5));
   return monthNumber >= 1 && monthNumber <= 12;
-}
-
-function monthKey(date: Date): string {
-  return date.toISOString().slice(0, 7);
-}
-
-/**
- * The month of a stored timestamp is its first seven characters, because
- * canonical UTC is enforced on write. Building a Date and formatting a full ISO
- * string just to slice it off ran once per event in several hot loops.
- */
-function monthKeyOf(occurredAt: string): string {
-  return occurredAt.endsWith("Z") ? occurredAt.slice(0, 7) : monthKey(new Date(occurredAt));
 }
 
 function temporaryPath(target: string): string {
@@ -1387,14 +1203,6 @@ function sha256(value: string | Uint8Array): string {
 function canonicalPath(filePath: string): string {
   const resolved = path.resolve(filePath);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function isNonNegativeFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function isMissingFile(error: unknown): boolean {

@@ -151,7 +151,7 @@ describe("portable usage ingestion", () => {
     const readClaude = vi.fn(async () => [claude({ costUSD: undefined })]);
     const base = { store, statePath, claudeRefs: [ref], codexRefs: [], readClaude };
     await ingestPortableUsage(base);
-    const enrichCosts = vi.fn(async (events: readonly import("../src/portable/types").PortableUsageEvent[]) => events);
+    const enrichCosts = vi.fn(async (events: readonly import("../src/portable/types").PortableUsageEvent[]) => [...events]);
 
     await ingestPortableUsage({ ...base, enrichCosts, costRetryIntervalMs: 0 });
     await ingestPortableUsage({ ...base, enrichCosts, costRetryIntervalMs: 0 });

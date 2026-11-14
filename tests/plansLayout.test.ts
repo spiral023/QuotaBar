@@ -1,8 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
+import { rendererStyles } from "./helpers/rendererStyles";
 import { describe, expect, it } from "vitest";
 
-const styles = () => fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "styles.css"), "utf8");
+const styles = () => rendererStyles();
 
 describe("plans layout", () => {
   it("stacks start and end date fields in compact view", () => {

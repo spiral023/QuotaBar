@@ -1,3 +1,4 @@
+vi.mock("../src/main/rendererSecurity", async () => ({ rendererIpc: (await import("electron")).ipcMain, hardenRendererWindow: vi.fn() }));
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -35,9 +36,9 @@ vi.mock("electron", () => {
       relaunch: vi.fn(),
       exit: vi.fn(),
     },
-    BrowserWindow: class {},
+    BrowserWindow: class { },
     screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }) },
-    Tray: class {},
+    Tray: class { },
     clipboard: { writeText: vi.fn() },
     shell: { openPath: vi.fn(), openExternal: vi.fn() },
     dialog: {
@@ -107,7 +108,7 @@ describe("analytics summary worker request", () => {
 });
 
 describe("windowBudget:get provider inputs", () => {
-  function budgetHandlerFor(runWorker: ReturnType<typeof vi.fn>): {
+  function budgetHandlerFor(runWorker: ReturnType<typeof vi.fn<(data: Record<string, unknown>) => Promise<unknown>>>): {
     controller: DetailsWindowController;
     invoke: () => Promise<unknown>;
   } {
@@ -358,7 +359,7 @@ describe("portable analytics readiness", () => {
 
 describe("DetailsWindowController system IPC", () => {
   it("keeps archive operations separate from terminal restart state", async () => {
-    const source = await fs.readFile(path.resolve("src/main/detailsWindow.ts"), "utf8");
+    const source = await fs.readFile(path.resolve("src/main/systemIpc.ts"), "utf8");
 
     expect(source).toContain('let archiveOperation: "export" | "import" | null = null;');
     expect(source).toContain('let portableImportRestart: "pending" | "exiting" | null = null;');

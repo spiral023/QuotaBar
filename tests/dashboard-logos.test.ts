@@ -1,3 +1,4 @@
+import { rendererStyles } from "./helpers/rendererStyles";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -29,7 +30,7 @@ describe("dashboard provider logos", () => {
   });
 
   it("keeps the Claude logo on a neutral background for contrast", () => {
-    const css = fs.readFileSync(path.join(repoRoot, "src", "renderer", "styles.css"), "utf8");
+    const css = rendererStyles();
     const claudeRule = cssRule(css, ".prov-icon.icon-claude");
 
     expect(claudeRule).toContain("rgba(255,255,255");

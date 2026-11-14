@@ -22,11 +22,11 @@ describe("portable renderer preparing behavior", () => {
     });
     h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "app-shell.js"));
     await h.handlers.get("quota:ready-ack")?.({ viewMode: "dashboard" }); await flush();
-    expect(h.document.getElementById("qs-api-cost").textContent).toContain("Preparing data");
+    expect(h.document.requireElementById("qs-api-cost").textContent).toContain("Preparing data");
     expect(h.timers.pendingCount()).toBe(1);
     h.timers.advanceBy(1_000); await flush();
     expect(h.invocations.filter(({ channel, args }) => channel === "analytics:summary" && (args[0] as any)?.costWindow === "30d")).toHaveLength(2);
-    expect(h.document.getElementById("qs-api-cost").textContent).toBe("$5");
+    expect(h.document.requireElementById("qs-api-cost").textContent).toBe("$5");
     expect(h.timers.pendingCount()).toBe(0);
   });
 
@@ -42,26 +42,26 @@ describe("portable renderer preparing behavior", () => {
     expect(h.timers.pendingCount()).toBe(1);
     const thirtyDayPill = h.document.windowPills.find((pill) => pill.dataset.win === "30d")!;
     await thirtyDayPill.emit("click"); await flush();
-    expect(h.document.getElementById("qs-api-cost").textContent).toBe("$30");
+    expect(h.document.requireElementById("qs-api-cost").textContent).toBe("$30");
     const sevenDayCalls = () => h.invocations.filter(({ channel, args }) => channel === "analytics:summary" && (args[0] as any)?.costWindow === "7d").length;
     expect(sevenDayCalls()).toBe(1);
     h.timers.advanceBy(1_000); await flush();
     expect(sevenDayCalls()).toBe(1);
-    expect(h.document.getElementById("qs-api-cost").textContent).toBe("$30");
+    expect(h.document.requireElementById("qs-api-cost").textContent).toBe("$30");
   });
 
   it("retries models after preparing and renders valid days", async () => {
     const h = rendererHarness({ "models:get": [preparing, preparing, { days: [], benchmarks: {}, benchmarksAsOf: "", benchmarkIndexes: {}, pricing: {}, minModelTokenSharePct: 0 }] });
     h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "tabs", "models-calc.js")); h.run(path.join(renderer, "tabs", "models.js"));
     await h.QB.renderModels();
-    expect(h.document.getElementById("models-content").innerHTML).toContain("Preparing data");
+    expect(h.document.requireElementById("models-content").innerHTML).toContain("Preparing data");
     expect(h.timers.pendingCount()).toBe(1);
     await h.QB.renderModels();
     expect(h.calls.filter((call) => call === "models:get")).toHaveLength(2);
     expect(h.timers.pendingCount()).toBe(1);
     h.timers.advanceBy(1_000); await flush();
     expect(h.calls.filter((call) => call === "models:get")).toHaveLength(3);
-    expect(h.document.getElementById("models-content").innerHTML).toContain("MODEL DETAILS");
+    expect(h.document.requireElementById("models-content").innerHTML).toContain("MODEL DETAILS");
     await h.QB.renderModels();
     expect(h.calls.filter((call) => call === "models:get")).toHaveLength(3);
     expect(h.timers.pendingCount()).toBe(0);
@@ -71,12 +71,12 @@ describe("portable renderer preparing behavior", () => {
     const h = rendererHarness({ "reports:get": [{ rows: [] }], "analytics:get": [preparing, analytics, analytics], "windowHistory:get": [preparing, { entries: [], planChanges: [] }] });
     h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "tabs", "analytics.js"));
     await h.QB.renderAnalytics();
-    expect(h.document.getElementById("an-results").innerHTML).toContain("Preparing data");
+    expect(h.document.requireElementById("an-results").innerHTML).toContain("Preparing data");
     expect(h.timers.pendingCount()).toBe(1);
     h.timers.advanceBy(1_000); await flush();
     expect(h.calls.filter((call) => call === "analytics:get")).toHaveLength(2);
-    expect(h.document.getElementById("an-results").innerHTML).toContain("USAGE BREAKDOWN");
-    expect(h.document.getElementById("an-wh-note").textContent).toContain("Preparing data");
+    expect(h.document.requireElementById("an-results").innerHTML).toContain("USAGE BREAKDOWN");
+    expect(h.document.requireElementById("an-wh-note").textContent).toContain("Preparing data");
     expect(h.timers.pendingCount()).toBe(1);
     h.timers.advanceBy(2_000); await flush();
     expect(h.calls.filter((call) => call === "windowHistory:get")).toHaveLength(2);
@@ -89,12 +89,12 @@ describe("portable renderer preparing behavior", () => {
 
     await h.QB.renderHistory();
 
-    expect(h.document.getElementById("history-content").innerHTML).toContain("Preparing data");
+    expect(h.document.requireElementById("history-content").innerHTML).toContain("Preparing data");
     expect(h.document.getElementById("hr-results")).toBeNull();
     expect(h.timers.pendingCount()).toBe(1);
     h.timers.advanceBy(1_000); await flush();
     expect(h.calls.filter((call) => call === "reports:get")).toHaveLength(3);
-    expect(h.document.getElementById("hr-results").innerHTML).toContain("No usage data");
+    expect(h.document.requireElementById("hr-results").innerHTML).toContain("No usage data");
     expect(h.timers.pendingCount()).toBe(0);
   });
 
@@ -104,12 +104,12 @@ describe("portable renderer preparing behavior", () => {
 
     await h.QB.renderHistory();
 
-    expect(h.document.getElementById("hr-results").innerHTML).toContain("Preparing data");
-    expect(h.document.getElementById("hr-results").innerHTML).not.toContain("No usage data");
+    expect(h.document.requireElementById("hr-results").innerHTML).toContain("Preparing data");
+    expect(h.document.requireElementById("hr-results").innerHTML).not.toContain("No usage data");
     expect(h.timers.pendingCount()).toBe(1);
     h.timers.advanceBy(1_000); await flush();
     expect(h.calls.filter((call) => call === "reports:get")).toHaveLength(3);
-    expect(h.document.getElementById("hr-results").innerHTML).toContain("No usage data");
+    expect(h.document.requireElementById("hr-results").innerHTML).toContain("No usage data");
     expect(h.timers.pendingCount()).toBe(0);
   });
 
@@ -119,11 +119,11 @@ describe("portable renderer preparing behavior", () => {
     h.run(path.join(renderer, "shared", "ipc.js")); h.run(path.join(renderer, "tabs", "live.js"));
     const snapshots = [{ provider: "claude", status: "ok", windows: [{ name: "weekly", usedPercent: 10 }], windowBudget: { learning: false, windowsPerWeek: 2, usedWindows: .2, remainingWindows: 1.8 } }];
     h.QB.renderLive(snapshots); await flush();
-    expect(h.document.getElementById("wb-forecast-claude").textContent).toContain("Preparing data");
+    expect(h.document.requireElementById("wb-forecast-claude").textContent).toContain("Preparing data");
     expect(h.timers.pendingCount()).toBe(1);
     h.timers.advanceBy(1_000); await flush();
     expect(h.calls.filter((call) => call === "windowBudget:get")).toHaveLength(2);
-    expect(h.document.getElementById("wb-forecast-claude").innerHTML).toContain("No reliable forecast");
+    expect(h.document.requireElementById("wb-forecast-claude").innerHTML).toContain("No reliable forecast");
     expect(h.timers.pendingCount()).toBe(0);
   });
 
@@ -139,10 +139,10 @@ describe("portable renderer preparing behavior", () => {
     h.QB.renderLive(snapshot("old@example.com", "2026-07-20T00:00:00.000Z")); await flush();
     expect(h.timers.pendingCount()).toBe(1);
     h.QB.renderLive(snapshot("new@example.com", "2026-07-21T00:00:00.000Z")); await flush();
-    const currentMarkup = h.document.getElementById("content").innerHTML;
+    const currentMarkup = h.document.requireElementById("content").innerHTML;
     h.timers.advanceBy(1_000); await flush();
     resolveCurrent(valid); await flush();
-    expect(h.document.getElementById("content").innerHTML).toBe(currentMarkup);
+    expect(h.document.requireElementById("content").innerHTML).toBe(currentMarkup);
     expect(currentMarkup).toContain("new@example.com");
     expect(chartResets).toEqual(["2026-07-21T00:00:00.000Z"]);
     expect(h.timers.pendingCount()).toBe(0);

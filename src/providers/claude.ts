@@ -95,7 +95,7 @@ export function parseRetryAfterMs(header: string | null, now = new Date()): numb
 }
 
 export function normalizeClaudeUsageResponse(input: unknown, identity: { rateLimitTier?: string } = {}): UsageSnapshot {
-  const root = asRecord(input);
+  const root = asRecord(input) ?? {};
   const windows: UsageWindow[] = [];
 
   const fiveHour = asRecord(root.fiveHour ?? root.five_hour);
@@ -111,6 +111,8 @@ export function normalizeClaudeUsageResponse(input: unknown, identity: { rateLim
       windows.push({ name: "credits", label: "Extra usage", usedPercent: Math.min(100, (used / limit) * 100) });
     }
   }
+
+  if (!windows.some(window => window.usedPercent !== undefined)) return errorSnapshot("claude", "Claude usage response format is not supported", "error");
 
   return {
     provider: "claude",
@@ -156,8 +158,8 @@ function toClaudeWindow(window: Record<string, unknown>, name: UsageWindow["name
   };
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
 function numberFrom(value: unknown): number | undefined {

@@ -8,6 +8,8 @@ window.QB = window.QB || {};
 // gemeinsamen globalen Scope kollidieren (sonst SyntaxError beim Laden des
 // nachfolgenden history.js → QB.renderHistory bliebe undefiniert).
 (function () {
+const { _buildHourHeatmap } = QB.createAnalyticsActivity(_pick);
+const { _statTooltip, _activityHeatColor, _cumulativeRoiSeries, _isoWeekStart, _isoWeekNum, _aggregateBuckets, _bucketLabel, _visibleLineDatasets, _weekdayLabel } = QB.analyticsHelpers;
 
 let _lineChart    = null;
 let _donutChart   = null;
@@ -27,32 +29,7 @@ let _whChart      = null;      // Chart-Instanz der 5h-Fenster-Historie
 let _whData       = null;      // { entries, planChanges } (zeitraum-unabhängig gecacht)
 let _whMode       = 'util';    // 'util' | 'used' | 'max'
 let _whGen        = 0;         // Race-Schutz für den asynchron geladenen Verlauf
-let _hourClockResizeObserver = null;
 
-const ACTIVITY_HEAT_LOW = [38, 66, 79];
-const ACTIVITY_HEAT_HIGH = [125, 220, 196];
-
-const KPI_TOOLTIPS = {
-  'Active days': 'Number of days in the selected period with recorded activity, shown against all days in the period.',
-  'Cache hit': 'Share of reusable prompt input served from cache. In All mode this is weighted by provider input volume.',
-  'Avg session': 'Average tracked session length for the selected provider filter.',
-  'Sessions': 'Total number of tracked sessions in the selected period.',
-  'Ses/day': 'Average sessions per active day, excluding days without activity.',
-  'Total hours': 'Total tracked active session time in the selected period.',
-  'API cost': 'Estimated API-equivalent usage cost for the selected provider filter and period.',
-  'ROI': 'API-equivalent factor: estimated API cost divided by subscription cost for the selected provider filter.',
-  'Tokens': 'Input plus output tokens for the selected provider filter, excluding cache-read tokens.',
-  '$/1k output': 'API cost divided by output tokens, normalized to 1,000 output tokens.',
-  '$/hr (API)': 'Estimated API-equivalent cost divided by tracked active hours.',
-  '$/hr (sub)': 'Subscription cost allocated across tracked active hours.',
-  '$/session': 'Estimated API-equivalent cost divided by tracked sessions.',
-  'Out tok/hr': 'Output tokens generated per tracked active hour.',
-  'Tok/session': 'Input plus output tokens divided by tracked sessions.',
-};
-
-function _statTooltip(label) {
-  return KPI_TOOLTIPS[label] || '';
-}
 
 // Wählt aus einem ProviderTriple ({claude, codex, all}) die Sicht des aktuellen
 // globalen Toggles; fällt auf die "all"-Sicht bzw. den Fallback zurück.
@@ -73,15 +50,6 @@ function _applyProvider() {
   _buildTopDays(_lastData);
   _buildFiveHourPressure(_lastData);
   _buildCostEfficiency(_lastData);
-}
-
-function _activityHeatColor(t, boost = 0) {
-  const v = Math.max(0, Math.min(1, t || 0));
-  const r = Math.round(ACTIVITY_HEAT_LOW[0] + (ACTIVITY_HEAT_HIGH[0] - ACTIVITY_HEAT_LOW[0]) * v);
-  const g = Math.round(ACTIVITY_HEAT_LOW[1] + (ACTIVITY_HEAT_HIGH[1] - ACTIVITY_HEAT_LOW[1]) * v);
-  const b = Math.round(ACTIVITY_HEAT_LOW[2] + (ACTIVITY_HEAT_HIGH[2] - ACTIVITY_HEAT_LOW[2]) * v);
-  const a = Math.min(1, 0.42 + 0.58 * v + boost);
-  return `rgba(${r},${g},${b},${a})`;
 }
 
 const PRESETS = [
@@ -465,71 +433,6 @@ function _updateSessionTimeTitle() {
   if (el) el.textContent = _sessionTimeTitle();
 }
 
-// Laufender ("kumulativer") ROI je Anbieter: an jedem Tag das Verhältnis der bis
-// dahin aufgelaufenen API-Kosten zu den bis dahin aufgelaufenen Abokosten (USD).
-// Liefert null, solange keine Abo-Baseline existiert (kein Plan ⇒ Lücke).
-function _cumulativeRoiSeries(buckets, costKey, subKey) {
-  let cumCost = 0, cumSub = 0;
-  return buckets.map(b => {
-    cumCost += b[costKey] ?? 0;
-    cumSub  += b[subKey]  ?? 0;
-    return cumSub > 0 ? cumCost / cumSub : null;
-  });
-}
-
-// ISO-Wochenanfang (Montag) als YYYY-MM-DD.
-function _isoWeekStart(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00Z');
-  const day = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() - (day - 1));
-  return d.toISOString().slice(0, 10);
-}
-
-function _isoWeekNum(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00Z');
-  const day = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil(((d - yearStart) / 864e5 + 1) / 7);
-}
-
-// Aggregiert Tages-Buckets zu Tag/Woche/Monat. Jeder Bucket trägt die
-// aufsummierten USD-Werte sowie die Anzahl enthaltener Tage (days) – so lässt
-// sich daraus sowohl der Tagesdurchschnitt (Kosten) als auch der laufende ROI
-// (über die Summen) bilden.
-function _aggregateBuckets(daily, agg) {
-  if (agg === 'daily') {
-    return daily.map(b => ({
-      date: b.date, days: 1,
-      claudeUSD: b.claudeUSD || 0, codexUSD: b.codexUSD || 0,
-      claudeSubUSD: b.claudeSubUSD || 0, codexSubUSD: b.codexSubUSD || 0,
-    }));
-  }
-  const keyOf = agg === 'weekly'
-    ? (b) => _isoWeekStart(b.date)
-    : (b) => b.date.slice(0, 7) + '-01';
-  const map = new Map();
-  for (const b of daily) {
-    const key = keyOf(b);
-    let e = map.get(key);
-    if (!e) { e = { date: key, days: 0, claudeUSD: 0, codexUSD: 0, claudeSubUSD: 0, codexSubUSD: 0 }; map.set(key, e); }
-    e.claudeUSD    += b.claudeUSD    || 0;
-    e.codexUSD     += b.codexUSD     || 0;
-    e.claudeSubUSD += b.claudeSubUSD || 0;
-    e.codexSubUSD  += b.codexSubUSD  || 0;
-    e.days += 1;
-  }
-  return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
-}
-
-function _bucketLabel(dateStr, agg) {
-  if (agg === 'hourly') return dateStr.slice(11, 16); // "HH:00"
-  const d = new Date(dateStr + 'T00:00:00Z');
-  if (agg === 'monthly') return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' });
-  if (agg === 'weekly')  return 'W' + _isoWeekNum(dateStr);
-  return d.toLocaleDateString('en-US', { day: '2-digit', month: 'short', timeZone: 'UTC' });
-}
-
 async function _ensureHourlyBuckets() {
   if (_hourlyBuckets !== null) return;
   try {
@@ -656,12 +559,6 @@ function _buildSessionTimeChart(data) {
   _renderSessionTimeLegend(visibleDatasets);
   _updateSessionTimeTitle();
   _sessionTimeChart = QB.charts.createLine(ctx, labels, visibleDatasets, { yFormat: 'minutes' });
-}
-
-function _visibleLineDatasets(provider, datasets) {
-  if (provider === 'claude') return datasets.filter(d => d.label === 'Claude');
-  if (provider === 'codex') return datasets.filter(d => d.label === 'Codex');
-  return datasets;
 }
 
 function _renderLineLegend(datasets) {
@@ -890,180 +787,6 @@ function _bindAnalyticsStatTooltips(root) {
   });
 }
 
-function _buildHourHeatmap(data) {
-  const el = document.getElementById('an-hour-heatmap');
-  if (!el) return;
-  const buckets = _pick(data.hourHeatmap, []);
-  if (!buckets.length || buckets.every(b => b.count === 0)) {
-    el.innerHTML = '<div style="color:var(--t400);font-size:10px;padding:4px 0">No data</div>';
-    return;
-  }
-
-  // Auf volle 0..23-Skala normalisieren (fehlende Stunden ⇒ 0).
-  const byHour = Array.from({ length: 24 }, (_, h) => {
-    const b = buckets.find(x => x.hour === h);
-    return { hour: h, count: b ? b.count : 0, pct: b ? b.pct : 0 };
-  });
-  const peak = byHour.reduce((m, b) => (b.count > m.count ? b : m), byHour[0]);
-  const totalCount = byHour.reduce((s, b) => s + b.count, 0);
-
-  el.innerHTML = `
-    <div class="an-clock">
-      <canvas class="an-clock-canvas"></canvas>
-      <div class="an-clock-tip"></div>
-      <div class="an-clock-cap">Peak hour <b>${String(peak.hour).padStart(2, '0')}:00</b> · Σ ${totalCount} activities</div>
-    </div>`;
-
-  _initHourClock(
-    el.querySelector('.an-clock'),
-    el.querySelector('.an-clock-canvas'),
-    el.querySelector('.an-clock-tip'),
-    byHour,
-    totalCount,
-  );
-}
-
-// Zeichnet die 24h-Aktivitätsuhr auf Canvas: 00 oben, 06 rechts, 12 unten,
-// 18 links (im Uhrzeigersinn). Jede Stunde ist ein Speichen-Segment; ein
-// dezenter Track in voller Länge, darüber ein Wert-Balken (Glut→Flamme nach
-// Auslastung). Einblend-Animation, Hover-Highlight + Tooltip, ResizeObserver.
-function _initHourClock(wrap, canvas, tip, byHour, totalCount) {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  const dpr = window.devicePixelRatio || 1;
-  const seg = (Math.PI * 2) / 24;
-  const gap = seg * 0.16;
-  let size = 0, cx = 0, cy = 0, innerR = 0, outerR = 0;
-  let progress = 0;
-  let hoverHour = -1;
-
-  function layout() {
-    const w = wrap.clientWidth || canvas.clientWidth || 240;
-    size = Math.max(180, Math.min(280, Math.floor(w)));
-    canvas.width = Math.round(size * dpr);
-    canvas.height = Math.round(size * dpr);
-    canvas.style.width = size + 'px';
-    canvas.style.height = size + 'px';
-    cx = cy = size / 2;
-    outerR = size / 2 - 4;
-    innerR = outerR * 0.34;
-  }
-
-  function wedge(r0, r1, a0, a1) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r1, a0, a1);
-    ctx.arc(cx, cy, r0, a1, a0, true);
-    ctx.closePath();
-  }
-
-  function draw() {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, size, size);
-
-    // Feiner Innenring um die Stundenlabels.
-    ctx.beginPath();
-    ctx.arc(cx, cy, innerR - 3, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    ctx.lineJoin = 'round';
-    for (let h = 0; h < 24; h++) {
-      const b = byHour[h];
-      const center = -Math.PI / 2 + h * seg;   // 0 = oben, im Uhrzeigersinn
-      const a0 = center - seg / 2 + gap / 2;
-      const a1 = center + seg / 2 - gap / 2;
-      const hovered = h === hoverHour;
-
-      // Track (volle Länge, dezent).
-      wedge(innerR, outerR, a0, a1);
-      ctx.fillStyle = hovered ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.045)';
-      ctx.fill();
-
-      // Wert-Balken.
-      const r1 = innerR + b.pct * progress * (outerR - innerR);
-      if (r1 > innerR + 0.5) {
-        wedge(innerR, r1, a0, a1);
-        ctx.fillStyle = _activityHeatColor(b.pct, hovered ? 0.18 : 0);
-        ctx.fill();
-        if (hovered) {
-          ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-        }
-      }
-    }
-
-    // Stundenlabels an den Kardinalpunkten.
-    ctx.fillStyle = '#7e92a4';
-    ctx.font = '600 9px "IBM Plex Mono", monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const rl = innerR * 0.6;
-    [[0, 0, -1], [6, 1, 0], [12, 0, 1], [18, -1, 0]].forEach(([hr, dx, dy]) => {
-      ctx.fillText(String(hr).padStart(2, '0'), cx + dx * rl, cy + dy * rl);
-    });
-  }
-
-  function animate() {
-    const step = () => {
-      progress += (1 - progress) * 0.16;          // ease-out
-      if (progress > 0.995) progress = 1;
-      draw();
-      if (progress < 1) requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  }
-
-  canvas.addEventListener('mousemove', (e) => {
-    const cRect = canvas.getBoundingClientRect();
-    const x = e.clientX - cRect.left - cx;
-    const y = e.clientY - cRect.top - cy;
-    const dist = Math.hypot(x, y);
-    if (dist < innerR - 2 || dist > outerR + 4) {
-      if (hoverHour !== -1) { hoverHour = -1; draw(); }
-      tip.classList.remove('show');
-      return;
-    }
-    let ang = (Math.atan2(y, x) + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2); // 0 = oben
-    const h = Math.floor(ang / seg + 0.5) % 24;
-    if (h !== hoverHour) { hoverHour = h; draw(); }
-
-    const b = byHour[h];
-    const share = totalCount > 0 ? (b.count / totalCount) * 100 : 0;
-    tip.innerHTML = `<b>${String(h).padStart(2, '0')}:00</b> · ${b.count} act.`
-      + `<br><span class="an-clock-tip-sub">${share.toFixed(0)}% of activity</span>`;
-    tip.classList.add('show');
-
-    // Tooltip relativ zum .an-clock-Wrap positionieren.
-    const wRect = wrap.getBoundingClientRect();
-    const tw = tip.offsetWidth, th = tip.offsetHeight;
-    let px = e.clientX - wRect.left + 12;
-    let py = e.clientY - wRect.top - th - 8;
-    if (px + tw > wrap.clientWidth) px = e.clientX - wRect.left - tw - 12;
-    if (py < 0) py = e.clientY - wRect.top + 14;
-    tip.style.left = px + 'px';
-    tip.style.top = py + 'px';
-  });
-
-  canvas.addEventListener('mouseleave', () => {
-    hoverHour = -1; draw();
-    tip.classList.remove('show');
-  });
-
-  layout();
-  draw();
-  animate();
-
-  if (typeof ResizeObserver !== 'undefined') {
-    if (_hourClockResizeObserver) _hourClockResizeObserver.disconnect();
-    const ro = new ResizeObserver(() => { layout(); draw(); });
-    ro.observe(wrap);
-    _hourClockResizeObserver = ro;
-  }
-}
-
 function _buildWeekdayBars(data) {
   const el = document.getElementById('an-weekday-bars');
   if (!el) return;
@@ -1077,11 +800,6 @@ function _buildWeekdayBars(data) {
       <span class="an-wkday-pct">${(d.pct * 100).toFixed(0)}%</span>
     </div>
   `).join('');
-}
-
-function _weekdayLabel(d) {
-  const labels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return labels[d.day] ?? d.label;
 }
 
 function _buildTopDays(data) {

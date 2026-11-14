@@ -11,6 +11,7 @@ export interface WorkerLike {
   on(event: "exit", listener: (code: number) => void): unknown;
   postMessage(value: unknown): void;
   unref(): void;
+  terminate?(): unknown;
 }
 
 interface WorkerResponse {
@@ -23,6 +24,7 @@ interface WorkerResponse {
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 export class PersistentWorkerClient {
@@ -30,17 +32,27 @@ export class PersistentWorkerClient {
   private nextId = 1;
   private readonly pending = new Map<number, PendingRequest>();
 
-  constructor(private readonly createWorker: () => WorkerLike) {}
+  constructor(
+    private readonly createWorker: () => WorkerLike,
+    private readonly options = { timeoutMs: 60_000, maxPending: 16 },
+  ) {}
 
   request(payload: Record<string, unknown>): Promise<unknown> {
+    if (this.pending.size >= this.options.maxPending) return Promise.reject(new Error("Analytics worker is busy"));
     const worker = this.ensureWorker();
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.failAll(worker, new Error("Analytics worker request timed out"));
+        void worker.terminate?.();
+      }, this.options.timeoutMs);
+      timer.unref();
+      this.pending.set(id, { resolve, reject, timer });
       try {
-        worker.postMessage({ id, ...payload });
+        worker.postMessage({ ...payload, id });
       } catch (error) {
         this.pending.delete(id);
+        clearTimeout(timer);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -59,10 +71,13 @@ export class PersistentWorkerClient {
 
   private handleMessage(worker: WorkerLike, value: unknown): void {
     if (this.worker !== worker) return;
+    if (!value || typeof value !== "object" || !("id" in value) || !("ok" in value)
+      || typeof value.id !== "number" || typeof value.ok !== "boolean") return;
     const msg = value as WorkerResponse;
     const entry = this.pending.get(msg.id);
     if (!entry) return;
     this.pending.delete(msg.id);
+    clearTimeout(entry.timer);
     if (msg.ok) entry.resolve(msg.result);
     else entry.reject(new Error(msg.error ?? "Worker request failed"));
   }
@@ -73,6 +88,9 @@ export class PersistentWorkerClient {
     this.worker = null;
     const entries = [...this.pending.values()];
     this.pending.clear();
-    for (const entry of entries) entry.reject(error);
+    for (const entry of entries) {
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
   }
 }

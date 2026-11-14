@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PersistentWorkerClient, type WorkerLike } from "../src/main/workerClient";
 
 class FakeWorker extends EventEmitter implements WorkerLike {
@@ -110,5 +110,33 @@ describe("PersistentWorkerClient", () => {
     const { client, workers } = createClient();
     void client.request({ task: "summary" }).catch(() => {});
     expect(workers[0].unrefCalled).toBe(true);
+  });
+
+  it("rejects silent workers after a deadline and permits a fresh worker", async () => {
+    vi.useFakeTimers();
+    try {
+      const workers: FakeWorker[] = [];
+      const client = new PersistentWorkerClient(() => {
+        const worker = new FakeWorker(); workers.push(worker); return worker;
+      }, { timeoutMs: 100, maxPending: 2 });
+      const first = client.request({ task: "summary" });
+      const assertion = expect(first).rejects.toThrow("timed out");
+      await vi.advanceTimersByTimeAsync(100);
+      await assertion;
+      const next = client.request({ task: "summary" });
+      workers[1].emit("message", { id: workers[1].posted[0].id, ok: true, result: 1 });
+      await expect(next).resolves.toBe(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("limits pending requests and ignores malformed responses", async () => {
+    const worker = new FakeWorker();
+    const client = new PersistentWorkerClient(() => worker, { timeoutMs: 1000, maxPending: 1 });
+    const first = client.request({ task: "summary", id: 999 });
+    expect(worker.posted[0].id).toBe(1);
+    worker.emit("message", null);
+    await expect(client.request({ task: "summary" })).rejects.toThrow("busy");
+    worker.emit("message", { id: 1, ok: true, result: "ok" });
+    await expect(first).resolves.toBe("ok");
   });
 });

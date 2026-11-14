@@ -16,10 +16,25 @@ import { buildModelsData, type ModelsData } from "./modelsData";
 import { dailySubCostUSD, periodSubCostUSD, planChangePoints, type PlanChangePoint } from "../pricing/plan-cost";
 import { makeFxLookup } from "../pricing/fx-fetcher";
 import { buildWeeklyProfile, computeWeeklyForecast, type WeeklyForecastResult } from "./weeklyForecast";
-import { insertBreaks, withBudgetMarkers, type WeeklySeriesRequest, type WindowBudgetSeries } from "./windowBudgetSeries";
-import { buildWindowHistory, buildFiveHourPressure, type HistoryObservation, type WindowHistoryEntry, type PressureDist } from "../usage/windowHistory";
+import {
+  insertBreaks,
+  withBudgetMarkers,
+  type WeeklySeriesRequest,
+  type WindowBudgetSeries,
+} from "./windowBudgetSeries";
+import {
+  buildWindowHistory,
+  buildFiveHourPressure,
+  type HistoryObservation,
+  type WindowHistoryEntry,
+  type PressureDist,
+} from "../usage/windowHistory";
 import type { UsagePace } from "../usage/usagePace";
-import { buildCurrentWindowUsage, type CurrentWindowObservation, type CurrentWindowUsage } from "../usage/windowBudgetRollup";
+import {
+  buildCurrentWindowUsage,
+  type CurrentWindowObservation,
+  type CurrentWindowUsage,
+} from "../usage/windowBudgetRollup";
 import { resetsAtChanged } from "../usage/windowRatio";
 import { getPortableQuotaDir } from "../config/paths";
 import { readQuotaSnapshots } from "../portable/quotaStore";
@@ -120,7 +135,7 @@ export interface WindowHistoryData {
   entries: WindowHistoryEntry[];
 }
 
-type WorkerInput = AnalyticsTaskInput | ModelsTaskInput | WindowBudgetTaskInput | WindowHistoryTaskInput | PrewarmTaskInput;
+export type WorkerInput = AnalyticsTaskInput | ModelsTaskInput | WindowBudgetTaskInput | WindowHistoryTaskInput | PrewarmTaskInput;
 
 // Must be the same instance the report layer falls back to, so the worker keeps
 // one partition cache instead of two.
@@ -152,16 +167,24 @@ function combinePressure(a: PressureDist, b: PressureDist): PressureDist {
   };
 }
 
+export type WorkerResult<T extends WorkerInput> =
+  T extends { task: "summary" } ? AnalyticsSummary :
+  T extends { task: "get" } ? AnalyticsData :
+  T extends { task: "models" } ? ModelsData :
+  T extends { task: "windowBudget" } ? WindowBudgetData :
+  T extends { task: "windowHistory" } ? WindowHistoryData : { prewarmed: true };
+
+export function runAnalyticsTask<T extends WorkerInput>(input: T, deps?: AnalyticsWorkerDependencies): Promise<WorkerResult<T>>;
 export async function runAnalyticsTask(
   input: WorkerInput,
   deps: AnalyticsWorkerDependencies = {},
-): Promise<AnalyticsSummary | AnalyticsData | ModelsData | WindowBudgetData | WindowHistoryData> {
+): Promise<AnalyticsSummary | AnalyticsData | ModelsData | WindowBudgetData | WindowHistoryData | { prewarmed: true }> {
   if (input.task === "prewarm") {
     await Promise.all([
       getUsageStore(deps).read(input.usageRange),
       (deps.readQuotaSnapshots ?? readQuotaSnapshots)(getPortableQuotaDir(), input.quotaRange),
     ]);
-    return { prewarmed: true } as unknown as AnalyticsSummary;
+    return { prewarmed: true };
   }
   if (input.task === "models") {
     return buildModelsData({ settings: reportSettings(input.settings), usageStore: getUsageStore(deps), usageEvents: deps.usageEvents, usageRange: input.usageRange });
@@ -226,7 +249,7 @@ export async function runAnalyticsTask(
   if (windowDays === 0) {
     const buckets = [...claudeReport.rows, ...codexReport.rows].map(r => r.bucket).sort();
     windowDays = buckets.length > 0
-      ? Math.ceil((Date.now() - new Date(buckets[0]).getTime()) / (24 * 3600 * 1000)) + 1
+      ? Math.ceil((input.nowMs - new Date(buckets[0]).getTime()) / (24 * 3600 * 1000)) + 1
       : 30;
   }
 
@@ -235,7 +258,7 @@ export async function runAnalyticsTask(
 
   // Real plan-based subscription costs (time-varying), summed over the period.
   const fx = makeFxLookup(input.eurUsdRates ?? {}, input.fxEstimated ?? false);
-  const untilDay = input.until ?? localDayKey(new Date(Date.now()).toISOString());
+  const untilDay = input.until ?? localDayKey(new Date(input.periodEndMs ?? input.nowMs).toISOString());
   const claudePeriodSub  = periodSubCostUSD(input.settings.plans, "claude", input.since, untilDay, fx);
   const codexPeriodSub   = periodSubCostUSD(input.settings.plans, "codex",  input.since, untilDay, fx);
   const combinedPeriodSub = claudePeriodSub + codexPeriodSub;

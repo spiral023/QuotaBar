@@ -49,7 +49,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/**/*.ts", "tests/**/*.ts", "*.config.ts"],
+    files: ["src/**/*.ts", "tests/**/*.ts", "*.config.{ts,mts}"],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: {
       globals: {

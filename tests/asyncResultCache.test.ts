@@ -41,4 +41,25 @@ describe("AsyncResultCache", () => {
 
     expect(await cache.get("k", async () => value)).toBe(2);
   });
+
+  it("evicts the least recently used result when capacity is reached", async () => {
+    const cache = new AsyncResultCache<number>(2);
+    await cache.get("a", async () => 1);
+    await cache.get("b", async () => 2);
+    await cache.get("a", async () => 9);
+    await cache.get("c", async () => 3);
+    expect(await cache.get("a", async () => 9)).toBe(1);
+    expect(await cache.get("b", async () => 9)).toBe(9);
+  });
+
+  it("does not evict a replacement when an earlier generation rejects", async () => {
+    const cache = new AsyncResultCache<number>();
+    let reject!: (error: Error) => void;
+    const old = cache.get("a", () => new Promise<number>((_, fail) => { reject = fail; }));
+    cache.clear();
+    await cache.get("a", async () => 2);
+    reject(new Error("old failure"));
+    await expect(old).rejects.toThrow("old failure");
+    expect(await cache.get("a", async () => 3)).toBe(2);
+  });
 });

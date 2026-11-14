@@ -88,6 +88,11 @@ export class FakeDocument {
     this.body.innerHTML = body;
     this.windowPills = this.querySelectorAll("#window-pill-grid .pill");
   }
+  requireElementById(id: string): FakeElement {
+    const element = this.getElementById(id);
+    if (!element) throw new Error(`Missing fixture element: ${id}`);
+    return element;
+  }
   getElementById(id: string) {
     return this.descendants(this.body).find((element) => element.id === id) ?? null;
   }
@@ -165,7 +170,7 @@ export class FakeDocument {
     if (!parent) return;
     parent.children = parent.children.filter((child) => child !== element);
     element.parentNode = null;
-    if (this.activeElement === element || this.descendants(element).includes(this.activeElement)) this.activeElement = null;
+    if (this.activeElement === element || (this.activeElement !== null && this.descendants(element).includes(this.activeElement))) this.activeElement = null;
   }
   replaceChildrenFromHtml(owner: FakeElement, html: string) {
     for (const child of [...owner.children]) this.remove(child);
@@ -249,7 +254,7 @@ export function rendererHarness(responses: Record<string, unknown[]>) {
     setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout, setInterval: () => 1, clearInterval() {},
     localStorage: { getItem: () => null, setItem() {} }, ResizeObserver: class { observe() {} disconnect() {} },
   });
-  return { context, QB, document, calls, invocations, handlers, timers, run(file: string) { const code = fs.readFileSync(file, "utf8"); vm.runInContext(code, context); } };
+  return { context, QB, document, calls, invocations, handlers, timers, run(file: string) { const dependencies = file.replaceAll("\\", "/").endsWith("tabs/analytics.js") ? ["analytics-helpers.js", "analytics-activity.js"] : file.replaceAll("\\", "/").endsWith("tabs/system.js") ? ["system-view.js"] : []; for (const dependency of dependencies) vm.runInContext(fs.readFileSync(file.replace(/[^/\\]+$/, dependency), "utf8"), context); const code = fs.readFileSync(file, "utf8"); vm.runInContext(code, context); } };
 }
 
 export async function flush(): Promise<void> { await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => setImmediate(resolve)); }
