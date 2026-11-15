@@ -3,6 +3,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     globals: true,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary", "html"],
+      include: ["src/auth/**/*.ts", "src/portable/**/*.ts", "src/main/updateState.ts", "src/main/updater.ts", "src/main/analyticsActivity.ts"],
+    },
     pool: "vmForks",
     // Several portable-store tests spawn real processes or build large fixtures
     // and legitimately take 3-4.5s. Under the default 5s budget they passed in

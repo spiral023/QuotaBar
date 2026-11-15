@@ -11,6 +11,7 @@ import { saveWindowHistoryFile } from "../src/usage/windowHistoryStore";
 import { saveWindowRatioFile } from "../src/usage/windowRatioStore";
 import { emptyRatioFile } from "../src/usage/windowRatio";
 import { NotificationLog } from "../src/main/notificationLog";
+import { AsyncLogWriter } from "../src/main/asyncLogWriter";
 import { saveNotificationStateFile } from "../src/main/notifications";
 
 const roots: string[] = [];
@@ -20,6 +21,25 @@ afterEach(async () => {
 });
 
 describe("managed app-data writer lock", () => {
+  it("keeps queued application logging outside an active archive snapshot", async () => {
+    const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "qb-app-log-lock-"));
+    roots.push(appDir);
+    let release!: () => void;
+    let acquired!: () => void;
+    const ready = new Promise<void>((resolve) => { acquired = resolve; });
+    const holder = withPortableRootLock(appDir, async () => { acquired(); await new Promise<void>((resolve) => { release = resolve; }); });
+    await ready;
+    const writer = new AsyncLogWriter();
+    writer.write(path.join(appDir, "quotabar.log"), "synthetic diagnostic\n");
+    let completed = false;
+    const writing = writer.flush().then(() => { completed = true; });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      expect(completed).toBe(false);
+    } finally { release(); await Promise.all([holder, writing]); }
+    expect(await fs.readFile(path.join(appDir, "quotabar.log"), "utf8")).toBe("synthetic diagnostic\n");
+  });
+
   it("blocks every asynchronous root-state writer while the archive app lock is held", async () => {
     const writers = [
       async (appDir: string) => saveSettings(defaultSettings, { appDir }),

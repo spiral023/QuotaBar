@@ -192,8 +192,10 @@ Run `node tools/benchmark-rollups.cjs` after building, with the declared Node
 runtime. It compares raw, first-cache and fresh-process cached daily reports on
 100,000 synthetic events, checks numerical equivalence at six decimal places,
 and asserts zero JSONL reads on cache hits. It cleans its own disposable home.
-The first read after a source change still rebuilds the entire daily snapshot;
-this is not an incremental per-partition materialized view.
+Tracked source changes rebuild only affected UTC-month contributions, then
+merge local-day rows. Untracked external changes rebuild the full snapshot with
+global ID deduplication. Run `node tools/benchmark-incremental-rollups.cjs` to
+measure a daily read after one changed month with canonical-result verification.
 
 ### Real installed auto-update test
 
@@ -255,3 +257,64 @@ This run's local evidence is `package-output/update-smoke/results-1794671170124/
 These disposable files are ignored by Git. No public release was published and
 no host installation was replaced. GitHub/CDN delivery, signing and SmartScreen
 remain outside this isolated validation.
+
+
+### Renderer and module maintenance — 2026-11-15
+
+The real Electron smoke now includes reverse-order analytics responses,
+invalidation during an outstanding request, literal markup in update errors and
+versions, distinct sub-dollar cost-axis labels, and retained settings drafts.
+The tests intercept only fixture analytics responses; provider polling remains
+disabled. Screenshots include `analytics-request-order.png` and
+`system-literal-update-error.png` under `package-output/smoke/`.
+
+`npm run typecheck` checks application/tests plus the renderer IPC helper and
+analytics data loader with `checkJs`. Compile-only IPC checks reject unknown
+channels, invalid date arguments and nonexistent response fields. Other legacy
+renderer scripts remain JavaScript and are covered by unit/live tests.
+
+`npm run test:coverage` produces text, HTML and JSON summaries in ignored
+`coverage/`. Its scope is authentication, portable persistence/archive modules,
+updater orchestration/state and shared activity metrics; it is not whole-app or
+real-Electron coverage. Token refresh tests mock persistence and HTTP. Updater
+unit tests mock Electron/updater events and timers; installed acceptance remains
+the separate Windows Sandbox test above.
+
+
+Final validation on 2026-11-15: clean npm ci, strict application/test/renderer
+checks, ESLint, 1,545 passing tests (seven child-fixture placeholders skipped),
+coverage with 92.32% lines and 83.38% branches in the selected scope, build and
+isolated Electron 45.3.2 smoke all passed. The latest renderer regressions include
+active-view reload after settings invalidation and rendering prefetched replacement
+data on tab reentry. NSIS, portable EXE and ZIP builds succeeded. Both npm audits
+reported zero known vulnerabilities.
+
+The installed Sandbox test passed installation, bad SHA-512 rejection,
+valid retry/download, the real install action, automatic relaunch and retained
+settings/usage. Its two fixture installers contain 183 runtime files matching the
+current build/source, allowing text line-ending normalization. Public delivery,
+code signing and SmartScreen reputation remain outside this fixture test.
+
+### Final review verification — 2026-11-15
+
+After the final review corrections, `npm run verify` passed on Node 22.23.4/npm
+11.21.2: application/test/renderer typechecks, lint, 1,556 tests and build. Seven
+child-fixture placeholders remain intentionally skipped. Coverage passed with
+92.37% lines and 83.57% branches in the selected scope described above. Both full
+and production-only npm audits reported zero known vulnerabilities.
+
+The real Electron smoke passed all seven tabs at both window sizes, compact and
+onboarding views, request-order/cache-invalidation regressions, literal update
+markup and retained settings drafts. NSIS, portable EXE and ZIP packaging passed.
+All runtime source modules are below 1,000 lines; the largest is 988 lines.
+
+The final installed Sandbox acceptance also passed checksum rejection, retry,
+download, installation, automatic relaunch, retained settings and canonical usage,
+and the final no-newer-update check. Both fixture installers matched 183 runtime
+files. Evidence is in `package-output/update-smoke/results-1794703161632/`, including
+`result.json`, `verified.json`, `rejected-checksum.png`, `ready-to-install.png` and
+`updated-system.png`. This remains a guest-local feed test with the public-delivery,
+signing and SmartScreen boundaries stated above.
+
+Review findings and their regression coverage are recorded in
+`docs/reviews/2026-11-15-maintenance-final-review.md`.

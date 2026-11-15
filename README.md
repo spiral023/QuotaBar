@@ -17,8 +17,8 @@
 
 <p align="center">
   <a href="#requirements"><img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4"></a>
-  <a href="https://www.electronjs.org/"><img alt="Electron 42" src="https://img.shields.io/badge/Electron-42-47848F"></a>
-  <a href="https://www.typescriptlang.org/"><img alt="TypeScript 5.8" src="https://img.shields.io/badge/TypeScript-5.8-3178C6"></a>
+  <a href="https://www.electronjs.org/"><img alt="Electron 45" src="https://img.shields.io/badge/Electron-45-47848F"></a>
+  <a href="https://www.typescriptlang.org/"><img alt="TypeScript 7.0" src="https://img.shields.io/badge/TypeScript-7.0-3178C6"></a>
   <a href="https://vitest.dev/"><img alt="Vitest" src="https://img.shields.io/badge/tests-Vitest-6E9F18"></a>
   <a href="#license"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
   <a href="https://deepwiki.com/spiral023/QuotaBar"><img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg"></a>
@@ -312,6 +312,8 @@ npm ci
 ### Development workflow
 
 `npm run dev:watch` is the fastest inner loop: it runs `nodemon` with a full build before each restart, so the sandboxed preload is always bundled. Electron restarts after source changes. For renderer-only changes, skip the restart entirely with `location.reload()` in DevTools.
+
+See [Architecture](docs/architecture.md) for process boundaries, module ownership, cache rules and lock ordering.
 
 ## Project Structure
 

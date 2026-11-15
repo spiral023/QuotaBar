@@ -8,6 +8,7 @@ window.QB = window.QB || {};
 // gemeinsamen globalen Scope kollidieren (sonst SyntaxError beim Laden des
 // nachfolgenden history.js → QB.renderHistory bliebe undefiniert).
 (function () {
+const _windowHistory = QB.createAnalyticsWindowHistory(() => _agg);
 const { _buildHourHeatmap } = QB.createAnalyticsActivity(_pick);
 const { _statTooltip, _activityHeatColor, _cumulativeRoiSeries, _isoWeekStart, _isoWeekNum, _aggregateBuckets, _bucketLabel, _visibleLineDatasets, _weekdayLabel } = QB.analyticsHelpers;
 
@@ -24,11 +25,9 @@ let _chartMode    = 'cost';   // 'cost' | 'roi'
 let _provider     = 'all';    // globaler Provider-Toggle: 'all' | 'claude' | 'codex' — steuert ALLE provider-abhängigen Sektionen
 let _agg          = 'daily';  // 'daily' | 'weekly' | 'monthly' | 'hourly'
 let _hourlyBuckets = null;    // gecachte Stunden-Daten für den Linien-Chart
-const _cache      = new Map(); // `${from}:${to}` → AnalyticsData
-let _whChart      = null;      // Chart-Instanz der 5h-Fenster-Historie
-let _whData       = null;      // { entries, planChanges } (zeitraum-unabhängig gecacht)
-let _whMode       = 'util';    // 'util' | 'used' | 'max'
-let _whGen        = 0;         // Race-Schutz für den asynchron geladenen Verlauf
+let _requestGeneration = 0;
+let _cacheGeneration = 0;
+const _analyticsData = QB.createAnalyticsData();
 
 
 // Wählt aus einem ProviderTriple ({claude, codex, all}) die Sicht des aktuellen
@@ -75,27 +74,27 @@ QB.renderAnalytics = async function renderAnalytics() {
     _minDate = await _fetchMinDate();
     _buildControls(container);
     await _loadAndRender();
-  } else if (!_cache.has(_rangeKey())) {
-    // Cache wurde z. B. nach Settings-Save invalidiert → aktuellen Bereich neu laden.
+  } else {
+    // Revisited tabs must also render replacement data loaded by prefetch.
     await _loadAndRender();
   }
 };
 
 QB.prefetchAnalytics = function prefetchAnalytics() {
   const { from, to } = _presetDates('30d');
-  const key = `${from}:${to}`;
-  if (_cache.has(key)) return;
-  QB.ipc.invoke('analytics:get', { since: from, until: to, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })
-    .then(data => { if (!QB.isPortableDataPreparing(data)) _cache.set(key, data); })
-    .catch(e => console.error('analytics prefetch failed', e));
+  void _analyticsData.load(_query(from, to)).catch(e => console.error('analytics prefetch failed', e));
 };
 
 QB.clearAnalyticsCache = function clearAnalyticsCache() {
   QB.clearPortableDataRetry('analytics');
   QB.clearPortableDataRetry('window-history');
-  _cache.clear();
+  _requestGeneration++;
+  _cacheGeneration++;
+  _windowHistory.clear();
+  _lastData = null;
+  _analyticsData.clear();
   _hourlyBuckets = null;
-  _whData = null; // Plan-/Settings-Änderung → Fenster-Historie neu laden
+  if (_initialized && document.getElementById('tab-analytics')?.classList.contains('active')) void _loadAndRender();
 };
 
 async function _fetchMinDate() {
@@ -239,8 +238,8 @@ function _buildControls(container) {
       if (_lastData) _buildLineChart(_lastData);
       if (_lastData) _buildSessionTimeChart(_lastData);
       // Auch die 5h-Fenster-Historie folgt der Auflösung (Woche ↔ Monat).
-      _updateWhTitle();
-      _buildWindowHistoryChart();
+      _windowHistory.updateTitle();
+      _windowHistory.rebuild();
     });
   });
 
@@ -258,30 +257,34 @@ function _buildControls(container) {
   });
 }
 
+function _query(from = _from, to = _to) {
+  return { since: from, until: to, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+}
+
 async function _loadAndRender() {
   const results = document.getElementById('an-results');
   if (!results) return;
 
+  const request = ++_requestGeneration;
+  const key = _rangeKey();
+  const isCurrent = () => request === _requestGeneration && key === _rangeKey();
   results.innerHTML = '<div class="empty"><div class="loading-dots"><span></span><span></span><span></span></div></div>';
 
   try {
-    const key = _rangeKey();
-    let data = _cache.get(key);
-    if (!data) {
-      data = await QB.ipc.invoke('analytics:get', { since: _from, until: _to, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
-      if (QB.isPortableDataPreparing(data)) {
-        _cache.delete(key);
-        results.innerHTML = '<div class="empty"><span>Preparing data…</span></div>';
-        QB.schedulePortableDataRetry('analytics', () => _loadAndRender());
-        return;
-      }
-      QB.clearPortableDataRetry('analytics');
-      _cache.set(key, data);
+    const data = await _analyticsData.load(_query());
+    if (!isCurrent() || data === undefined) return;
+    if (QB.isPortableDataPreparing(data)) {
+      results.innerHTML = '<div class="empty"><span>Preparing data…</span></div>';
+      QB.schedulePortableDataRetry('analytics', () => _loadAndRender());
+      return;
     }
+    QB.clearPortableDataRetry('analytics');
     _hourlyBuckets = null; // Datumsbereich geändert → Stunden-Cache invalidieren
     if (_agg === 'hourly') await _ensureHourlyBuckets();
+    if (!isCurrent()) return;
     _renderResults(data);
   } catch (e) {
+    if (!isCurrent()) return;
     console.error('analytics:get failed', e);
     results.innerHTML = '<div class="empty"><span>Failed to load</span></div>';
   }
@@ -371,12 +374,12 @@ function _renderResults(data) {
 
     <div class="an-section">
       <div class="an-section-head">
-        <span class="an-section-title" id="an-wh-title">${_whTitle()}</span>
+        <span class="an-section-title" id="an-wh-title">${_windowHistory.title()}</span>
         <div style="display:flex;gap:6px;align-items:center">
           <div class="mod-seg" id="an-wh-pills">
-            <button class="${_whMode === 'util' ? 'active' : ''}" data-whmode="util">%</button>
-            <button class="${_whMode === 'used' ? 'active' : ''}" data-whmode="used">Cnt</button>
-            <button class="${_whMode === 'max'  ? 'active' : ''}" data-whmode="max">Max</button>
+            <button class="${_windowHistory.mode() === 'util' ? 'active' : ''}" data-whmode="util">%</button>
+            <button class="${_windowHistory.mode() === 'used' ? 'active' : ''}" data-whmode="used">Cnt</button>
+            <button class="${_windowHistory.mode() === 'max'  ? 'active' : ''}" data-whmode="max">Max</button>
           </div>
           <div class="hr-chart-legend">
             <span class="hr-legend-dot" style="background:var(--claude-col)"></span>
@@ -402,7 +405,7 @@ function _renderResults(data) {
   _buildTopDays(data);
   _buildFiveHourPressure(data);
   _buildCostEfficiency(data);
-  void _renderWindowHistory();
+  void _windowHistory.render();
 }
 
 function _lineTitle() {
@@ -435,6 +438,9 @@ function _updateSessionTimeTitle() {
 
 async function _ensureHourlyBuckets() {
   if (_hourlyBuckets !== null) return;
+  const key = _rangeKey();
+  const generation = _cacheGeneration;
+  const isCurrent = () => key === _rangeKey() && generation === _cacheGeneration;
   try {
     const base = {
       type: 'hourly', limit: 168,
@@ -445,6 +451,7 @@ async function _ensureHourlyBuckets() {
     // One request for both providers: the main process then reads the range
     // once instead of once per provider.
     const batch = await QB.ipc.invoke('reports:get-batch', { ...base, providers: ['claude', 'codex'] });
+    if (!isCurrent()) return;
     const cr = batch?.claude || {};
     const xr = batch?.codex || {};
     const cm = new Map((cr.rows || []).map(r => [r.bucket, r.costUSD || 0]));
@@ -453,7 +460,7 @@ async function _ensureHourlyBuckets() {
     _hourlyBuckets = Array.from(all).sort().map(b => ({
       date: b, days: 1, claudeUSD: cm.get(b) || 0, codexUSD: xm.get(b) || 0,
     }));
-  } catch { _hourlyBuckets = []; }
+  } catch { if (isCurrent()) _hourlyBuckets = []; }
 }
 
 function _buildLineChart(data) {
@@ -900,202 +907,6 @@ function _buildCostEfficiency(data) {
 // Folgt dem Muster des Kosten/ROI-Linien-Charts: reagiert auf Datumswahl
 // (_from/_to) und Auflösung (_agg), umschaltbar zwischen Auslastung %, genutzten
 // und möglichen Fenstern.
-
-const _WH_SERIES = [
-  { id: 'claude', label: 'Claude', color: '#DA785B', bg: 'rgba(218,120,91,0.08)' },
-  { id: 'codex',  label: 'Codex',  color: '#4B55C8', bg: 'rgba(75,85,200,0.07)' },
-];
-
-function _whTitle() {
-  const m = _whMode === 'used' ? 'USED 5H WINDOWS'
-          : _whMode === 'max'  ? 'POSSIBLE 5H WINDOWS'
-          : '5H WINDOW UTILIZATION';
-  const unit = _agg === 'monthly' ? 'PER MONTH' : 'PER WEEK';
-  return `${m} · ${unit}`;
-}
-
-function _updateWhTitle() {
-  const el = document.getElementById('an-wh-title');
-  if (el) el.textContent = _whTitle();
-}
-
-async function _renderWindowHistory() {
-  const canvas = document.getElementById('an-wh-canvas');
-  if (!canvas) return;
-  const token = ++_whGen;
-
-  if (!_whData) {
-    try {
-      _whData = await QB.ipc.invoke('windowHistory:get');
-      if (QB.isPortableDataPreparing(_whData)) {
-        _whData = null;
-        const note = document.getElementById('an-wh-note');
-        if (note) { note.hidden = false; note.textContent = 'Preparing data…'; }
-        QB.schedulePortableDataRetry('window-history', () => _renderWindowHistory());
-        return;
-      }
-      QB.clearPortableDataRetry('window-history');
-    } catch (e) {
-      if (token !== _whGen) return;
-      console.error('windowHistory:get failed', e);
-      _whData = { entries: [], planChanges: [] };
-    }
-  }
-  if (token !== _whGen) return; // veralteter Load
-  _buildWindowHistoryChart();
-  _bindWhToggles();
-}
-
-// Gemeinsame Buckets über beide Anbieter, da deren 7d-Reset-Zeitpunkte nicht
-// aligned sind: monthly → Kalendermonat, sonst ISO-Kalenderwoche.
-function _whBucketKey(weekEndIso) {
-  const day = weekEndIso.slice(0, 10);
-  return _agg === 'monthly' ? day.slice(0, 7) : _isoWeekStart(day);
-}
-
-function _whBucketLabel(key) {
-  if (/^\d{4}-\d{2}$/.test(key)) {
-    const d = new Date(key + '-01T00:00:00Z');
-    return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' });
-  }
-  return 'W' + _isoWeekNum(key);
-}
-
-function _buildWindowHistoryChart() {
-  if (_whChart) { _whChart.destroy(); _whChart = null; }
-  const ctx = document.getElementById('an-wh-canvas');
-  const note = document.getElementById('an-wh-note');
-  if (!ctx || typeof Chart === 'undefined') return;
-
-  const entries = (_whData && _whData.entries) || [];
-  const planChanges = (_whData && _whData.planChanges) || [];
-
-  // Bewusst NICHT nach dem Analytics-Zeitraum gefiltert: Diese Historie ist als
-  // Langzeit-Trend gedacht ("wird der Plan über die Wochen ausgereizt?") und
-  // zeigt alle erfassten 7d-Fenster. Nur die Auflösung (Woche/Monat) greift.
-
-  // Pro (Bucket, Anbieter) aggregieren: Ø genutzte, Ø mögliche Fenster, Bonus.
-  const buckets = new Map();
-  for (const e of entries) {
-    const key = _whBucketKey(e.weekEnd);
-    let b = buckets.get(key);
-    if (!b) { b = { key, repDay: e.weekStart.slice(0, 10), prov: {} }; buckets.set(key, b); }
-    if (e.weekStart.slice(0, 10) < b.repDay) b.repDay = e.weekStart.slice(0, 10);
-    let pp = b.prov[e.provider];
-    if (!pp) { pp = { used: 0, n: 0, max: 0, maxN: 0, bonus: false }; b.prov[e.provider] = pp; }
-    pp.used += e.usedWindows; pp.n += 1;
-    if (typeof e.maxWindows === 'number') { pp.max += e.maxWindows; pp.maxN += 1; }
-    if (e.bonus) pp.bonus = true;
-  }
-
-  const keys = [...buckets.keys()].sort();
-  if (!keys.length) {
-    if (note) { note.hidden = false; note.textContent = 'No completed week recorded yet — history will fill in over time.'; }
-    return;
-  }
-  if (note) note.hidden = true;
-
-  const labels  = keys.map(_whBucketLabel);
-  const dayKeys = keys.map(k => buckets.get(k).repDay);
-  const isPct   = _whMode === 'util';
-
-  const valueOf = (pp) => {
-    if (!pp || pp.n === 0) return null;
-    const avgUsed = pp.used / pp.n;
-    const avgMax = pp.maxN > 0 ? pp.max / pp.maxN : null;
-    if (_whMode === 'used') return avgUsed;
-    if (_whMode === 'max') return avgMax;
-    return avgMax && avgMax > 0 ? (avgUsed / avgMax) * 100 : null;
-  };
-
-  const datasets = _WH_SERIES.map(s => {
-    const data = keys.map(k => {
-      const v = valueOf(buckets.get(k).prov[s.id]);
-      return v == null ? null : Number(v.toFixed(2));
-    });
-    const bonusFlags = keys.map(k => !!(buckets.get(k).prov[s.id] && buckets.get(k).prov[s.id].bonus));
-    return {
-      label: s.label,
-      data,
-      borderColor: s.color,
-      backgroundColor: s.bg,
-      borderWidth: 1.5,
-      tension: 0.3,
-      fill: false,
-      spanGaps: false,
-      pointRadius: bonusFlags.map(b => b ? 4 : 2),
-      pointHoverRadius: 5,
-      pointBackgroundColor: bonusFlags.map(b => b ? '#52d017' : s.color),
-      pointBorderColor: bonusFlags.map(b => b ? '#52d017' : s.color),
-    };
-  });
-
-  const changes = QB.charts.mapChangesToIndex(planChanges, dayKeys);
-
-  _whChart = new Chart(ctx, {
-    type: 'line',
-    data: { labels, datasets },
-    plugins: [QB.charts.planChangePlugin],
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 300 },
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#0f1319', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1,
-          titleColor: '#b4c8d8', bodyColor: '#8298aa', padding: 8,
-          callbacks: {
-            label: (item) => {
-              const v = item.parsed.y;
-              if (v == null) return ` ${item.dataset.label}: —`;
-              return isPct
-                ? ` ${item.dataset.label}: ${v.toFixed(0)} %`
-                : ` ${item.dataset.label}: ${_fmtWin(v)} windows`;
-            },
-            afterLabel: (item) => {
-              const b = buckets.get(keys[item.dataIndex]);
-              const s = _WH_SERIES[item.datasetIndex];
-              return (b && b.prov[s.id] && b.prov[s.id].bonus) ? '⚡ Bonus week' : '';
-            },
-          },
-        },
-        planChanges: { changes },
-      },
-      scales: {
-        x: {
-          grid: { color: 'rgba(255,255,255,0.04)' }, border: { color: 'rgba(255,255,255,0.07)' },
-          ticks: { color: QB.charts.mutedTextColor, font: { family: "'IBM Plex Mono', monospace", size: 9 },
-                   maxTicksLimit: 10, maxRotation: 0 },
-        },
-        y: {
-          beginAtZero: true,
-          grid: { color: 'rgba(255,255,255,0.04)' }, border: { color: 'rgba(255,255,255,0.07)' },
-          ticks: { color: QB.charts.mutedTextColor, font: { family: "'IBM Plex Mono', monospace", size: 9 },
-                   callback: (val) => isPct ? val + ' %' : _fmtWin(Number(val)) },
-        },
-      },
-    },
-  });
-}
-
-function _bindWhToggles() {
-  document.querySelectorAll('#an-wh-pills button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (btn.classList.contains('active')) return;
-      document.querySelectorAll('#an-wh-pills button').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      _whMode = btn.dataset.whmode;
-      _updateWhTitle();
-      _buildWindowHistoryChart();
-    });
-  });
-}
-
-function _fmtWin(n) {
-  return n.toFixed(1);
-}
 
 QB.__analyticsTest = {
   activityHeatColor: _activityHeatColor,

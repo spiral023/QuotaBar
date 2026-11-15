@@ -17,7 +17,7 @@ const logMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/portable/archiveService", () => archiveMocks);
-vi.mock("../src/main/logging", () => ({ log: logMocks }));
+vi.mock("../src/main/logging", () => ({ log: logMocks, flushLogging: vi.fn(async () => {}) }));
 
 // Mock Electron — DetailsWindowController calls ipcMain.on and may use other
 // Electron APIs at import/construction time. Provide just enough surface to
@@ -48,6 +48,8 @@ vi.mock("electron", () => {
   };
 });
 
+import { app, clipboard, dialog, ipcMain, shell } from "electron";
+import { preparePortableData } from "../src/main/debugBackfill";
 import { DebugRecorder } from "../src/main/debugRecorder";
 import {
   createAnalyticsGetRequest,
@@ -55,10 +57,8 @@ import {
   DetailsWindowController,
   portableDataIsReady,
 } from "../src/main/detailsWindow";
-import { app, clipboard, dialog, ipcMain, shell } from "electron";
-import { PortableUsageStore } from "../src/portable/usageStore";
-import { preparePortableData } from "../src/main/debugBackfill";
 import { markMigrationComplete, markMigrationFailed, markMigrationRunning } from "../src/portable/migration";
+import { PortableUsageStore } from "../src/portable/usageStore";
 
 let tmpDir: string;
 

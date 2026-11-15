@@ -2,6 +2,7 @@ export interface ShutdownDrainDependencies {
   stopIngestion(): Promise<void>;
   flushNotifications(): Promise<void>;
   flushRecorder(): Promise<void>;
+  flushLogging?(): Promise<void>;
   warn(message: string): void;
 }
 
@@ -29,4 +30,5 @@ async function drain(dependencies: ShutdownDrainDependencies): Promise<void> {
   } catch {
     dependencies.warn("Debug recorder flush failed during shutdown");
   }
+  await dependencies.flushLogging?.();
 }

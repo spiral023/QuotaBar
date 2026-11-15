@@ -11,10 +11,11 @@
     "build": "node node_modules/@typescript/native/bin/tsc -p tsconfig.json && node tools/build-assets.mjs",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "package": "npm run build && electron-builder --win --publish never",
     "upload:ftp": "node --env-file=.env tools/upload-ftp.mjs",
     "release:local": "npm run package && npm run upload:ftp",
-    "typecheck": "node node_modules/@typescript/native/bin/tsc -p tsconfig.tests.json",
+    "typecheck": "node node_modules/@typescript/native/bin/tsc -p tsconfig.tests.json && node node_modules/@typescript/native/bin/tsc -p tsconfig.renderer.json",
     "verify": "npm run typecheck && npm run lint && npm test && npm run build",
     "test:electron": "npm run build && node tools/electron-smoke.cjs",
     "test:update": "npm run check:runtime && npm run build && node tools/test-update.cjs",
@@ -48,6 +49,8 @@
     "@types/pngjs": "^6.0.5",
     "@types/yauzl": "^3.4.0",
     "@types/yazl": "^3.3.1",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "@vitest/coverage-v8": "^5.1.0",
     "chart.js": "^4.6.1",
     "electron": "^45.3.2",
     "electron-builder": "^26.18.0",
@@ -59,8 +62,7 @@
     "ssh2-sftp-client": "^12.1.1",
     "typescript": "npm:@typescript/typescript6@~6.0.2",
     "typescript-eslint": "^8.72.2",
-    "vitest": "^5.1.0",
-    "@typescript/native": "npm:typescript@^7.0.2"
+    "vitest": "^5.1.0"
   },
   "packageManager": "npm@11.21.2",
   "engines": {

@@ -1,9 +1,9 @@
-import { aggregateDaily, invalidateDailyRollups, loadDailyRollups, type DailyUsageRollup } from "./dailyRollups";
 import { createHash, randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import * as nodeFs from "node:fs/promises";
 import path from "node:path";
 import { getPortableUsageDir } from "../config/paths";
+import { invalidateDailyRollups, loadDailyRollups, selectDailyRollups, type DailyUsageRollup } from "./dailyRollups";
 import {
   PORTABLE_INGEST_JOURNAL_FILE,
   sanitizePortableIngestState,
@@ -21,38 +21,19 @@ import {
 import {
   canonicalSerialize,
   clonePortableEvent,
-  compareCanonicalEvents,
   compareText,
-  isIsoTimestamp,
   isNonEmptyString,
   monthKey,
   monthKeyOf,
   requirePortableEvent,
-  sanitizePortableEvent,
+  sanitizePortableEvent
 } from "./usageEventCodec";
+import { buildMetadata, canonicalPath, deduplicateGlobally, deduplicateRepairCandidates, delay, isMissingFile, isRecognizedSiblingTemp, parseRange, parseTransaction, partitionCanonical, PartitionFile, PartitionSnapshot, PendingTransaction, Range, serializeEvents, sha256, snapshotsToMaps, storeRevision, temporaryPath, TransactionEntry } from "./usageStoreFormat";
+import { cleanupStaleTemps, readMetadataIdentity, readMetadataPartitions, type StoreFileSystem } from "./usageStoreMaintenance";
 export { validatePortableEventForArchive } from "./usageEventCodec";
 
 const PARTITION_FILE = /^(\d{4}-\d{2})\.jsonl$/;
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const TRANSACTION_FILE = "pending-store-transaction.json";
-const TEMP_FILE = /^(?:store-metadata\.json|ingest-state\.json|pending-store-transaction\.json|\d{4}-\d{2}\.jsonl)\.\d+\.\d+\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/i;
-const STALE_TEMP_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
-
-type Range = { since?: string; until?: string };
-type StoreFileSystem = Pick<
-  typeof nodeFs,
-  "lstat" | "mkdir" | "readFile" | "readdir" | "rename" | "unlink" | "writeFile"
->;
-
-interface PartitionFile {
-  month: string;
-  filePath: string;
-}
-
-interface PartitionSnapshot extends PartitionFile {
-  events: PortableUsageEvent[];
-}
-
 interface AppendPlan {
   contents: string;
   events: PortableUsageEvent[];
@@ -61,24 +42,6 @@ interface AppendPlan {
 interface PartitionCacheEntry {
   identity: string;
   events: PortableUsageEvent[];
-}
-
-interface TransactionEntry {
-  target: string;
-  temporary: string;
-  sha256: string;
-}
-
-interface PendingTransaction {
-  schemaVersion: 1;
-  transactionId: string;
-  entries: TransactionEntry[];
-  remove: string[];
-}
-
-interface RepairCandidate {
-  event: PortableUsageEvent;
-  canonical: boolean;
 }
 
 /** Changed ingest-state records to append; startWith begins a fresh journal on that snapshot. */
@@ -226,26 +189,18 @@ export class PortableUsageStore {
       const files = await this.listPartitions();
       const identities = await Promise.all(files.map(async (file) => {
         const stat = await this.fileSystem.lstat(file.filePath, { bigint: true });
-        return [file.month, stat.size.toString(), stat.mtimeNs.toString(), stat.ctimeNs.toString(), stat.dev.toString(), stat.ino.toString()];
+        return { month: file.month, identity: [stat.size, stat.mtimeNs, stat.ctimeNs, stat.dev, stat.ino].join(":") };
       }));
-      const rows = await loadDailyRollups(this.rootDir, timeZone, JSON.stringify(identities), () => this.readUnlocked({}));
-      const result: DailyUsageRollup[] = [];
-      for (const row of rows) {
-        const first = Date.parse(row.firstActivity);
-        const last = Date.parse(row.reportEvent.occurredAt);
-        if ((bounds.since !== undefined && last < bounds.since) || (bounds.until !== undefined && first > bounds.until)) continue;
-        if ((bounds.since === undefined || first >= bounds.since) && (bounds.until === undefined || last <= bounds.until)) {
-          result.push(row);
-        } else {
-          const events = await this.readUnlocked({
-            since: new Date(Math.max(first, bounds.since ?? first)).toISOString(),
-            until: new Date(Math.min(last, bounds.until ?? last)).toISOString(),
-          });
-          result.push(...aggregateDaily(events.filter((event) => event.provider === row.reportEvent.provider
-            && event.model === row.reportEvent.model), timeZone));
-        }
-      }
-      return result.sort((a, b) => a.firstActivity.localeCompare(b.firstActivity));
+      const rows = await loadDailyRollups(this.rootDir, timeZone, identities, async () => {
+        const raw = (await this.scanPartitions({ acceptMisplaced: false })).flatMap(({ events }) => events);
+        const events = deduplicateGlobally(raw);
+        return { events, independentPartitions: events.length === raw.length };
+      }, (month) => {
+        const start = new Date(`${month}-01T00:00:00.000Z`);
+        const end = new Date(start); end.setUTCMonth(end.getUTCMonth() + 1);
+        return this.readUnlocked({ since: start.toISOString(), until: new Date(end.getTime() - 1).toISOString() });
+      });
+      return selectDailyRollups(rows, timeZone, bounds, (range) => this.readUnlocked(range));
     });
   }
 
@@ -272,6 +227,7 @@ export class PortableUsageStore {
       const snapshots = await this.scanPartitions({ acceptMisplaced: false });
       const storedByMonth = snapshotsToMaps(snapshots);
       const knownIds = new Set(snapshots.flatMap(({ events: stored }) => stored.map(({ id }) => id)));
+      await this.invalidateDuplicateRollups(snapshots, knownIds.size);
       const incoming: PortableUsageEvent[] = [];
       let existing = 0;
       for (const item of sanitized) {
@@ -316,6 +272,7 @@ export class PortableUsageStore {
       const storedByMonth = snapshotsToMaps(snapshots);
       const current = deduplicateGlobally(snapshots.flatMap(({ events }) => events));
       const storedById = new Map(current.map((event) => [event.id, event]));
+      await this.invalidateDuplicateRollups(snapshots, storedById.size);
       const plan = builder(current.map(clonePortableEvent));
       if (!plan || !Array.isArray(plan.events) || !Array.isArray(plan.removeIds)) {
         throw new Error("Invalid derived reconciliation plan");
@@ -455,6 +412,7 @@ export class PortableUsageStore {
       }
     }
 
+    await this.invalidateDuplicateRollups(snapshots, storedById.size);
     const affected = new Set<string>();
     // Ingestion is overwhelmingly append-only: new events for the current month.
     // Recording which months saw nothing but insertions lets those partitions be
@@ -578,6 +536,13 @@ export class PortableUsageStore {
     });
   }
 
+  /** A partial rebuild cannot retain globally deduplicated rows from ambiguous partitions. */
+  private async invalidateDuplicateRollups(snapshots: readonly PartitionSnapshot[], uniqueCount: number): Promise<void> {
+    if (snapshots.reduce((sum, snapshot) => sum + snapshot.events.length, 0) !== uniqueCount) {
+      await invalidateDailyRollups(this.rootDir);
+    }
+  }
+
   private async prepareStore(): Promise<void> {
     await this.recoverPendingTransaction();
     await this.cleanupStaleTemps();
@@ -652,7 +617,7 @@ export class PortableUsageStore {
    * time, many times per minute during active use.
    */
   private async commitAppends(appends: ReadonlyMap<string, AppendPlan>): Promise<void> {
-    if (appends.size > 0) await invalidateDailyRollups(this.rootDir);
+    if (appends.size > 0) await invalidateDailyRollups(this.rootDir, [...appends.keys()]);
     for (const [filePath, plan] of appends) {
       const key = canonicalPath(filePath);
       const cached = this.partitionCache.get(key);
@@ -780,37 +745,9 @@ export class PortableUsageStore {
   }
 
   /** Month -> compact signature of that partition, or undefined if unreadable. */
-  private async readMetadataPartitions(): Promise<Map<string, string> | undefined> {
-    let contents: string;
-    try {
-      contents = await this.fileSystem.readFile(this.metadataPath(), "utf8");
-    } catch {
-      return undefined;
-    }
-    try {
-      const parsed = JSON.parse(contents) as { partitions?: Record<string, unknown> };
-      const partitions = parsed?.partitions;
-      if (!partitions || typeof partitions !== "object") return undefined;
-      const result = new Map<string, string>();
-      for (const [month, value] of Object.entries(partitions)) {
-        const item = value as { eventCount?: unknown; firstAt?: unknown; lastAt?: unknown };
-        result.set(month, `${String(item?.eventCount)}:${String(item?.firstAt)}:${String(item?.lastAt)}`);
-      }
-      return result;
-    } catch {
-      return undefined;
-    }
-  }
+  private readMetadataPartitions() { return readMetadataPartitions(this.fileSystem, this.metadataPath()); }
 
-  private async readMetadataIdentity(): Promise<string> {
-    try {
-      const info = await this.fileSystem.lstat(this.metadataPath(), { bigint: true });
-      return info.isFile() ? `${info.size}:${info.mtimeNs}:${info.ctimeNs}:${info.dev}:${info.ino}` : "non-file";
-    } catch (error) {
-      if (isMissingFile(error)) return "missing";
-      throw error;
-    }
-  }
+  private readMetadataIdentity() { return readMetadataIdentity(this.fileSystem, this.metadataPath()); }
 
   private async recoverPendingTransaction(): Promise<void> {
     const marker = this.transactionPath();
@@ -836,7 +773,7 @@ export class PortableUsageStore {
   private async rollForward(transaction: PendingTransaction): Promise<void> {
     if (transaction.entries.some(({ target }) => canonicalPath(path.dirname(this.resolveRelative(target))) === canonicalPath(this.eventsDir()))
       || transaction.remove.length > 0) {
-      await invalidateDailyRollups(this.rootDir);
+      await invalidateDailyRollups(this.rootDir, [...transaction.entries.map((entry) => entry.target), ...transaction.remove]);
     }
     // Every write path funnels through here (commit and startup recovery), so
     // this is the one place that can drop cached state deterministically.
@@ -951,24 +888,7 @@ export class PortableUsageStore {
     }
   }
 
-  private async cleanupStaleTemps(): Promise<void> {
-    const cutoff = Date.now() - STALE_TEMP_AGE_MS;
-    for (const directory of [this.rootDir, this.eventsDir()]) {
-      let entries: Dirent[];
-      try {
-        entries = await this.fileSystem.readdir(directory, { withFileTypes: true });
-      } catch (error) {
-        if (isMissingFile(error)) continue;
-        throw error;
-      }
-      for (const entry of entries) {
-        if (typeof entry === "string" || !entry.isFile() || !TEMP_FILE.test(entry.name)) continue;
-        const filePath = path.join(directory, entry.name);
-        const info = await this.fileSystem.lstat(filePath);
-        if (info.isFile() && info.mtimeMs < cutoff) await this.fileSystem.unlink(filePath);
-      }
-    }
-  }
+  private cleanupStaleTemps() { return cleanupStaleTemps(this.fileSystem, this.rootDir); }
 
   private async removeObsoletePartition(relative: string): Promise<void> {
     const filePath = this.resolveRemoval(relative);
@@ -1062,153 +982,7 @@ export class PortableUsageStore {
   }
 }
 
-function snapshotsToMaps(snapshots: readonly PartitionSnapshot[]): Map<string, Map<string, PortableUsageEvent>> {
-  const result = new Map<string, Map<string, PortableUsageEvent>>();
-  for (const snapshot of snapshots) {
-    const partition = new Map<string, PortableUsageEvent>();
-    for (const item of [...snapshot.events].sort(compareCanonicalEvents)) {
-      if (!partition.has(item.id)) partition.set(item.id, item);
-    }
-    result.set(snapshot.month, partition);
-  }
-  return result;
-}
-
-function deduplicateGlobally(events: readonly PortableUsageEvent[]): PortableUsageEvent[] {
-  const unique = new Map<string, PortableUsageEvent>();
-  for (const item of [...events].sort(compareCanonicalEvents)) {
-    if (!unique.has(item.id)) unique.set(item.id, item);
-  }
-  return [...unique.values()].sort(compareCanonicalEvents);
-}
-
-function deduplicateRepairCandidates(candidates: readonly RepairCandidate[]): PortableUsageEvent[] {
-  const chosen = new Map<string, RepairCandidate>();
-  for (const candidate of candidates) {
-    const current = chosen.get(candidate.event.id);
-    if (!current || compareRepairCandidates(candidate, current) < 0) chosen.set(candidate.event.id, candidate);
-  }
-  return [...chosen.values()].map(({ event }) => event).sort(compareCanonicalEvents);
-}
-
-function compareRepairCandidates(left: RepairCandidate, right: RepairCandidate): number {
-  if (left.canonical !== right.canonical) return left.canonical ? -1 : 1;
-  return compareCanonicalEvents(left.event, right.event);
-}
-
-function buildMetadata(partitions: ReadonlyMap<string, ReadonlyMap<string, PortableUsageEvent>>): PortableStoreMetadata {
-  const metadata: PortableStoreMetadata = {
-    schemaVersion: PORTABLE_STORE_VERSION,
-    partitions: {},
-    updatedAt: new Date().toISOString(),
-  };
-  for (const [month, partition] of [...partitions].sort(([a], [b]) => a.localeCompare(b))) {
-    const events = [...partition.values()].sort(compareCanonicalEvents);
-    if (events.length === 0) continue;
-    metadata.partitions[month] = {
-      eventCount: events.length,
-      firstAt: events[0].occurredAt,
-      lastAt: events[events.length - 1].occurredAt,
-    };
-  }
-  return metadata;
-}
-
-function partitionCanonical(month: string, events: readonly PortableUsageEvent[]): string {
-  const partition = new Map<string, PortableUsageEvent>();
-  for (const item of [...events].sort(compareCanonicalEvents)) {
-    if (!partition.has(item.id)) partition.set(item.id, item);
-  }
-  return JSON.stringify([month, [...partition.values()].sort(compareCanonicalEvents).map(canonicalSerialize)]);
-}
-
-function storeRevision(partitions: ReadonlyMap<string, ReadonlyMap<string, PortableUsageEvent>>): string {
-  const canonical = [...partitions]
-    .sort(([left], [right]) => compareText(left, right))
-    .map(([month, events]) => [
-      month,
-      [...events.values()].sort(compareCanonicalEvents).map(canonicalSerialize),
-    ]);
-  return sha256(JSON.stringify([PORTABLE_STORE_VERSION, canonical]));
-}
-
-function serializeEvents(events: Iterable<PortableUsageEvent>): string {
-  const lines = [...events].sort(compareCanonicalEvents).map((item) => canonicalSerialize(item));
-  return `${lines.join("\n")}\n`;
-}
-
-function parseTransaction(value: unknown): PendingTransaction {
-  if (!value || typeof value !== "object") throw new Error("invalid transaction");
-  const item = value as Record<string, unknown>;
-  if (item.schemaVersion !== 1 || !isUuid(item.transactionId)
-    || !Array.isArray(item.entries) || !Array.isArray(item.remove)) {
-    throw new Error("invalid transaction");
-  }
-  const entries = item.entries.map((entry): TransactionEntry => {
-    if (!entry || typeof entry !== "object") throw new Error("invalid transaction entry");
-    const fields = entry as Record<string, unknown>;
-    if (!isNonEmptyString(fields.target) || !isNonEmptyString(fields.temporary)
-      || typeof fields.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(fields.sha256)) {
-      throw new Error("invalid transaction entry");
-    }
-    return { target: fields.target, temporary: fields.temporary, sha256: fields.sha256 };
-  });
-  if (!item.remove.every((entry): entry is string => isNonEmptyString(entry))) {
-    throw new Error("invalid transaction removal");
-  }
-  return { schemaVersion: 1, transactionId: item.transactionId, entries, remove: [...item.remove] };
-}
-
-function isRecognizedSiblingTemp(target: string, temporary: string): boolean {
-  const prefix = `${path.basename(target)}.`;
-  return path.basename(temporary).startsWith(prefix) && TEMP_FILE.test(path.basename(temporary));
-}
-
-function isUuid(value: unknown): value is string {
-  return typeof value === "string"
-    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function parseRange(range: Range): { since?: number; until?: number } {
-  const since = range.since === undefined ? undefined : parseBoundary(range.since, false);
-  const until = range.until === undefined ? undefined : parseBoundary(range.until, true);
-  if (since === null || until === null) throw new Error("Invalid portable usage range");
-  if (since !== undefined && until !== undefined && since > until) {
-    throw new Error("Invalid portable usage range: since is after until");
-  }
-  return { since, until };
-}
-
-function parseBoundary(value: string, endOfDay: boolean): number | null {
-  if (DATE_ONLY.test(value)) {
-    const timestamp = `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`;
-    return isIsoTimestamp(timestamp) ? Date.parse(timestamp) : null;
-  }
-  return isIsoTimestamp(value) ? Date.parse(value) : null;
-}
-
 function isValidMonth(month: string): boolean {
   const monthNumber = Number(month.slice(5));
   return monthNumber >= 1 && monthNumber <= 12;
-}
-
-function temporaryPath(target: string): string {
-  return `${target}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-}
-
-function sha256(value: string | Uint8Array): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function canonicalPath(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
-
-function isMissingFile(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

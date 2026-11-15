@@ -46,3 +46,16 @@ disabled. It tests checksum rejection, retry/download, the real System install
 button, automatic installation/relaunch, retained settings/usage and a final
 no-newer-update check. This does not validate GitHub/CDN availability, code
 signing or SmartScreen reputation. See TESTING.md for artifacts and boundaries.
+
+### Maintenance changes — 2026-11-15
+
+GitHub Actions are pinned to verified commit revisions, with version comments
+for Renovate. Windows CI builds once, then runs the isolated Electron driver
+and electron-builder against that build. Local test:electron and package
+commands still build first. Coverage uses the matching Vitest 5.1 V8 provider;
+reports cover authentication, portable data, updater state and activity metrics.
+Coverage is initially diagnostic, without an arbitrary global percentage gate.
+
+Strict typechecking also checks the renderer IPC helper and analytics request
+cache using JSDoc and tsconfig.renderer.json. The native/classic compiler split
+and the validated Node/npm versions remain in place.

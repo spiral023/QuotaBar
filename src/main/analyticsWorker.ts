@@ -1,20 +1,49 @@
 import { parentPort } from "node:worker_threads";
+import { getPortableQuotaDir } from "../config/paths";
 import { defaultSettings, type Settings } from "../config/settings";
+import { toClaudeEntries, toCodexEvents } from "../portable/eventAdapters";
+import { readQuotaSnapshots } from "../portable/quotaStore";
+import type { PortableUsageEvent } from "../portable/types";
+import { getSharedUsageStore, PortableUsageStore } from "../portable/usageStore";
+import { makeFxLookup } from "../pricing/fx-fetcher";
+import { dailySubCostUSD, periodSubCostUSD, planChangePoints, type PlanChangePoint } from "../pricing/plan-cost";
 import { generateUsageReport } from "../reports/reportService";
 import type { BackfillDayRecord } from "../reports/types";
+import { isIgnoredModel, normalizeModelName } from "../shared/modelNames";
+import { zonedDayKey } from "../shared/zonedDate";
+import type { UsagePace } from "../usage/usagePace";
 import {
+  buildCurrentWindowUsage,
+  type CurrentWindowObservation,
+  type CurrentWindowUsage,
+} from "../usage/windowBudgetRollup";
+import {
+  buildFiveHourPressure,
+  buildWindowHistory,
+  type HistoryObservation,
+  type PressureDist,
+  type WindowHistoryEntry,
+} from "../usage/windowHistory";
+import { resetsAtChanged } from "../usage/windowRatio";
+import { buildActivityMetrics } from "./analyticsActivity";
+import {
+  aggregateSessionDurationBuckets,
+  buildCostEfficiency,
+  buildDailyBuckets,
+  buildSessionDurationBuckets,
   buildSparkline7d, buildTopModels,
+  buildTotalTokens,
+  buildWeeklySummary,
+  computeActiveHours,
   computeAvgSessionMinutes,
-  buildDailyBuckets, buildSessionStats, buildTotalTokens,
-  buildHourHeatmap, buildWeekdayDistribution, buildTopActiveDays,
-  buildWeeklySummary, buildCostEfficiency, computeActiveHours,
-  buildSessionDurationBuckets, aggregateSessionDurationBuckets,
   localDayKey,
-  type AnalyticsSummary, type AnalyticsData, type ActivityEntry, type ProviderTriple,
+  type ActivityEntry,
+  type AnalyticsData,
+  type AnalyticsSummary,
+  type ProviderTriple,
 } from "./analyticsSummary";
+import type { SnapshotEvent } from "./debugEvents";
 import { buildModelsData, type ModelsData } from "./modelsData";
-import { dailySubCostUSD, periodSubCostUSD, planChangePoints, type PlanChangePoint } from "../pricing/plan-cost";
-import { makeFxLookup } from "../pricing/fx-fetcher";
 import { buildWeeklyProfile, computeWeeklyForecast, type WeeklyForecastResult } from "./weeklyForecast";
 import {
   insertBreaks,
@@ -22,27 +51,6 @@ import {
   type WeeklySeriesRequest,
   type WindowBudgetSeries,
 } from "./windowBudgetSeries";
-import {
-  buildWindowHistory,
-  buildFiveHourPressure,
-  type HistoryObservation,
-  type WindowHistoryEntry,
-  type PressureDist,
-} from "../usage/windowHistory";
-import type { UsagePace } from "../usage/usagePace";
-import {
-  buildCurrentWindowUsage,
-  type CurrentWindowObservation,
-  type CurrentWindowUsage,
-} from "../usage/windowBudgetRollup";
-import { resetsAtChanged } from "../usage/windowRatio";
-import { getPortableQuotaDir } from "../config/paths";
-import { readQuotaSnapshots } from "../portable/quotaStore";
-import type { SnapshotEvent } from "./debugEvents";
-import { toClaudeEntries, toCodexEvents } from "../portable/eventAdapters";
-import type { PortableUsageEvent } from "../portable/types";
-import { getSharedUsageStore, PortableUsageStore } from "../portable/usageStore";
-import { isIgnoredModel, normalizeModelName } from "../shared/modelNames";
 
 export interface AnalyticsWorkerSettings {
   plans: Settings["plans"];
@@ -295,10 +303,8 @@ export async function runAnalyticsTask(
   const byProvider = <T>(claudeVal: T, codexVal: T, allVal: T): ProviderTriple<T> =>
     ({ claude: claudeVal, codex: codexVal, all: allVal });
 
-  const sessionStats = byProvider(
-    buildSessionStats(claudeActivity, activeDays),
-    buildSessionStats(codexActivity, activeDays),
-    buildSessionStats(allActivity, activeDays),
+  const { sessionStats, hourHeatmap, weekdayDistribution, topActiveDays } = buildActivityMetrics(
+    claudeActivity, codexActivity, activeDays, claudeReport.rows, codexReport.rows,
   );
   const dailySessionDurationBuckets = buildSessionDurationBuckets(
     claudeActivity,
@@ -312,23 +318,6 @@ export async function runAnalyticsTask(
     weekly: aggregateSessionDurationBuckets(dailySessionDurationBuckets, "weekly"),
     monthly: aggregateSessionDurationBuckets(dailySessionDurationBuckets, "monthly"),
   };
-  const hourHeatmap = byProvider(
-    buildHourHeatmap(claudeActivity),
-    buildHourHeatmap(codexActivity),
-    buildHourHeatmap(allActivity),
-  );
-  const weekdayDistribution = byProvider(
-    buildWeekdayDistribution(claudeActivity),
-    buildWeekdayDistribution(codexActivity),
-    buildWeekdayDistribution(allActivity),
-  );
-  const allRows = [...claudeReport.rows, ...codexReport.rows];
-  const topActiveDays = byProvider(
-    buildTopActiveDays(claudeActivity, claudeReport.rows, 5),
-    buildTopActiveDays(codexActivity, codexReport.rows, 5),
-    buildTopActiveDays(allActivity, allRows, 5),
-  );
-
   const sinceMs = input.periodStartMs;
   const untilMs = input.periodEndMs ?? input.nowMs;
   const quotaSnapshots = await (deps.readQuotaSnapshots ?? readQuotaSnapshots)(getPortableQuotaDir(), input.quotaRange ?? {
@@ -436,11 +425,8 @@ function entryWithinSummaryRange(entry: { timestamp: string }, input: AnalyticsS
 }
 
 function activityDayCount(entries: Array<{ timestamp: string }>, timeZone?: string): number {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
-    year: "numeric", month: "2-digit", day: "2-digit",
-  });
-  return new Set(entries.map((entry) => formatter.format(new Date(entry.timestamp)))).size;
+  const zone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return new Set(entries.map((entry) => zonedDayKey(new Date(entry.timestamp), zone))).size;
 }
 
 const DAY_MS = 24 * 3600 * 1000;

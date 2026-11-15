@@ -6,9 +6,15 @@ const os = require('node:os');
 const path = require('node:path');
 
 async function sample(count) {
-  const { runAnalyticsTask } = require('../dist/main/analyticsWorker');
+  const { runAnalyticsTask } = require(path.join(path.resolve(process.env.QB_BENCHMARK_DIST || path.join(__dirname, '../dist')), 'main/analyticsWorker'));
   const start = Date.parse('2026-01-01T00:00:00.000Z');
   const end = Date.parse('2026-12-31T23:59:59.999Z');
+  // Summary sparklines use the current calendar day. Freeze it across A/B runs.
+  const RealDate = Date;
+  global.Date = class extends RealDate {
+    constructor(...args) { if (args.length) super(...args); else super(end); }
+    static now() { return end; }
+  };
   const events = Array.from({ length: count }, (_, index) => ({
     schemaVersion: 1, id: String(index).padStart(64, '0'), provider: index % 2 ? 'codex' : 'claude',
     occurredAt: new Date(start + (index % 365) * 86400000 + Math.floor(index / 365) * 1000).toISOString(),

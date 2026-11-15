@@ -1,5 +1,3 @@
-import type { UpdateUiState } from "./updateState";
-import { formatPathListForLog } from "./pathDiagnostics";
 import { app, BrowserWindow, screen, Tray } from "electron";
 import fs from "node:fs/promises";
 import { Worker } from "node:worker_threads";
@@ -22,8 +20,6 @@ import { getSharedUsageStore } from "../portable/usageStore";
 import { sharedFxFetcher } from "../pricing/fx-fetcher";
 import { planChangePoints } from "../pricing/plan-cost";
 import { UsageSnapshot } from "../providers/types";
-import { generateUsageReport, portableReadRange } from "../reports/reportService";
-import type { ReportRequest } from "../reports/types";
 import { loadWindowHistoryFile, mergeWindowHistory, saveWindowHistoryFile } from "../usage/windowHistoryStore";
 import { mergeSettingsWithAgentRoots } from "./agentRootDiscovery";
 import { computeCacheHitRate, type AnalyticsData, type AnalyticsSummary } from "./analyticsSummary";
@@ -36,10 +32,13 @@ import { configureHttpProxy, getActiveProxyUrl, httpFetch } from "./httpClient";
 import { log } from "./logging";
 import type { ModelsData } from "./modelsData";
 import type { NotificationService } from "./notifications";
+import { formatPathListForLog } from "./pathDiagnostics";
 import { QuickStatsLoadMetric } from "./quickStatsLoadMetric";
 import { hardenRendererWindow, rendererIpc } from "./rendererSecurity";
+import { registerReportIpc } from "./reportsIpc";
 import { mergeAndSaveSettings } from "./settingsSave";
 import { registerSystemIpc } from "./systemIpc";
+import type { UpdateUiState } from "./updateState";
 import { PersistentWorkerClient } from "./workerClient";
 
 // One long-lived worker instead of a fresh one per request: its module-level
@@ -396,6 +395,7 @@ export class DetailsWindowController {
   }
 
   private registerIpcHandlers(): void {
+    registerReportIpc(() => this.isPortableDataReady(), loadRuntimeSettings);
     registerSystemIpc(() => this.quickStatsLoadMetric.valueMs);
     rendererIpc.on("quota:ready", async () => {
       log.debug("Dashboard window ready, pushing current data");
@@ -483,38 +483,6 @@ export class DetailsWindowController {
           error: error instanceof Error ? error.message : String(error),
         };
       }
-    });
-
-    rendererIpc.handle("reports:get", async (_, request: ReportRequest) => {
-      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
-      const settings = await loadRuntimeSettings();
-      const report = await generateUsageReport({ ...request, source: "portable" }, { settings });
-      const sinceDay = request.since ?? report.rows[0]?.bucket?.slice(0, 10);
-      const untilDay = request.until ?? new Date().toISOString().slice(0, 10);
-      const planChanges = (sinceDay && untilDay) ? [
-        ...planChangePoints(settings.plans, "claude", sinceDay, untilDay),
-        ...planChangePoints(settings.plans, "codex",  sinceDay, untilDay),
-      ] : [];
-      return { ...report, planChanges };
-    });
-
-    // The analytics tab needs the same time range split by provider. Asking
-    // twice re-reads and re-adapts the whole range for each call; reading the
-    // events once and building both reports from them is several times faster.
-    rendererIpc.handle("reports:get-batch", async (_, request: ReportRequest & { providers?: unknown }) => {
-      if (!await this.isPortableDataReady()) return PORTABLE_DATA_PREPARING;
-      const settings = await loadRuntimeSettings();
-      const providers = Array.isArray(request.providers)
-        ? request.providers.filter((item): item is "claude" | "codex" => item === "claude" || item === "codex")
-        : ["claude", "codex"] as const;
-      const { providers: _ignored, ...base } = request;
-      const range = portableReadRange(base.since, base.until);
-      const usageEvents = await getSharedUsageStore().read(range);
-      const reports = await Promise.all(providers.map((provider) => generateUsageReport(
-        { ...base, provider, source: "portable" },
-        { settings, usageEvents },
-      )));
-      return Object.fromEntries(providers.map((provider, index) => [provider, reports[index]]));
     });
 
     rendererIpc.handle("analytics:summary", async (_, request?: { costWindow?: string }) => {

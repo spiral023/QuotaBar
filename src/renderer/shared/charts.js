@@ -48,7 +48,13 @@ QB.charts.createLine = function(ctx, labels, datasets, opts) {
   const yFmt   = isRoi  ? (v) => Number(v).toFixed(1) + '×'
                : isRate ? (v) => '$' + Number(v).toFixed(2)
                : isMinutes ? (v) => Number(v).toFixed(0) + ' min'
-               :          (v) => '$' + Number(v).toFixed(0);
+               :          (v, _index, ticks) => {
+                   const steps = (ticks || []).slice(1).map((tick, i) => Math.abs(tick.value - ticks[i].value)).filter(step => step > 0);
+                   const step = steps.length ? Math.min(...steps) : (Math.abs(Number(v)) < 1 ? 0.01 : 1);
+                   let digits = 0;
+                   while (digits < 6 && Math.abs(step - Number(step.toFixed(digits))) > 1e-9 * Math.max(1, step)) digits++;
+                   return '$' + Number(v).toFixed(digits);
+                 };
   const tipFmt = isRoi
     ? (item) => ` ${item.dataset.label}: ${item.parsed.y.toFixed(1)}×`
     : isRate

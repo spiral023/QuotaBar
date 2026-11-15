@@ -8,10 +8,13 @@ if (window.__QB_IPC_BRIDGE__) {
   console.error('QuotaBar IPC bridge is unavailable');
 }
 
+/** @param {unknown} value
+ * @returns {value is import("../../shared/rendererIpc").PortableDataPreparing} */
 QB.isPortableDataPreparing = function isPortableDataPreparing(value) {
-  return Boolean(value && value.portableDataPreparing === true);
+  return Boolean(value && typeof value === 'object' && 'portableDataPreparing' in value && value.portableDataPreparing === true);
 };
 
+/** @type {Map<string, { attempt: number; timer: ReturnType<typeof setTimeout> | null; retry: () => unknown }>} */
 const portableDataRetries = new Map();
 
 QB.schedulePortableDataRetry = function schedulePortableDataRetry(key, retry) {

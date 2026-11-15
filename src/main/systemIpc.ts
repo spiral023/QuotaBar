@@ -1,4 +1,3 @@
-import { formatPathListForLog } from "./pathDiagnostics";
 import { app, dialog, shell } from "electron";
 import fs from "node:fs/promises";
 import path from "path";
@@ -15,7 +14,8 @@ import {
 import { exportPortableData, stagePortableImport } from "../portable/archiveService";
 import { getRuntimeAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { detectAppVariant } from "./appIdentity";
-import { log } from "./logging";
+import { flushLogging, log } from "./logging";
+import { formatPathListForLog } from "./pathDiagnostics";
 import { rendererIpc } from "./rendererSecurity";
 import {
   collectSystemData,
@@ -113,6 +113,7 @@ export function registerSystemIpc(getQuickStatsLoadDurationMs: () => number | nu
     }
     portableImportRestart = "exiting";
     app.relaunch();
+    await flushLogging();
     app.exit(0);
     return { ok: true };
   });

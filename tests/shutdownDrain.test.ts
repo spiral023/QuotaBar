@@ -36,6 +36,7 @@ describe("application shutdown drain", () => {
       stopIngestion: async () => { order.push("ingestion"); },
       flushNotifications: async () => { await service.flush(); order.push("notifications"); },
       flushRecorder: async () => { order.push("recorder"); },
+      flushLogging: async () => { order.push("logging"); },
       warn: vi.fn(),
     });
 
@@ -46,7 +47,7 @@ describe("application shutdown drain", () => {
     release();
     await Promise.all([lockHolder, first, second]);
 
-    expect(order).toEqual(["ingestion", "notifications", "recorder"]);
+    expect(order).toEqual(["ingestion", "notifications", "recorder", "logging"]);
     expect(JSON.parse(await fs.readFile(statePath, "utf8"))).toMatchObject({ dismissedUpdateVersion: "1.2.3" });
     expect(await fs.readFile(logPath, "utf8")).toContain('"evt":"start"');
   });

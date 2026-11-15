@@ -1,14 +1,14 @@
-import * as fs from "node:fs/promises";
 import type { PathLike } from "node:fs";
+import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PortableUsageStore } from "../src/portable/usageStore";
+import { buildModelsData } from "../src/main/modelsData";
 import { aggregateDaily } from "../src/portable/dailyRollups";
 import { fromClaudeEntries, fromCodexEvents } from "../src/portable/eventAdapters";
-import { generateUsageReport } from "../src/reports/reportService";
-import { buildModelsData } from "../src/main/modelsData";
 import type { PortableUsageEvent } from "../src/portable/types";
+import { PortableUsageStore } from "../src/portable/usageStore";
+import { generateUsageReport } from "../src/reports/reportService";
 
 function event(id: string, occurredAt: string, overrides: Partial<PortableUsageEvent> = {}): PortableUsageEvent {
   return { ...fromClaudeEntries([{ provider: "claude", timestamp: occurredAt, model: "claude-haiku-4-5",
@@ -65,6 +65,66 @@ describe("persisted daily rollups", () => {
     expect(await store.readDaily("UTC")).toEqual([]);
   });
 
+  it("rebuilds only a changed month in a fresh process cache", async () => {
+    await store.upsert([event("jan", "2026-01-31T23:30:00.000Z"), event("feb", "2026-02-01T00:30:00.000Z")]);
+    await store.readDaily("Europe/Vienna");
+    await store.upsert([event("new", "2026-02-02T00:30:00.000Z")]);
+    const readFile = vi.fn(fs.readFile);
+    const fresh = new PortableUsageStore(root, { ...fs, readFile: readFile as typeof fs.readFile });
+    const rows = await fresh.readDaily("Europe/Vienna");
+    expect(rows).toEqual(aggregateDaily(await store.read(), "Europe/Vienna"));
+    const jsonl = readFile.mock.calls.map(([file]) => String(file)).filter((file) => file.endsWith(".jsonl"));
+    expect(jsonl.map((file) => path.basename(file))).toEqual(["2026-02.jsonl"]);
+  });
+
+  it("rebuilds globally after an untracked external edit and deduplicates IDs", async () => {
+    const january = event("duplicate", "2026-01-01T01:00:00.000Z");
+    await store.upsert([january, event("feb", "2026-02-01T01:00:00.000Z")]);
+    await store.readDaily("UTC");
+    await fs.appendFile(path.join(root, "events", "2026-02.jsonl"), JSON.stringify({ ...january, occurredAt: "2026-02-02T01:00:00.000Z" }) + "\n");
+    const fresh = new PortableUsageStore(root);
+    expect(await fresh.readDaily("UTC")).toEqual(aggregateDaily(await fresh.read(), "UTC"));
+  });
+
+  it.each([false, true].flatMap((readBetween) => (["upsert", "reconcile", "legacy"] as const).map((method) => ({ readBetween, method }))))(
+    "preserves global deduplication after an external duplicate then $method (read between: $readBetween)", async ({ readBetween, method }) => {
+    const original = event("duplicate", "2026-01-01T01:00:00.000Z");
+    await store.upsert([original, event("feb", "2026-02-01T01:00:00.000Z")]);
+    await store.readDaily("UTC");
+    await fs.appendFile(path.join(root, "events", "2026-02.jsonl"), JSON.stringify({ ...original, occurredAt: "2026-02-02T01:00:00.000Z" }) + "\n");
+    const fresh = new PortableUsageStore(root);
+    if (readBetween) await fresh.readDaily("UTC");
+    const added = event("new", "2026-02-03T01:00:00.000Z");
+    if (method === "legacy") await fresh.reconcileLegacyDerived(() => ({ events: [{ ...added, source: "legacy-reconciliation", synthetic: true }], removeIds: [] }));
+    else await fresh[method]([added]);
+    const rows = await fresh.readDaily("UTC");
+    expect(rows.reduce((sum, row) => sum + row.count, 0)).toBe(3);
+    expect(rows).toEqual(aggregateDaily(await fresh.read(), "UTC"));
+  });
+
+  it("moves contributions between cached months without retaining the old day", async () => {
+    const original = event("moving", "2026-01-31T23:30:00.000Z");
+    await store.upsert([original]); await store.readDaily("Europe/Vienna");
+    await store.reconcile([{ ...original, occurredAt: "2026-02-02T01:00:00.000Z" }]);
+    const fresh = new PortableUsageStore(root);
+    expect(await fresh.readDaily("Europe/Vienna")).toEqual(aggregateDaily(await fresh.read(), "Europe/Vienna"));
+  });
+
+  it.each(["empty", "remove"])("restores a formerly excluded duplicate after its winner is externally changed (%s)", async (change) => {
+    const original = event("duplicate", "2026-01-01T01:00:00.000Z");
+    await store.upsert([original, event("feb", "2026-02-01T01:00:00.000Z")]);
+    await fs.appendFile(path.join(root, "events", "2026-02.jsonl"), JSON.stringify({ ...original, occurredAt: "2026-02-02T01:00:00.000Z" }) + "\n");
+    await store.readDaily("UTC");
+    const january = path.join(root, "events", "2026-01.jsonl");
+    if (change === "empty") await fs.writeFile(january, "");
+    else await fs.unlink(january);
+    const fresh = new PortableUsageStore(root);
+    await fresh.upsert([event("new-jan", "2026-01-03T01:00:00.000Z")]);
+    const rows = await fresh.readDaily("UTC");
+    expect(rows.reduce((sum, row) => sum + row.count, 0)).toBe(3);
+    expect(rows).toEqual(aggregateDaily(await fresh.read(), "UTC"));
+  });
+
   it("preserves the persisted cache across ingestion checkpoints without event changes", async () => {
     await store.upsert([event("one", "2026-01-01T01:00:00.000Z")]);
     await store.readDaily("UTC");
@@ -113,6 +173,24 @@ describe("persisted daily rollups", () => {
     expect(await new PortableUsageStore(root).readDaily("UTC")).toEqual(expected);
   });
 
+  it("rebuilds older snapshots whose global-deduplication provenance is unknown", async () => {
+    const { createHash } = await import("node:crypto");
+    await store.upsert([event("one", "2026-01-01T01:00:00.000Z")]);
+    const expected = await store.readDaily("UTC");
+    const directory = path.join(root, "daily-rollups");
+    const cache = path.join(directory, (await fs.readdir(directory))[0]);
+    const stored = JSON.parse(await fs.readFile(cache, "utf8"));
+    const payload = JSON.parse(stored.payload);
+    payload.version = 2; delete payload.independentPartitions;
+    stored.payload = JSON.stringify(payload);
+    stored.checksum = createHash("sha256").update(stored.payload).digest("hex");
+    await fs.writeFile(cache, JSON.stringify(stored));
+    const readFile = vi.fn(fs.readFile);
+    const fresh = new PortableUsageStore(root, { ...fs, readFile: readFile as typeof fs.readFile });
+    expect(await fresh.readDaily("UTC")).toEqual(expected);
+    expect(readFile.mock.calls.filter(([file]) => String(file).endsWith(".jsonl"))).toHaveLength(1);
+  });
+
   it("falls back when the cache directory is unavailable", async () => {
     await store.upsert([event("one", "2026-01-01T01:00:00.000Z")]);
     await fs.writeFile(path.join(root, "daily-rollups"), "fixture obstruction");
@@ -137,11 +215,21 @@ describe("persisted daily rollups", () => {
   });
 
   it("keeps exact range semantics for imported offset timestamps", async () => {
-    const events = [event("offset", "2026-01-01T10:00:00.000+10:00"), event("utc", "2026-01-01T02:00:00.000Z")];
+    const events = [event("offset", "2026-01-01T10:00:00.000+10:00", { occurredAt: "2026-01-01T10:00:00.000+10:00" }), event("utc", "2026-01-01T02:00:00.000Z")];
     await store.upsert(events);
     await store.readDaily("UTC");
     const range = { since: "2026-01-01T00:30:00.000Z", until: "2026-01-01T03:00:00.000Z" };
     expect(await new PortableUsageStore(root).readDaily("UTC", range)).toEqual(aggregateDaily([events[1]], "UTC"));
+  });
+
+  it("counts an offset event once when it overlaps a partially included UTC group", async () => {
+    const events = [event("early", "2026-01-01T01:00:00.000Z"), event("late", "2026-01-01T03:00:00.000Z"),
+      event("offset", "2026-01-01T12:00:00.000+10:00", { occurredAt: "2026-01-01T12:00:00.000+10:00" })];
+    await store.upsert(events); await store.readDaily("UTC");
+    const range = { since: "2026-01-01T02:00:00.000Z", until: "2026-01-01T04:00:00.000Z" };
+    const rows = await new PortableUsageStore(root).readDaily("UTC", range);
+    expect(rows.reduce((sum, row) => sum + row.count, 0)).toBe(2);
+    expect(rows).toEqual(aggregateDaily(await store.read(range), "UTC"));
   });
 
   it.each(["daily", "weekly", "monthly"] as const)("matches raw %s reports with authoritative and missing component costs", async (type) => {

@@ -1,11 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { invokeChannels, sendChannels, eventChannels, validIpcArguments } from "../shared/ipcContract";
+import { eventChannels, invokeChannels, sendChannels, validIpcArguments } from "../shared/ipcContract";
+import type { RendererIpc } from "../shared/rendererIpc";
 
 function assertAllowed(channels: readonly string[], channel: string, args?: unknown[]): void {
   if (!channels.includes(channel) || (args && !validIpcArguments(channel, args))) throw new Error("IPC request rejected");
 }
 
-contextBridge.exposeInMainWorld("__QB_IPC_BRIDGE__", {
+const bridge: RendererIpc = {
   invoke: (channel: string, ...args: unknown[]) => {
     assertAllowed(invokeChannels, channel, args);
     return ipcRenderer.invoke(channel, ...args);
@@ -21,4 +22,5 @@ contextBridge.exposeInMainWorld("__QB_IPC_BRIDGE__", {
     assertAllowed(sendChannels, channel, args);
     ipcRenderer.send(channel, ...args);
   },
-});
+};
+contextBridge.exposeInMainWorld("__QB_IPC_BRIDGE__", bridge);

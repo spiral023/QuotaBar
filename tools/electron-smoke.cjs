@@ -45,6 +45,7 @@ delete process.env.ELECTRON_RUN_AS_NODE;
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     }
 
+    await require('./electron-renderer-regressions.cjs')(electron, page, output);
     await page.fill('#sys-codex-root-new', 'C:\\draft-root');
     await electron.evaluate(() => global.smokeController.notifyUpdateState({
       status: 'downloading', currentVersion: '2.3.1', newVersion: '2.3.2', downloadPercent: 42, error: null,
@@ -103,7 +104,7 @@ delete process.env.ELECTRON_RUN_AS_NODE;
     assert.equal(await onboarding.locator('#tog-autostart').isChecked(), false);
     await onboarding.click('#btn-start');
     assert.deepEqual(errors, []);
-    process.stdout.write(JSON.stringify({ electron: runtime, dashboardSizes: ['900x660', '750x520'], tabs: 7, portableStates: 3, ipcRejections: 'passed', screenshots: output }) + '\n');
+    process.stdout.write(JSON.stringify({ electron: runtime, dashboardSizes: ['900x660', '750x520'], tabs: 7, portableStates: 3, ipcRejections: 'passed', rendererRegressions: 'passed', screenshots: output }) + '\n');
   } finally {
     if (electron) await electron.close();
     const resolved = path.resolve(root);

@@ -254,7 +254,7 @@ export function rendererHarness(responses: Record<string, unknown[]>) {
     setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout, setInterval: () => 1, clearInterval() {},
     localStorage: { getItem: () => null, setItem() {} }, ResizeObserver: class { observe() {} disconnect() {} },
   });
-  return { context, QB, document, calls, invocations, handlers, timers, run(file: string) { const dependencies = file.replaceAll("\\", "/").endsWith("tabs/analytics.js") ? ["analytics-helpers.js", "analytics-activity.js"] : file.replaceAll("\\", "/").endsWith("tabs/system.js") ? ["system-view.js"] : []; for (const dependency of dependencies) vm.runInContext(fs.readFileSync(file.replace(/[^/\\]+$/, dependency), "utf8"), context); const code = fs.readFileSync(file, "utf8"); vm.runInContext(code, context); } };
+  return { context, QB, document, calls, invocations, handlers, timers, run(file: string) { const dependencies = file.replaceAll("\\", "/").endsWith("tabs/analytics.js") ? ["analytics-helpers.js", "analytics-activity.js", "analytics-window-history.js", "analytics-data.js"] : file.replaceAll("\\", "/").endsWith("tabs/system.js") ? ["system-view.js", "system-roots-view.js", "system-updates-view.js"] : []; for (const dependency of dependencies) vm.runInContext(fs.readFileSync(file.replace(/[^/\\]+$/, dependency), "utf8"), context); const code = fs.readFileSync(file, "utf8"); vm.runInContext(code, context); } };
 }
 
 export async function flush(): Promise<void> { await Promise.resolve(); await Promise.resolve(); await new Promise((resolve) => setImmediate(resolve)); }

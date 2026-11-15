@@ -3,7 +3,20 @@
 Langfristiges Register für Performance-Analysen, Messwerte und offene Optimierungen.
 
 Erstanalyse: 2026-09-05
-Letzte Aktualisierung: 2026-10-17
+Last updated: 2026-11-15
+
+## Current status — 2026-11-15
+
+Implemented: append ingestion journal, per-root watcher fallback, bounded main
+and renderer analytics caches, worker request limits, persisted daily metrics,
+per-partition daily rebuilds, shared timezone conversion, shared activity
+aggregation and bounded asynchronous application logging.
+
+The older rounds and open-item descriptions below are historical evidence.
+In particular, daily rollups are implemented, and unchanged legacy
+reconciliation uses the revision memo. See the latest measurements at the end.
+Remaining work includes measuring partition cloning and long-running memory
+retention; canonical event reads remain necessary for session/project details.
 
 ## Warum diese Datei
 
@@ -423,7 +436,7 @@ Mit Preisen für alle Modelle ist die Reparatur abgeschlossen (`costEnrichmentVe
 erste Lauf liest den Store nicht mehr. Kommt ein neues unbepreistes Modell hinzu, greift
 wieder die stündliche Drossel; beim Start läuft dann einmal ein voller Versuch.
 
-### 2. Tages-Rollups persistieren — hoch, größerer Umbau
+### 2. Persisted daily rollups — implemented; incremental partitions added 2026-11-15
 
 Der Architektur-Fix: `rollups/<YYYY-MM>.jsonl` je Tag × Provider × Modell mit
 Tokens und Kosten. Analytics, History und Models lesen dann ~300 Zeilen statt
@@ -432,7 +445,7 @@ mit *Tagen* statt mit *Events* — die Voraussetzung dafür, dass sie langfristi
 schnell bleibt. Adressiert zugleich `models:get` (1,0 s) und `windowHistory`
 (0,85 s), die weiterhin die volle Historie lesen.
 
-### 3. Legacy-Reconciliation: dreifacher Store-Hash pro Lauf — hoch, geprüft 2026-10-17
+### 3. Historical reconciliation profile — unchanged runs now use the revision memo
 
 Die Debug-Logs sind **nicht** der Kostenpunkt. Gelesen werden nur die 201 `*.backfill.jsonl`
 (36 MB, 320 ms, und im Refresh-Pfad sogar außerhalb des Stage-Timers); sie sind seit
@@ -649,3 +662,101 @@ All seven reports had identical row/total hashes after rounding numerical values
 to six decimal places. The warm-path assertion also requires zero JSONL reads.
 These measurements describe additive daily reports, not the full activity/session
 Analytics screen or end-to-end UI latency.
+
+
+## Renderer and performance maintenance — 2026-11-15
+
+Implemented latest-request rendering and invalidation-safe prefetch, a 32-entry
+renderer LRU, strictly checked IPC/data-loading helpers, literal update text,
+adaptive cost ticks, shared timezone conversion/activity aggregation and bounded
+asynchronous application logging. The five source files previously over 1,000
+lines were split by responsibility; all first-party runtime source files now
+remain below 1,000 lines. Report IPC registration is separate from window code.
+
+Daily snapshot format 2 stores per-UTC-month contributions plus durable partition
+generations. Appends, replacements, removals and transaction recovery update the
+affected generations before source writes. A tracked mutation rebuilds only
+changed partitions, then merges local-day/provider/model contributions. Unknown
+external changes trigger a full canonical read with global ID deduplication.
+Checksums, exact-range fallbacks, offset timestamp handling and archive exclusion
+remain covered by regressions. Metadata-only checkpoints preserve the cache.
+
+### Matched A/B analytics and incremental reads
+
+Windows, Node 22.23.4, native TypeScript 7.0.2 on both sides. The baseline source
+was extracted from HEAD into an ignored isolated directory and compiled with the
+same compiler/dependencies. Each sample uses a fresh process and synthetic data;
+no test, package build or Sandbox ran concurrently. Analytics freezes its clock
+to the fixture end date because sparklines otherwise change across midnight.
+All before/after hashes match (daily numeric values rounded to six decimals).
+
+| Workload | Baseline samples (ms) | Updated samples (ms) | Median before → after |
+| --- | --- | --- | --- |
+| Full Analytics, 10,000 events | 360 / 370 / 373 | 292 / 288 / 287 | 370 → 288 ms |
+| Full Analytics, 100,000 events | 2,390 / 2,367 / 2,359 | 1,791 / 1,778 / 1,799 | 2,367 → 1,791 ms |
+| Daily read after one changed month, 100,000 events | 1,475 / 1,525 / 1,487 | 109 / 104 / 105 | 1,487 → 105 ms |
+
+Full Analytics improved by about 24% in the larger fixture. Its RSS was
+241–245 MiB before and 247–249 MiB after; this change does not reduce full-task
+memory. Incremental reads dropped from 12 JSONL reads to one and about 14 times
+less latency; RSS in that fixture was 253–256 MiB before and 206–208 MiB after.
+
+Analytics timing excludes input generation, module loading, disk reads and
+renderer painting. The incremental benchmark warms the initial snapshot and
+performs the source mutation outside the timed section, then times a new store
+instance reading the updated daily data. It includes locks, cache/source reads
+and aggregation. It does not measure ingestion/write latency or cold physical
+storage. Synthetic timing is evidence for these paths, not a UI latency promise.
+
+The existing daily-report benchmark also passed unchanged canonical-result and
+zero-JSONL-read warm assertions. Observed initial snapshot creation was 1,805 ms
+before and 1,067 ms after (single samples); warm report medians were 103 ms and
+76 ms. These single cold samples do not establish a latency distribution.
+
+Reproduce after building:
+
+```powershell
+node tools/benchmark-analytics.cjs
+node tools/benchmark-rollups.cjs
+node tools/benchmark-incremental-rollups.cjs
+```
+
+`QB_BENCHMARK_DIST` optionally selects an isolated compiled baseline for the
+analytics/incremental tools. Both versions must use the same runtime and compiler.
+Remaining work: measure canonical partition cloning, long-running cache memory
+and logging event-loop latency. Full ingestion/reconciliation still scans canonical
+history in several paths; incremental daily reads do not remove that write cost.
+
+
+Final correctness validation passed 1,545 tests, strict typechecking, lint, build,
+coverage, isolated Electron rendering and real installed update acceptance in
+Windows Sandbox. The last UI follow-up reloads an active invalidated view and
+renders prefetched replacement data on tab reentry; it does not alter the worker
+or rollup workloads measured above.
+
+
+## Final review corrections — 2026-11-15
+
+Snapshot format 3 records whether each full snapshot was independent of global
+ID deduplication. An ambiguous snapshot can reuse unchanged rows, but a mutation
+requires a full canonical rebuild. Managed writers also invalidate the global
+epoch when raw partitions contain duplicate IDs, covering external edits masked
+by a subsequent managed write. Once duplicates are resolved, independent monthly
+rebuilds resume. No canonical usage format changed.
+
+Partial instant-range fallback now retains only the original aggregate group,
+preventing separately stored offset events from being counted twice. Application
+log stat/rotation/append operations now share the archive application lock.
+
+Fresh-process benchmark verification after these correctness fixes preserved
+all result hashes: full Analytics medians were 285 ms (10,000 events) and
+1,776 ms (100,000 events); the updated daily read after one changed month had
+105 / 108 / 108 ms samples (108 ms median) and exactly one JSONL read per sample.
+The warm daily-report assertion still requires zero JSONL reads. The documented
+benchmark timing boundaries and synthetic-data limitations above still apply.
+
+Final review verification passed 1,556 tests, strict typechecks, lint, build,
+coverage, isolated real Electron rendering and the installed Windows Sandbox
+update test. The duplicate and offset regressions use canonical-event aggregates
+as the reference; the logger test holds the archive lock until queued logging
+has demonstrably waited. Details are in `docs/reviews/2026-11-15-maintenance-final-review.md`.

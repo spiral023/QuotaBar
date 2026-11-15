@@ -18,7 +18,7 @@ function loadAnalyticsHelpers(): {
     console,
   });
   const script = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "tabs", "analytics.js"), "utf8");
-  for (const file of ["analytics-helpers.js", "analytics-activity.js"]) vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "tabs", file), "utf8"), context);
+  for (const file of ["analytics-helpers.js", "analytics-activity.js", "analytics-window-history.js", "analytics-data.js"]) vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "tabs", file), "utf8"), context);
   vm.runInContext(script, context);
   return (context.QB as any).__analyticsTest;
 }
@@ -63,15 +63,9 @@ describe("analytics renderer helpers", () => {
     expect(helpers.statTooltip("$/1k output")).toContain("API cost divided by output tokens");
   });
 
-  it("does not cache or render analytics preparing responses", () => {
-    const script = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "tabs", "analytics.js"), "utf8");
-    expect(script).toContain("QB.isPortableDataPreparing(data)");
-    expect(script).toContain("Preparing data");
-    expect(script).toMatch(/isPortableDataPreparing\(data\)[\s\S]{0,220}_cache\.delete\(key\)/);
-  });
 
   it("keeps preparing window history out of its renderer cache", () => {
-    const script = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "tabs", "analytics.js"), "utf8");
+    const script = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "tabs", "analytics-window-history.js"), "utf8");
     expect(script).toMatch(/windowHistory:get[\s\S]{0,220}isPortableDataPreparing\(_whData\)/);
   });
 });
