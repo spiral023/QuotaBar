@@ -224,6 +224,15 @@ The installed test also exercises custom-directory NSIS detection and the
 first packaged CLI argument (`--open-window`). These regressions have focused
 unit coverage in `appIdentity.test.ts` and `cli.test.ts`.
 
+Automatic relaunch must now be a newly created main process, excluding Chromium
+children, with the updated version's startup recorded before the separate CDP
+verification launch. Older runs observed any surviving QuotaBar PID; that alone
+did not prove a successful automatic main-process restart. A failure reports its
+phase and leaves `dataRetained` null until the data comparison actually runs.
+Credential-free guest process traces and startup diagnostics distinguish a failed
+automatic launch from changed usage data. Diagnostic manual starts never count
+as a passing automatic relaunch.
+
 The live updater pushes `update:state` to the existing System panel. Only the
 version/update panel is replaced, preserving drafts and transfer dialogs. The
 Electron smoke test checks progress, the install button and an edited root field;
@@ -318,3 +327,79 @@ signing and SmartScreen boundaries stated above.
 
 Review findings and their regression coverage are recorded in
 `docs/reviews/2026-11-15-maintenance-final-review.md`.
+
+### Large-history performance and retention
+
+Build first with the declared Node/npm versions, then run from the repository root:
+
+```powershell
+node --expose-gc tools/benchmark-store.cjs
+node --expose-gc tools/benchmark-pipelines.cjs 250000
+node --expose-gc tools/benchmark-cache-churn.cjs
+node --expose-gc tools/soak-runtime.cjs 30 100000
+node tools/electron-soak.cjs 30
+```
+
+All inputs and homes are synthetic and disposable. The pipeline test reads real
+JSONL files, uses deterministic local price enrichment, exports a portable ZIP,
+stages it over an existing large destination with a backup, applies it and checks
+canonical event equality through the same previously warmed destination store.
+Store tests also check insert/update/existing counts and canonical result hashes.
+
+`compare-write-performance.cjs <baseline-dist>` alternates three fresh processes
+per version/workload at 100,000 and 250,000 events. The baseline must be built with
+the same compiler/dependencies/runtime. Its parent directory needs the matching
+`package.json`, as in a normal checkout/build. `QB_BENCHMARK_DIST` also selects a
+compiled tree for individual store/pipeline/cache-churn runs. Run timing comparisons
+without concurrent QuotaBar tests, builds or soak processes. See PERFORMANCE.md
+for timing boundaries, measured values and limitations.
+
+The runtime soak repeatedly mutates usage, reads daily rows, rotates source files,
+loads/invalidates main and renderer request caches and rotates asynchronous logs.
+It checks canonical totals, cache hits/capacity, final log delivery, file limits
+and heap retention after garbage collection and invalidation. Its renderer cache
+is run as the real module in a VM with a local IPC substitute; actual IPC and
+workers are covered by the separate real Electron soak.
+
+The Electron soak opens the real dashboard with 100,000 events, alternates both
+window sizes and seven tabs, sends worker queries and simulates ingestion updates.
+It samples main/renderer heaps, RSS, DOM nodes and Chart.js instances and rejects
+renderer errors or continuing heap growth after warmup. It never starts provider
+polling or opens the host installation. The test disables background animation
+throttling for its own window and restores it if minimized, so occlusion by another
+acceptance window does not pause the active-use workload. This is not an idle-power
+test. Failure diagnostics capture window state and a screenshot before cleanup.
+Results/screenshots are ignored under
+`package-output/performance-ingestion/`. Duration arguments are actual elapsed
+minutes, not accelerated application time; a 30-minute pass does not establish
+day-long production behavior. These manual load tests are not ordinary CI steps.
+
+### Write/retention validation — 2026-11-15
+
+Node 22.23.4/npm 11.21.2 passed strict application/test/renderer typechecking,
+lint, 1,566 tests (seven child-fixture placeholders intentionally skipped), build
+and selected-scope coverage: 92.37% lines and 83.52% branches. The ordinary real
+Electron smoke passed both sizes, seven tabs, compact/onboarding and renderer
+regressions. NSIS, portable EXE and ZIP packaging also succeeded.
+
+The runtime and real Electron retention tests each passed 30 actual minutes with
+100,000 initial events. Runtime: 897 cycles/90 appends, a bounded parse cache,
+flat live post-GC heap, canonical rollup equality and intact final log delivery.
+Electron: 180 cycles/18 appends, no renderer errors, six charts and 2,503 DOM nodes
+after warmup. Detailed measurements and limits are in PERFORMANCE.md.
+
+Two final isolated installed-update acceptances passed with the normal production
+entry point (`dist/main/main.js`), not a diagnostic wrapper. Both observed the new
+main process and version before verification, rejected the bad checksum, retried,
+installed/relaunched and retained settings plus byte-identical usage. Both ASARs
+matched 183 runtime files. Evidence directories are
+`package-output/update-smoke/results-1794744035270/` and
+`package-output/update-smoke/results-1794744316350/`, including `relaunch.json`,
+`verified.json` and before/after usage snapshots. No public update was published.
+
+Earlier Sandbox attempts during concurrent verification ended in automatic
+startup before the usage comparison. A diagnostic run and both final unmodified
+isolated runs passed; the earlier startup-abort cause was not established. Run
+installed acceptance separately from timing/soak workloads for reproducible
+results, and keep resource-saturated startup as a separate follow-up. This round
+does not establish update reliability under resource saturation.

@@ -41,9 +41,8 @@ import { registerSystemIpc } from "./systemIpc";
 import type { UpdateUiState } from "./updateState";
 import { PersistentWorkerClient } from "./workerClient";
 
-// One long-lived worker instead of a fresh one per request: its module-level
-// FileParseCaches stay warm, so repeat requests (cost-window switch, poll
-// ticks) only re-stat the JSONL files instead of re-parsing the full history.
+// One long-lived worker preserves bounded provider parse caches between requests.
+// Reused files need only a stat; cold or evicted files are parsed on demand.
 const analyticsWorker = new PersistentWorkerClient(
   () => new Worker(path.join(__dirname, "analyticsWorker.js"))
 );

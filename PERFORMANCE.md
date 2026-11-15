@@ -10,13 +10,16 @@ Last updated: 2026-11-15
 Implemented: append ingestion journal, per-root watcher fallback, bounded main
 and renderer analytics caches, worker request limits, persisted daily metrics,
 per-partition daily rebuilds, shared timezone conversion, shared activity
-aggregation and bounded asynchronous application logging.
+aggregation and bounded asynchronous application logging. The latest write round
+also removes per-record comparison serialization, borrows internally owned
+partition records and bounds source-file parse retention.
 
 The older rounds and open-item descriptions below are historical evidence.
 In particular, daily rollups are implemented, and unchanged legacy
 reconciliation uses the revision memo. See the latest measurements at the end.
-Remaining work includes measuring partition cloning and long-running memory
-retention; canonical event reads remain necessary for session/project details.
+See the write and retention measurements below. Canonical event reads and
+per-write ID/ownership maps remain necessary in several paths; multi-day memory
+behavior and larger source-file populations remain follow-up measurements.
 
 ## Warum diese Datei
 
@@ -760,3 +763,152 @@ coverage, isolated real Electron rendering and the installed Windows Sandbox
 update test. The duplicate and offset regressions use canonical-event aggregates
 as the reference; the logger test holds the archive lock until queued logging
 has demonstrably waited. Details are in `docs/reviews/2026-11-15-maintenance-final-review.md`.
+
+## Import, reconciliation and retention — 2026-11-15
+
+### Workloads and feedback loop
+
+Baseline: `bdb37e8bf315518bdeb875b610e982b8b3006555`, compiled with the same
+TypeScript 7.0.2 dependencies as the updated tree. Windows, Node 22.23.4/npm
+11.21.2. `tools/compare-write-performance.cjs` alternates three fresh baseline
+and updated processes per size and workload. No QuotaBar tests, build, Sandbox
+or soak process ran concurrently with the timing comparison. Data generation,
+module loading and explicit garbage collection are outside measured operations;
+ordinary allocation/GC, locks, reads and writes inside the operation are included.
+Filesystem pages may be cached by Windows.
+
+The store fixture contains 100,000 or 250,000 events from both providers across
+12 UTC months. The end-to-end fixture contains the same event counts in 100 real
+Claude JSONL source files, with a deterministic local price-enrichment callback.
+The pricing lookup/network itself is not timed. It measures initial ingestion,
+the first unchanged pass (loading the newly written state), a subsequent warm
+unchanged pass and the first changed source. The latter can still require loading
+canonical partitions that were invalidated by the initial write; it is not a
+steady-state append-only latency claim.
+
+ZIP creation is outside import timing. The measured stage includes validation,
+backup of an existing equally large destination and staging. Apply includes the
+normal verified replacement/cleanup. A destination-only event must disappear,
+and a previously warmed store instance must observe the imported canonical data.
+All baseline/current canonical event hashes match at both sizes. Store operation
+counts and final contents also match independently constructed expected events;
+archive timestamps and ZIP bytes themselves are not compared.
+
+CPU profiles identified canonical JSON comparison as the largest store-level
+self-time and recursive field sorting/serialization in cost-only enrichment
+validation as the largest ingestion self-time. The cache churn loop initially
+failed because every one of 512 historical source files remained retained.
+
+### Changes
+
+- Sanitized record equality now compares every scalar and nested legacy target
+  directly; an exhaustive TypeScript key map prevents new scalar fields being
+  omitted. Canonical serialization, ordering, revisions and persisted formats
+  remain the reference for writes and hashes.
+- Internal store readers borrow owned partition records. Public reads and legacy
+  builders still clone, including nested targets. Tests mutate returned objects
+  and prove the cache, revision and subsequent reconciliation remain unchanged.
+- Cost-only enrichment compares immutable keys/values structurally, avoiding
+  recursive sorting and string allocation. Enrichment receives separate copies:
+  two failing regressions showed that in-place token/model mutations previously
+  changed the very reference used for validation. Source ingestion and stored
+  cost repair now reject those mutations without committing them. Reordered
+  keys and legitimate cost changes remain accepted; extra non-cost keys are rejected.
+- Each source parse cache now uses LRU eviction with at most 128 files and
+  100,000 array items, skips oversized results, and drops entries for missing
+  files before fallback parsing. These limits count entries/items, not bytes.
+
+### Matched operation medians
+
+All values are milliseconds, before → after, with three samples per cell.
+
+| Operation | 100,000 events | 250,000 events |
+| --- | --- | --- |
+| Initial real JSONL ingestion | 4,860 → 2,812 | 11,319 → 7,021 |
+| Full unchanged store reconciliation | 767 → 406 | 1,899 → 1,001 |
+| Store bulk upsert | 835 → 810 | 2,022 → 2,020 |
+| One-event store append, warm | 111 → 87 | 283 → 185 |
+| One-event store update, warm | 132 → 108 | 349 → 238 |
+| Empty store reconciliation | 104 → 90 | 361 → 194 |
+| First unchanged ingestion after initial write | 278 → 278 | 588 → 611 |
+| Warm unchanged ingestion | 74 → 72 | 122 → 124 |
+| First changed source after initial ingestion | 852 → 766 | 1,979 → 1,853 |
+| ZIP import stage, existing destination and backup | 3,278 → 3,090 | 7,486 → 7,516 |
+| ZIP import apply | 1,009 → 963 | 1,756 → 1,738 |
+
+Initial ingestion improved by approximately 42%/38%; full reconciliation by
+approximately 47% at both sizes. Bulk writes, unchanged ingestion and archive
+import are effectively unchanged in this fixture. Smaller changes still build
+history-wide ID/source-ownership maps; no new persistent index was introduced.
+Archive validation, backup, checksums, locking and rollback remain part of the path.
+
+The store filesystem counters cover its injected readFile/writeFile calls,
+including staged-file verification; they do not include every root-lock or
+rollup-marker operation. Whole-process max RSS in benchmark output also includes
+fixture construction and canonical-hash verification, so it is not an operation's
+peak memory measurement.
+
+### Parse-cache retention
+
+`node --expose-gc tools/benchmark-cache-churn.cjs`, one fresh process per version,
+512 distinct synthetic files with 256 parsed events each. Post-GC heap:
+
+| Files visited | Before | After |
+| --- | --- | --- |
+| 128 | 21.28 MiB | 21.29 MiB |
+| 256 | 38.09 MiB | 21.28 MiB |
+| 384 | 54.89 MiB | 21.28 MiB |
+| 512 | 71.68 MiB | 21.28 MiB |
+
+The oldest file is reparsed after eviction. The updated heap stays flat after
+cache capacity is reached, about 70% below the baseline's final heap in this
+fixture. This does not cap the canonical partition cache or the memory of a
+single oversized result while its caller is using it.
+
+### Thirty-minute active-use retention tests
+
+Both tests used 100,000 initial events and real elapsed time, with full tests,
+coverage, package builds and isolated Sandbox acceptance running concurrently.
+These are stability/load observations, not isolated latency comparisons.
+
+| Test | Elapsed time | Work completed | Retention after warmup |
+| --- | --- | --- | --- |
+| Runtime modules | 1,801 seconds | 897 cycles, 90 canonical appends, rotating source files, main/renderer cache loads and invalidation, asynchronous log rotation | Live post-GC/post-invalidation heap 64.19–64.69 MiB; source cache at most 128 files |
+| Real Electron window | 1,802 seconds | 180 cycles, 18 canonical appends, seven tabs, both sizes, worker queries and ingestion invalidation | Renderer heap 6.59–7.76 MiB; main heap 37.74–37.94 MiB; six charts and 2,503 DOM nodes |
+
+Runtime figures exclude the first three minutes of cache warmup; Electron figures
+exclude the first eight minutes. The runtime test's live heap range is only
+0.50 MiB. Its 3,588 rotating files produced 918,528 parsed fixture records; cold
+entries were evicted throughout. All final canonical events and daily aggregates
+matched. The final log batch was present, with observed log size below 5,000,000
+bytes. The live heap range was checked independently from the final measurement,
+which can release caches no longer referenced after the workload ends.
+
+Runtime event-loop p99 after warmup was 32–44 ms and the largest sampled stall
+121 ms. The diagnostic timer resolution is 20 ms; the workload also includes
+explicit GC and host contention. These figures do not isolate logging latency.
+Runtime process RSS ranged from 149.80 to 189.44 MiB after warmup and includes
+allocator behavior; it is not a retained-heap or whole-Electron memory limit.
+
+The Electron test ran the real production IPC handlers, worker and Chromium DOM
+in a synthetic home. Its active-use fixture disables background throttling and
+restores a minimized test window, preventing another acceptance window from
+pausing the UI workload. It had no renderer errors or continued chart/DOM growth.
+This does not measure idle power use, GPU memory or multi-day production behavior.
+
+Artifacts are ignored under `package-output/performance-ingestion/`: comparison
+JSONL, CPU profiles, cache churn samples, both soak JSON reports and Electron
+start/end screenshots. Reproduction commands and precise boundaries are in
+TESTING.md. Remaining work includes multi-day runs, larger source-file counts,
+root-switch retention and measured ID/source-ownership indexing opportunities.
+
+### Final functional verification
+
+Strict typechecks, lint, 1,566 tests, selected-scope coverage, build, the standard
+real Electron smoke and all Windows package targets passed. Both final isolated
+installed-update runs used the normal production entry point and passed actual
+main-process relaunch, settings retention and byte-identical canonical usage.
+The acceptance harness now excludes Chromium children when observing relaunch.
+Earlier concurrently loaded Sandbox startup aborts remain an unconfirmed test
+finding; saturated startup needs its own controlled comparison. See TESTING.md
+for exact artifact directories and acceptance boundaries.

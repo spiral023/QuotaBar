@@ -21,9 +21,13 @@ app.whenReady().then(async () => {
   await saveSettings({ ...defaultSettings, pinned: true, pricingOfflineMode: true, proxy: { mode: 'off', url: '' } });
   const store = getSharedUsageStore();
   const now = Date.now();
-  await store.upsert(Array.from({ length: 120 }, (_, index) => ({
+  const count = Number(process.env.QB_SMOKE_EVENTS || 120);
+  if (!Number.isSafeInteger(count) || count < 1 || count > 1000000) throw new Error('Invalid synthetic event count');
+  const spacing = Math.min(3600_000, 360 * 86400000 / count);
+  global.smokeUsageStore = store;
+  await store.upsert(Array.from({ length: count }, (_, index) => ({
     schemaVersion: 1, id: String(index).padStart(64, '0'), provider: index % 2 ? 'codex' : 'claude',
-    occurredAt: new Date(now - index * 3600_000).toISOString(),
+    occurredAt: new Date(now - index * spacing).toISOString(),
     model: index % 2 ? 'gpt-5.4' : 'claude-sonnet-4-6', sessionKey: `synthetic-${Math.floor(index / 6)}`,
     source: index % 2 ? 'codex-log' : 'claude-log', synthetic: false,
     inputTokens: 1000, outputTokens: 100, cacheReadTokens: 100, cacheCreationTokens: 0, reasoningOutputTokens: 0,

@@ -44,6 +44,23 @@ UTC partitions can contribute to the same local day. Their provider/model rows
 are merged after per-event cost reconciliation. Exact partial ranges still read
 canonical boundary events. Imported offset timestamps retain individual rows.
 
+Partition records are owned by the store. Internal readers borrow those records;
+public reads and legacy-builder callbacks receive copies, including nested legacy
+targets. Reconciliation compares sanitized fields directly, with compile-time
+coverage of every scalar field, rather than allocating canonical JSON strings.
+Persisted serialization and revisions retain their existing format and ordering.
+
+Cost enrichment receives separate event copies. Its output must preserve event
+positions, all non-cost keys and their values. A structural comparison enforces
+that boundary without sorting and serializing every field; in-place callback
+mutations cannot alter the reference used for validation.
+
+Source-file parse caches retain at most 128 files and 100,000 array items per
+provider cache, using least-recently-used eviction. A single oversized array is
+not retained, and missing files discard their old entry. These are entry/item
+limits, not a byte budget. Portable partition caching still scales with canonical
+history; result caches in main and renderer remain separately bounded.
+
 Renderer invalidation clears pending generations as well as cached values.
 Only the latest selected-range request may update the visible analytics UI.
 Old successes, errors and prefetch results cannot repopulate an invalidated cache.

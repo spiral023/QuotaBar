@@ -11,6 +11,43 @@ afterEach(async () => {
 });
 
 describe("FileParseCache", () => {
+  it("evicts the least recently used file while retaining hot entries", async () => {
+    await fs.mkdir(tmpRoot, { recursive: true });
+    const files = ["a", "b", "c"].map(name => path.join(tmpRoot, name));
+    for (const file of files) await fs.writeFile(file, "fixture");
+    const cache = new FileParseCache<string[]>(2);
+    await cache.get(files[0], async () => ["a"]);
+    await cache.get(files[1], async () => ["b"]);
+    expect(await cache.get(files[0], async () => ["unexpected"])).toEqual(["a"]);
+    await cache.get(files[2], async () => ["c"]);
+    expect(await cache.get(files[0], async () => ["unexpected"])).toEqual(["a"]);
+    expect(await cache.get(files[1], async () => ["reparsed"])).toEqual(["reparsed"]);
+  });
+
+  it("bounds retained array items and skips a single oversized parse", async () => {
+    await fs.mkdir(tmpRoot, { recursive: true });
+    const files = ["a", "b", "large"].map(name => path.join(tmpRoot, name));
+    for (const file of files) await fs.writeFile(file, "fixture");
+    const cache = new FileParseCache<number[]>(10, 3);
+    await cache.get(files[0], async () => [1, 2]);
+    await cache.get(files[1], async () => [3, 4]);
+    expect(await cache.get(files[0], async () => [5])).toEqual([5]);
+    await cache.get(files[2], async () => [1, 2, 3, 4]);
+    expect(await cache.get(files[2], async () => [6])).toEqual([6]);
+    cache.clear();
+    expect(cache.size).toBe(0);
+  });
+
+  it("drops a disappeared file even when its fallback parser fails", async () => {
+    await fs.mkdir(tmpRoot, { recursive: true });
+    const file = path.join(tmpRoot, "removed"); await fs.writeFile(file, "fixture");
+    const cache = new FileParseCache<string[]>();
+    await cache.get(file, async () => ["held"]);
+    await fs.unlink(file);
+    await expect(cache.get(file, async () => { throw new Error("missing"); })).rejects.toThrow("missing");
+    expect(cache.size).toBe(0);
+  });
+
   it("reuses parsed output while path, mtime, and size stay unchanged", async () => {
     const filePath = path.join(tmpRoot, "session.jsonl");
     await fs.mkdir(tmpRoot, { recursive: true });

@@ -118,10 +118,12 @@ async function startFeed(requests, corrupt) {
     await until(() => cdp.evaluate("Boolean(document.querySelector('#sys-update-check'))"));
     if (process.argv.includes('--verify')) {
       assert.equal((await state()).currentVersion, '2.3.2');
+      await until(() => cdp.evaluate("window.QB.ipc.invoke('system:get').then(report => report.app.portableDataReady)"));
       const settings = JSON.parse((await fs.readFile(path.join(home, 'settings.json'), 'utf8')).replace(/^\uFEFF/, ''));
       assert.equal(settings.minModelTokenSharePct, 7);
       assert.equal(settings.pollIntervalSeconds, 3600);
       const usage = await fs.readFile(path.join(home, 'usage', 'events', '2026-01.jsonl'));
+      await fs.writeFile(path.join(results, 'usage-after-update.jsonl'), usage);
       assert.equal(createHash('sha256').update(usage).digest('hex'), await fs.readFile(path.join(results, 'usage-hash.txt'), 'utf8'));
       await cdp.evaluate("document.querySelector('#sys-update-check').click()");
       await until(async () => requests.some(request => request.file.endsWith('.yml')) && (await state()).status === 'idle');

@@ -19,9 +19,9 @@ import {
   type PortableUsageEvent
 } from "./types";
 import {
-  canonicalSerialize,
   clonePortableEvent,
   compareText,
+  equalPortableEvents,
   isNonEmptyString,
   monthKey,
   monthKeyOf,
@@ -41,7 +41,7 @@ interface AppendPlan {
 
 interface PartitionCacheEntry {
   identity: string;
-  events: PortableUsageEvent[];
+  events: readonly PortableUsageEvent[];
 }
 
 /** Changed ingest-state records to append; startWith begins a fresh journal on that snapshot. */
@@ -177,7 +177,7 @@ export class PortableUsageStore {
   read(range: Range = {}): Promise<PortableUsageEvent[]> {
     return this.exclusive(async () => {
       await this.prepareStore();
-      return this.readUnlocked(range);
+      return (await this.readUnlocked(range)).map(clonePortableEvent);
     });
   }
 
@@ -319,7 +319,7 @@ export class PortableUsageStore {
         const stored = storedById.get(event.id);
         if (!stored) {
           inserted += 1;
-        } else if (canonicalSerialize(stored) === canonicalSerialize(event)) {
+        } else if (equalPortableEvents(stored, event)) {
           existing += 1;
           continue;
         } else {
@@ -426,7 +426,7 @@ export class PortableUsageStore {
       const stored = storedById.get(item.id);
       if (!stored) {
         inserted += 1;
-      } else if (canonicalSerialize(stored) === canonicalSerialize(item)) {
+      } else if (equalPortableEvents(stored, item)) {
         existing += 1;
         continue;
       } else {
@@ -649,7 +649,8 @@ export class PortableUsageStore {
     }
   }
 
-  private async readValidEvents(filePath: string): Promise<PortableUsageEvent[]> {
+  /** Internal readers borrow owned records; public read/builder boundaries clone them. */
+  private async readValidEvents(filePath: string): Promise<readonly PortableUsageEvent[]> {
     let identity: string;
     try {
       const info = await this.fileSystem.lstat(filePath, { bigint: true });
@@ -664,7 +665,7 @@ export class PortableUsageStore {
     }
     const cacheKey = canonicalPath(filePath);
     const cached = this.partitionCache.get(cacheKey);
-    if (cached?.identity === identity) return cached.events.map(clonePortableEvent);
+    if (cached?.identity === identity) return cached.events;
     let contents: string;
     try {
       contents = await this.fileSystem.readFile(filePath, "utf8");
@@ -685,7 +686,7 @@ export class PortableUsageStore {
         // A damaged line must not hide valid records in the same partition.
       }
     }
-    this.partitionCache.set(cacheKey, { identity, events: events.map(clonePortableEvent) });
+    this.partitionCache.set(cacheKey, { identity, events });
     return events;
   }
 

@@ -25,7 +25,7 @@ export interface PartitionFile {
 }
 
 export interface PartitionSnapshot extends PartitionFile {
-  events: PortableUsageEvent[];
+  events: readonly PortableUsageEvent[];
 }
 
 export interface TransactionEntry {

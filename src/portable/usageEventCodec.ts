@@ -170,6 +170,25 @@ export function canonicalSerialize(event: PortableUsageEvent): string {
   return JSON.stringify(event);
 }
 
+// Exhaustive at compile time so new persisted fields cannot silently bypass reconciliation.
+const EVENT_SCALARS: Record<Exclude<keyof PortableUsageEvent, "legacyTarget">, true> = {
+  schemaVersion: true, id: true, provider: true, occurredAt: true, model: true,
+  projectName: true, sessionKey: true, source: true, synthetic: true,
+  inputTokens: true, outputTokens: true, cacheCreationTokens: true, cacheReadTokens: true,
+  reasoningOutputTokens: true, costUSD: true, inputCostUSD: true, outputCostUSD: true,
+  cacheCreationCostUSD: true, cacheReadCostUSD: true, pricingVersion: true,
+};
+const eventScalarKeys = Object.keys(EVENT_SCALARS) as Array<keyof typeof EVENT_SCALARS>;
+
+/** Compare sanitized records without allocating two canonical JSON strings per event. */
+export function equalPortableEvents(left: PortableUsageEvent, right: PortableUsageEvent): boolean {
+  for (const field of eventScalarKeys) if (left[field] !== right[field]) return false;
+  if (left.legacyTarget === right.legacyTarget) return true;
+  if (!left.legacyTarget || !right.legacyTarget) return false;
+  for (const field of LEGACY_TARGET_KEYS) if (left.legacyTarget[field] !== right.legacyTarget[field]) return false;
+  return true;
+}
+
 export function clonePortableEvent(event: PortableUsageEvent): PortableUsageEvent {
   return {
     ...event,

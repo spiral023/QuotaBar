@@ -34,6 +34,7 @@ import {
 import { withNamedPortableRootLock } from "./rootLock";
 import { PORTABLE_STORE_VERSION, type PortableIngestState, type PortableProvider, type PortableUsageEvent } from "./types";
 import { getSharedUsageStore, PortableUsageStore, type IngestJournalWrite } from "./usageStore";
+import { clonePortableEvent } from "./usageEventCodec";
 
 type ReconcileResult = { inserted: number; updated: number; existing: number };
 type SourceErrorCode = "listing_failed" | "stat_failed" | "read_failed" | "adapter_failed" | "cost_failed";
@@ -257,7 +258,7 @@ async function ingestExclusive(
     try {
       stored = await store.read();
       const candidates = stored.filter((event) => event.source !== "legacy-reconciliation" && !hasCompleteCost(event));
-      repairedEvents = candidates.length > 0 ? await enrichCosts(candidates) : [];
+      repairedEvents = candidates.length > 0 ? await enrichCosts(candidates.map(clonePortableEvent)) : [];
       if (!preservesCostOnlyChanges(candidates, repairedEvents)) throw new Error("invalid cost enrichment");
       repairedCostsComplete = repairedEvents.every(hasCompleteCost);
     } catch {
@@ -482,7 +483,7 @@ async function readSource(
     const normalized = source.provider === "claude"
       ? fromClaudeEntries(providerEvents as ClaudeUsageEntry[])
       : fromCodexEvents(providerEvents as CodexTokenEvent[]);
-    const events = enrichCosts ? await enrichCosts(normalized) : normalized;
+    const events = enrichCosts ? await enrichCosts(normalized.map(clonePortableEvent)) : normalized;
     if (enrichCosts && !preservesCostOnlyChanges(normalized, events)) throw new Error("invalid cost enrichment");
     batches.set(source.key, events);
   } catch {
@@ -513,25 +514,29 @@ function preservesCostOnlyChanges(
   input: readonly PortableUsageEvent[],
   output: readonly PortableUsageEvent[],
 ): boolean {
-  if (input.length !== output.length) return false;
-  return input.every((event, index) => immutableEventFingerprint(event) === immutableEventFingerprint(output[index]));
+  if (!Array.isArray(output) || input.length !== output.length) return false;
+  return input.every((event, index) => {
+    const enriched = output[index];
+    if (!enriched || typeof enriched !== "object") return false;
+    let fields = 0;
+    for (const key of Object.keys(event) as Array<keyof PortableUsageEvent>) {
+      if (COST_ENRICHMENT_FIELDS.has(key)) continue;
+      fields++;
+      if (!Object.hasOwn(enriched, key) || !equalImmutableValue(event[key], enriched[key])) return false;
+    }
+    for (const key of Object.keys(enriched)) if (!COST_ENRICHMENT_FIELDS.has(key)) fields--;
+    return fields === 0;
+  });
 }
 
-function immutableEventFingerprint(event: PortableUsageEvent): string {
-  const fields = Object.entries(event as unknown as Record<string, unknown>)
-    .filter(([key]) => !COST_ENRICHMENT_FIELDS.has(key))
-    .sort(([left], [right]) => left.localeCompare(right));
-  return canonicalValue(fields);
-}
-
-function canonicalValue(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalValue).join(",")}]`;
-  if (value && typeof value === "object") {
-    const fields = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right));
-    return `{${fields.map(([key, item]) => `${JSON.stringify(key)}:${canonicalValue(item)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "undefined";
+/** Preserve the cost-only boundary without recursively sorting/stringifying every record. */
+function equalImmutableValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object"
+    || Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left) && left.length !== (right as unknown[]).length) return false;
+  const a = left as Record<string, unknown>, b = right as Record<string, unknown>, keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && equalImmutableValue(a[key], b[key]));
 }
 
 async function assertSupportedCostEnrichmentState(statePath: string): Promise<void> {
