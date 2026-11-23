@@ -3,7 +3,9 @@ import path from "node:path";
 import { ensureConfigDir } from "../main/logging";
 import { DEFAULT_PROVIDER_ORDER, normalizeProviderOrder } from "../providers/providerOrder";
 import { getSettingsPath } from "./paths";
-import { writeAppDataFile } from "../portable/appDataLock";
+import { updateAppDataFile, withAppDataLock, writeAppDataFile } from "../portable/appDataLock";
+import { renameWithRetry, retryTransient } from "../shared/atomicFile";
+import { errnoCode } from "../shared/errors";
 
 export type CostWindow = "7d" | "30d" | "all";
 export type ViewMode = "dashboard" | "compact";
@@ -167,23 +169,148 @@ export const defaultSettings: Settings = {
   notifications: defaultNotificationSettings,
 };
 
-export async function loadSettings(overrides: Partial<Settings> = {}): Promise<Settings> {
-  const defaults = normalizeSettings({ ...defaultSettings, ...overrides });
-  try {
-    const parsed = JSON.parse(await fs.readFile(getSettingsPath(), "utf8")) as Partial<Settings>;
-    return normalizeSettings({ ...defaultSettings, ...parsed, ...overrides });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      await saveSettings({ ...defaultSettings, ...overrides });
-    }
-    return defaults;
+/**
+ * settings.json exists but cannot be used. Callers must not fall back to
+ * defaults and write them back - that would overwrite the user's file.
+ * `reason` is "corrupt" (not a JSON object) or "unreadable" (I/O error after
+ * retries); the message is path-free and carries the errno code if any.
+ */
+export class SettingsReadError extends Error {
+  readonly code?: string;
+
+  constructor(readonly reason: "corrupt" | "unreadable", failure?: unknown) {
+    const code = errnoCode(failure);
+    super(`Settings file is ${reason}${code ? ` (${code})` : ""}`);
+    this.name = "SettingsReadError";
+    if (code) this.code = code;
   }
 }
 
+function parseStoredSettings(text: string): Partial<Settings> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new SettingsReadError("corrupt");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new SettingsReadError("corrupt");
+  return parsed as Partial<Settings>;
+}
+
+function serializeSettings(settings: Settings): string {
+  return `${JSON.stringify(normalizeSettings(settings), null, 2)}\n`;
+}
+
+/** Reads settings.json; `null` when it does not exist. Throws SettingsReadError otherwise. */
+async function readStoredSettings(settingsPath: string): Promise<Partial<Settings> | null> {
+  let text: string;
+  try {
+    text = await retryTransient(() => fs.readFile(settingsPath, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new SettingsReadError("unreadable", error);
+  }
+  return parseStoredSettings(text);
+}
+
+/**
+ * Loads the settings. A missing file is created with the defaults; a corrupt
+ * or unreadable file throws SettingsReadError and is never replaced here.
+ */
+export async function loadSettings(overrides: Partial<Settings> = {}): Promise<Settings> {
+  const settingsPath = getSettingsPath();
+  const result: { stored: Partial<Settings> | null } = { stored: await readStoredSettings(settingsPath) };
+  if (result.stored === null) {
+    await ensureConfigDir();
+    // Create the defaults only if no other writer created the file meanwhile.
+    await updateAppDataFile(settingsPath, (current) => {
+      if (current !== null) {
+        result.stored = parseStoredSettings(current);
+        return null;
+      }
+      return serializeSettings({ ...defaultSettings, ...overrides });
+    });
+  }
+  return normalizeSettings({ ...defaultSettings, ...result.stored, ...overrides });
+}
+
+/**
+ * Atomic read-modify-write of settings.json under the app-data lock. The file
+ * is re-read inside the lock; if it is corrupt or unreadable the update is
+ * aborted with SettingsReadError instead of writing defaults over it.
+ */
+export async function updateSettings(
+  update: (current: Settings) => Settings,
+  options: { appDir?: string } = {},
+): Promise<Settings> {
+  if (!options.appDir) await ensureConfigDir();
+  const settingsPath = options.appDir ? path.join(options.appDir, "settings.json") : getSettingsPath();
+  const result: { saved?: Settings } = {};
+  await updateAppDataFile(settingsPath, (text) => {
+    const stored = text === null ? {} : parseStoredSettings(text);
+    const saved = normalizeSettings(update(normalizeSettings({ ...defaultSettings, ...stored })));
+    result.saved = saved;
+    return serializeSettings(saved);
+  });
+  if (!result.saved) throw new Error("Settings update did not run");
+  return result.saved;
+}
+
+/**
+ * Startup recovery for a settings.json that is not valid JSON: the file is
+ * moved aside to `settings.corrupt-<epoch ms>.json` (never deleted) so the app
+ * can start with defaults. Returns the backup's file name, or null when the
+ * file was missing or had become valid again.
+ */
+export async function quarantineCorruptSettings(now: () => number = Date.now): Promise<string | null> {
+  const settingsPath = getSettingsPath();
+  return withAppDataLock(path.dirname(settingsPath), async (): Promise<string | null> => {
+    let text: string;
+    try {
+      text = await retryTransient(() => fs.readFile(settingsPath, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+    try {
+      parseStoredSettings(text);
+      return null;
+    } catch {
+      // Still corrupt: move it aside below.
+    }
+    const name = `settings.corrupt-${now()}.json`;
+    await renameWithRetry(settingsPath, path.join(path.dirname(settingsPath), name));
+    return name;
+  });
+}
+
+/**
+ * Loads settings at app start. A corrupt settings.json is quarantined and
+ * replaced with defaults (reported via `onRecovered`); an unreadable one
+ * throws, because guessing would risk overwriting it later.
+ */
+export async function loadSettingsAtStartup(
+  overrides: Partial<Settings> = {},
+  onRecovered?: (backupName: string) => void,
+): Promise<Settings> {
+  try {
+    return await loadSettings(overrides);
+  } catch (error) {
+    if (!(error instanceof SettingsReadError) || error.reason !== "corrupt") throw error;
+    const backupName = await quarantineCorruptSettings();
+    if (backupName) onRecovered?.(backupName);
+    return await loadSettings(overrides);
+  }
+}
+
+/**
+ * Writes a complete settings object, refusing if the file changed while
+ * waiting for the lock. Prefer updateSettings() for partial changes.
+ */
 export async function saveSettings(settings: Settings, options: { appDir?: string } = {}): Promise<void> {
   if (!options.appDir) await ensureConfigDir();
   const settingsPath = options.appDir ? path.join(options.appDir, "settings.json") : getSettingsPath();
-  await writeAppDataFile(settingsPath, `${JSON.stringify(normalizeSettings(settings), null, 2)}\n`);
+  await writeAppDataFile(settingsPath, serializeSettings(settings));
 }
 
 /** Begrenzt einen Prozentwert auf 0–100; bei ungültiger Eingabe → Fallback. */

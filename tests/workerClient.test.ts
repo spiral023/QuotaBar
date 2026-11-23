@@ -140,3 +140,21 @@ describe("PersistentWorkerClient", () => {
     await expect(first).resolves.toBe("ok");
   });
 });
+
+describe("PersistentWorkerClient exit hook", () => {
+  it("reports a stopped worker after it has exited", () => {
+    const exited: WorkerLike[] = [];
+    const workers: FakeWorker[] = [];
+    const client = new PersistentWorkerClient(() => {
+      const worker = new FakeWorker();
+      workers.push(worker);
+      return worker;
+    }, { timeoutMs: 60_000, maxPending: 16, onWorkerExit: (worker) => exited.push(worker) });
+
+    void client.request({ task: "summary" }).catch(() => undefined);
+    expect(exited).toEqual([]);
+    workers[0].emit("exit", 1);
+
+    expect(exited).toEqual([workers[0]]);
+  });
+});

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
+import { threadId as currentThreadId } from "node:worker_threads";
 import { renameWithRetry, writeFileAtomic } from "../shared/atomicFile";
 
 const LOCK_DIRECTORY = ".portable-store.lock";
@@ -9,12 +10,21 @@ const MIGRATION_LOCK_DIRECTORY = ".portable-migration.lock";
 const OWNER_FILE = "owner.json";
 const HEARTBEAT_INTERVAL_MS = 1_000;
 const STALE_HEARTBEAT_MS = 2 * 60 * 1_000;
+/**
+ * A live PID's stale heartbeat must stay unchanged this long while we wait
+ * before the lock is reclaimed. After standby the wall clock jumps, so a
+ * healthy owner briefly looks stale until its next 1 s heartbeat lands.
+ */
+const STALE_CONFIRM_MS = 5 * HEARTBEAT_INTERVAL_MS;
+const LOCK_DIRECTORIES = [LOCK_DIRECTORY, INGESTION_LOCK_DIRECTORY, MIGRATION_LOCK_DIRECTORY] as const;
 const LOCK_WAIT_MS = 30_000;
 const RETRY_MS = 25;
 
 interface LockOwner {
   token: string;
   pid: number;
+  /** worker_threads id of the owning thread (0 = main thread); absent in older owner files. */
+  threadId?: number;
   createdAt: string;
   heartbeatAt: string;
 }
@@ -102,6 +112,7 @@ async function acquire(rootDir: string, lockDirectory: string, runtime: RootLock
   await runtime.fileSystem.mkdir(rootDir, { recursive: true });
   const directory = path.join(rootDir, lockDirectory);
   const deadline = runtime.now() + runtime.lockWaitMs;
+  const observed = new Map<string, HeartbeatObservation>();
   while (true) {
     const owner = newOwner(runtime);
     try {
@@ -135,7 +146,7 @@ async function acquire(rootDir: string, lockDirectory: string, runtime: RootLock
       return held;
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
-      await reclaimIfAbandoned(directory, runtime);
+      await reclaimIfAbandoned(directory, runtime, observed);
       if (runtime.now() >= deadline) {
         throw Object.assign(new Error("Timed out waiting for portable store lock", { cause: error }), { code: "ETIMEDOUT" });
       }
@@ -162,11 +173,24 @@ async function release(held: HeldLock): Promise<void> {
   await removeKnownLockDirectory(released, runtime).catch(() => undefined);
 }
 
-async function reclaimIfAbandoned(directory: string, runtime: RootLockRuntime): Promise<void> {
+interface HeartbeatObservation {
+  heartbeatAt: string;
+  firstSeenAt: number;
+}
+
+async function reclaimIfAbandoned(
+  directory: string,
+  runtime: RootLockRuntime,
+  observed: Map<string, HeartbeatObservation>,
+): Promise<void> {
   const ownerPath = path.join(directory, OWNER_FILE);
   const owner = await readOwner(ownerPath, runtime);
   if (owner) {
-    if (runtime.isPidAlive(owner.pid)) return;
+    // A live PID alone does not prove a live owner: a terminated worker thread
+    // shares the app's PID, and a crashed owner's PID can be reused. Its
+    // heartbeat (every second) does, so a heartbeat that is stale and stays
+    // unchanged while we watch marks the lock as abandoned.
+    if (runtime.isPidAlive(owner.pid) && !heartbeatAbandoned(owner, runtime, observed)) return;
     const confirmed = await readOwner(ownerPath, runtime);
     if (!confirmed || confirmed.token !== owner.token || confirmed.heartbeatAt !== owner.heartbeatAt) return;
   } else {
@@ -221,6 +245,9 @@ async function readOwner(ownerPath: string, runtime: RootLockRuntime): Promise<L
     return {
       token: owner.token,
       pid: owner.pid as number,
+      ...(Number.isSafeInteger(owner.threadId) && (owner.threadId as number) >= 0
+        ? { threadId: owner.threadId as number }
+        : {}),
       createdAt: owner.createdAt,
       heartbeatAt: owner.heartbeatAt,
     };
@@ -252,9 +279,55 @@ async function removeKnownLockDirectory(directory: string, runtime: RootLockRunt
   await runtime.fileSystem.rmdir(directory);
 }
 
+function heartbeatAbandoned(owner: LockOwner, runtime: RootLockRuntime, observed: Map<string, HeartbeatObservation>): boolean {
+  const now = runtime.now();
+  if (now - Date.parse(owner.heartbeatAt) <= STALE_HEARTBEAT_MS) return false;
+  const previous = observed.get(owner.token);
+  if (!previous || previous.heartbeatAt !== owner.heartbeatAt) {
+    observed.set(owner.token, { heartbeatAt: owner.heartbeatAt, firstSeenAt: now });
+    return false;
+  }
+  return now - previous.firstSeenAt >= STALE_CONFIRM_MS;
+}
+
+/**
+ * Frees every lock under `rootDirs` that a now-terminated worker thread of
+ * this process held. Call only after the thread's "exit" event, when it can
+ * no longer touch the store; locks of other threads or processes are kept.
+ */
+export async function releaseLocksOfExitedThread(
+  rootDirs: readonly string[],
+  threadId: number,
+  dependencies: PortableRootLockDependencies = {},
+): Promise<number> {
+  if (threadId === currentThreadId) throw new Error("Cannot release locks of the calling thread");
+  const runtime = createRuntime(dependencies);
+  let released = 0;
+  for (const rootDir of rootDirs) {
+    for (const name of LOCK_DIRECTORIES) {
+      const directory = path.join(rootDir, name);
+      const owner = await readOwner(path.join(directory, OWNER_FILE), runtime);
+      if (!owner || owner.pid !== process.pid || owner.threadId !== threadId) continue;
+      const abandoned = `${directory}.abandoned.${randomUUID()}`;
+      try {
+        await renameWithRetry(directory, abandoned, {
+          rename: (from, to) => runtime.fileSystem.rename(from, to),
+          wait: runtime.wait,
+        });
+      } catch (error) {
+        if (isMissing(error)) continue;
+        throw error;
+      }
+      await removeKnownLockDirectory(abandoned, runtime);
+      released += 1;
+    }
+  }
+  return released;
+}
+
 function newOwner(runtime: RootLockRuntime): LockOwner {
   const now = new Date(runtime.now()).toISOString();
-  return { token: randomUUID(), pid: process.pid, createdAt: now, heartbeatAt: now };
+  return { token: randomUUID(), pid: process.pid, threadId: currentThreadId, createdAt: now, heartbeatAt: now };
 }
 
 function checkPidAlive(pid: number): boolean {

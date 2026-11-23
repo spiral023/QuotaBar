@@ -1,4 +1,4 @@
-import { httpFetch } from "../main/httpClient";
+import { httpFetch, requestSignal } from "../main/httpClient";
 
 const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
@@ -20,7 +20,11 @@ export function clearClaudeProfileCache(): void {
   cachedProfile = null;
 }
 
-export async function fetchClaudeProfile(accessToken: string, timeoutMs: number): Promise<ClaudeProfile | null> {
+export async function fetchClaudeProfile(
+  accessToken: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<ClaudeProfile | null> {
   if (accessToken === cachedToken) {
     return cachedProfile;
   }
@@ -36,7 +40,7 @@ export async function fetchClaudeProfile(accessToken: string, timeoutMs: number)
         "anthropic-beta": CLAUDE_OAUTH_BETA,
         "User-Agent": "QuotaBar for Windows"
       },
-      signal: AbortSignal.timeout(timeoutMs)
+      signal: requestSignal(timeoutMs, signal)
     });
 
     if (!response.ok) {
@@ -48,6 +52,8 @@ export async function fetchClaudeProfile(accessToken: string, timeoutMs: number)
     const body = await response.json() as unknown;
     profile = parseProfile(body);
   } catch {
+    // A cancelled refresh cycle says nothing about the endpoint; retry next time.
+    if (signal?.aborted) return null;
     cachedToken = accessToken;
     cachedProfile = null;
     return null;

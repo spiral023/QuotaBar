@@ -89,10 +89,10 @@ describe("writeFileAtomic", () => {
     const flags: unknown[] = [];
     const spyFs = {
       ...nodeFs,
-      async writeFile(file: PathLike, data: string | Uint8Array, options?: unknown) {
-        flags.push((options as { flush?: boolean }).flush);
-        return nodeFs.writeFile(file, data, options as Parameters<typeof nodeFs.writeFile>[2]);
-      },
+      writeFile: (async (...args: Parameters<typeof nodeFs.writeFile>) => {
+        flags.push((args[2] as { flush?: boolean }).flush);
+        return nodeFs.writeFile(...args);
+      }) as typeof nodeFs.writeFile,
     };
     await writeFileAtomic(path.join(dir, "a.json"), "{}", { fileSystem: spyFs });
     await writeFileAtomic(path.join(dir, "b.json"), "{}", { fileSystem: spyFs, fsync: true });

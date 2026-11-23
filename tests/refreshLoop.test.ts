@@ -476,3 +476,38 @@ describe("RefreshLoop windowBudget", () => {
     }
   });
 });
+
+describe("RefreshLoop cycle timeout", () => {
+  it("aborts the provider's signal when the cycle times out", async () => {
+    let seen: AbortSignal | undefined;
+    const provider: UsageProvider = {
+      ...makeProvider("claude", async () => okSnap("claude")),
+      fetchUsage: (signal?: AbortSignal) => {
+        seen = signal;
+        return new Promise<UsageSnapshot>(() => undefined);
+      },
+    };
+    const loop = new RefreshLoop([provider], new UsageStore(), 60, 20);
+
+    const [snapshot] = await loop.refreshNow();
+
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.errorMessage).toContain("timed out");
+    expect(seen?.aborted).toBe(true);
+  });
+
+  it("leaves the signal untouched when the provider answers in time", async () => {
+    let seen: AbortSignal | undefined;
+    const provider: UsageProvider = {
+      ...makeProvider("codex", async () => okSnap("codex")),
+      fetchUsage: async (signal?: AbortSignal) => {
+        seen = signal;
+        return okSnap("codex");
+      },
+    };
+
+    await new RefreshLoop([provider], new UsageStore(), 60, 10_000).refreshNow();
+
+    expect(seen?.aborted).toBe(false);
+  });
+});

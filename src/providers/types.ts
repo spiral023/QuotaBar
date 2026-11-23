@@ -34,7 +34,8 @@ export interface UsageProvider {
   id: string;
   displayName: string;
   isAvailable(): Promise<boolean>;
-  fetchUsage(): Promise<UsageSnapshot>;
+  /** `signal` aborts the provider's requests when the refresh cycle gives up on it. */
+  fetchUsage(signal?: AbortSignal): Promise<UsageSnapshot>;
   getAuthHint(): Promise<string | null>;
 }
 

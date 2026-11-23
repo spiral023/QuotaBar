@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
-import { writeFileAtomic } from "../shared/atomicFile";
+import { retryTransient, writeFileAtomic } from "../shared/atomicFile";
 import { withPortableRootLock } from "./rootLock";
 
 export async function withAppDataLock<T>(appDir: string, operation: () => Promise<T>): Promise<T> {
@@ -20,18 +20,25 @@ export async function writeAppDataFile(filePath: string, contents: string): Prom
   });
 }
 
+/**
+ * Read-modify-write under the app-data lock. `update` receives the current
+ * contents (`null` when the file is missing) and returns the new contents, or
+ * `null` to leave the file untouched. A read failure other than ENOENT - or an
+ * exception from `update` - aborts without writing.
+ */
 export async function updateAppDataFile(
   filePath: string,
-  update: (current: string | null) => string,
+  update: (current: string | null) => string | null,
 ): Promise<void> {
   await withAppDataLock(path.dirname(filePath), async () => {
     let current: string | null = null;
     try {
-      current = await fs.readFile(filePath, "utf8");
+      current = await retryTransient(() => fs.readFile(filePath, "utf8"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    await writeUnlocked(filePath, update(current));
+    const next = update(current);
+    if (next !== null) await writeUnlocked(filePath, next);
   });
 }
 

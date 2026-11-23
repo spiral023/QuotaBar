@@ -184,7 +184,11 @@ export class RefreshLoop {
     this.callSeq.set(provider.id, call);
     const ctx = `tick=${tick} call=${call}`;
     try {
-      const snapshot = await withTimeout(provider.fetchUsage(), this.timeoutMs, `${provider.displayName} timed out`);
+      const snapshot = await withTimeout(
+        (signal) => provider.fetchUsage(signal),
+        this.timeoutMs,
+        `${provider.displayName} timed out`,
+      );
       this.consecutiveRateLimits.delete(provider.id);
       if (this.offline) {
         this.offline = false;
@@ -218,14 +222,28 @@ export class RefreshLoop {
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+/**
+ * Races `operation` against a timeout. On timeout the operation's signal is
+ * aborted, so its outstanding requests stop instead of running on in the
+ * background and overlapping the next refresh cycle.
+ */
+async function withTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  const controller = new AbortController();
   let timeout: NodeJS.Timeout | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    timeout = setTimeout(() => {
+      const error = new Error(message);
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
   });
 
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    return await Promise.race([operation(controller.signal), timeoutPromise]);
   } finally {
     if (timeout) clearTimeout(timeout);
   }

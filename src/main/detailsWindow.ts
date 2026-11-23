@@ -5,6 +5,8 @@ import path from "path";
 import {
   getFxCachePath, getLiteLLMModelPricesPath,
   getPortableMigrationPath,
+  getPortableQuotaDir,
+  getPortableUsageDir,
   getWindowHistoryPath
 } from "../config/paths";
 import type { CostWindow, Settings, ViewMode } from "../config/settings";
@@ -12,10 +14,11 @@ import {
   loadSettings,
   normalizeNotificationSettings,
   normalizeProxySettings,
-  saveSettings,
+  updateSettings,
   type ProxySettings,
 } from "../config/settings";
 import { parseMigrationState } from "../portable/migration";
+import { releaseLocksOfExitedThread } from "../portable/rootLock";
 import { getSharedUsageStore } from "../portable/usageStore";
 import { sharedFxFetcher } from "../pricing/fx-fetcher";
 import { planChangePoints } from "../pricing/plan-cost";
@@ -39,13 +42,30 @@ import { registerReportIpc } from "./reportsIpc";
 import { mergeAndSaveSettings } from "./settingsSave";
 import { registerSystemIpc } from "./systemIpc";
 import type { UpdateUiState } from "./updateState";
-import { PersistentWorkerClient } from "./workerClient";
+import { PersistentWorkerClient, type WorkerLike } from "./workerClient";
 
 // One long-lived worker preserves bounded provider parse caches between requests.
 // Reused files need only a stat; cold or evicted files are parsed on demand.
 const analyticsWorker = new PersistentWorkerClient(
-  () => new Worker(path.join(__dirname, "analyticsWorker.js"))
+  () => new Worker(path.join(__dirname, "analyticsWorker.js")),
+  { timeoutMs: 60_000, maxPending: 16, onWorkerExit: releaseAnalyticsWorkerLocks },
 );
+
+/**
+ * A worker terminated after a request timeout cannot release the store locks
+ * it held; free them as soon as the thread has stopped instead of leaving
+ * ingestion blocked until the stale-heartbeat reclaim kicks in.
+ */
+function releaseAnalyticsWorkerLocks(worker: WorkerLike): void {
+  if (worker.threadId === undefined) return;
+  void releaseLocksOfExitedThread([getPortableUsageDir(), getPortableQuotaDir()], worker.threadId)
+    .then((released) => {
+      if (released > 0) log.warn(`Released ${released} store lock(s) left by the stopped analytics worker`);
+    })
+    .catch((err: unknown) => {
+      log.warn(`Releasing analytics worker locks failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+}
 
 function runAnalyticsWorker(data: Record<string, unknown>): Promise<unknown> {
   return analyticsWorker.request(data);
@@ -416,7 +436,10 @@ export class DetailsWindowController {
       if (this.win && !this.win.isDestroyed()) {
         this.win.webContents.send("window:pin-state", this.isPinned);
       }
-      void loadSettings().then(s => saveSettings({ ...s, pinned: this.isPinned }));
+      const pinned = this.isPinned;
+      void updateSettings((s) => ({ ...s, pinned })).catch((err: unknown) => {
+        log.warn(`Pin state save failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
     });
 
     rendererIpc.on("quota:refresh", () => {
@@ -514,8 +537,10 @@ export class DetailsWindowController {
     });
 
     rendererIpc.handle("plans:save", async (_, plans: unknown) => {
-      const current = await loadSettings();
-      await saveSettings({ ...current, plans: Array.isArray(plans) ? (plans as typeof current.plans) : [] });
+      await updateSettings((current) => ({
+        ...current,
+        plans: Array.isArray(plans) ? (plans as typeof current.plans) : [],
+      }));
       this.clearAnalyticsCaches();
       log.info("Plans saved via dashboard");
       return { ok: true };
@@ -602,8 +627,7 @@ export class DetailsWindowController {
 
     rendererIpc.handle("window:set-view", async (_, mode: string) => {
       if (mode !== "dashboard" && mode !== "compact") return;
-      const settings = await loadSettings();
-      await saveSettings({ ...settings, viewMode: mode as ViewMode });
+      await updateSettings((settings) => ({ ...settings, viewMode: mode as ViewMode }));
       log.info(`View mode changed to ${mode}`);
       if (this.win && !this.win.isDestroyed()) {
         this.win.once("closed", () => {
@@ -623,17 +647,18 @@ export class DetailsWindowController {
     });
 
     rendererIpc.handle("notification:settings:save", async (_, partial: Record<string, unknown>) => {
-      const current = await loadSettings();
-      const merged = normalizeNotificationSettings({
-        ...current.notifications,
-        ...(partial as object),
-        rules: {
-          ...current.notifications.rules,
-          ...((partial.rules as object) ?? {}),
-        },
-      });
-      await saveSettings({ ...current, notifications: merged });
-      this.notificationService?.updateSettings(merged);
+      const saved = await updateSettings((current) => ({
+        ...current,
+        notifications: normalizeNotificationSettings({
+          ...current.notifications,
+          ...(partial as object),
+          rules: {
+            ...current.notifications.rules,
+            ...((partial.rules as object) ?? {}),
+          },
+        }),
+      }));
+      this.notificationService?.updateSettings(saved.notifications);
       log.info("Notification settings saved via dashboard");
       return { ok: true };
     });

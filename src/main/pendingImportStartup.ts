@@ -1,5 +1,5 @@
 import type { Settings } from "../config/settings";
-import { loadSettings } from "../config/settings";
+import { loadSettingsAtStartup } from "../config/settings";
 import { isFirstRun } from "../config/firstRun";
 import { getAppConfigDir, getLegacyQuotaImportManifestPath } from "../config/paths";
 import { resetLegacyQuotaImport } from "./debugBackfill";
@@ -29,7 +29,9 @@ const defaultDependencies: InitialStartupDependencies = {
   applyPendingImport: () => applyPendingImport(getAppConfigDir()),
   resetLegacyQuotaImport: () => resetLegacyQuotaImport(getLegacyQuotaImportManifestPath()),
   isFirstRun,
-  loadSettings,
+  loadSettings: (overrides) => loadSettingsAtStartup(overrides, (backupName) => {
+    log.warn(`Settings file was not valid JSON; moved it to ${backupName} and started with defaults`);
+  }),
   log,
 };
 

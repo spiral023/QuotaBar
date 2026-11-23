@@ -12,6 +12,15 @@ export interface WorkerLike {
   postMessage(value: unknown): void;
   unref(): void;
   terminate?(): unknown;
+  /** worker_threads id; reported to `onWorkerExit` so its leftovers can be cleaned up. */
+  readonly threadId?: number;
+}
+
+export interface PersistentWorkerOptions {
+  timeoutMs: number;
+  maxPending: number;
+  /** Called once the worker thread has fully stopped (its "exit" event). */
+  onWorkerExit?: (worker: WorkerLike) => void;
 }
 
 interface WorkerResponse {
@@ -34,7 +43,7 @@ export class PersistentWorkerClient {
 
   constructor(
     private readonly createWorker: () => WorkerLike,
-    private readonly options = { timeoutMs: 60_000, maxPending: 16 },
+    private readonly options: PersistentWorkerOptions = { timeoutMs: 60_000, maxPending: 16 },
   ) {}
 
   request(payload: Record<string, unknown>): Promise<unknown> {
@@ -63,7 +72,10 @@ export class PersistentWorkerClient {
     const worker = this.createWorker();
     worker.on("message", value => this.handleMessage(worker, value));
     worker.on("error", err => this.failAll(worker, err));
-    worker.on("exit", code => this.failAll(worker, new Error(`Analytics worker exited with code ${code}`)));
+    worker.on("exit", code => {
+      this.failAll(worker, new Error(`Analytics worker exited with code ${code}`));
+      this.options.onWorkerExit?.(worker);
+    });
     worker.unref();
     this.worker = worker;
     return worker;

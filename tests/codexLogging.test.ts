@@ -17,7 +17,8 @@ vi.mock("../src/auth/codexAuth", () => ({
   })),
 }));
 
-vi.mock("../src/main/httpClient", () => ({
+vi.mock("../src/main/httpClient", async (importOriginal) => ({
+  requestSignal: (await importOriginal<typeof import("../src/main/httpClient")>()).requestSignal,
   httpFetch: vi.fn(async () => {
     const payload = mockState.payloads.shift();
     return {

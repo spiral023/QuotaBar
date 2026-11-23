@@ -29,15 +29,27 @@ export interface RenameRetryOptions {
 
 export async function renameWithRetry(from: string, to: string, options: RenameRetryOptions = {}): Promise<void> {
   const rename = options.rename ?? nodeFs.rename;
+  await retryTransient(() => rename(from, to), options);
+}
+
+/** True for the Windows sharing-violation codes that clear up once another handle closes. */
+export function isTransientFileError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return Boolean(code && RETRYABLE_RENAME_CODES.has(code));
+}
+
+/** Runs `operation`, retrying transient sharing violations with the rename backoff. */
+export async function retryTransient<T>(
+  operation: () => Promise<T>,
+  options: Pick<RenameRetryOptions, "wait" | "attempts"> = {},
+): Promise<T> {
   const wait = options.wait ?? delay;
   const attempts = Math.max(1, options.attempts ?? RENAME_RETRY_ATTEMPTS);
   for (let attempt = 1; ; attempt += 1) {
     try {
-      await rename(from, to);
-      return;
+      return await operation();
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException)?.code;
-      if (!code || !RETRYABLE_RENAME_CODES.has(code) || attempt >= attempts) throw error;
+      if (!isTransientFileError(error) || attempt >= attempts) throw error;
       await wait(renameRetryDelay(attempt));
     }
   }

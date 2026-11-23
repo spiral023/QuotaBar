@@ -3,7 +3,7 @@ import { isClaudeTokenExpired, loadClaudeCredentials, ClaudeCredentials } from "
 import { fetchClaudeProfile } from "../auth/claudeProfile";
 import { refreshClaudeToken } from "../auth/tokenRefresh";
 import { log } from "../main/logging";
-import { httpFetch } from "../main/httpClient";
+import { httpFetch, requestSignal } from "../main/httpClient";
 import { NotAuthenticatedError, RateLimitError, toErrorMessage } from "../shared/errors";
 import { errorSnapshot, UsageProvider, UsageSnapshot, UsageWindow } from "./types";
 import type { ProviderSettingsLoader } from "./providerRegistry";
@@ -25,7 +25,7 @@ export class ClaudeProvider implements UsageProvider {
     return (await this.isAvailable()) ? null : "Claude: Click to authenticate...";
   }
 
-  async fetchUsage(): Promise<UsageSnapshot> {
+  async fetchUsage(signal?: AbortSignal): Promise<UsageSnapshot> {
     try {
       let credentials = await loadClaudeCredentials(await this.pathContext());
       if (!credentials) {
@@ -33,13 +33,13 @@ export class ClaudeProvider implements UsageProvider {
       }
 
       if (isClaudeTokenExpired(credentials) && credentials.refreshToken) {
-        credentials = await refreshClaudeToken(credentials, this.timeoutMs);
+        credentials = await refreshClaudeToken(credentials, this.timeoutMs, { signal });
       }
 
-      let response = await requestClaudeUsage(credentials, this.timeoutMs);
+      let response = await requestClaudeUsage(credentials, this.timeoutMs, signal);
       if (response.status === 401 && credentials.refreshToken) {
-        credentials = await refreshClaudeToken(credentials, this.timeoutMs);
-        response = await requestClaudeUsage(credentials, this.timeoutMs);
+        credentials = await refreshClaudeToken(credentials, this.timeoutMs, { signal });
+        response = await requestClaudeUsage(credentials, this.timeoutMs, signal);
       }
 
       if (response.status === 401 || response.status === 403) {
@@ -57,7 +57,7 @@ export class ClaudeProvider implements UsageProvider {
       const snapshot = normalizeClaudeUsageResponse(await response.json(), {
         rateLimitTier: credentials.rateLimitTier
       });
-      const profile = await fetchClaudeProfile(credentials.accessToken, this.timeoutMs);
+      const profile = await fetchClaudeProfile(credentials.accessToken, this.timeoutMs, signal);
       if (profile?.email || profile?.accountUuid) {
         snapshot.identity = { email: profile.email, accountId: profile.accountUuid };
       }
@@ -65,7 +65,8 @@ export class ClaudeProvider implements UsageProvider {
     } catch (error) {
       if (error instanceof RateLimitError) throw error;
       const status = error instanceof NotAuthenticatedError ? "not_authenticated" : "error";
-      log.warn(`Claude fetch failed: ${toErrorMessage(error)}`);
+      // After a cycle timeout the refresh loop already logged the failure.
+      if (!signal?.aborted) log.warn(`Claude fetch failed: ${toErrorMessage(error)}`);
       return errorSnapshot("claude", toErrorMessage(error), status);
     }
   }
@@ -132,7 +133,7 @@ export function openClaudeLoginTerminal(): void {
   }).unref();
 }
 
-async function requestClaudeUsage(credentials: ClaudeCredentials, timeoutMs: number): Promise<Response> {
+async function requestClaudeUsage(credentials: ClaudeCredentials, timeoutMs: number, signal?: AbortSignal): Promise<Response> {
   // Unofficial/fragile: Claude Code OAuth endpoint; schema and scope rules can change without notice.
   return httpFetch(CLAUDE_USAGE_URL, {
     headers: {
@@ -142,7 +143,7 @@ async function requestClaudeUsage(credentials: ClaudeCredentials, timeoutMs: num
       "anthropic-beta": CLAUDE_OAUTH_BETA,
       "User-Agent": "QuotaBar for Windows"
     },
-    signal: AbortSignal.timeout(timeoutMs)
+    signal: requestSignal(timeoutMs, signal)
   });
 }
 
