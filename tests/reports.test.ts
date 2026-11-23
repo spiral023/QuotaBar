@@ -278,8 +278,8 @@ describe("usage reports", () => {
     const calculate = await generateUsageReport({ ...base, costMode: "calculate" }, deps);
     const display = await generateUsageReport({ ...base, costMode: "display" }, deps);
 
-    expect(auto.totals.costUSD).toBeCloseTo(7 + 1000 * 4e-6, 5);
-    expect(calculate.totals.costUSD).toBeCloseTo(2000 * 4e-6, 5);
+    expect(auto.totals.costUSD).toBeCloseTo(7 + 1000 * 5e-6, 5);
+    expect(calculate.totals.costUSD).toBeCloseTo(2000 * 5e-6, 5);
     expect(display.totals.costUSD).toBe(7);
   });
 });

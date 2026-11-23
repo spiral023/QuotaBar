@@ -74,6 +74,29 @@ describe("LiteLLMFetcher (offline mode)", () => {
     expect(pricing!.cache_read_input_token_cost).toBeCloseTo(0.25e-6, 10);
   });
 
+  it.each([
+    ["claude-opus-4-5", 5e-6, 25e-6],
+    ["claude-opus-4-5-20251101", 5e-6, 25e-6],
+    ["claude-opus-4-6", 5e-6, 25e-6],
+    ["claude-opus-4-8", 5e-6, 25e-6],
+    ["claude-opus-5", 5e-6, 25e-6],
+    ["claude-opus-5-5", 4e-6, 20e-6],
+    ["claude-opus-4-20250514", 15e-6, 75e-6],
+    ["claude-sonnet-4-6", 3e-6, 15e-6],
+    ["claude-haiku-4-5-20251001", 1e-6, 5e-6],
+  ])("prices %s with its own generation offline", async (model, input, output) => {
+    const pricing = await new LiteLLMFetcher(true).getModelPricing(model);
+    expect(pricing).not.toBeNull();
+    expect(pricing!.input_cost_per_token).toBeCloseTo(input, 12);
+    expect(pricing!.output_cost_per_token).toBeCloseTo(output, 12);
+  });
+
+  it("does not price a newer Opus version with an older generation's fallback", async () => {
+    // Only "claude-opus-4" would match by substring; its 15/75 USD rate would overstate the cost.
+    const pricing = await new LiteLLMFetcher(true).getModelPricing("claude-opus-4-9");
+    expect(pricing).toBeNull();
+  });
+
   it("returns pricing for gpt-5.4-mini", async () => {
     const fetcher = new LiteLLMFetcher(true);
     const pricing = await fetcher.getModelPricing("gpt-5.4-mini");

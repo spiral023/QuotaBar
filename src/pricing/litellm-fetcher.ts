@@ -11,6 +11,23 @@ export type { ModelPricing };
 export const LITELLM_PRICING_SOURCE =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 
+// Anthropic prices per LiteLLM as of 2026-11-23. Each model generation gets its
+// own key: a dated or variant name resolves to its generation, while a newer
+// version number does not fall back to an older, differently priced key.
+const OPUS_4_5_PRICING: ModelPricing = {
+  input_cost_per_token: 5e-6,
+  output_cost_per_token: 2.5e-5,
+  cache_creation_input_token_cost: 6.25e-6,
+  cache_read_input_token_cost: 5e-7,
+};
+
+const SONNET_4_PRICING: ModelPricing = {
+  input_cost_per_token: 3e-6,
+  output_cost_per_token: 1.5e-5,
+  cache_creation_input_token_cost: 3.75e-6,
+  cache_read_input_token_cost: 3e-7,
+};
+
 const FALLBACK_PRICES: Record<string, ModelPricing> = {
   "claude-opus-4": {
     input_cost_per_token: 1.5e-5,
@@ -19,17 +36,70 @@ const FALLBACK_PRICES: Record<string, ModelPricing> = {
     cache_read_input_token_cost: 1.5e-6,
     provider_specific_entry: { fast: 6 },
   },
-  "claude-sonnet-4-5": {
-    input_cost_per_token: 3e-6,
-    output_cost_per_token: 1.5e-5,
-    cache_creation_input_token_cost: 3.75e-6,
-    cache_read_input_token_cost: 3e-7,
+  "claude-opus-4-1": {
+    input_cost_per_token: 1.5e-5,
+    output_cost_per_token: 7.5e-5,
+    cache_creation_input_token_cost: 1.875e-5,
+    cache_read_input_token_cost: 1.5e-6,
+  },
+  "claude-opus-4-5": { ...OPUS_4_5_PRICING },
+  // Fast mode on Opus 4.6 is billed at six times the standard rate.
+  "claude-opus-4-6": { ...OPUS_4_5_PRICING, provider_specific_entry: { fast: 6 } },
+  "claude-opus-4-7": { ...OPUS_4_5_PRICING },
+  "claude-opus-4-8": { ...OPUS_4_5_PRICING, provider_specific_entry: { fast: 2 } },
+  "claude-opus-5": { ...OPUS_4_5_PRICING, provider_specific_entry: { fast: 2 } },
+  "claude-opus-5-5": {
+    input_cost_per_token: 4e-6,
+    output_cost_per_token: 2e-5,
+    cache_creation_input_token_cost: 5e-6,
+    cache_read_input_token_cost: 2e-7,
+    provider_specific_entry: { fast: 2 },
+  },
+  "claude-sonnet-4": { ...SONNET_4_PRICING },
+  "claude-sonnet-4-5": { ...SONNET_4_PRICING },
+  "claude-sonnet-4-6": { ...SONNET_4_PRICING },
+  "claude-sonnet-5": {
+    input_cost_per_token: 2e-6,
+    output_cost_per_token: 1e-5,
+    cache_creation_input_token_cost: 2.5e-6,
+    cache_read_input_token_cost: 2e-7,
+  },
+  "claude-sonnet-5-5": {
+    input_cost_per_token: 2e-6,
+    output_cost_per_token: 1e-5,
+    cache_creation_input_token_cost: 2.5e-6,
+    cache_read_input_token_cost: 1e-7,
   },
   "claude-haiku-4-5": {
-    input_cost_per_token: 8e-7,
-    output_cost_per_token: 4e-6,
-    cache_creation_input_token_cost: 1e-6,
-    cache_read_input_token_cost: 8e-8,
+    input_cost_per_token: 1e-6,
+    output_cost_per_token: 5e-6,
+    cache_creation_input_token_cost: 1.25e-6,
+    cache_read_input_token_cost: 1e-7,
+  },
+  "claude-haiku-5-5": {
+    input_cost_per_token: 1e-7,
+    output_cost_per_token: 5e-7,
+    cache_creation_input_token_cost: 1.25e-7,
+    cache_read_input_token_cost: 1e-8,
+  },
+  "claude-fable-5": {
+    input_cost_per_token: 1e-5,
+    output_cost_per_token: 5e-5,
+    cache_creation_input_token_cost: 1.25e-5,
+    cache_read_input_token_cost: 1e-6,
+  },
+  "claude-fable-5-1": {
+    input_cost_per_token: 1e-5,
+    output_cost_per_token: 5e-5,
+    cache_creation_input_token_cost: 1.25e-5,
+    cache_read_input_token_cost: 2.5e-7,
+  },
+  "claude-fable-5-2": {
+    input_cost_per_token: 8e-6,
+    output_cost_per_token: 4e-5,
+    cache_creation_input_token_cost: 1e-5,
+    cache_read_input_token_cost: 2e-7,
+    provider_specific_entry: { fast: 2 },
   },
   "gpt-4o": {
     input_cost_per_token: 2.5e-6,
@@ -54,6 +124,12 @@ const FALLBACK_PRICES: Record<string, ModelPricing> = {
     input_cost_per_token: 2e-6,
     output_cost_per_token: 12e-6,
     cache_read_input_token_cost: 0.2e-6,
+  },
+  // Priced unlike "gpt-5.3", which the fuzzy match would otherwise pick offline.
+  "gpt-5.3-codex": {
+    input_cost_per_token: 1.75e-6,
+    output_cost_per_token: 14e-6,
+    cache_read_input_token_cost: 0.175e-6,
   },
   "gpt-5.2": {
     input_cost_per_token: 1.75e-6,
@@ -146,11 +222,26 @@ export class LiteLLMFetcher {
     const matches: ModelPricing[] = [];
     for (const [key, value] of pricing) {
       const k = key.toLowerCase();
-      if (k.includes(lower) || lower.includes(k)) matches.push(value);
+      if (containsSameVersion(lower, k) || containsSameVersion(k, lower)) matches.push(value);
     }
     if (matches.length === 1) return matches[0];
     return null;
   }
+}
+
+/**
+ * A version segment ("-8", ".1") directly after a matched name. A date stamp
+ * ("-20251001") or a variant ("-codex") does not count.
+ */
+const VERSION_CONTINUATION = /^[-.]\d{1,2}(?!\d)/;
+
+/**
+ * True when `outer` contains `inner` and does not continue it with another
+ * version number, so "claude-opus-4-8" never resolves to "claude-opus-4".
+ */
+function containsSameVersion(outer: string, inner: string): boolean {
+  const index = outer.indexOf(inner);
+  return index >= 0 && !VERSION_CONTINUATION.test(outer.slice(index + inner.length));
 }
 
 async function persistLiteLLMPriceFile(json: Record<string, unknown>): Promise<void> {

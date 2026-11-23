@@ -197,6 +197,44 @@ describe("readCodexTokensForPeriod", () => {
     expect(events[1].outputTokens).toBe(200);   // 300 - 100
   });
 
+  it("does not count a re-emitted token_count whose cumulative total is unchanged", async () => {
+    const first = { input_tokens: 1000, cached_input_tokens: 200, output_tokens: 100, reasoning_output_tokens: 10, total_tokens: 1100 };
+    const second = { input_tokens: 500, cached_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 0, total_tokens: 550 };
+    const sum = { input_tokens: 1500, cached_input_tokens: 200, output_tokens: 150, reasoning_output_tokens: 10, total_tokens: 1650 };
+    const tokenCount = (timestamp: string, last: typeof first, total: typeof first) => ({
+      timestamp,
+      type: "event_msg",
+      payload: { type: "token_count", info: { last_token_usage: last, total_token_usage: total } },
+    });
+    await writeJsonl(path.join(tmpDir, "2026/05/18"), "session.jsonl", [
+      makeTurnContext("gpt-4o"),
+      tokenCount("2026-05-18T10:00:01.000Z", first, first),
+      // Same call repeated, e.g. after a turn_context update.
+      tokenCount("2026-05-18T10:00:05.000Z", first, first),
+      tokenCount("2026-05-18T10:01:00.000Z", second, sum),
+      // After a compaction Codex may report a different last usage with the same total.
+      { timestamp: "2026-05-18T10:02:00.000Z", type: "compacted", payload: {} },
+      tokenCount("2026-05-18T10:02:01.000Z", first, sum),
+    ]);
+
+    const events = await readCodexTokensForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(events.map((event) => event.timestamp)).toEqual(["2026-05-18T10:00:01.000Z", "2026-05-18T10:01:00.000Z"]);
+    expect(events.reduce((sum, event) => sum + event.totalTokens, 0)).toBe(1650);
+  });
+
+  it("skips an unchanged total_token_usage-only event instead of emitting zero usage", async () => {
+    const total = { input_tokens: 1000, cached_input_tokens: 0, output_tokens: 100, reasoning_output_tokens: 0, total_tokens: 1100 };
+    await writeJsonl(path.join(tmpDir, "2026/05/18"), "session.jsonl", [
+      makeTurnContext("gpt-4o"),
+      makeTokenCountTotalOnly("2026-05-18T10:00:01.000Z", total),
+      makeTokenCountTotalOnly("2026-05-18T10:00:02.000Z", total),
+    ]);
+
+    const events = await readCodexTokensForPeriod(tmpDir, new Date("2026-05-01"));
+    expect(events).toHaveLength(1);
+    expect(events[0].inputTokens).toBe(1000);
+  });
+
   it("clamps cachedInputTokens to inputTokens (bug protection)", async () => {
     await writeJsonl(path.join(tmpDir, "2026/05/18"), "session.jsonl", [
       makeTurnContext("gpt-4o"),

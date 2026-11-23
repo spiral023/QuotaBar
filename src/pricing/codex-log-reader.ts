@@ -161,7 +161,13 @@ async function parseCodexJsonlFile(
 
       const oldTotals = previousTotals;
       if (totalUsage) {
-        previousTotals = extractTotals(totalUsage);
+        const totals = extractTotals(totalUsage);
+        // Codex re-emits token_count with an unchanged cumulative total, for
+        // example after a context compaction or a turn_context update. Its
+        // last_token_usage then repeats the previous call, which was already
+        // counted, so the event carries no new usage.
+        if (sameTotals(totals, oldTotals)) continue;
+        previousTotals = totals;
       } else if (lastUsage) {
         const d = extractTotals(lastUsage);
         previousTotals = {
@@ -234,6 +240,14 @@ function diffTotals(current: TokenTotals, prev: TokenTotals): TokenTotals {
     reasoning_output_tokens: Math.max(current.reasoning_output_tokens - prev.reasoning_output_tokens, 0),
     total_tokens: Math.max(current.total_tokens - prev.total_tokens, 0),
   };
+}
+
+function sameTotals(left: TokenTotals, right: TokenTotals): boolean {
+  return left.input_tokens === right.input_tokens
+    && left.cached_input_tokens === right.cached_input_tokens
+    && left.output_tokens === right.output_tokens
+    && left.reasoning_output_tokens === right.reasoning_output_tokens
+    && left.total_tokens === right.total_tokens;
 }
 
 function zeroTotals(): TokenTotals {
