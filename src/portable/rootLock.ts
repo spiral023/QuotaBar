@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
+import { renameWithRetry, writeFileAtomic } from "../shared/atomicFile";
 
 const LOCK_DIRECTORY = ".portable-store.lock";
 const INGESTION_LOCK_DIRECTORY = ".portable-ingestion.lock";
@@ -135,7 +136,9 @@ async function acquire(rootDir: string, lockDirectory: string, runtime: RootLock
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
       await reclaimIfAbandoned(directory, runtime);
-      if (runtime.now() >= deadline) throw new Error("Timed out waiting for portable store lock", { cause: error });
+      if (runtime.now() >= deadline) {
+        throw Object.assign(new Error("Timed out waiting for portable store lock", { cause: error }), { code: "ETIMEDOUT" });
+      }
       await runtime.wait(runtime.retryMs);
     }
   }
@@ -195,31 +198,16 @@ async function reclaimIfAbandoned(directory: string, runtime: RootLockRuntime): 
 }
 
 async function writeOwner(ownerPath: string, owner: LockOwner, runtime: RootLockRuntime): Promise<void> {
-  const temporary = path.join(path.dirname(ownerPath), `owner.${owner.token}.tmp`);
-  try {
-    await runtime.fileSystem.writeFile(temporary, `${JSON.stringify(owner)}\n`, { encoding: "utf8", flag: "wx" });
-    await replaceWithRetry(temporary, ownerPath, runtime);
-  } catch (error) {
-    try {
-      await runtime.fileSystem.unlink(temporary);
-    } catch {
-      // Preserve the primary lock write failure.
-    }
-    throw error;
-  }
+  // The temp name must match the `owner.<token>.tmp` pattern removeKnownLockDirectory accepts.
+  await writeFileAtomic(ownerPath, `${JSON.stringify(owner)}\n`, {
+    temporaryPath: path.join(path.dirname(ownerPath), `owner.${owner.token}.tmp`),
+    fileSystem: runtime.fileSystem,
+    wait: runtime.wait,
+  });
 }
 
-async function replaceWithRetry(from: string, to: string, runtime: RootLockRuntime): Promise<void> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await runtime.fileSystem.rename(from, to);
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException)?.code;
-      if ((code !== "EPERM" && code !== "EACCES") || attempt >= 2) throw error;
-      await runtime.wait(10 * (attempt + 1));
-    }
-  }
+function replaceWithRetry(from: string, to: string, runtime: RootLockRuntime): Promise<void> {
+  return renameWithRetry(from, to, { rename: (source, target) => runtime.fileSystem.rename(source, target), wait: runtime.wait });
 }
 
 async function readOwner(ownerPath: string, runtime: RootLockRuntime): Promise<LockOwner | undefined> {

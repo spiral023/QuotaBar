@@ -1,7 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
+import { writeFileAtomic } from "../shared/atomicFile";
 import { withPortableRootLock } from "./rootLock";
 
 export async function withAppDataLock<T>(appDir: string, operation: () => Promise<T>): Promise<T> {
@@ -35,25 +35,8 @@ export async function updateAppDataFile(
   });
 }
 
-async function writeUnlocked(filePath: string, contents: string): Promise<void> {
-  const temporary = `${filePath}.${randomUUID()}.tmp`;
-  const handle = await fs.open(
-    temporary,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
-    0o600,
-  );
-  try {
-    await handle.writeFile(contents, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
-    await fs.rename(temporary, filePath);
-  } catch (error) {
-    await fs.unlink(temporary).catch(() => undefined);
-    throw error;
-  }
+function writeUnlocked(filePath: string, contents: string): Promise<void> {
+  return writeFileAtomic(filePath, contents, { fsync: true, mode: 0o600 });
 }
 
 async function fileFingerprint(filePath: string): Promise<string | null> {

@@ -13,6 +13,7 @@ import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { PricingEngine } from "../pricing/subscription-factor";
 import { createProviderRegistry } from "../providers/providerRegistry";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
+import { errnoSuffix } from "../shared/errors";
 import { BonusResetTracker } from "../usage/bonusReset";
 import { loadBonusStateFile, saveBonusStateFile } from "../usage/bonusStateStore";
 import { RefreshLoop } from "../usage/refreshLoop";
@@ -224,8 +225,8 @@ if (!app.requestSingleInstanceLock()) {
           },
         }).then((result) => {
           portableReady = result.status === "complete";
-        }).catch(() => {
-          log.warn("Portable data preparation failed");
+        }).catch((err: unknown) => {
+          log.warn(`Portable data preparation failed${errnoSuffix(err)}`);
         });
         if (portableReady && !portableStartupStopped) {
           portableIngestionLifecycle = createPortableIngestionLifecycle(createPortableIngestionRunner(async () => {
@@ -324,8 +325,8 @@ if (!app.requestSingleInstanceLock()) {
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
         detailsWindow.notifyUpdate(snapshots);
-        void appendQuotaSnapshots(getPortableQuotaDir(), snapshots.map(snapshotEvent)).catch(() => {
-          log.warn("Portable quota snapshot save failed");
+        void appendQuotaSnapshots(getPortableQuotaDir(), snapshots.map(snapshotEvent)).catch((err: unknown) => {
+          log.warn(`Portable quota snapshot save failed${errnoSuffix(err)}`);
         });
         void saveCachedSnapshots(usageSnapshotCachePath, snapshots).catch((err: unknown) => {
           log.warn(`Usage snapshot cache save failed: ${err instanceof Error ? err.message : String(err)}`);

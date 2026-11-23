@@ -8,6 +8,7 @@ import {
   PortableImportApplyError,
   type AppliedImportResult,
 } from "../portable/archiveService";
+import { errnoCode } from "../shared/errors";
 import { log } from "./logging";
 
 interface StartupLogger {
@@ -41,8 +42,9 @@ export async function loadInitialStartupState(
     pendingImport = await dependencies.applyPendingImport();
   } catch (error) {
     const rollback = error instanceof PortableImportApplyError ? error.rollbackOutcome : "unknown";
+    const code = errnoCode(error);
     dependencies.log.error(
-      `Portable pending import apply failed rollback=${rollback} error=Portable data apply failed`,
+      `Portable pending import apply failed rollback=${rollback} error=Portable data apply failed${code ? ` code=${code}` : ""}`,
     );
     // The archive boundary intentionally drops raw causes because they may contain private paths or secrets.
     // eslint-disable-next-line preserve-caught-error

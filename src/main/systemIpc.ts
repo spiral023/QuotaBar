@@ -12,6 +12,7 @@ import {
   getWindowRatioPath
 } from "../config/paths";
 import { exportPortableData, stagePortableImport } from "../portable/archiveService";
+import { errnoCode } from "../shared/errors";
 import { getRuntimeAgentRoots, refreshRuntimeWslAgentRoots } from "./agentRootDiscovery";
 import { detectAppVariant } from "./appIdentity";
 import { flushLogging, log } from "./logging";
@@ -64,9 +65,9 @@ export function registerSystemIpc(getQuickStatsLoadDurationMs: () => number | nu
       const result = await exportPortableData(getAppConfigDir(), selected.filePath);
       log.info(`Portable archive action=export result=success files=${result.fileCount} bytes=${result.totalBytes}`);
       return { ok: true, ...result };
-    } catch {
+    } catch (error) {
       const message = "Portable data export failed.";
-      log.warn(`Portable archive action=export error=${message}`);
+      log.warn(`Portable archive action=export error=${message}${codeField(error)}`);
       return { ok: false, error: "portable_export_failed", message };
     } finally {
       archiveOperation = null;
@@ -94,9 +95,9 @@ export function registerSystemIpc(getQuickStatsLoadDurationMs: () => number | nu
         totalBytes: result.totalBytes,
         restartScheduled: true,
       };
-    } catch {
+    } catch (error) {
       const message = "Portable data import failed.";
-      log.warn(`Portable archive action=import error=${message}`);
+      log.warn(`Portable archive action=import error=${message}${codeField(error)}`);
       return { ok: false, error: "portable_import_failed", message };
     } finally {
       archiveOperation = null;
@@ -202,4 +203,10 @@ export function registerSystemIpc(getQuickStatsLoadDurationMs: () => number | nu
     }
     return { ok: errors.length === 0, deleted, errors };
   });
+}
+
+/** Log field with the errno code only; archive errors never carry paths. */
+function codeField(error: unknown): string {
+  const code = errnoCode(error);
+  return code ? ` code=${code}` : "";
 }

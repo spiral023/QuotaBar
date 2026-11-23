@@ -4,6 +4,8 @@ import path from "node:path";
 import type { SnapshotEvent } from "./debugEvents";
 import type { BackfillDayRecord } from "../reports/types";
 import { sanitizeQuotaSnapshot } from "../portable/quotaStore";
+import { writeFileAtomic } from "../shared/atomicFile";
+import { boundaryError } from "../shared/errors";
 import type {
   MigrationRefreshOwner,
   MigrationRefreshTransitionResult,
@@ -137,7 +139,7 @@ export async function preparePortableData(
       legacyInserted: legacy.syntheticInserted + legacy.syntheticUpdated,
       quotaSnapshots: quotaSnapshots.length,
     };
-  } catch {
+  } catch (error) {
     let failureResult: MigrationStateTransitionResult | void;
     try {
       failureResult = stage === "consumer_prewarm" && completedRevision
@@ -153,10 +155,11 @@ export async function preparePortableData(
       return { status: "superseded" };
     }
     if (failureResult?.status === "already_failed") {
+      // eslint-disable-next-line preserve-caught-error
       throw new Error(`Portable data preparation failed: ${failureResult.lastError}`);
     }
-    // The original failure may contain provider data; expose only the fixed stage category.
-    throw new Error(`Portable data preparation failed at ${stage}`);
+    // The original failure may contain provider data; expose only the fixed stage category and errno code.
+    throw boundaryError(`Portable data preparation failed at ${stage}`, error);
   }
 }
 
@@ -569,10 +572,8 @@ async function readLegacyQuotaManifest(manifestPath: string): Promise<Record<str
 }
 
 async function writeLegacyQuotaManifest(manifestPath: string, files: Record<string, string>): Promise<void> {
-  await fs.mkdir(path.dirname(manifestPath), { recursive: true });
-  const temporary = `${manifestPath}.${process.pid}.tmp`;
-  await fs.writeFile(temporary, `${JSON.stringify({ version: LEGACY_QUOTA_MANIFEST_VERSION, files }, null, 2)}\n`, "utf8");
-  await fs.rename(temporary, manifestPath);
+  const contents = JSON.stringify({ version: LEGACY_QUOTA_MANIFEST_VERSION, files }, null, 2);
+  await writeFileAtomic(manifestPath, `${contents}\n`, { createParent: true });
 }
 
 /** Forces the next start to merge every legacy debug log again, e.g. after quota data was replaced. */

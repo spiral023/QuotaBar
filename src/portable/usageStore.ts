@@ -3,6 +3,7 @@ import type { Dirent } from "node:fs";
 import * as nodeFs from "node:fs/promises";
 import path from "node:path";
 import { getPortableUsageDir } from "../config/paths";
+import { renameWithRetry, siblingTemporaryPath, writeFileAtomic } from "../shared/atomicFile";
 import { invalidateDailyRollups, loadDailyRollups, selectDailyRollups, type DailyUsageRollup } from "./dailyRollups";
 import {
   PORTABLE_INGEST_JOURNAL_FILE,
@@ -28,7 +29,7 @@ import {
   requirePortableEvent,
   sanitizePortableEvent
 } from "./usageEventCodec";
-import { buildMetadata, canonicalPath, deduplicateGlobally, deduplicateRepairCandidates, delay, isMissingFile, isRecognizedSiblingTemp, parseRange, parseTransaction, partitionCanonical, PartitionFile, PartitionSnapshot, PendingTransaction, Range, serializeEvents, sha256, snapshotsToMaps, storeRevision, temporaryPath, TransactionEntry } from "./usageStoreFormat";
+import { buildMetadata, canonicalPath, deduplicateGlobally, deduplicateRepairCandidates, isMissingFile, isRecognizedSiblingTemp, parseRange, parseTransaction, partitionCanonical, PartitionFile, PartitionSnapshot, PendingTransaction, Range, serializeEvents, sha256, snapshotsToMaps, storeRevision, TransactionEntry } from "./usageStoreFormat";
 import { cleanupStaleTemps, readMetadataIdentity, readMetadataPartitions, type StoreFileSystem } from "./usageStoreMaintenance";
 export { validatePortableEventForArchive } from "./usageEventCodec";
 
@@ -703,7 +704,7 @@ export class PortableUsageStore {
     try {
       for (const [target, contents] of writes) {
         await this.fileSystem.mkdir(path.dirname(target), { recursive: true });
-        const temporary = temporaryPath(target);
+        const temporary = siblingTemporaryPath(target);
         stagedTemporaryPaths.push(temporary);
         await this.fileSystem.writeFile(temporary, contents, { encoding: "utf8", flag: "wx" });
         entries.push({
@@ -712,7 +713,10 @@ export class PortableUsageStore {
           sha256: sha256(contents),
         });
       }
-      await this.writeStandaloneAtomic(this.transactionPath(), `${JSON.stringify(transaction, null, 2)}\n`);
+      await writeFileAtomic(this.transactionPath(), `${JSON.stringify(transaction, null, 2)}\n`, {
+        createParent: true,
+        fileSystem: this.fileSystem,
+      });
     } catch (error) {
       await this.cleanupIgnoringErrors(stagedTemporaryPaths);
       throw error;
@@ -797,7 +801,7 @@ export class PortableUsageStore {
       if (await this.isRegularFile(temporary)) {
         const staged = await this.fileSystem.readFile(temporary);
         if (sha256(staged) !== entry.sha256) throw new Error("Portable store transaction checksum mismatch");
-        await this.renameWithRetry(temporary, target);
+        await renameWithRetry(temporary, target, { rename: (from, to) => this.fileSystem.rename(from, to) });
       } else {
         const committed = await this.readFileIfRegular(target);
         if (!committed || sha256(committed) !== entry.sha256) {
@@ -861,31 +865,6 @@ export class PortableUsageStore {
       if (marker.transactionId === transactionId) await this.fileSystem.unlink(this.transactionPath());
     } catch (error) {
       if (!isMissingFile(error) && !(error instanceof SyntaxError)) return;
-    }
-  }
-
-  private async writeStandaloneAtomic(target: string, contents: string): Promise<void> {
-    await this.fileSystem.mkdir(path.dirname(target), { recursive: true });
-    const temporary = temporaryPath(target);
-    try {
-      await this.fileSystem.writeFile(temporary, contents, { encoding: "utf8", flag: "wx" });
-      await this.renameWithRetry(temporary, target);
-    } catch (error) {
-      await this.cleanupIgnoringErrors([temporary]);
-      throw error;
-    }
-  }
-
-  private async renameWithRetry(from: string, to: string): Promise<void> {
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        await this.fileSystem.rename(from, to);
-        return;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException)?.code;
-        if ((code !== "EPERM" && code !== "EACCES") || attempt >= 2) throw error;
-        await delay(10 * (attempt + 1));
-      }
     }
   }
 

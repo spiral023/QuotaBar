@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   PORTABLE_STORE_VERSION,
@@ -171,10 +171,6 @@ export function parseBoundary(value: string, endOfDay: boolean): number | null {
   return isIsoTimestamp(value) ? Date.parse(value) : null;
 }
 
-export function temporaryPath(target: string): string {
-  return `${target}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-}
-
 export function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -188,6 +184,3 @@ export function isMissingFile(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === "ENOENT";
 }
 
-export function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}

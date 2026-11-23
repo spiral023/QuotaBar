@@ -533,6 +533,27 @@ describe("portable usage ingestion", () => {
     expect(await readFile(statePath)).toEqual(oldState);
   });
 
+  it("keeps only the errno code of a filesystem reconciliation failure", async () => {
+    const ref = await claudeRef(rootDir, "source.jsonl", "first");
+    const options = { store, statePath, claudeRefs: [ref], codexRefs: [], readClaude: async () => [claude()] };
+    await ingestPortableUsage(options);
+    await writeFile(ref.file, "changed", "utf8");
+    const failingStore = {
+      getIngestStatePath: () => statePath,
+      recoverPending: async () => undefined,
+      async reconcileWithIngestState(): Promise<never> {
+        throw new Error("Portable store write failed", {
+          cause: Object.assign(new Error("EBUSY: resource busy, rename 'C:\\Users\\someone\\events.jsonl'"), { code: "EBUSY" }),
+        });
+      },
+    };
+
+    const thrown = await ingestPortableUsage({ ...options, store: failingStore }).catch((error: unknown) => error);
+    expect(thrown).toMatchObject({ message: "Portable usage reconciliation failed (EBUSY)", code: "EBUSY" });
+    expect(thrown).not.toHaveProperty("cause");
+    expect(String(thrown)).not.toContain("someone");
+  });
+
   it("serializes concurrent calls for the same canonical state path", async () => {
     const ref = await claudeRef(rootDir, "source.jsonl", "fixture");
     let release!: () => void;

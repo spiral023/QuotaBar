@@ -51,6 +51,8 @@ import { PORTABLE_STORE_VERSION } from "./types";
 export { ArchiveBackupDependencies, ArchiveOperationResult, BackupWriterPolicy, privateBackupWriterPolicy } from "./archiveBackup";
 
 import { appVersion as QUOTABAR_VERSION } from "../shared/appVersion";
+import { renameWithRetry } from "../shared/atomicFile";
+import { boundaryError, errnoCode } from "../shared/errors";
 const PENDING_FILE = ".portable-import.pending.json";
 const PENDING_FORMAT = "QuotaBar/pending-import";
 const PENDING_VERSION = 1;
@@ -70,9 +72,14 @@ export interface AppliedImportResult {
 export type PortableImportRollbackOutcome = "completed" | "pending-recovery" | "not-attempted";
 
 export class PortableImportApplyError extends Error {
-  constructor(public readonly rollbackOutcome: PortableImportRollbackOutcome) {
+  /** errno code of the underlying failure, if any; the message stays fixed and path-free. */
+  readonly code?: string;
+
+  constructor(public readonly rollbackOutcome: PortableImportRollbackOutcome, failure?: unknown) {
     super("Portable data apply failed");
     this.name = "PortableImportApplyError";
+    const code = errnoCode(failure);
+    if (code) this.code = code;
   }
 }
 
@@ -142,11 +149,11 @@ export async function exportPortableData(
       await verifySnapshotFiles(sourceFiles);
       const verified = await preflightPortableZip(partialPath);
       await verified.cleanup();
-      await fs.rename(partialPath, destinationZip);
+      await renameWithRetry(partialPath, destinationZip);
       return summarizeSnapshots(destinationZip, files);
-    } catch {
+    } catch (error) {
       await removeFileIfPresent(partialPath);
-      throw new Error("Portable data export failed");
+      throw boundaryError("Portable data export failed", error);
     }
   }));
 }
@@ -263,9 +270,9 @@ export async function stagePortableImport(
         fileCount: stagedFiles.length,
         totalBytes: stagedFiles.reduce((sum, file) => sum + file.size, 0),
       };
-    } catch {
+    } catch (error) {
       if (stagingDir) await removeOwnedTree(stagingDir);
-      throw new Error("Portable data import failed");
+      throw boundaryError("Portable data import failed", error);
     }
       });
     } finally {
@@ -313,8 +320,7 @@ export async function applyPendingImport(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { applied: false, fileCount: 0, totalBytes: 0 };
       // Pending metadata is local but can be tampered with; never attach parser or path details.
-      // eslint-disable-next-line preserve-caught-error
-      throw new Error("Portable data apply failed");
+      throw boundaryError("Portable data apply failed", error);
     }
     let pending: PendingImport;
     try {
@@ -365,17 +371,17 @@ export async function applyPendingImport(
           await applyOnePath(appDir, stagingDir, rollbackDir, relativePath, imported, rename);
         }
         await verifyCommittedLive(appDir, pending.stagedEntries);
-      } catch {
+      } catch (applyError) {
         try {
           await updatePendingPhase(appDir, pendingPath, pending, "rolling-back", dependencies.pendingWriteCheckpoint);
           await finishPendingRollback(
             appDir, stagingDir, rollbackDir, pendingPath, pending, stagedByPath,
             rename, removeTree, unlinkPending, dependencies.pendingWriteCheckpoint,
           );
-        } catch {
-          throw new PortableImportApplyError("pending-recovery");
+        } catch (rollbackError) {
+          throw new PortableImportApplyError("pending-recovery", rollbackError);
         }
-        throw new PortableImportApplyError("completed");
+        throw new PortableImportApplyError("completed", applyError);
       }
       await updatePendingPhase(appDir, pendingPath, pending, "committed", dependencies.pendingWriteCheckpoint);
       await removeTree(rollbackDir);
@@ -388,12 +394,12 @@ export async function applyPendingImport(
       };
     } catch (error) {
       if (error instanceof PortableImportApplyError) throw error;
-      throw new PortableImportApplyError(applyStarted ? "pending-recovery" : "not-attempted");
+      throw new PortableImportApplyError(applyStarted ? "pending-recovery" : "not-attempted", error);
     }
     });
   } catch (error) {
     if (error instanceof PortableImportApplyError) throw error;
-    throw new PortableImportApplyError(applyStarted ? "pending-recovery" : "not-attempted");
+    throw new PortableImportApplyError(applyStarted ? "pending-recovery" : "not-attempted", error);
   }
 }
 
@@ -711,7 +717,7 @@ async function rollbackAll(
       rollbackError ??= error;
     }
   }
-  if (rollbackError) throw new Error("Portable data rollback failed");
+  if (rollbackError) throw boundaryError("Portable data rollback failed", rollbackError);
   return { retryable };
 }
 
@@ -779,7 +785,7 @@ async function atomicWritePending(
     await assertDirectoryBinding(parentBinding);
     if (replace) await assertRegularPending(pendingPath);
     else await assertPathMissing(pendingPath);
-    await fs.rename(temporaryPath, pendingPath);
+    await renameWithRetry(temporaryPath, pendingPath);
     temporaryExists = false;
     await checkpoint?.("after-rename");
     await assertDirectoryBinding(parentBinding);
@@ -897,7 +903,8 @@ async function withArchiveLocks<T>(appDir: string, operation: () => Promise<T>):
 async function genericFailure<T>(message: string, operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
-  } catch {
-    throw new Error(message);
+  } catch (error) {
+    // Archive diagnostics can contain host paths; keep only the errno code.
+    throw boundaryError(message, error);
   }
 }

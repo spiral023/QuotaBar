@@ -31,6 +31,8 @@ import {
   type PortableIngestJournalBase,
   type PortableIngestStateDelta,
 } from "./ingestState";
+import { renameWithRetry } from "../shared/atomicFile";
+import { boundaryError } from "../shared/errors";
 import { withNamedPortableRootLock } from "./rootLock";
 import { PORTABLE_STORE_VERSION, type PortableIngestState, type PortableProvider, type PortableUsageEvent } from "./types";
 import { getSharedUsageStore, PortableUsageStore, type IngestJournalWrite } from "./usageStore";
@@ -199,8 +201,7 @@ async function runWithIngestionLock(
   } catch (error) {
     if (isOperationError(error)) throw error.error;
     // Lock diagnostics may contain arbitrary host details; expose only the allowlisted boundary category.
-    // eslint-disable-next-line preserve-caught-error
-    throw new Error("Portable usage ingestion lock failed");
+    throw boundaryError("Portable usage ingestion lock failed", error);
   }
 }
 
@@ -215,8 +216,8 @@ async function ingestExclusive(
   const errors: IngestError[] = [];
   try {
     await store.recoverPending();
-  } catch {
-    throw new Error("Portable usage store recovery failed");
+  } catch (error) {
+    throw boundaryError("Portable usage store recovery failed", error);
   }
   const loaded = await readStateCached(statePath);
   const previousState = loaded.state;
@@ -427,8 +428,8 @@ async function ingestExclusive(
     reconciled = journalWrite && store.reconcileWithIngestJournal
       ? await store.reconcileWithIngestJournal(incoming, journalWrite)
       : await store.reconcileWithIngestState(incoming, nextState);
-  } catch {
-    throw new Error("Portable usage reconciliation failed");
+  } catch (error) {
+    throw boundaryError("Portable usage reconciliation failed", error);
   }
   let identity: { key: string; journalBytes: number } | undefined;
   try {
@@ -722,8 +723,7 @@ async function readStateRecovering(statePath: string): Promise<LoadedState> {
       return { state: emptyState(), diagnostics: [], rewriteRequired: false };
     }
     // The filesystem message may contain arbitrary host details; this boundary intentionally has no cause.
-    // eslint-disable-next-line preserve-caught-error
-    throw new Error("Portable ingest state read failed");
+    throw boundaryError("Portable ingest state read failed", error);
   }
   const text = bytes.toString("utf8");
   let parsed: ReturnType<typeof parsePortableIngestStateForLoad> | undefined;
@@ -747,8 +747,8 @@ async function readStateRecovering(statePath: string): Promise<LoadedState> {
   try {
     await renameWithRetry(statePath, quarantine);
     await cleanupCorruptStateFiles(path.dirname(statePath));
-  } catch {
-    throw new Error("Portable ingest state recovery failed");
+  } catch (error) {
+    throw boundaryError("Portable ingest state recovery failed", error);
   }
   // No journal is loaded, so the rewrite that follows also removes any journal
   // that belonged to the quarantined snapshot.
@@ -798,19 +798,6 @@ async function readJournal(
       bytes: applied.usable ? Buffer.byteLength(text, "utf8") : 0,
     },
   };
-}
-
-async function renameWithRetry(from: string, to: string): Promise<void> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await nodeFs.rename(from, to);
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException)?.code;
-      if ((code !== "EPERM" && code !== "EACCES") || attempt >= 2) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
-    }
-  }
 }
 
 async function cleanupCorruptStateFiles(rootDir: string): Promise<void> {

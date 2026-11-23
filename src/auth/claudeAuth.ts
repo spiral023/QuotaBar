@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 import { getClaudeCredentialsPath, type PathContext } from "../config/paths";
+import { writeFileAtomic } from "../shared/atomicFile";
 
 export interface ClaudeCredentials {
   accessToken: string;
@@ -68,10 +68,11 @@ export async function saveClaudeCredentials(credentials: ClaudeCredentials): Pro
   if (credentials.rateLimitTier !== undefined) nextOauth.rateLimitTier = credentials.rateLimitTier;
   existing.claudeAiOauth = nextOauth;
 
-  await fs.mkdir(path.dirname(credentialsPath), { recursive: true });
-  const tmpPath = `${credentialsPath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmpPath, `${JSON.stringify(existing, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await fs.rename(tmpPath, credentialsPath);
+  await writeFileAtomic(credentialsPath, `${JSON.stringify(existing, null, 2)}\n`, {
+    createParent: true,
+    fsync: true,
+    mode: 0o600,
+  });
 }
 
 export function isClaudeTokenExpired(credentials: ClaudeCredentials, skewMs = 5 * 60_000): boolean {
