@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.4.2 - 2026-11-23
+
+### Fixes
+
+- Settings are no longer reset to defaults when `settings.json` is briefly locked or invalid. Changes are saved atomically under a lock, and an invalid file is kept as `settings.corrupt-<time>.json` at startup instead of being overwritten.
+- A Claude token refresh no longer rewrites an unreadable `.credentials.json` with only the OAuth entry. It writes back to the file the token came from (custom and WSL roots previously went to the default path), runs only one refresh at a time, and reuses a newer token already stored by Claude Code.
+- Usage ingestion no longer stays blocked until restart after the analytics worker was stopped while holding a store lock.
+- Portable data preparation retries with backoff after a startup failure instead of staying off for the session.
+- Network and DNS outages are recognised again, and an error response is no longer logged as "network recovered".
+- File replacements retry longer when Windows briefly locks a file (antivirus, indexer). Error logs now include the error code, still without paths.
+- Tooltips near the right window edge keep their margin instead of touching the edge.
+
+### Improvements
+
+- Tooltips in History, Analytics and Alerts use one shared implementation and also open on keyboard focus.
+- History, Analytics and Models share one range filter bar.
+- Portable archives use only the streaming ZIP reader/writer; `adm-zip` is no longer shipped.
+
+### Validation
+
+- Strict typechecking, lint, 1,638 tests (1,631 run, seven child-fixture placeholders skipped) and production build passed. Setup, portable and ZIP packages built. Tooltips and filter bars were verified in a real Electron window at 900×660 and 750×520.
+
+
 ## 2.4.1 - 2026-11-23
 
 ### Security
