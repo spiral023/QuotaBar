@@ -1,3 +1,4 @@
+import type { FetchErrorClass, FetchErrorKind } from "../usage/fetchErrorClassifier";
 import type { UsagePace } from "../usage/usagePace";
 import type { WindowBudgetInfo } from "../usage/windowRatio";
 
@@ -34,7 +35,8 @@ export interface UsageProvider {
   id: string;
   displayName: string;
   isAvailable(): Promise<boolean>;
-  fetchUsage(): Promise<UsageSnapshot>;
+  /** `signal` aborts the provider's requests when the refresh cycle gives up on it. */
+  fetchUsage(signal?: AbortSignal): Promise<UsageSnapshot>;
   getAuthHint(): Promise<string | null>;
 }
 
@@ -62,16 +64,30 @@ export interface UsageSnapshot {
   windows: UsageWindow[];
   updatedAt: string;
   errorMessage?: string;
+  /**
+   * Transport class of the failure behind an error snapshot. Providers turn
+   * exceptions into snapshots, so this is how the refresh loop still learns
+   * that the network or DNS was down.
+   */
+  errorKind?: FetchErrorKind;
+  /** errno-style code of that failure, e.g. ENOTFOUND or TIMEOUT. */
+  errorCode?: string;
   costFactor?: CostFactorResult;
   windowBudget?: WindowBudgetInfo;
 }
 
-export function errorSnapshot(provider: string, message: string, status: UsageStatus = "error"): UsageSnapshot {
+export function errorSnapshot(
+  provider: string,
+  message: string,
+  status: UsageStatus = "error",
+  failure?: FetchErrorClass,
+): UsageSnapshot {
   return {
     provider,
     status,
     windows: [],
     updatedAt: new Date().toISOString(),
-    errorMessage: message
+    errorMessage: message,
+    ...(failure && failure.kind !== "other" ? { errorKind: failure.kind, errorCode: failure.code } : {})
   };
 }

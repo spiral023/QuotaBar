@@ -1,7 +1,7 @@
 import { app, shell } from "electron";
 import path from "node:path";
 import { getBonusStatePath, getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs, getDebugLogDir, getLegacyQuotaImportManifestPath, getPortableIngestStatePath, getPortableMigrationPath, getPortableQuotaDir, getPortableUsageDir, getUsageSnapshotCachePath, getWindowRatioPath } from "../config/paths";
-import { isNotificationRuleId, loadSettings, normalizeNotificationSettings, saveSettings } from "../config/settings";
+import { isNotificationRuleId, loadSettings, normalizeNotificationSettings, updateSettings } from "../config/settings";
 import { enrichPortableEventCosts } from "../portable/costEnrichment";
 import { ingestPortableUsage } from "../portable/ingestion";
 import { beginMigrationRefresh, beginMigrationRefreshRecovery, markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData, readCompleteMigrationRevision } from "../portable/migration";
@@ -13,6 +13,7 @@ import { LiteLLMFetcher } from "../pricing/litellm-fetcher";
 import { PricingEngine } from "../pricing/subscription-factor";
 import { createProviderRegistry } from "../providers/providerRegistry";
 import { readBackfillDayRecords } from "../reports/backfill-reader";
+import { errnoSuffix } from "../shared/errors";
 import { BonusResetTracker } from "../usage/bonusReset";
 import { loadBonusStateFile, saveBonusStateFile } from "../usage/bonusStateStore";
 import { RefreshLoop } from "../usage/refreshLoop";
@@ -24,7 +25,7 @@ import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAge
 import { configureAppIdentity, detectAppVariant, ensureWindowsNotificationShortcut } from "./appIdentity";
 import { applyStartupFlag } from "./autostart";
 import { parseRuntimeCliArgs } from "./cli";
-import { createIncrementalLegacyQuotaImport, createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
+import { createIncrementalLegacyQuotaImport, createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, preparePortableDataWithRetry, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
 import { snapshotEvent } from "./debugEvents";
 import { DebugRecorder } from "./debugRecorder";
 import { DetailsWindowController } from "./detailsWindow";
@@ -189,7 +190,7 @@ if (!app.requestSingleInstanceLock()) {
       // reconciliation, quota migration). It is started only once the live path
       // below is up, so quota polling, notifications and the tray menu no longer
       // wait for it. Shutdown waits for it instead of cutting a commit short.
-      let portableStartupStopped = false;
+      const portableStartupStop = new AbortController();
       let portableStartup: Promise<void> = Promise.resolve();
       const legacyQuotaImport = createIncrementalLegacyQuotaImport({
         logDir: getDebugLogDir(),
@@ -199,7 +200,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       const startPortableData = async (): Promise<void> => {
         let portableReady = false;
-        await preparePortableData({
+        await preparePortableDataWithRetry(() => preparePortableData({
           beginMigration: () => markMigrationRunning(getPortableMigrationPath()),
           ingestProviderEvents: ingestPortableSources,
           readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
@@ -222,12 +223,20 @@ if (!app.requestSingleInstanceLock()) {
           onStageComplete: (stage, durationMs, count) => {
             log.info(`Portable data stage=${stage} count=${count} durationMs=${durationMs}`);
           },
+        }), {
+          stopSignal: portableStartupStop.signal,
+          // preparePortableData and the migration-state transitions only throw
+          // fixed, path-free boundary messages (stage + errno code).
+          onRetry: (err, attempt, delayMs) => {
+            const reason = err instanceof Error ? err.message : `Portable data preparation failed${errnoSuffix(err)}`;
+            log.warn(`${reason}; attempt ${attempt}, retrying in ${Math.round(delayMs / 1000)}s`);
+          },
         }).then((result) => {
           portableReady = result.status === "complete";
-        }).catch(() => {
-          log.warn("Portable data preparation failed");
+        }).catch((err: unknown) => {
+          log.warn(`Portable data preparation failed${errnoSuffix(err)}`);
         });
-        if (portableReady && !portableStartupStopped) {
+        if (portableReady && !portableStartupStop.signal.aborted) {
           portableIngestionLifecycle = createPortableIngestionLifecycle(createPortableIngestionRunner(async () => {
             await refreshPortableData({
               readCompleteRevision: () => readCompleteMigrationRevision(getPortableMigrationPath()),
@@ -285,12 +294,12 @@ if (!app.requestSingleInstanceLock()) {
           { tab },
         ),
         muteRule: async (ruleId: string) => {
-          const current = await loadSettings();
-          const rules = current.notifications.rules as unknown as Record<string, { enabled: boolean }>;
-          if (isNotificationRuleId(ruleId) && Object.hasOwn(rules, ruleId)) rules[ruleId].enabled = false;
-          const merged = normalizeNotificationSettings(current.notifications);
-          await saveSettings({ ...current, notifications: merged });
-          return merged;
+          const saved = await updateSettings((current) => {
+            const rules = current.notifications.rules as unknown as Record<string, { enabled: boolean }>;
+            if (isNotificationRuleId(ruleId) && Object.hasOwn(rules, ruleId)) rules[ruleId].enabled = false;
+            return { ...current, notifications: normalizeNotificationSettings(current.notifications) };
+          });
+          return saved.notifications;
         },
         installUpdate: () => quitAndInstall(),
         // "Later" suppresses the re-notification for this version only — the downloaded
@@ -324,8 +333,8 @@ if (!app.requestSingleInstanceLock()) {
       refreshLoop.onRefresh((snapshots) => {
         notificationService.onRefresh(snapshots);
         detailsWindow.notifyUpdate(snapshots);
-        void appendQuotaSnapshots(getPortableQuotaDir(), snapshots.map(snapshotEvent)).catch(() => {
-          log.warn("Portable quota snapshot save failed");
+        void appendQuotaSnapshots(getPortableQuotaDir(), snapshots.map(snapshotEvent)).catch((err: unknown) => {
+          log.warn(`Portable quota snapshot save failed${errnoSuffix(err)}`);
         });
         void saveCachedSnapshots(usageSnapshotCachePath, snapshots).catch((err: unknown) => {
           log.warn(`Usage snapshot cache save failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -361,7 +370,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       const drainShutdown = createShutdownDrain({
         stopIngestion: async () => {
-          portableStartupStopped = true;
+          portableStartupStop.abort();
           await portableStartup;
           const lifecycle = portableIngestionLifecycle;
           portableIngestionLifecycle = undefined;

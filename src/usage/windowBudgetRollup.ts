@@ -1,5 +1,9 @@
-import { resetsAtChanged } from "./windowRatio";
-import { classifyWeeklyTransition, isTransientWeeklySpike } from "./weeklyTransition";
+import {
+  classifyWeeklyTransition,
+  isFiveHourResetConfirmedByDrop,
+  isTransientWeeklySpike,
+  USED_WINDOW_MIN_PCT,
+} from "./weeklyTransition";
 
 export interface CurrentWindowObservation {
   ts: string;
@@ -21,8 +25,6 @@ export interface CurrentWindowUsage {
   bonusResetCount: number;
 }
 
-const USED_WINDOW_MIN_PCT = 5;
-const FIVE_RESET_DROP_PCT = 15;
 
 export function buildCurrentWindowUsage(
   observations: CurrentWindowObservation[],
@@ -76,11 +78,9 @@ function countUsedFiveHourWindows(observations: CurrentWindowObservation[]): num
       started = false;
     }
     prevWeekly = o;
+    // Compared against the window's own resetsAt, not the previous sample.
     const rollover = started
-      && (
-        (resetsAtChanged(curReset, o.fiveResetsAt) && o.fivePct < lastFivePct)
-        || o.fivePct < lastFivePct - FIVE_RESET_DROP_PCT
-      );
+      && isFiveHourResetConfirmedByDrop({ pct: lastFivePct, resetsAt: curReset }, { pct: o.fivePct, resetsAt: o.fiveResetsAt });
     if (!started || rollover) {
       flush();
       started = true;

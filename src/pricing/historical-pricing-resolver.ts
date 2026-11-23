@@ -1,7 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import path from "node:path";
 import { getHistoricalPricingPath } from "../config/paths";
+import { writeFileAtomic } from "../shared/atomicFile";
 import type { ModelPricing } from "./cost-calculator";
 import { LITELLM_PRICING_SOURCE } from "./litellm-fetcher";
 
@@ -61,10 +61,7 @@ const fileStorage: HistoricalPricingStorage = {
   },
   async write(historyPath, content) {
     try {
-      await fs.mkdir(path.dirname(historyPath), { recursive: true });
-      const tempPath = `${historyPath}.${process.pid}.${randomUUID()}.tmp`;
-      await fs.writeFile(tempPath, content, "utf8");
-      await fs.rename(tempPath, historyPath);
+      await writeFileAtomic(historyPath, content, { createParent: true });
     } catch {
       // The current pricing still provides the legacy fallback when local persistence is unavailable.
     }

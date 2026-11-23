@@ -1,13 +1,12 @@
-import { loadSettings, saveSettings, type Settings } from "../config/settings";
+import { updateSettings, type Settings } from "../config/settings";
 
 export interface SettingsPersistence {
-  load(): Promise<Settings>;
-  save(settings: Settings): Promise<void>;
+  /** Atomic read-modify-write; aborts instead of overwriting an unreadable file. */
+  update(change: (current: Settings) => Settings): Promise<Settings>;
 }
 
 const defaultPersistence: SettingsPersistence = {
-  load: loadSettings,
-  save: saveSettings,
+  update: (change) => updateSettings(change),
 };
 
 export async function mergeAndSaveSettings(
@@ -15,9 +14,7 @@ export async function mergeAndSaveSettings(
   onSaved?: (settings: Settings, changedKeys: string[]) => void,
   persistence: SettingsPersistence = defaultPersistence,
 ): Promise<Settings> {
-  const current = await persistence.load();
-  await persistence.save({ ...current, ...partial } as Settings);
-  const saved = await persistence.load();
+  const saved = await persistence.update((current) => ({ ...current, ...partial } as Settings));
   onSaved?.(saved, Object.keys(partial));
   return saved;
 }

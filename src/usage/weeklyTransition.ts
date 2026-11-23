@@ -1,4 +1,4 @@
-import { RESETS_AT_TOLERANCE_MS } from "./windowRatio";
+import { RESETS_AT_TOLERANCE_MS, resetsAtChanged } from "./windowRatio";
 
 /**
  * Gemeinsame Klassifikation von Weekly-Fenster-Übergängen (regulärer Reset,
@@ -133,4 +133,41 @@ export function isBonusReset(prev: WeeklyPoint, next: WeeklyPoint): boolean {
 export function classifyWeeklyTransition(prev: WeeklyPoint, next: WeeklyPoint): WeeklyTransitionKind {
   if (prev.weeklyPct < BONUS_PREV_MIN_PCT || next.weeklyPct >= BONUS_NEXT_MAX_PCT) return "none";
   return isRegularWeeklyReset(prev, next) ? "regular" : "bonus";
+}
+
+// --- 5h window segmentation -------------------------------------------------
+//
+// Two rules are in use and intentionally kept apart (merging them changes the
+// numbers shown in Analytics):
+//
+// - Drop-confirmed (window budget series, current-period rollup): a resetsAt
+//   change counts only when usage also fell, because Codex idle windows roll
+//   resetsAt forward on every poll while usage stays flat; a fall of more than
+//   FIVE_HOUR_RESET_DROP_PCT counts on its own (covers a missing resetsAt).
+// - resetsAt-only (7d window history, 5h pressure): any resetsAt change beyond
+//   the tolerance starts a new window.
+
+/** Usage drop (percentage points) that marks a 5h reset even without a resetsAt change. */
+export const FIVE_HOUR_RESET_DROP_PCT = 15;
+/** A 5h window counts as used once its peak exceeds this percentage. */
+export const USED_WINDOW_MIN_PCT = 5;
+
+export interface FiveHourPoint {
+  pct: number;
+  resetsAt: string | null | undefined;
+}
+
+/** Drop-confirmed rule: `prev` is the reference point (previous sample or the window's own start). */
+export function isFiveHourResetConfirmedByDrop(prev: FiveHourPoint | null, next: FiveHourPoint): boolean {
+  if (!prev) return false;
+  return (resetsAtChanged(prev.resetsAt, next.resetsAt) && next.pct < prev.pct)
+    || next.pct < prev.pct - FIVE_HOUR_RESET_DROP_PCT;
+}
+
+/** resetsAt-only rule: the window's resetsAt moved beyond the tolerance. */
+export function isFiveHourResetByResetsAt(
+  windowResetsAt: string | null | undefined,
+  nextResetsAt: string | null | undefined,
+): boolean {
+  return resetsAtChanged(windowResetsAt, nextResetsAt);
 }

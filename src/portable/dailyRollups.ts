@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import { reconcileStoredCost } from "../pricing/stored-cost";
+import { writeFileAtomic } from "../shared/atomicFile";
 import { zonedDayKey } from "../shared/zonedDate";
 import { isNeutralInternalMarker } from "./eventAdapters";
 import type { PortableUsageEvent } from "./types";
@@ -39,14 +40,8 @@ function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-async function atomicWrite(file: string, contents: string): Promise<void> {
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  try {
-    await fs.writeFile(temporary, contents, { encoding: "utf8", flag: "wx" });
-    await fs.rename(temporary, file);
-  } finally {
-    await fs.unlink(temporary).catch(() => undefined);
-  }
+function atomicWrite(file: string, contents: string): Promise<void> {
+  return writeFileAtomic(file, contents);
 }
 
 /** Called under the store lock BEFORE append, replacement, removal or recovery. */

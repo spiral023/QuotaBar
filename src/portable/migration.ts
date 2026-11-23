@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import type { BackfillDayRecord } from "../reports/types";
+import { writeFileAtomic } from "../shared/atomicFile";
+import { boundaryError, isBoundaryError } from "../shared/errors";
 import { normalizeModelName } from "../shared/modelNames";
 import { Aggregate, LegacyTarget, aggregateKey, aggregateProviderEvents, canonicalizeLegacyRecords, compareReconciliationItems, isPlainObject, legacyTargetFromPortable, maximumLegacyTarget, reconciliationEvent, reconciliationIdentity, seedHistoricalTarget, utcDay, zeroAggregate } from "./legacyReconciliation";
 import { withNamedPortableRootLock } from "./rootLock";
@@ -140,8 +142,7 @@ export async function migrateLegacyData(
   } catch (error) {
     if (isMigrationOperationError(error)) throw error.error;
     // Lock diagnostics may expose host paths; retain only the fixed boundary category.
-    // eslint-disable-next-line preserve-caught-error
-    throw new Error("Portable usage migration lock failed");
+    throw boundaryError("Portable usage migration lock failed", error);
   }
 }
 
@@ -156,8 +157,8 @@ async function migrateLegacyDataExclusive(
 
   try {
     await store.recoverPending();
-  } catch {
-    throw new Error("Portable usage store recovery failed");
+  } catch (error) {
+    throw boundaryError("Portable usage store recovery failed", error);
   }
 
   if (loadedState.rewriteRequired && loadedState.state) {
@@ -233,8 +234,7 @@ async function migrateLegacyDataExclusive(
     }
     await writeFailedState(statePath, "store_reconciliation_failed", now);
     // Store diagnostics can contain host paths; expose only the fixed boundary category.
-    // eslint-disable-next-line preserve-caught-error
-    throw new Error("Portable usage migration could not reconcile events");
+    throw boundaryError("Portable usage migration could not reconcile events", error);
   }
   if (options.failAfterState === "events") throw new Error("Portable usage migration interrupted");
 
@@ -415,13 +415,12 @@ async function withMigrationStateLock<T>(statePath: string, operation: () => Pro
   } catch (error) {
     if (error instanceof FutureMigrationStateError) throw error;
     if (error instanceof Error && (
-      error.message === "Portable migration state read failed"
-      || error.message === "Portable migration state write failed"
+      isBoundaryError(error, "Portable migration state read failed")
+      || isBoundaryError(error, "Portable migration state write failed")
       || error.message === "Portable migration clock is invalid"
     )) throw error;
     // Lock diagnostics can contain host paths; expose only the fixed boundary category.
-    // eslint-disable-next-line preserve-caught-error
-    throw new Error("Portable migration state transition failed");
+    throw boundaryError("Portable migration state transition failed", error);
   }
 }
 
@@ -476,8 +475,7 @@ async function readMigrationState(statePath: string): Promise<LoadedMigrationSta
       return { rewriteRequired: true };
     }
     // State read diagnostics may contain host paths or file contents; expose only the boundary category.
-    // eslint-disable-next-line preserve-caught-error
-    throw new Error("Portable migration state read failed");
+    throw boundaryError("Portable migration state read failed", error);
   }
 }
 
@@ -530,34 +528,10 @@ async function writeFailedState(statePath: string, lastError: string, now: () =>
 
 async function writeStateSafely(statePath: string, value: PortableMigrationState): Promise<void> {
   try {
-    await writeAtomic(statePath, `${JSON.stringify(value, null, 2)}\n`);
-  } catch {
-    throw new Error("Portable migration state write failed");
-  }
-}
-
-async function writeAtomic(target: string, contents: string): Promise<void> {
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  const temporary = `${target}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-  try {
-    await fs.writeFile(temporary, contents, { encoding: "utf8", flag: "wx" });
-    await renameWithRetry(temporary, target);
+    await writeFileAtomic(statePath, `${JSON.stringify(value, null, 2)}\n`, { createParent: true });
   } catch (error) {
-    await fs.unlink(temporary).catch(() => undefined);
-    throw error;
-  }
-}
-
-async function renameWithRetry(from: string, to: string): Promise<void> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await fs.rename(from, to);
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException)?.code;
-      if ((code !== "EPERM" && code !== "EACCES") || attempt >= 2) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
-    }
+    // Filesystem messages embed host paths; keep only the errno code.
+    throw boundaryError("Portable migration state write failed", error);
   }
 }
 

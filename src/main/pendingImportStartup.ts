@@ -1,5 +1,5 @@
 import type { Settings } from "../config/settings";
-import { loadSettings } from "../config/settings";
+import { loadSettingsAtStartup } from "../config/settings";
 import { isFirstRun } from "../config/firstRun";
 import { getAppConfigDir, getLegacyQuotaImportManifestPath } from "../config/paths";
 import { resetLegacyQuotaImport } from "./debugBackfill";
@@ -8,6 +8,7 @@ import {
   PortableImportApplyError,
   type AppliedImportResult,
 } from "../portable/archiveService";
+import { errnoCode } from "../shared/errors";
 import { log } from "./logging";
 
 interface StartupLogger {
@@ -28,7 +29,9 @@ const defaultDependencies: InitialStartupDependencies = {
   applyPendingImport: () => applyPendingImport(getAppConfigDir()),
   resetLegacyQuotaImport: () => resetLegacyQuotaImport(getLegacyQuotaImportManifestPath()),
   isFirstRun,
-  loadSettings,
+  loadSettings: (overrides) => loadSettingsAtStartup(overrides, (backupName) => {
+    log.warn(`Settings file was not valid JSON; moved it to ${backupName} and started with defaults`);
+  }),
   log,
 };
 
@@ -41,8 +44,9 @@ export async function loadInitialStartupState(
     pendingImport = await dependencies.applyPendingImport();
   } catch (error) {
     const rollback = error instanceof PortableImportApplyError ? error.rollbackOutcome : "unknown";
+    const code = errnoCode(error);
     dependencies.log.error(
-      `Portable pending import apply failed rollback=${rollback} error=Portable data apply failed`,
+      `Portable pending import apply failed rollback=${rollback} error=Portable data apply failed${code ? ` code=${code}` : ""}`,
     );
     // The archive boundary intentionally drops raw causes because they may contain private paths or secrets.
     // eslint-disable-next-line preserve-caught-error

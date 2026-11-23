@@ -23,12 +23,11 @@ Die gesamte App ist auf **Englisch**: UI-Labels, Tooltips, Fehlermeldungen, Bena
 ## UI-Konventionen
 
 ### Tooltips
-Neue Tooltips werden als **Portal-Elemente** direkt an `<body>` gehängt (nicht als Child des auslösenden Elements), damit sie nicht durch `overflow: hidden` oder `z-index`-Stacking abgeschnitten werden. Orientierung am bestehenden Token-Breakdown-Tooltip in [history.js](src/renderer/tabs/history.js):
+Tooltips laufen über das gemeinsame Portal-Modul `QB.portalTip` in [shared/tooltip.js](src/renderer/shared/tooltip.js). Es hängt ein einziges Element direkt an `<body>`, damit nichts durch `overflow: hidden` oder `z-index`-Stacking abgeschnitten wird. Keine eigenen Tooltip-Elemente mehr pro Tab bauen.
 
-- CSS-Klasse `.hr-kpi-tok-tip` in [index.html](src/renderer/index.html) als Vorlage für Aussehen und Einblend-Animation (`opacity + scale + filter: blur`, 160 ms)
-- Tooltip-Element beim ersten Aufruf erzeugen (`document.createElement`, `document.body.appendChild`), ID vergeben, bei späteren Aufrufen per `getElementById` wiederverwenden
-- Position über `getBoundingClientRect()` des Anker-Elements berechnen; zentriert oberhalb, bei zu wenig Platz unterhalb — mit `transformOrigin` entsprechend wechseln
-- Einblenden durch `.classList.add('is-visible')`, Ausblenden durch `.classList.remove('is-visible')`
+- Einfache Texte: Anker bekommt `data-tip="…"` (Text, kein HTML); Container einmal mit `QB.portalTip.bindDataTips(container, selector)` binden. Das ist idempotent, deckt Maus und Tastatur-Fokus ab und überlebt `innerHTML`-Neu-Renderings.
+- Eigene Auslöser: `QB.portalTip.show(anchor, text)` / `QB.portalTip.hide()`; Zeilen-Layout mit `{ variant: 'rows', html }` (Beispiel: Token-Breakdown in [history.js](src/renderer/tabs/history.js)).
+- Aussehen und Einblend-Animation (`opacity + scale + filter: blur`, 160 ms) stehen in `.qb-portal-tip` in [shell.css](src/renderer/styles/shell.css); Position zentriert oberhalb des Ankers, bei zu wenig Platz unterhalb, `transformOrigin` wechselt mit.
 
 ## Hinweise zur Preisdaten-Quelle
 

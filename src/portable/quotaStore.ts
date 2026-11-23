@@ -5,6 +5,7 @@ import path from "node:path";
 import type { SnapshotEvent } from "../main/debugEvents";
 import type { CostFactorResult, UsageStatus, UsageWindow } from "../providers/types";
 import type { UsagePace } from "../usage/usagePace";
+import { renameWithRetry, siblingTemporaryPath, writeFileAtomic } from "../shared/atomicFile";
 import { withPortableRootLock } from "./rootLock";
 
 const PARTITION_FILE = /^(\d{4}-\d{2})\.jsonl$/;
@@ -186,7 +187,7 @@ async function commit(root: string, writes: ReadonlyMap<string, string>): Promis
   try {
     for (const [target, contents] of writes) {
       await fs.mkdir(path.dirname(target), { recursive: true });
-      const temporary = `${target}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+      const temporary = siblingTemporaryPath(target);
       await fs.writeFile(temporary, contents, { encoding: "utf8", flag: "wx" });
       staged.push(temporary);
       entries.push({
@@ -195,7 +196,7 @@ async function commit(root: string, writes: ReadonlyMap<string, string>): Promis
         sha256: hash(contents),
       });
     }
-    await writeAtomic(transactionPath(root), `${JSON.stringify(transaction)}\n`);
+    await writeFileAtomic(transactionPath(root), `${JSON.stringify(transaction)}\n`, { createParent: true });
   } catch (error) {
     await cleanup(staged);
     throw error;
@@ -258,31 +259,6 @@ async function rollForward(root: string, transaction: PendingTransaction): Promi
     if (current.transactionId === transaction.transactionId) await fs.unlink(transactionPath(root));
   } catch (error) {
     if (!isMissing(error)) throw error;
-  }
-}
-
-async function writeAtomic(target: string, contents: string): Promise<void> {
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  const temporary = `${target}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-  try {
-    await fs.writeFile(temporary, contents, { encoding: "utf8", flag: "wx" });
-    await renameWithRetry(temporary, target);
-  } catch (error) {
-    await cleanup([temporary]);
-    throw error;
-  }
-}
-
-async function renameWithRetry(from: string, to: string): Promise<void> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await fs.rename(from, to);
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException)?.code;
-      if ((code !== "EPERM" && code !== "EACCES") || attempt >= 2) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
-    }
   }
 }
 

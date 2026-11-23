@@ -1,7 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
+import { retryTransient, writeFileAtomic } from "../shared/atomicFile";
 import { withPortableRootLock } from "./rootLock";
 
 export async function withAppDataLock<T>(appDir: string, operation: () => Promise<T>): Promise<T> {
@@ -20,40 +20,30 @@ export async function writeAppDataFile(filePath: string, contents: string): Prom
   });
 }
 
+/**
+ * Read-modify-write under the app-data lock. `update` receives the current
+ * contents (`null` when the file is missing) and returns the new contents, or
+ * `null` to leave the file untouched. A read failure other than ENOENT - or an
+ * exception from `update` - aborts without writing.
+ */
 export async function updateAppDataFile(
   filePath: string,
-  update: (current: string | null) => string,
+  update: (current: string | null) => string | null,
 ): Promise<void> {
   await withAppDataLock(path.dirname(filePath), async () => {
     let current: string | null = null;
     try {
-      current = await fs.readFile(filePath, "utf8");
+      current = await retryTransient(() => fs.readFile(filePath, "utf8"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    await writeUnlocked(filePath, update(current));
+    const next = update(current);
+    if (next !== null) await writeUnlocked(filePath, next);
   });
 }
 
-async function writeUnlocked(filePath: string, contents: string): Promise<void> {
-  const temporary = `${filePath}.${randomUUID()}.tmp`;
-  const handle = await fs.open(
-    temporary,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
-    0o600,
-  );
-  try {
-    await handle.writeFile(contents, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
-    await fs.rename(temporary, filePath);
-  } catch (error) {
-    await fs.unlink(temporary).catch(() => undefined);
-    throw error;
-  }
+function writeUnlocked(filePath: string, contents: string): Promise<void> {
+  return writeFileAtomic(filePath, contents, { fsync: true, mode: 0o600 });
 }
 
 async function fileFingerprint(filePath: string): Promise<string | null> {

@@ -32,7 +32,7 @@ describe("portable startup preparation", () => {
   it("integrates preparation after runtime discovery and before analytics prewarm", async () => {
     const source = await readFile(path.resolve("src/main/main.ts"), "utf8");
     const discovery = source.indexOf("await refreshRuntimeWslAgentRoots()");
-    const preparation = source.indexOf("await preparePortableData(");
+    const preparation = source.indexOf("await preparePortableDataWithRetry(() => preparePortableData(");
     const prewarm = source.indexOf("prewarmAnalytics()", preparation);
     expect(discovery).toBeGreaterThan(-1);
     expect(preparation).toBeGreaterThan(discovery);
@@ -46,9 +46,11 @@ describe("portable startup preparation", () => {
     const drain = source.indexOf("const drainShutdown");
     expect(liveStart).toBeGreaterThan(-1);
     expect(portableStart).toBeGreaterThan(liveStart);
-    expect(source.indexOf("await preparePortableData(")).toBeLessThan(liveStart);
+    expect(source.indexOf("await preparePortableDataWithRetry(() => preparePortableData(")).toBeLessThan(liveStart);
     expect(source.indexOf("await portableStartup;", drain)).toBeLessThan(source.indexOf("await lifecycle?.stop()", drain));
-    expect(source).toContain("if (portableReady && !portableStartupStopped)");
+    expect(source).toContain("if (portableReady && !portableStartupStop.signal.aborted)");
+    expect(source).toContain("stopSignal: portableStartupStop.signal");
+    expect(source.indexOf("portableStartupStop.abort();", drain)).toBeLessThan(source.indexOf("await portableStartup;", drain));
   });
 
   it("prices provider events before committing them to the portable store", async () => {

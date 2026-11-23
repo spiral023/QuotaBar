@@ -1,8 +1,9 @@
 import { resolveCodexCredentials, CodexCredentials } from "../auth/codexAuth";
 import { log } from "../main/logging";
-import { httpFetch } from "../main/httpClient";
+import { httpFetch, requestSignal } from "../main/httpClient";
 import { redactObject } from "../shared/redaction";
 import { NotAuthenticatedError, RateLimitError, toErrorMessage } from "../shared/errors";
+import { classifyFetchError } from "../usage/fetchErrorClassifier";
 import { parseRetryAfterMs } from "./claude";
 import { errorSnapshot, UsageProvider, UsageSnapshot, UsageWindow } from "./types";
 import type { ProviderSettingsLoader } from "./providerRegistry";
@@ -27,7 +28,7 @@ export class CodexProvider implements UsageProvider {
     return "Codex: Run 'codex login' to authenticate";
   }
 
-  async fetchUsage(): Promise<UsageSnapshot> {
+  async fetchUsage(signal?: AbortSignal): Promise<UsageSnapshot> {
     try {
       const resolution = await resolveCodexCredentials(await this.pathContext());
       if (resolution.state === "expired") {
@@ -41,7 +42,7 @@ export class CodexProvider implements UsageProvider {
       // Unofficial/fragile: ChatGPT backend API used by Codex CLI/web; shape can change without notice.
       const response = await httpFetch(CODEX_USAGE_URL, {
         headers: buildHeaders(credentials),
-        signal: AbortSignal.timeout(this.timeoutMs)
+        signal: requestSignal(this.timeoutMs, signal)
       });
 
       if (response.status === 401 || response.status === 403) {
@@ -60,8 +61,9 @@ export class CodexProvider implements UsageProvider {
     } catch (error) {
       if (error instanceof RateLimitError) throw error;
       const status = error instanceof NotAuthenticatedError ? "not_authenticated" : "error";
-      log.warn(`Codex fetch failed: ${toErrorMessage(error)}`);
-      return errorSnapshot("codex", toErrorMessage(error), status);
+      // After a cycle timeout the refresh loop already logged the failure.
+      if (!signal?.aborted) log.warn(`Codex fetch failed: ${toErrorMessage(error)}`);
+      return errorSnapshot("codex", toErrorMessage(error), status, classifyFetchError(error));
     }
   }
 

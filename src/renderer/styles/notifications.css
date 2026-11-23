@@ -170,17 +170,6 @@
     }
     .notif-tip-icon::before { content: ''; position: absolute; inset: -13px; }
     .notif-tip:hover .notif-tip-icon, .notif-tip:focus-within .notif-tip-icon { color: var(--t100); border-color: var(--border-mid); }
-    /* Tooltip wird per JS an <body> gerendert (Portal), um Overflow-Clipping zu umgehen */
-    .notif-tooltip-float {
-      position: fixed; z-index: 9999; max-width: 220px;
-      background: #0d1119; border: 1px solid var(--border-mid); border-radius: var(--r-btn);
-      padding: 8px 10px; font-size: 10px; line-height: 1.5; color: var(--t200); text-wrap: pretty;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.4);
-      opacity: 0; scale: 0.96; filter: blur(4px); pointer-events: none; transform-origin: bottom center;
-      transition-property: opacity, scale, filter; transition-duration: 160ms;
-      transition-timing-function: cubic-bezier(0.2,0,0,1);
-    }
-    .notif-tooltip-float.is-visible { opacity: 1; scale: 1; filter: blur(0); }
 
     /* Rule config (cooldown + extras), collapses when rule is off */
     .notif-rule-config {

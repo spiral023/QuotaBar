@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 import { getClaudeCredentialsPath, type PathContext } from "../config/paths";
+import { retryTransient, writeFileAtomic } from "../shared/atomicFile";
+import { errnoSuffix } from "../shared/errors";
 
 export interface ClaudeCredentials {
   accessToken: string;
@@ -8,6 +9,20 @@ export interface ClaudeCredentials {
   expiresAt?: Date;
   scopes: string[];
   rateLimitTier?: string;
+  /** File the credentials were read from; a refresh writes back there. Absent for env tokens. */
+  sourcePath?: string;
+}
+
+/**
+ * The credentials file cannot be updated safely. It belongs to Claude Code and
+ * may hold more than our OAuth entry, so QuotaBar never rewrites it from a
+ * partial or guessed state. Messages are path- and token-free.
+ */
+export class ClaudeCredentialsWriteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClaudeCredentialsWriteError";
+  }
 }
 
 export function parseClaudeCredentialsJson(content: string): ClaudeCredentials | null {
@@ -46,14 +61,25 @@ export async function loadClaudeCredentials(context: PathContext = {}): Promise<
   }
 
   try {
-    return parseClaudeCredentialsJson(await fs.readFile(getClaudeCredentialsPath(context), "utf8"));
+    return await readClaudeCredentialsFile(getClaudeCredentialsPath(context));
   } catch {
     return null;
   }
 }
 
+/** Reads and parses one credentials file; throws on I/O or JSON errors. */
+export async function readClaudeCredentialsFile(credentialsPath: string): Promise<ClaudeCredentials | null> {
+  const parsed = parseClaudeCredentialsJson(await retryTransient(() => fs.readFile(credentialsPath, "utf8")));
+  return parsed ? { ...parsed, sourcePath: credentialsPath } : null;
+}
+
+/**
+ * Merges refreshed tokens into the credentials file they were read from,
+ * keeping every other key. Throws ClaudeCredentialsWriteError - and writes
+ * nothing - if the file is missing, unreadable or not a JSON object.
+ */
 export async function saveClaudeCredentials(credentials: ClaudeCredentials): Promise<void> {
-  const credentialsPath = getClaudeCredentialsPath();
+  const credentialsPath = credentials.sourcePath ?? getClaudeCredentialsPath();
   const existing = await readExistingJson(credentialsPath);
   const previousOauth = existing.claudeAiOauth && typeof existing.claudeAiOauth === "object"
     ? existing.claudeAiOauth as Record<string, unknown>
@@ -68,22 +94,38 @@ export async function saveClaudeCredentials(credentials: ClaudeCredentials): Pro
   if (credentials.rateLimitTier !== undefined) nextOauth.rateLimitTier = credentials.rateLimitTier;
   existing.claudeAiOauth = nextOauth;
 
-  await fs.mkdir(path.dirname(credentialsPath), { recursive: true });
-  const tmpPath = `${credentialsPath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmpPath, `${JSON.stringify(existing, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await fs.rename(tmpPath, credentialsPath);
+  await writeFileAtomic(credentialsPath, `${JSON.stringify(existing, null, 2)}\n`, {
+    createParent: true,
+    fsync: true,
+    mode: 0o600,
+  });
 }
 
 export function isClaudeTokenExpired(credentials: ClaudeCredentials, skewMs = 5 * 60_000): boolean {
   return Boolean(credentials.expiresAt && credentials.expiresAt.getTime() <= Date.now() + skewMs);
 }
 
-async function readExistingJson(path: string): Promise<Record<string, unknown> & { claudeAiOauth?: unknown }> {
+async function readExistingJson(credentialsPath: string): Promise<Record<string, unknown> & { claudeAiOauth?: unknown }> {
+  let text: string;
   try {
-    return JSON.parse(await fs.readFile(path, "utf8")) as Record<string, unknown>;
-  } catch {
-    return {};
+    text = await retryTransient(() => fs.readFile(credentialsPath, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      // Logged out meanwhile: recreating the file would resurrect the session.
+      throw new ClaudeCredentialsWriteError("Claude credentials file disappeared; refreshed token not saved");
+    }
+    throw new ClaudeCredentialsWriteError(`Claude credentials file could not be read${errnoSuffix(error)}; refreshed token not saved`);
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new ClaudeCredentialsWriteError("Claude credentials file is not valid JSON; refreshed token not saved");
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function readString(value: unknown): string | undefined {

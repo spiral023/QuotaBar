@@ -11,13 +11,24 @@ describe("mergeAndSaveSettings", () => {
       { providerOrder: ["codex", "invalid", "codex"] },
       onSaved,
       {
-        load: async () => stored,
-        save: async (settings) => { stored = normalizeSettings(settings); },
+        update: async (change) => {
+          stored = normalizeSettings(change(stored));
+          return stored;
+        },
       },
     );
 
     expect(result.providerOrder).toEqual(["codex", "claude"]);
     expect(onSaved).toHaveBeenCalledOnce();
     expect(onSaved).toHaveBeenCalledWith(result, ["providerOrder"]);
+  });
+
+  it("does not report a save when the update is rejected", async () => {
+    const onSaved = vi.fn();
+
+    await expect(mergeAndSaveSettings({ pinned: true }, onSaved, {
+      update: async () => { throw new Error("Settings file is corrupt"); },
+    })).rejects.toThrow("Settings file is corrupt");
+    expect(onSaved).not.toHaveBeenCalled();
   });
 });

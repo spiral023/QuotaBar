@@ -4,6 +4,8 @@ import path from "node:path";
 import type { SnapshotEvent } from "./debugEvents";
 import type { BackfillDayRecord } from "../reports/types";
 import { sanitizeQuotaSnapshot } from "../portable/quotaStore";
+import { writeFileAtomic } from "../shared/atomicFile";
+import { boundaryError } from "../shared/errors";
 import type {
   MigrationRefreshOwner,
   MigrationRefreshTransitionResult,
@@ -137,7 +139,7 @@ export async function preparePortableData(
       legacyInserted: legacy.syntheticInserted + legacy.syntheticUpdated,
       quotaSnapshots: quotaSnapshots.length,
     };
-  } catch {
+  } catch (error) {
     let failureResult: MigrationStateTransitionResult | void;
     try {
       failureResult = stage === "consumer_prewarm" && completedRevision
@@ -153,10 +155,11 @@ export async function preparePortableData(
       return { status: "superseded" };
     }
     if (failureResult?.status === "already_failed") {
+      // eslint-disable-next-line preserve-caught-error
       throw new Error(`Portable data preparation failed: ${failureResult.lastError}`);
     }
-    // The original failure may contain provider data; expose only the fixed stage category.
-    throw new Error(`Portable data preparation failed at ${stage}`);
+    // The original failure may contain provider data; expose only the fixed stage category and errno code.
+    throw boundaryError(`Portable data preparation failed at ${stage}`, error);
   }
 }
 
@@ -248,6 +251,60 @@ export async function refreshPortableData(
     // eslint-disable-next-line preserve-caught-error
     throw new Error(`Portable data refresh failed at ${stage}`);
   }
+}
+
+/** Backoff between failed preparation attempts; the last delay repeats. */
+export const PORTABLE_PREPARATION_RETRY_DELAYS_MS: readonly number[] = [
+  30_000, 60_000, 2 * 60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000,
+];
+
+export interface PortablePreparationRetryOptions {
+  /** Ends the retry loop (app shutdown); an ongoing wait returns at once. */
+  stopSignal: AbortSignal;
+  delaysMs?: readonly number[];
+  wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+  onRetry?: (error: unknown, attempt: number, delayMs: number) => void;
+}
+
+/**
+ * Runs `prepare` until it completes or is superseded. A failure - a locked
+ * file, a transient I/O error at startup - is retried with backoff instead of
+ * leaving portable ingestion off for the whole session.
+ */
+export async function preparePortableDataWithRetry(
+  prepare: () => Promise<PreparePortableDataResult>,
+  options: PortablePreparationRetryOptions,
+): Promise<PreparePortableDataResult | { status: "stopped" }> {
+  const delays = options.delaysMs ?? PORTABLE_PREPARATION_RETRY_DELAYS_MS;
+  const wait = options.wait ?? abortableDelay;
+  for (let attempt = 1; ; attempt += 1) {
+    if (options.stopSignal.aborted) return { status: "stopped" };
+    try {
+      return await prepare();
+    } catch (error) {
+      if (options.stopSignal.aborted) return { status: "stopped" };
+      const delayMs = delays[Math.min(attempt, delays.length) - 1] ?? 0;
+      options.onRetry?.(error, attempt, delayMs);
+      await wait(delayMs, options.stopSignal);
+    }
+  }
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const done = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, milliseconds);
+    timer.unref?.();
+    signal.addEventListener("abort", done, { once: true });
+  });
 }
 
 function transitionWasSuperseded(result: MigrationStateTransitionResult | void): boolean {
@@ -569,10 +626,8 @@ async function readLegacyQuotaManifest(manifestPath: string): Promise<Record<str
 }
 
 async function writeLegacyQuotaManifest(manifestPath: string, files: Record<string, string>): Promise<void> {
-  await fs.mkdir(path.dirname(manifestPath), { recursive: true });
-  const temporary = `${manifestPath}.${process.pid}.tmp`;
-  await fs.writeFile(temporary, `${JSON.stringify({ version: LEGACY_QUOTA_MANIFEST_VERSION, files }, null, 2)}\n`, "utf8");
-  await fs.rename(temporary, manifestPath);
+  const contents = JSON.stringify({ version: LEGACY_QUOTA_MANIFEST_VERSION, files }, null, 2);
+  await writeFileAtomic(manifestPath, `${contents}\n`, { createParent: true });
 }
 
 /** Forces the next start to merge every legacy debug log again, e.g. after quota data was replaced. */

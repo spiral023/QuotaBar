@@ -56,6 +56,12 @@ export function httpFetch(input: string, init?: RequestInit): Promise<Response> 
   return fetch(input, init);
 }
 
+/** A request signal that fires on the per-request timeout or when `outer` aborts. */
+export function requestSignal(timeoutMs: number, outer?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return outer ? AbortSignal.any([timeout, outer]) : timeout;
+}
+
 async function resolveProxyUrl(proxy: ProxySettings): Promise<string | null> {
   const { mode, url } = normalizeProxySettings(proxy);
   if (mode === "off") return null;

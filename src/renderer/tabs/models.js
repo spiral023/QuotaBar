@@ -33,15 +33,6 @@ window.QB = window.QB || {};
     ['cacheCreation', 'CC'], ['total', '∑'], ['cost', '$'], ['rate', '$/MTok'],
   ];
 
-  const PRESETS = [
-    ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['week', 'This week'],
-    ['month', 'This month'], ['year', 'This year'], ['all', 'All time'],
-  ];
-
-  const RESOLUTIONS = [
-    ['hourly', 'Hr'], ['daily', 'Day'], ['weekly', 'Wk'], ['monthly', 'Mo'],
-  ];
-
   function minDataDate() {
     return (_data && _data.days.length > 0) ? _data.days[0].date : null;
   }
@@ -239,41 +230,10 @@ window.QB = window.QB || {};
             <span class="mod-chart-ttl">DISTRIBUTION</span>
           </div>
           <div class="hr-controls mod-chart-controls">
-            <div class="hr-ctrl-row1">
-              <div class="hr-select-wrap">
-                <select class="hr-preset-select" id="mod-preset" aria-label="Period" title="Select period">
-                  <option value="custom" hidden${_preset ? '' : ' selected'}>Custom range</option>
-                  ${PRESETS.map(([id, label]) => `<option value="${id}"${_preset === id ? ' selected' : ''}>${label}</option>`).join('')}
-                </select>
-                <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
-                     stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M1.5 3 4 5.5 6.5 3"/>
-                </svg>
-              </div>
-              <div class="hr-date-pair">
-                <input class="hr-date-input" type="date" id="mod-from" value="${_from}" aria-label="From" title="Start date">
-                <span class="hr-date-sep" aria-hidden="true">–</span>
-                <input class="hr-date-input" type="date" id="mod-to" value="${_to}" aria-label="To" title="End date">
-              </div>
-              <button class="hr-reload" id="mod-load-btn" title="Reload" aria-label="Reload">
-                <svg width="12" height="12" viewBox="0 0 14 14" fill="none"
-                     stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M1.5 7a5.5 5.5 0 0 1 9.9-3.3"/>
-                  <path d="M12.5 7a5.5 5.5 0 0 1-9.9 3.3"/>
-                  <path d="M11 2.2 13 4l-2 1.8"/>
-                  <path d="M3 11.8 1 10l2-1.8"/>
-                </svg>
-              </button>
-            </div>
+            ${QB.filterBar.periodRowHtml({ prefix: 'mod', preset: _preset, from: _from, to: _to, reload: true })}
             <div class="hr-ctrl-row2">
-              <div class="hr-seg" id="mod-agg-pills" role="group" aria-label="Resolution">
-                ${RESOLUTIONS.map(([id, label]) => `<button class="hr-seg-btn${_resolution === id ? ' active' : ''}" data-agg="${id}">${label}</button>`).join('')}
-              </div>
-              <div class="hr-seg" id="mod-prov-pills" role="group" aria-label="Provider">
-                <button class="hr-seg-btn${_provider === 'all' ? ' active' : ''}" data-prov="all">All</button>
-                <button class="hr-seg-btn hr-seg-claude${_provider === 'claude' ? ' active' : ''}" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
-                <button class="hr-seg-btn hr-seg-codex${_provider === 'codex' ? ' active' : ''}" data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
-              </div>
+              ${QB.filterBar.resolutionSegHtml({ id: 'mod-agg-pills', active: _resolution })}
+              ${QB.filterBar.providerSegHtml({ id: 'mod-prov-pills', active: _provider })}
               <button class="hr-tgl${_showEmpty ? ' active' : ''}" id="mod-empty-toggle"
                       title="Show empty time units" aria-pressed="${_showEmpty}">
                 <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
@@ -333,26 +293,16 @@ window.QB = window.QB || {};
   }
 
   function bindPills() {
-    const presetSel = document.getElementById('mod-preset');
-    presetSel?.addEventListener('change', () => {
-      if (presetSel.value === 'custom') return;
-      _preset = presetSel.value;
-      const { from, to } = presetDates(_preset);
-      _from = from; _to = to;
-      const fromEl = document.getElementById('mod-from');
-      const toEl = document.getElementById('mod-to');
-      if (fromEl) fromEl.value = from;
-      if (toEl) toEl.value = to;
-      refreshLocal();
-    });
-    ['mod-from', 'mod-to'].forEach((id) =>
-      document.getElementById(id)?.addEventListener('change', () => {
-        _preset = null;
-        _from = document.getElementById('mod-from')?.value || _from;
-        _to = document.getElementById('mod-to')?.value || _to;
-        if (presetSel) presetSel.value = 'custom';
+    QB.filterBar.bindPeriod({
+      prefix: 'mod',
+      minDate: minDataDate,
+      onChange: ({ preset, from, to }) => {
+        _preset = preset;
+        _from = from || _from;
+        _to = to || _to;
         refreshLocal();
-      }));
+      },
+    });
     document.querySelectorAll('#mod-agg-pills .hr-seg-btn').forEach((b) =>
       b.addEventListener('click', () => { if (_resolution === b.dataset.agg) return; _resolution = b.dataset.agg; syncPills(); refreshChart(); }));
     document.querySelectorAll('#mod-metric-pills button').forEach((p) =>
