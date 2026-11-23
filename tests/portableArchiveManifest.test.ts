@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import AdmZip from "adm-zip";
 import { describe, expect, it } from "vitest";
 import { defaultSettings } from "../src/config/settings";
 import {
@@ -12,7 +11,6 @@ import {
   ArchiveManifest,
   createArchiveManifest,
   isPortableArchivePath,
-  metadataFromZipEntry,
   normalizeArchivePath,
   parseArchiveManifest,
   sanitizeImportedSettings,
@@ -241,85 +239,6 @@ describe("ZIP path validation before content access", () => {
     }
     expect(() => validateZipEntryMetadata([entry("manifest.json", 1, { attributes: 0x20 })]))
       .not.toThrow();
-  });
-});
-
-describe("AdmZip metadata adaptation", () => {
-  it("fails closed with a generic error when raw extra metadata is uninspectable", () => {
-    let getDataCalls = 0;
-    const zipEntry = {
-      entryName: "settings.json",
-      isDirectory: false,
-      get extra(): Buffer {
-        throw new Error("private raw metadata");
-      },
-      attr: 0,
-      header: { size: 2, compressedSize: 2, flags: 0, method: 0, made: 0 },
-      getData(): Buffer {
-        getDataCalls += 1;
-        return Buffer.alloc(0);
-      },
-    } as unknown as AdmZip.IZipEntry;
-
-    expect(() => metadataFromZipEntry(zipEntry)).toThrow("Unsupported ZIP64 archive entry");
-    try {
-      metadataFromZipEntry(zipEntry);
-    } catch (error) {
-      expect(String(error)).not.toContain("private raw metadata");
-    }
-    expect(getDataCalls).toBe(0);
-  });
-
-  it.each([
-    { size: 0xffff_ffff, compressedSize: 1 },
-    { size: 1, compressedSize: 0xffff_ffff },
-  ])("rejects ZIP64 sentinel header sizes before reading data", ({ size, compressedSize }) => {
-    const zip = new AdmZip();
-    const zipEntry = zip.addFile("settings.json", Buffer.from("{}"));
-    zipEntry.header.size = size;
-    zipEntry.header.compressedSize = compressedSize;
-    let getDataCalls = 0;
-    zipEntry.getData = () => {
-      getDataCalls += 1;
-      return Buffer.alloc(0);
-    };
-
-    expect(() => metadataFromZipEntry(zipEntry)).toThrow("Unsupported ZIP64 archive entry");
-    expect(getDataCalls).toBe(0);
-  });
-
-  it("rejects ZIP64 extra data even when AdmZip wrapped 64-bit sizes", () => {
-    const zip64Extra = Buffer.alloc(20);
-    zip64Extra.writeUInt16LE(0x0001, 0);
-    zip64Extra.writeUInt16LE(16, 2);
-    zip64Extra.writeBigUInt64LE(0x1_0000_0001n, 4);
-    zip64Extra.writeBigUInt64LE(0x1_0000_0002n, 12);
-    const zip = new AdmZip();
-    const zipEntry = zip.addFile("settings.json", Buffer.from("{}"));
-    zipEntry.header.size = 0xffff_ffff;
-    zipEntry.header.compressedSize = 0xffff_ffff;
-    zipEntry.extra = zip64Extra;
-    let getDataCalls = 0;
-    zipEntry.getData = () => {
-      getDataCalls += 1;
-      return Buffer.alloc(0);
-    };
-
-    expect(zipEntry.header.size).toBe(1);
-    expect(zipEntry.header.compressedSize).toBe(2);
-    expect(() => metadataFromZipEntry(zipEntry)).toThrow("Unsupported ZIP64 archive entry");
-    expect(getDataCalls).toBe(0);
-  });
-
-  it.each([
-    Buffer.from([0x01, 0x00]),
-    Buffer.from([0x34, 0x12, 0x00, 0x00, 0x01, 0x00]),
-    Buffer.from([0x01, 0x00, 0x10, 0x00, 0x01]),
-  ])("rejects truncated or malformed ZIP64 extra fields", (extra) => {
-    const zip = new AdmZip();
-    const zipEntry = zip.addFile("settings.json", Buffer.from("{}"));
-    zipEntry.extra = extra;
-    expect(() => metadataFromZipEntry(zipEntry)).toThrow("Unsupported ZIP64 archive entry");
   });
 });
 

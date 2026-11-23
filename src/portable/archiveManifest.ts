@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import type AdmZip from "adm-zip";
 import { defaultSettings, normalizeSettings, Settings } from "../config/settings";
 
 export const ARCHIVE_FORMAT = "QuotaBar/archive" as const;
@@ -57,66 +56,6 @@ export interface CreateArchiveManifestOptions {
 interface ArchivePathTrieNode {
   terminalFile: boolean;
   children: Map<string, ArchivePathTrieNode>;
-}
-
-/** Copies only metadata from an AdmZip entry. This helper never calls getData(). */
-export function metadataFromZipEntry(entry: AdmZip.IZipEntry): ArchiveEntryMetadata {
-  try {
-    assertNoZip64Metadata(entry);
-  } catch {
-    throw new Error("Unsupported ZIP64 archive entry");
-  }
-  return {
-    entryName: entry.entryName,
-    isDirectory: entry.isDirectory,
-    size: entry.header.size,
-    compressedSize: entry.header.compressedSize,
-    flags: entry.header.flags,
-    method: entry.header.method,
-    madeBy: entry.header.made,
-    attributes: entry.attr,
-  };
-}
-
-function assertNoZip64Metadata(entry: AdmZip.IZipEntry): void {
-  if (entry.header.size === 0xffff_ffff || entry.header.compressedSize === 0xffff_ffff) {
-    throw new Error("Unsupported ZIP64 archive entry");
-  }
-
-  const runtimeEntry = entry as unknown as {
-    extra?: unknown;
-    rawEntry?: { extra?: unknown };
-    header: { extra?: unknown };
-  };
-  const centralExtra = runtimeEntry.extra;
-  if (!(centralExtra instanceof Uint8Array)) {
-    throw new Error("Unsupported ZIP64 archive entry");
-  }
-  assertNoZip64Extra(centralExtra);
-  for (const optionalExtra of [runtimeEntry.rawEntry?.extra, runtimeEntry.header.extra]) {
-    if (optionalExtra !== undefined) {
-      if (!(optionalExtra instanceof Uint8Array)) {
-        throw new Error("Unsupported ZIP64 archive entry");
-      }
-      assertNoZip64Extra(optionalExtra);
-    }
-  }
-}
-
-function assertNoZip64Extra(extra: Uint8Array): void {
-  const bytes = Buffer.from(extra.buffer, extra.byteOffset, extra.byteLength);
-  let offset = 0;
-  while (offset < bytes.length) {
-    if (bytes.length - offset < 4) {
-      throw new Error("Unsupported ZIP64 archive entry");
-    }
-    const fieldId = bytes.readUInt16LE(offset);
-    const fieldSize = bytes.readUInt16LE(offset + 2);
-    if (fieldId === 0x0001 || fieldSize > bytes.length - offset - 4) {
-      throw new Error("Unsupported ZIP64 archive entry");
-    }
-    offset += 4 + fieldSize;
-  }
 }
 
 export function normalizeArchivePath(rawPath: string): string {

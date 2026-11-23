@@ -1,9 +1,7 @@
-import AdmZip from "adm-zip";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
-import { inflateRawSync } from "node:zlib";
 import { ArchiveBackupDependencies, ArchiveOperationResult, assertSafeBackupDestination, createFullBackupUnlocked, isSafeNonNegativeInteger, manifestFromSnapshots, PendingBackup, sanitizePortableExportFiles, sha256Bytes, snapshotAppFiles, summarizeSnapshots, verifyBackupArchive, verifySnapshotFiles, writeStreamingZip } from "./archiveBackup";
 import { PortableArchiveContentValidator } from "./archiveContentValidator";
 import {
@@ -11,7 +9,6 @@ import {
   assertDestinationAvailable,
   assertDirectory,
   assertDirectoryBinding,
-  assertFileIdentity,
   bindDirectory,
   containedPath,
   ensureOwnedDirectory,
@@ -29,15 +26,10 @@ import {
   writeNewContainedFile
 } from "./archiveFileSystem";
 import {
-  createArchiveManifest,
   isPortableArchivePath,
-  metadataFromZipEntry,
   normalizeArchivePath,
   parseArchiveManifest,
   sanitizeImportedSettings,
-  validateArchiveStructure,
-  validateZipEntryMetadata,
-  verifyArchiveEntryBytes,
   type ArchiveManifest,
   type ArchiveManifestEntry
 } from "./archiveManifest";
@@ -50,7 +42,6 @@ import {
 import { PORTABLE_STORE_VERSION } from "./types";
 export { ArchiveBackupDependencies, ArchiveOperationResult, BackupWriterPolicy, privateBackupWriterPolicy } from "./archiveBackup";
 
-import { appVersion as QUOTABAR_VERSION } from "../shared/appVersion";
 import { renameWithRetry } from "../shared/atomicFile";
 import { boundaryError, errnoCode } from "../shared/errors";
 const PENDING_FILE = ".portable-import.pending.json";
@@ -93,8 +84,6 @@ export interface ArchiveApplyDependencies {
 export type PendingWriteCheckpoint = "before-temp-write" | "after-temp-write" | "after-temp-fsync" | "after-rename";
 
 export interface ArchiveImportDependencies {
-  openZip?: (zipPath: string) => Pick<AdmZip, "getEntries">;
-  skipSourceIdentity?: boolean;
   onStreamChunk?: (entryPath: string, bytes: number) => void;
   onContentValidation?: (entryPath: string, phase: "start" | "end") => void;
 }
@@ -174,31 +163,19 @@ export async function stagePortableImport(
   dependencies: ArchiveImportDependencies = {},
 ): Promise<StagedImportResult> {
   return genericFailure("Portable data import failed", async () => {
-    let streaming: StreamingPortablePreflight | undefined;
-    const sourceIdentity = dependencies.openZip && !dependencies.skipSourceIdentity
-      ? await fileIdentity(zipPath, MAX_COMPRESSED_PORTABLE_ARCHIVE_SIZE)
-      : undefined;
-    const stagedFiles: PreparedPortableFile[] = dependencies.openZip
-      ? (await validatePortableZip(zipPath, dependencies.openZip)).map((file) => ({
-        path: file.path,
-        size: file.data.byteLength,
-        sha256: sha256Bytes(file.data),
-        data: file.data,
-      }))
-      : ((streaming = await preflightPortableZip(zipPath, { onStreamChunk: dependencies.onStreamChunk })), streaming.files.map((file) => ({
-        path: file.path,
-        size: file.size,
-        sha256: file.sha256,
-        temporaryPath: file.temporaryPath,
-      })));
-    if (sourceIdentity) await assertFileIdentity(zipPath, sourceIdentity);
+    const streaming: StreamingPortablePreflight = await preflightPortableZip(zipPath, { onStreamChunk: dependencies.onStreamChunk });
+    const stagedFiles: PreparedPortableFile[] = streaming.files.map((file) => ({
+      path: file.path,
+      size: file.size,
+      sha256: file.sha256,
+      temporaryPath: file.temporaryPath,
+    }));
     try {
       await validatePreparedPortableContents(stagedFiles, dependencies.onContentValidation);
       return await withArchiveLocks(appDir, async () => {
     let stagingDir: string | undefined;
     try {
-      if (streaming) await streaming.verifySourceIdentity();
-      else if (sourceIdentity) await assertFileIdentity(zipPath, sourceIdentity);
+      await streaming.verifySourceIdentity();
       await assertTargetHome(appDir, targetHome);
       await assertPendingMissing(appDir);
       const settings = stagedFiles.find((file) => file.path === "settings.json");
@@ -215,12 +192,11 @@ export async function stagePortableImport(
         settings.sha256 = sha256Bytes(settings.data);
       }
       const ingestState = Buffer.from(`${JSON.stringify({ schemaVersion: PORTABLE_STORE_VERSION, sources: {} }, null, 2)}\n`, "utf8");
-      const stagedManifest = streaming
-        ? { ...streaming.manifest, entries: stagedFiles.map(({ path: filePath, size, sha256 }) => ({ path: filePath, size, sha256 }))
-          .sort((left, right) => left.path.localeCompare(right.path, "en")) }
-        : createArchiveManifest(stagedFiles.map((file) => ({ path: file.path, data: file.data! })), {
-          quotaBarVersion: QUOTABAR_VERSION,
-        });
+      const stagedManifest = {
+        ...streaming.manifest,
+        entries: stagedFiles.map(({ path: filePath, size, sha256 }) => ({ path: filePath, size, sha256 }))
+          .sort((left, right) => left.path.localeCompare(right.path, "en")),
+      };
       const currentFiles = await snapshotAppFiles(appDir);
       const replacePaths = new Set(
         currentFiles.filter((file) => isPortableArchivePath(file.path) && file.path !== "manifest.json").map((file) => file.path),
@@ -276,7 +252,7 @@ export async function stagePortableImport(
     }
       });
     } finally {
-      await streaming?.cleanup();
+      await streaming.cleanup();
     }
   });
 }
@@ -407,40 +383,6 @@ async function verifyReferencedBackup(appDir: string, pending: PendingImport): P
   const backupPath = path.join(path.dirname(appDir), "QuotaBar Backups", pending.backup.fileName);
   await assertSafeBackupDestination(appDir, backupPath);
   await verifyBackupArchive(backupPath, pending.backup);
-}
-
-async function validatePortableZip(
-  zipPath: string,
-  openZip: ArchiveImportDependencies["openZip"] = (archivePath) => new AdmZip(archivePath),
-): Promise<SafeFile[]> {
-  const zip = openZip(zipPath);
-  const entries = zip.getEntries();
-  const metadata = entries.map(metadataFromZipEntry);
-  validateZipEntryMetadata(metadata);
-  const manifestEntry = entries.find((entry) => entry.entryName === "manifest.json");
-  if (!manifestEntry) throw new Error("Archive must contain exactly one manifest");
-  const manifest = parseArchiveManifest(readValidatedCompressedEntry(manifestEntry));
-  validateArchiveStructure(metadata, manifest);
-  const manifestByPath = new Map(manifest.entries.map((entry) => [entry.path, entry]));
-  const files: SafeFile[] = [];
-  for (const entry of entries) {
-    const data = entry.getData();
-    if (entry.entryName === "manifest.json") continue;
-    const expected = manifestByPath.get(entry.entryName);
-    if (!expected) throw new Error("Archive contents do not match manifest");
-    verifyArchiveEntryBytes(expected, data);
-    files.push({ path: entry.entryName, data: Buffer.from(data) });
-  }
-  return files;
-}
-
-function readValidatedCompressedEntry(entry: AdmZip.IZipEntry): Buffer {
-  const compressed = entry.getCompressedData();
-  const data = entry.header.method === 0
-    ? Buffer.from(compressed)
-    : inflateRawSync(compressed, { maxOutputLength: entry.header.size });
-  if (data.byteLength !== entry.header.size) throw new Error("Archive entry size does not match header");
-  return data;
 }
 
 function parsePending(input: Uint8Array): PendingImport {

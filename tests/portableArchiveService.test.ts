@@ -10,9 +10,12 @@ import { pipeline } from "node:stream/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { ZipFile as YazlZipFile } from "yazl";
 import {
+  type ArchiveEntryMetadata,
+  isPortableArchivePath,
   MAX_ARCHIVE_ENTRIES,
   MAX_ARCHIVE_FILE_SIZE,
   parseArchiveManifest,
+  validateZipEntryMetadata,
   verifyArchiveEntryBytes,
 } from "../src/portable/archiveManifest";
 import { withNamedPortableRootLock, withPortableRootLock } from "../src/portable/rootLock";
@@ -82,31 +85,6 @@ async function writeSyntheticZip(target: string, addEntries: (zip: YazlZipFile) 
   const writing = pipeline(zip.outputStream, createWriteStream(target));
   zip.end();
   await writing;
-}
-
-function fakeZipEntry(
-  entryName: string,
-  overrides: Partial<{ size: number; compressedSize: number; extra: Buffer }> = {},
-  onGetData: () => void = () => undefined,
-): AdmZip.IZipEntry {
-  const extra = overrides.extra ?? Buffer.alloc(0);
-  return {
-    entryName,
-    isDirectory: false,
-    attr: 0,
-    extra,
-    header: {
-      size: overrides.size ?? 1,
-      compressedSize: overrides.compressedSize ?? 1,
-      flags: 0,
-      method: 0,
-      made: 0,
-      extra,
-    },
-    getData: () => { onGetData(); return Buffer.from("x"); },
-    getDataAsync: () => { onGetData(); return Promise.resolve(Buffer.from("x")); },
-    getCompressedData: () => Buffer.from("x"),
-  } as unknown as AdmZip.IZipEntry;
 }
 
 describe("portable archive service", () => {
@@ -582,70 +560,58 @@ describe("portable archive service", () => {
     }
   });
 
-  it("rejects adversarial entry metadata before getData or import artifacts", async () => {
-    const cases: Array<{ name: string; entries: AdmZip.IZipEntry[] }> = [];
-    let getDataCalls = 0;
-    const tracked = (name: string, overrides?: Parameters<typeof fakeZipEntry>[1]) =>
-      fakeZipEntry(name, overrides, () => { getDataCalls += 1; });
-    cases.push(
-      { name: "traversal", entries: [tracked("../auth.json")] },
-      { name: "mixed path", entries: [tracked("usage\\events/x.jsonl")] },
-      { name: "case duplicate", entries: [tracked("settings.json"), tracked("SETTINGS.json")] },
-      { name: "file directory collision", entries: [tracked("usage/events"), tracked("usage/events/x.jsonl")] },
-      { name: "oversized file", entries: [tracked("settings.json", { size: MAX_ARCHIVE_FILE_SIZE + 1 })] },
-      { name: "ZIP64 sentinel", entries: [tracked("settings.json", { size: 0xffff_ffff })] },
-      { name: "ZIP64 extra", entries: [tracked("settings.json", { extra: Buffer.from([1, 0, 0, 0]) })] },
-      { name: "unexpected", entries: [tracked("auth.json")] },
-    );
-    cases.push({
-      name: "expanded total",
-      entries: Array.from({ length: 17 }, (_, index) => tracked(`usage/events/${index}.jsonl`, {
-        size: MAX_ARCHIVE_FILE_SIZE,
-        compressedSize: MAX_ARCHIVE_FILE_SIZE,
-      })),
+  it("rejects adversarial entry metadata from the central directory", () => {
+    const meta = (entryName: string, overrides: Partial<ArchiveEntryMetadata> = {}): ArchiveEntryMetadata => ({
+      entryName, isDirectory: entryName.endsWith("/"), size: 1, compressedSize: 1,
+      flags: 0, method: 0, madeBy: 0, attributes: 0, ...overrides,
     });
-    cases.push({
-      name: "entry count",
-      entries: Array.from({ length: MAX_ARCHIVE_ENTRIES + 1 }, (_, index) => tracked(`usage/events/${index}.jsonl`)),
-    });
+    const cases: Array<{ name: string; entries: ArchiveEntryMetadata[] }> = [
+      { name: "traversal", entries: [meta("../auth.json")] },
+      // Backslash names never reach this check: yauzl (strictFileNames) rejects them while reading.
+      { name: "case duplicate", entries: [meta("settings.json"), meta("SETTINGS.json")] },
+      { name: "file directory collision", entries: [meta("usage/events"), meta("usage/events/x.jsonl")] },
+      { name: "oversized file", entries: [meta("settings.json", { size: MAX_ARCHIVE_FILE_SIZE + 1 })] },
+      {
+        name: "expanded total",
+        entries: Array.from({ length: 17 }, (_, index) => meta(`usage/events/${index}.jsonl`, {
+          size: MAX_ARCHIVE_FILE_SIZE,
+          compressedSize: MAX_ARCHIVE_FILE_SIZE,
+        })),
+      },
+      { name: "entry count", entries: Array.from({ length: MAX_ARCHIVE_ENTRIES + 1 }, (_, index) => meta(`usage/events/${index}.jsonl`)) },
+    ];
+    for (const item of cases) expect(() => validateZipEntryMetadata(item.entries), item.name).toThrow();
+    expect(isPortableArchivePath("auth.json")).toBe(false);
+  });
 
-    for (const item of cases) {
-      const root = await tempRoot();
-      const targetHome = path.join(root, "target");
-      const target = path.join(targetHome, ".quotabar-win");
-      await put(target, "settings.json", "{}");
-      getDataCalls = 0;
-      let opened = false;
-      await expect(stagePortableImport("unused.zip", target, targetHome, {
-        openZip: () => { opened = true; return { getEntries: () => item.entries }; },
-        skipSourceIdentity: true,
-      }), item.name).rejects.toThrow("Portable data import failed");
-      expect(opened, item.name).toBe(true);
-      expect(getDataCalls, item.name).toBe(0);
-      await expect(access(path.join(target, ".portable-import.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
-      await expect(access(path.join(target, "usage"))).rejects.toMatchObject({ code: "ENOENT" });
-      await expect(access(path.join(target, "quota"))).rejects.toMatchObject({ code: "ENOENT" });
-      await expect(access(path.join(targetHome, "QuotaBar Backups"))).rejects.toMatchObject({ code: "ENOENT" });
-      expect((await fsPromises.readdir(targetHome)).filter((name) => name.includes("portable-import"))).toEqual([]);
-    }
+  it("rejects ZIP64 entries in the streaming preflight before any import artifact", async () => {
+    const root = await tempRoot();
+    const archivePath = path.join(root, "zip64.zip");
+    await writeSyntheticZip(archivePath, (zip) => {
+      zip.addBuffer(Buffer.from("{}"), "settings.json", { forceZip64Format: true } as Partial<import("yazl").FileOptions>);
+    });
+    const targetHome = path.join(root, "target");
+    const target = path.join(targetHome, ".quotabar-win");
+
+    await expect(preflightPortableZip(archivePath)).rejects.toThrow("Unsupported ZIP64 archive entry");
+    await expect(stagePortableImport(archivePath, target, targetHome)).rejects.toThrow("Portable data import failed");
+    await expect(access(targetHome)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("leaves a nonexistent target tree untouched when archive preflight fails", async () => {
     const root = await tempRoot();
+    const archivePath = path.join(root, "unexpected.zip");
+    await writeSyntheticZip(archivePath, (zip) => {
+      zip.addBuffer(Buffer.from("{}"), "auth.json", { compress: false });
+    });
     const targetHome = path.join(root, "empty-target");
     const target = path.join(targetHome, ".quotabar-win");
-    let getDataCalls = 0;
-    const malicious = fakeZipEntry("../escape.json", {}, () => { getDataCalls += 1; });
 
-    await expect(stagePortableImport("unused.zip", target, targetHome, {
-      openZip: () => ({ getEntries: () => [malicious] }),
-      skipSourceIdentity: true,
-    })).rejects.toThrow("Portable data import failed");
-    expect(getDataCalls).toBe(0);
-    expect(await fsPromises.readdir(root)).toEqual([]);
+    await expect(stagePortableImport(archivePath, target, targetHome)).rejects.toThrow("Portable data import failed");
+    expect(await fsPromises.readdir(root)).toEqual(["unexpected.zip"]);
   });
 
-  it("rejects an oversized compressed source before target locks or parser allocation", async () => {
+  it("rejects an oversized compressed source before target locks or parsing", async () => {
     const root = await tempRoot();
     const archivePath = path.join(root, "oversized-source.zip");
     const handle = await fsPromises.open(archivePath, "w");
@@ -653,12 +619,9 @@ describe("portable archive service", () => {
     await handle.close();
     const targetHome = path.join(root, "target");
     const target = path.join(targetHome, ".quotabar-win");
-    let parserCalls = 0;
 
-    await expect(stagePortableImport(archivePath, target, targetHome, {
-      openZip: () => { parserCalls += 1; throw new Error("parser should not run"); },
-    })).rejects.toThrow("Portable data import failed");
-    expect(parserCalls).toBe(0);
+    await expect(preflightPortableZip(archivePath)).rejects.toThrow("Invalid portable archive source");
+    await expect(stagePortableImport(archivePath, target, targetHome)).rejects.toThrow("Portable data import failed");
     await expect(access(targetHome)).rejects.toMatchObject({ code: "ENOENT" });
   });
 

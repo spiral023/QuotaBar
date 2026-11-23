@@ -14,6 +14,10 @@ sandboxed preloads cannot load local CommonJS modules. `build-assets.mjs` also
 refreshes the checked-in Chart.js vendor copy from the locked npm package.
 `dev:watch` rebuilds before restarting Electron, including the preload bundle.
 
+Portable archives are read and written only with `yauzl`/`yazl` (streaming, bounded).
+`adm-zip` is a development dependency: tests use it to inspect exported archives.
+It is not shipped in `app.asar`; keep it out of `dependencies`.
+
 The minimatch override applies only to affected versions 7–10 and selects the
 patched 11.x API. Legacy 3.x/5.x consumers are not overridden. Remove this override
 when all affected parent packages adopt patched releases. Verify lint, tests and
