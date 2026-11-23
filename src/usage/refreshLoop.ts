@@ -10,7 +10,7 @@ import { weeklyOnlyBudget, type WindowRatioTracker } from "./windowRatio";
 import type { BonusResetTracker } from "./bonusReset";
 import { snapshotEvent } from "../main/debugEvents";
 import { computeBackoffMs } from "./backoff";
-import { classifyFetchError } from "./fetchErrorClassifier";
+import { classifyFetchError, type FetchErrorClass } from "./fetchErrorClassifier";
 
 export type RefreshListener = (snapshots: UsageSnapshot[]) => void;
 
@@ -190,7 +190,11 @@ export class RefreshLoop {
         `${provider.displayName} timed out`,
       );
       this.consecutiveRateLimits.delete(provider.id);
-      if (this.offline) {
+      if (snapshot.errorKind === "dns" || snapshot.errorKind === "network") {
+        // The provider turned a transport failure into an error snapshot.
+        this.markOffline(provider.id, { kind: snapshot.errorKind, code: snapshot.errorCode ?? "" });
+      } else if (this.offline) {
+        // Any answer from the server - even an HTTP error - means the network is back.
         this.offline = false;
         this.recorder?.write({ kind: "network.recovered" });
         log.info(`network recovered [${ctx}]`);
@@ -209,15 +213,19 @@ export class RefreshLoop {
         return errorSnapshot(provider.id, toErrorMessage(error), "error");
       }
       const cls = classifyFetchError(error);
-      if (cls.kind === "dns") {
-        this.offline = true;
-        this.recorder?.write({ kind: "dns.lookup.failed", provider: provider.id, code: cls.code });
-      } else if (cls.kind === "network") {
-        this.offline = true;
-        this.recorder?.write({ kind: "network.check.failed", provider: provider.id, code: cls.code });
-      }
+      this.markOffline(provider.id, cls);
       log.warn(`${provider.id} refresh failed: ${toErrorMessage(error)} [${ctx}]`);
-      return errorSnapshot(provider.id, toErrorMessage(error), "error");
+      return errorSnapshot(provider.id, toErrorMessage(error), "error", cls);
+    }
+  }
+
+  private markOffline(providerId: string, cls: FetchErrorClass): void {
+    if (cls.kind === "dns") {
+      this.offline = true;
+      this.recorder?.write({ kind: "dns.lookup.failed", provider: providerId, code: cls.code });
+    } else if (cls.kind === "network") {
+      this.offline = true;
+      this.recorder?.write({ kind: "network.check.failed", provider: providerId, code: cls.code });
     }
   }
 }

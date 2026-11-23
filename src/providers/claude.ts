@@ -5,6 +5,7 @@ import { refreshClaudeToken } from "../auth/tokenRefresh";
 import { log } from "../main/logging";
 import { httpFetch, requestSignal } from "../main/httpClient";
 import { NotAuthenticatedError, RateLimitError, toErrorMessage } from "../shared/errors";
+import { classifyFetchError } from "../usage/fetchErrorClassifier";
 import { errorSnapshot, UsageProvider, UsageSnapshot, UsageWindow } from "./types";
 import type { ProviderSettingsLoader } from "./providerRegistry";
 
@@ -67,7 +68,7 @@ export class ClaudeProvider implements UsageProvider {
       const status = error instanceof NotAuthenticatedError ? "not_authenticated" : "error";
       // After a cycle timeout the refresh loop already logged the failure.
       if (!signal?.aborted) log.warn(`Claude fetch failed: ${toErrorMessage(error)}`);
-      return errorSnapshot("claude", toErrorMessage(error), status);
+      return errorSnapshot("claude", toErrorMessage(error), status, classifyFetchError(error));
     }
   }
 

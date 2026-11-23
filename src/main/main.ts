@@ -25,7 +25,7 @@ import { getRuntimeAgentRoots, mergeSettingsWithAgentRoots, refreshRuntimeWslAge
 import { configureAppIdentity, detectAppVariant, ensureWindowsNotificationShortcut } from "./appIdentity";
 import { applyStartupFlag } from "./autostart";
 import { parseRuntimeCliArgs } from "./cli";
-import { createIncrementalLegacyQuotaImport, createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
+import { createIncrementalLegacyQuotaImport, createPortableIngestionLifecycle, createPortableIngestionRunner, preparePortableData, preparePortableDataWithRetry, refreshPortableData, type PortableIngestionLifecycle } from "./debugBackfill";
 import { snapshotEvent } from "./debugEvents";
 import { DebugRecorder } from "./debugRecorder";
 import { DetailsWindowController } from "./detailsWindow";
@@ -190,7 +190,7 @@ if (!app.requestSingleInstanceLock()) {
       // reconciliation, quota migration). It is started only once the live path
       // below is up, so quota polling, notifications and the tray menu no longer
       // wait for it. Shutdown waits for it instead of cutting a commit short.
-      let portableStartupStopped = false;
+      const portableStartupStop = new AbortController();
       let portableStartup: Promise<void> = Promise.resolve();
       const legacyQuotaImport = createIncrementalLegacyQuotaImport({
         logDir: getDebugLogDir(),
@@ -200,7 +200,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       const startPortableData = async (): Promise<void> => {
         let portableReady = false;
-        await preparePortableData({
+        await preparePortableDataWithRetry(() => preparePortableData({
           beginMigration: () => markMigrationRunning(getPortableMigrationPath()),
           ingestProviderEvents: ingestPortableSources,
           readLegacyRecords: () => readBackfillDayRecords(getDebugLogDir()),
@@ -223,12 +223,20 @@ if (!app.requestSingleInstanceLock()) {
           onStageComplete: (stage, durationMs, count) => {
             log.info(`Portable data stage=${stage} count=${count} durationMs=${durationMs}`);
           },
+        }), {
+          stopSignal: portableStartupStop.signal,
+          // preparePortableData and the migration-state transitions only throw
+          // fixed, path-free boundary messages (stage + errno code).
+          onRetry: (err, attempt, delayMs) => {
+            const reason = err instanceof Error ? err.message : `Portable data preparation failed${errnoSuffix(err)}`;
+            log.warn(`${reason}; attempt ${attempt}, retrying in ${Math.round(delayMs / 1000)}s`);
+          },
         }).then((result) => {
           portableReady = result.status === "complete";
         }).catch((err: unknown) => {
           log.warn(`Portable data preparation failed${errnoSuffix(err)}`);
         });
-        if (portableReady && !portableStartupStopped) {
+        if (portableReady && !portableStartupStop.signal.aborted) {
           portableIngestionLifecycle = createPortableIngestionLifecycle(createPortableIngestionRunner(async () => {
             await refreshPortableData({
               readCompleteRevision: () => readCompleteMigrationRevision(getPortableMigrationPath()),
@@ -362,7 +370,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       const drainShutdown = createShutdownDrain({
         stopIngestion: async () => {
-          portableStartupStopped = true;
+          portableStartupStop.abort();
           await portableStartup;
           const lifecycle = portableIngestionLifecycle;
           portableIngestionLifecycle = undefined;

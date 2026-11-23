@@ -3,6 +3,7 @@ import { log } from "../main/logging";
 import { httpFetch, requestSignal } from "../main/httpClient";
 import { redactObject } from "../shared/redaction";
 import { NotAuthenticatedError, RateLimitError, toErrorMessage } from "../shared/errors";
+import { classifyFetchError } from "../usage/fetchErrorClassifier";
 import { parseRetryAfterMs } from "./claude";
 import { errorSnapshot, UsageProvider, UsageSnapshot, UsageWindow } from "./types";
 import type { ProviderSettingsLoader } from "./providerRegistry";
@@ -62,7 +63,7 @@ export class CodexProvider implements UsageProvider {
       const status = error instanceof NotAuthenticatedError ? "not_authenticated" : "error";
       // After a cycle timeout the refresh loop already logged the failure.
       if (!signal?.aborted) log.warn(`Codex fetch failed: ${toErrorMessage(error)}`);
-      return errorSnapshot("codex", toErrorMessage(error), status);
+      return errorSnapshot("codex", toErrorMessage(error), status, classifyFetchError(error));
     }
   }
 

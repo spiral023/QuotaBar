@@ -511,3 +511,47 @@ describe("RefreshLoop cycle timeout", () => {
     expect(seen?.aborted).toBe(false);
   });
 });
+
+describe("RefreshLoop network state from provider snapshots", () => {
+  function snapshotWith(kind?: "dns" | "network", code?: string): UsageSnapshot {
+    return {
+      provider: "claude",
+      status: kind ? "error" : "ok",
+      windows: [],
+      updatedAt: new Date().toISOString(),
+      ...(kind ? { errorMessage: "fetch failed", errorKind: kind, errorCode: code } : {}),
+    };
+  }
+
+  it("detects an outage that the provider reported as an error snapshot", async () => {
+    const results = [snapshotWith("dns", "ENOTFOUND"), snapshotWith("network", "ECONNRESET"), snapshotWith()];
+    const provider = makeProvider("claude", async () => results.shift()!);
+    const events: any[] = [];
+    const loop = new RefreshLoop([provider], new UsageStore(), 60, 10_000, undefined, { write: (e: any) => events.push(e) } as any);
+
+    await loop.refreshNow();
+    expect(events.filter(e => e.kind === "dns.lookup.failed")).toEqual([{ kind: "dns.lookup.failed", provider: "claude", code: "ENOTFOUND" }]);
+
+    await loop.refreshNow();
+    expect(events.some(e => e.kind === "network.check.failed" && e.code === "ECONNRESET")).toBe(true);
+    expect(events.some(e => e.kind === "network.recovered")).toBe(false);
+
+    await loop.refreshNow();
+    expect(events.filter(e => e.kind === "network.recovered")).toHaveLength(1);
+  });
+
+  it("treats an HTTP error answer as a recovered network", async () => {
+    const results: UsageSnapshot[] = [
+      snapshotWith("network", "ETIMEDOUT"),
+      { provider: "claude", status: "error", windows: [], updatedAt: new Date().toISOString(), errorMessage: "HTTP 500" },
+    ];
+    const provider = makeProvider("claude", async () => results.shift()!);
+    const events: any[] = [];
+    const loop = new RefreshLoop([provider], new UsageStore(), 60, 10_000, undefined, { write: (e: any) => events.push(e) } as any);
+
+    await loop.refreshNow();
+    await loop.refreshNow();
+
+    expect(events.map(e => e.kind).filter(kind => kind.startsWith("network"))).toEqual(["network.check.failed", "network.recovered"]);
+  });
+});

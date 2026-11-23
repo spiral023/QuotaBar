@@ -253,6 +253,60 @@ export async function refreshPortableData(
   }
 }
 
+/** Backoff between failed preparation attempts; the last delay repeats. */
+export const PORTABLE_PREPARATION_RETRY_DELAYS_MS: readonly number[] = [
+  30_000, 60_000, 2 * 60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000,
+];
+
+export interface PortablePreparationRetryOptions {
+  /** Ends the retry loop (app shutdown); an ongoing wait returns at once. */
+  stopSignal: AbortSignal;
+  delaysMs?: readonly number[];
+  wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+  onRetry?: (error: unknown, attempt: number, delayMs: number) => void;
+}
+
+/**
+ * Runs `prepare` until it completes or is superseded. A failure - a locked
+ * file, a transient I/O error at startup - is retried with backoff instead of
+ * leaving portable ingestion off for the whole session.
+ */
+export async function preparePortableDataWithRetry(
+  prepare: () => Promise<PreparePortableDataResult>,
+  options: PortablePreparationRetryOptions,
+): Promise<PreparePortableDataResult | { status: "stopped" }> {
+  const delays = options.delaysMs ?? PORTABLE_PREPARATION_RETRY_DELAYS_MS;
+  const wait = options.wait ?? abortableDelay;
+  for (let attempt = 1; ; attempt += 1) {
+    if (options.stopSignal.aborted) return { status: "stopped" };
+    try {
+      return await prepare();
+    } catch (error) {
+      if (options.stopSignal.aborted) return { status: "stopped" };
+      const delayMs = delays[Math.min(attempt, delays.length) - 1] ?? 0;
+      options.onRetry?.(error, attempt, delayMs);
+      await wait(delayMs, options.stopSignal);
+    }
+  }
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const done = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, milliseconds);
+    timer.unref?.();
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
 function transitionWasSuperseded(result: MigrationStateTransitionResult | void): boolean {
   return result?.status === "future_state" || result?.status === "not_running" || result?.status === "stale_revision";
 }
