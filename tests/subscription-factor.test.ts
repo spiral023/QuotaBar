@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { PricingEngine } from "../src/pricing/subscription-factor";
+import { PricingEngine, earliestTimestampMs } from "../src/pricing/subscription-factor";
 import { defaultSettings, type Settings } from "../src/config/settings";
 import type { ModelPricing } from "../src/pricing/cost-calculator";
 import {
@@ -120,13 +120,13 @@ describe("PricingEngine", () => {
     expect(result!.subscriptionCostUSD).toBeCloseTo(20 / daysInCurrentLocalMonth(), 6);
   });
 
-  it("returns Keine Logs for Codex when sessions dir is empty", async () => {
+  it("returns 'No logs available' for Codex when sessions dir is empty", async () => {
     const engine = new PricingEngine(settings, "/nonexistent/claude", "/nonexistent/codex", "/nonexistent/config.toml");
     const result = await engine.calculateFactor(makeSnapshot("codex"));
     expect(result).not.toBeUndefined();
     expect(result!.factor).toBeNull();
     expect(result!.isEstimate).toBe(true);
-    expect(result!.label).toBe("Keine Logs verfügbar");
+    expect(result!.label).toBe("No logs available");
     expect(result!.apiCostUSD).toBe(0);
     // No logs → early return with subscriptionCostUSD 0 and factor null.
     expect(result!.subscriptionCostUSD).toBe(0);
@@ -299,5 +299,19 @@ describe("PricingEngine", () => {
     } finally {
       await fs.rm(claudeDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("earliestTimestampMs", () => {
+  it("handles more entries than fit into call arguments", () => {
+    const base = Date.UTC(2026, 0, 1);
+    const timestamps = Array.from({ length: 300_000 }, (_, i) => new Date(base + (300_000 - i) * 1000).toISOString());
+    expect(earliestTimestampMs(timestamps)).toBe(base + 1000);
+  });
+
+  it("skips unparseable timestamps and returns undefined when none parse", () => {
+    expect(earliestTimestampMs(["garbage", "2026-02-01T00:00:00.000Z", ""])).toBe(Date.UTC(2026, 1, 1));
+    expect(earliestTimestampMs(["garbage"])).toBeUndefined();
+    expect(earliestTimestampMs([])).toBeUndefined();
   });
 });

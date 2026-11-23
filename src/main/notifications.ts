@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { Notification } from "electron";
 import type { NotificationConstructorOptions } from "electron";
 import type { UsageSnapshot } from "../providers/types";
+import { isNotificationRuleId } from "../config/settings";
 import type { NotificationSettings, PlanPeriod } from "../config/settings";
 import { NotificationEngine, NotificationStateStore } from "./notificationEngine";
 import type { NotificationEvent, NotificationOpenTab, PersistedNotificationState } from "./notificationEngine";
@@ -252,8 +253,9 @@ export class NotificationService {
     // For quotabar://open, "open" lands in hostname; defensively check pathname too.
     const action = (parsed.hostname || parsed.pathname.replace(/^\/+/, "")).toLowerCase();
     if (action === "mute") {
+      // The protocol is reachable from any web page, so only known rule IDs pass.
       const ruleId = parsed.searchParams.get("rule");
-      if (ruleId) void this.muteRuleFromNotification(ruleId);
+      if (ruleId && isNotificationRuleId(ruleId)) void this.muteRuleFromNotification(ruleId);
       return;
     }
     if (action === "update-install") {

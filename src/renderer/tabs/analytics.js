@@ -112,31 +112,7 @@ async function _fetchMinDate() {
 }
 
 function _presetDates(preset) {
-  const now   = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const pad   = n => String(n).padStart(2, '0');
-
-  switch (preset) {
-    case '7d':
-      return { from: new Date(now - 6  * 864e5).toISOString().slice(0, 10), to: today };
-    case '30d':
-      return { from: new Date(now - 29 * 864e5).toISOString().slice(0, 10), to: today };
-    case 'week': {
-      const d   = new Date(now);
-      const day = d.getDay();
-      d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
-      return { from: d.toISOString().slice(0, 10), to: today };
-    }
-    case 'month':
-      return { from: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`, to: today };
-    case 'year':
-      return { from: `${now.getFullYear()}-01-01`, to: today };
-    case 'all':
-    default: {
-      const fallback = new Date(now - 90 * 864e5).toISOString().slice(0, 10);
-      return { from: _minDate ?? fallback, to: today };
-    }
-  }
+  return QB.presetRange(preset, _minDate);
 }
 
 function _rangeKey() {
@@ -153,8 +129,8 @@ function _winLabel() {
 }
 
 function _buildControls(container) {
-  const today     = new Date().toISOString().slice(0, 10);
-  const ninetyAgo = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+  const today     = QB.localDayKey(new Date());
+  const ninetyAgo = QB.localDayKeyDaysAgo(new Date(), 90);
 
   // Default-Zeitraum: letzte 30 Tage (wie bisher).
   if (_activePreset === null && _from === null) {

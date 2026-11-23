@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { pathToFileURL } from "node:url";
+import { comparablePath } from "./helpers/paths";
 import { buildNotificationOptions, buildTestToastXml, buildToastXml, buildUpdateToastXml } from "../src/main/notifications";
 import type { NotificationEvent } from "../src/main/notificationEngine";
 
@@ -25,14 +26,14 @@ describe("buildNotificationOptions", () => {
 
     expect(options.title).toBe("Codex 5h: 82% used");
     expect(options.body).toBe("Quota usage has crossed 80%.");
-    expect(String(options.icon)).toBe(path.resolve("logos", "codex.png"));
+    expect(comparablePath(options.icon)).toBe(comparablePath(path.resolve("logos", "codex.png")));
   });
 
   it("uses the Claude logo for Claude events", () => {
     const options = buildNotificationOptions(event("claude", "Claude week: 97% used"));
 
     expect(options.title).toBe("Claude week: 97% used");
-    expect(String(options.icon)).toBe(path.resolve("logos", "claude.png"));
+    expect(comparablePath(options.icon)).toBe(comparablePath(path.resolve("logos", "claude.png")));
   });
 
   it("uses English action labels", () => {

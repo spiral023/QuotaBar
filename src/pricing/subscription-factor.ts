@@ -9,6 +9,7 @@ import { aggregateClaudeEntries, readClaudeUsageEntriesForPeriod } from "./jsonl
 import { LiteLLMFetcher } from "./litellm-fetcher";
 import { HistoricalPricingResolver } from "./historical-pricing-resolver";
 import { periodSubCostUSD } from "./plan-cost";
+import { log } from "../main/logging";
 
 export class PricingEngine {
   private readonly fetcher: LiteLLMFetcher;
@@ -42,7 +43,8 @@ export class PricingEngine {
         case "codex": return await this.calculateCodexFactor(snapshot);
         default: return undefined;
       }
-    } catch {
+    } catch (error) {
+      log.warn(`Cost factor calculation failed for ${snapshot.provider}: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
     }
   }
@@ -86,7 +88,7 @@ export class PricingEngine {
       ? windowDays
       : computeActualDaysFromEntries(entries.map(e => e.timestamp));
     const sinceDay = localDayKey(billingStart.getTime() > 0 ? billingStart.getTime()
-      : (entries.length ? Math.min(...entries.map(e => new Date(e.timestamp).getTime())) : Date.now()));
+      : (earliestTimestampMs(entries.map(e => e.timestamp)) ?? Date.now()));
     const untilDay = localDayKey(Date.now());
     const needsFx = currentSettings.plans.some(p => p.provider === "claude" && p.currency === "EUR");
     if (needsFx) await sharedFxFetcher.ensureRange(sinceDay, untilDay);
@@ -131,7 +133,7 @@ export class PricingEngine {
         windowLabel,
         windowDays,
         calculationMode,
-        label: "Keine Logs verfügbar",
+        label: "No logs available",
       };
     }
     const configPaths = this.codexConfigPath ?? getCodexConfigPaths({ codexHomes: currentSettings.codexHomes ?? [] });
@@ -142,7 +144,7 @@ export class PricingEngine {
       ? windowDays
       : computeActualDaysFromEntries(events.map(e => e.timestamp));
     const sinceDay = localDayKey(billingStart.getTime() > 0 ? billingStart.getTime()
-      : (events.length ? Math.min(...events.map(e => new Date(e.timestamp).getTime())) : Date.now()));
+      : (earliestTimestampMs(events.map(e => e.timestamp)) ?? Date.now()));
     const untilDay = localDayKey(Date.now());
     const needsFx = currentSettings.plans.some(p => p.provider === "codex" && p.currency === "EUR");
     if (needsFx) await sharedFxFetcher.ensureRange(sinceDay, untilDay);
@@ -199,11 +201,25 @@ function resolveBillingStart(
   return { billingStart: new Date(0), windowLabel: "all", windowDays: 0, calculationMode: "actual-span" };
 }
 
+/**
+ * Earliest valid timestamp in epoch ms, or undefined when none parses.
+ * A loop instead of `Math.min(...values)`: spreading 100k+ log entries into
+ * call arguments overflows the V8 stack with a RangeError.
+ */
+export function earliestTimestampMs(timestamps: readonly string[]): number | undefined {
+  let earliest: number | undefined;
+  for (const timestamp of timestamps) {
+    const ms = new Date(timestamp).getTime();
+    if (Number.isNaN(ms)) continue;
+    if (earliest === undefined || ms < earliest) earliest = ms;
+  }
+  return earliest;
+}
+
 function computeActualDaysFromEntries(timestamps: string[]): number {
-  if (timestamps.length === 0) return 30;
-  const ms = timestamps.map(t => new Date(t).getTime()).filter(n => !isNaN(n));
-  if (ms.length === 0) return 30;
-  const spanDays = Math.ceil((Date.now() - Math.min(...ms)) / (24 * 3600 * 1000));
+  const earliest = earliestTimestampMs(timestamps);
+  if (earliest === undefined) return 30;
+  const spanDays = Math.ceil((Date.now() - earliest) / (24 * 3600 * 1000));
   return Math.max(1, spanDays);
 }
 

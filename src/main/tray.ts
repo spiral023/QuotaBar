@@ -62,11 +62,11 @@ export class TrayController {
     void this.rebuildMenu();
   }
 
-  /** Zeigt "Aktualisiere…" im Tooltip nach einem langen Sleep. Wird beim nächsten Refresh automatisch gelöscht. */
+  /** Shows "Refreshing…" in the tooltip after a long sleep; cleared automatically by the next refresh. */
   notifyStaleAfterResume(sleepSeconds: number): void {
     if (sleepSeconds >= STALE_RESUME_THRESHOLD_S) {
       this.isStaleAfterResume = true;
-      this.tray.setToolTip("QuotaBar – Aktualisiere…");
+      this.tray.setToolTip("QuotaBar – Refreshing…");
     }
   }
 

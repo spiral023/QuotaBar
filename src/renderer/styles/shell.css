@@ -160,6 +160,19 @@
       border-bottom-color: rgba(255,255,255,0.15);
     }
 
+    /* Shared portal tooltip for plain-text data-tip anchors (shared/tooltip.js) */
+    .qb-portal-tip {
+      position: fixed; z-index: 9999; max-width: 240px;
+      background: #0d1119; border: 1px solid var(--border-mid); border-radius: var(--r-btn);
+      padding: 8px 10px; font-size: 10px; line-height: 1.5; color: var(--t200);
+      white-space: pre-line; text-wrap: pretty;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.4);
+      opacity: 0; scale: 0.96; filter: blur(4px); pointer-events: none;
+      transition-property: opacity, scale, filter; transition-duration: 160ms;
+      transition-timing-function: cubic-bezier(0.2,0,0,1);
+    }
+    .qb-portal-tip.is-visible { opacity: 1; scale: 1; filter: blur(0); }
+
     /* Top Models Tabelle */
     .top-models-table {
       width: 100%; border-collapse: collapse; table-layout: fixed;

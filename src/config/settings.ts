@@ -109,6 +109,11 @@ export const defaultNotificationRules: NotificationRules = {
   missingPlan:              { enabled: true,  cooldownMinutes: 1440 },
 };
 
+/** True only for an own key of the rule table; rejects `__proto__`, `constructor` and other inherited names. */
+export function isNotificationRuleId(value: string): value is keyof NotificationRules {
+  return Object.hasOwn(defaultNotificationRules, value);
+}
+
 export const defaultNotificationSettings: NotificationSettings = {
   enabled: true,
   quietHours: { enabled: false, start: "22:30", end: "08:00" },

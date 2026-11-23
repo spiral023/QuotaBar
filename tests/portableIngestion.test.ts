@@ -1103,7 +1103,7 @@ function runIngestionChild(
   childId: string,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [vitestCli, "run", childFile, "--pool=forks", "--maxWorkers=1"], {
+    const child = spawn(process.execPath, [vitestCli, "run", childFile, "--maxWorkers=1"], {
       cwd: process.cwd(),
       env: {
         ...process.env,

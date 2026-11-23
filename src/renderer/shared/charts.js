@@ -285,7 +285,7 @@ QB.weeklyBudgetChart = function (ctx, series, forecast, windowEndIso) {
             autoSkip: false, // kein automatisches Ausdünnen der Wochentags-Labels
             maxRotation: 0,
             minRotation: 0,
-            callback: (v) => new Date(v).toLocaleDateString('de-DE', { weekday: 'short' }),
+            callback: (v) => new Date(v).toLocaleDateString('en-US', { weekday: 'short' }),
           },
         },
         y: {
@@ -299,7 +299,7 @@ QB.weeklyBudgetChart = function (ctx, series, forecast, windowEndIso) {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            title: (items) => new Date(items[0].parsed.x).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
+            title: (items) => new Date(items[0].parsed.x).toLocaleString('en-US', { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
             label: (item) => `${item.parsed.y.toFixed(1)} %`,
           },
         },

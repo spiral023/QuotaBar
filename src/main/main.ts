@@ -1,7 +1,7 @@
 import { app, shell } from "electron";
 import path from "node:path";
 import { getBonusStatePath, getClaudeProjectsDirs, getCodexConfigPaths, getCodexSessionsDirs, getDebugLogDir, getLegacyQuotaImportManifestPath, getPortableIngestStatePath, getPortableMigrationPath, getPortableQuotaDir, getPortableUsageDir, getUsageSnapshotCachePath, getWindowRatioPath } from "../config/paths";
-import { loadSettings, normalizeNotificationSettings, saveSettings } from "../config/settings";
+import { isNotificationRuleId, loadSettings, normalizeNotificationSettings, saveSettings } from "../config/settings";
 import { enrichPortableEventCosts } from "../portable/costEnrichment";
 import { ingestPortableUsage } from "../portable/ingestion";
 import { beginMigrationRefresh, beginMigrationRefreshRecovery, markMigrationComplete, markMigrationFailed, markMigrationRunning, migrateLegacyData, readCompleteMigrationRevision } from "../portable/migration";
@@ -287,7 +287,7 @@ if (!app.requestSingleInstanceLock()) {
         muteRule: async (ruleId: string) => {
           const current = await loadSettings();
           const rules = current.notifications.rules as unknown as Record<string, { enabled: boolean }>;
-          if (rules[ruleId]) rules[ruleId].enabled = false;
+          if (isNotificationRuleId(ruleId) && Object.hasOwn(rules, ruleId)) rules[ruleId].enabled = false;
           const merged = normalizeNotificationSettings(current.notifications);
           await saveSettings({ ...current, notifications: merged });
           return merged;
