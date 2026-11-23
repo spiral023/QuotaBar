@@ -219,12 +219,12 @@ describe("PricingEngine", () => {
       expect(result).not.toBeUndefined();
       expect(result!.apiCostUSD).toBeGreaterThan(0);
 
-      // haiku cache_read: 1M × $0.08/M = $0.08
+      // haiku cache_read: 1M × $0.10/M = $0.10
       // sonnet cache_read: 1M × $0.30/M = $0.30
-      // total: $0.38
-      // Using only haiku pricing for both would give $0.16 (too low)
+      // total: $0.40
+      // Using only haiku pricing for both would give $0.20 (too low)
       // Using only sonnet pricing for both would give $0.60 (too high)
-      expect(result!.apiCostUSD).toBeCloseTo(0.08 + 0.30, 2);
+      expect(result!.apiCostUSD).toBeCloseTo(0.10 + 0.30, 2);
     } finally {
       await fs.rm(claudeDir, { recursive: true, force: true });
     }
@@ -255,8 +255,8 @@ describe("PricingEngine", () => {
       const engine = new PricingEngine({ ...settings, costWindow: "7d" }, claudeDir);
       const result = await engine.calculateFactor(makeSnapshot("claude"));
       expect(result!.windowLabel).toBe("7d");
-      // Nur recentTs-Token sollen zählen — output 1000 tokens haiku = $0.004
-      expect(result!.apiCostUSD).toBeCloseTo(1000 * 4e-6, 5);
+      // Nur recentTs-Token sollen zählen — output 1000 tokens haiku = $0.005
+      expect(result!.apiCostUSD).toBeCloseTo(1000 * 5e-6, 5);
     } finally {
       await fs.rm(claudeDir, { recursive: true, force: true });
     }
