@@ -50,14 +50,7 @@ async function _fetchMinDate() {
   }
 }
 
-const PRESETS = [
-  { id: '7d',    label: 'Last 7 days' },
-  { id: '30d',   label: 'Last 30 days' },
-  { id: 'week',  label: 'This week' },
-  { id: 'month', label: 'This month' },
-  { id: 'year',  label: 'This year' },
-  { id: 'all',   label: 'All time' },
-];
+// Period presets come from QB.filterBar (shared/filter-bar.js).
 
 function _presetDates(preset) {
   return QB.presetRange(preset, _minDate);
@@ -69,50 +62,13 @@ function _buildControls(container) {
   if (_activePreset === null) _activePreset = '30d';
   const { from: fromDate } = _presetDates(_activePreset);
 
-  const presetOptions = PRESETS.map(p =>
-    `<option value="${p.id}"${_activePreset === p.id ? ' selected' : ''}>${p.label}</option>`
-  ).join('');
-
+  const fb = QB.filterBar;
   container.innerHTML = `
     <div class="hr-controls">
-      <div class="hr-ctrl-row1">
-        <div class="hr-select-wrap">
-          <select class="hr-preset-select" id="hr-preset" aria-label="Period" title="Select period">
-            <option value="custom" hidden${_activePreset ? '' : ' selected'}>Custom range</option>
-            ${presetOptions}
-          </select>
-          <svg class="hr-select-chevron" width="8" height="8" viewBox="0 0 8 8" fill="none"
-               stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M1.5 3 4 5.5 6.5 3"/>
-          </svg>
-        </div>
-        <div class="hr-date-pair">
-          <input class="hr-date-input" type="date" id="hr-from" value="${fromDate}" aria-label="From" title="Start date">
-          <span class="hr-date-sep" aria-hidden="true">–</span>
-          <input class="hr-date-input" type="date" id="hr-to" value="${today}" aria-label="To" title="End date">
-        </div>
-        <button class="hr-reload" id="hr-load-btn" title="Reload" aria-label="Reload">
-          <svg width="12" height="12" viewBox="0 0 14 14" fill="none"
-               stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M1.5 7a5.5 5.5 0 0 1 9.9-3.3"/>
-            <path d="M12.5 7a5.5 5.5 0 0 1-9.9 3.3"/>
-            <path d="M11 2.2 13 4l-2 1.8"/>
-            <path d="M3 11.8 1 10l2-1.8"/>
-          </svg>
-        </button>
-      </div>
+      ${fb.periodRowHtml({ prefix: 'hr', preset: _activePreset, from: fromDate, to: today, reload: true })}
       <div class="hr-ctrl-row2">
-        <div class="hr-seg" id="hr-agg-pills" role="group" aria-label="Resolution">
-          <button class="hr-seg-btn"        data-agg="hourly"  title="Hourly">Hr</button>
-          <button class="hr-seg-btn active" data-agg="daily"   title="Daily">Day</button>
-          <button class="hr-seg-btn"        data-agg="weekly"  title="Weekly">Wk</button>
-          <button class="hr-seg-btn"        data-agg="monthly" title="Monthly">Mo</button>
-        </div>
-        <div class="hr-seg" id="hr-prov-pills" role="group" aria-label="Provider">
-          <button class="hr-seg-btn active" data-prov="all">All</button>
-          <button class="hr-seg-btn hr-seg-claude" data-prov="claude"><span class="hr-seg-dot"></span>Claude</button>
-          <button class="hr-seg-btn hr-seg-codex"  data-prov="codex"><span class="hr-seg-dot"></span>Codex</button>
-        </div>
+        ${fb.resolutionSegHtml({ id: 'hr-agg-pills', active: 'daily' })}
+        ${fb.providerSegHtml({ id: 'hr-prov-pills', active: 'all' })}
         <button class="hr-tgl${_showEmpty ? ' active' : ''}" id="hr-empty-toggle"
                 title="Show empty time units" aria-pressed="${_showEmpty}">
           <svg width="11" height="11" viewBox="0 0 11 11" fill="none"
@@ -126,22 +82,13 @@ function _buildControls(container) {
     <div id="hr-results"></div>
   `;
 
-  const presetSelect = document.getElementById('hr-preset');
-  presetSelect?.addEventListener('change', () => {
-    if (presetSelect.value === 'custom') return;
-    _activePreset = presetSelect.value;
-    const { from, to } = _presetDates(_activePreset);
-    document.getElementById('hr-from').value = from;
-    document.getElementById('hr-to').value   = to;
-    _loadAndRender();
-  });
-
-  ['hr-from', 'hr-to'].forEach(id => {
-    document.getElementById(id)?.addEventListener('change', () => {
-      _activePreset = null;
-      if (presetSelect) presetSelect.value = 'custom';
+  fb.bindPeriod({
+    prefix: 'hr',
+    minDate: () => _minDate,
+    onChange: ({ preset }) => {
+      _activePreset = preset;
       _loadAndRender();
-    });
+    },
   });
 
   ['hr-agg-pills', 'hr-prov-pills'].forEach(groupId => {
