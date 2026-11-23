@@ -9,6 +9,9 @@ export default defineConfig({
       include: ["src/auth/**/*.ts", "src/portable/**/*.ts", "src/main/updateState.ts", "src/main/updater.ts", "src/main/analyticsActivity.ts"],
     },
     pool: "vmForks",
+    // Points os.homedir() at a temporary directory for every test file.
+    globalSetup: ["tests/setup/testHomeRoot.ts"],
+    setupFiles: ["tests/setup/isolateHome.ts"],
     // Several portable-store tests spawn real processes or build large fixtures
     // and legitimately take 3-4.5s. Under the default 5s budget they passed in
     // isolation but failed sporadically when the suite ran them in parallel, so

@@ -276,7 +276,7 @@ describe("PricingEngine", () => {
       const engine = new PricingEngine({ ...settings, costWindow: "30d" }, claudeDir);
       const result = await engine.calculateFactor(makeSnapshot("claude"));
       expect(result!.windowLabel).toBe("30d");
-      expect(result!.apiCostUSD).toBeCloseTo(500 * 4e-6, 5);
+      expect(result!.apiCostUSD).toBeCloseTo(500 * 5e-6, 5);
     } finally {
       await fs.rm(claudeDir, { recursive: true, force: true });
     }

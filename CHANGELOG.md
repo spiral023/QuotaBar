@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.4.3 - 2026-11-23
+
+### Fixes
+
+- Codex usage no longer counts a model call twice when Codex repeats its token count without new usage, for example after a context compaction. This affected about 0.6 % of Codex tokens. Usage already stored is not corrected.
+- Offline prices now cover every current Claude model. Opus 4.7 and 4.8 were priced at three times their real rate when LiteLLM was unreachable, Opus 5/5.5, Sonnet 4.6/5 and Fable had no price at all, and Haiku 4.5 was priced too low.
+- An offline price lookup no longer falls back to an older model version with a different price (for example Opus 4.8 to Opus 4).
+
+### Tests
+
+- Tests no longer read or write the real `~/.quotabar-win` folder. Before, running the suite could add test prices to the local price history, so later usage could be priced at an old offline rate.
+
+### Validation
+
+- Lint, 1,650 tests (1,643 run, seven child-fixture placeholders skipped) and production build passed. Online price lookups were checked against the current LiteLLM file for every locally stored model name and are unchanged.
+
+
 ## 2.4.2 - 2026-11-23
 
 ### Fixes
