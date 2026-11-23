@@ -535,13 +535,7 @@ function _bindTokenKpiTooltip() {
   const card = document.getElementById('hr-kpi-tokens');
   if (!card) return;
 
-  let tip = document.getElementById('hr-kpi-tok-tip');
-  if (!tip) {
-    tip = document.createElement('div');
-    tip.id = 'hr-kpi-tok-tip';
-    tip.className = 'hr-kpi-tok-tip';
-    document.body.appendChild(tip);
-  }
+  const row = (label, value, extraClass = '') => `<div class="hr-tok-tip-row${extraClass}"><span class="hr-tok-tip-lbl">${label}</span><span class="hr-tok-tip-val">${QB.fmtTokens(value)}</span></div>`;
 
   function show() {
     const inp     = parseInt(card.dataset.inp,     10) || 0;
@@ -550,57 +544,18 @@ function _bindTokenKpiTooltip() {
     const ccreate = parseInt(card.dataset.ccreate, 10) || 0;
     const total   = inp + out + cread + ccreate;
 
-    tip.innerHTML = `
-      <div class="hr-tok-tip-row">
-        <span class="hr-tok-tip-lbl">Input</span>
-        <span class="hr-tok-tip-val">${QB.fmtTokens(inp)}</span>
-      </div>
-      <div class="hr-tok-tip-row">
-        <span class="hr-tok-tip-lbl">Output</span>
-        <span class="hr-tok-tip-val">${QB.fmtTokens(out)}</span>
-      </div>
-      <div class="hr-tok-tip-row">
-        <span class="hr-tok-tip-lbl">Cache Read</span>
-        <span class="hr-tok-tip-val">${QB.fmtTokens(cread)}</span>
-      </div>
-      ${ccreate > 0 ? `
-      <div class="hr-tok-tip-row">
-        <span class="hr-tok-tip-lbl">Cache Create</span>
-        <span class="hr-tok-tip-val">${QB.fmtTokens(ccreate)}</span>
-      </div>` : ''}
-      <hr class="hr-tok-tip-divider">
-      <div class="hr-tok-tip-row hr-tok-tip-total">
-        <span class="hr-tok-tip-lbl">Total</span>
-        <span class="hr-tok-tip-val">${QB.fmtTokens(total)}</span>
-      </div>
-    `;
-
-    const r  = card.getBoundingClientRect();
-    tip.style.visibility = 'hidden';
-    tip.style.opacity    = '0';
-    tip.classList.add('is-visible');
-    const tw = tip.offsetWidth;
-    const th = tip.offsetHeight;
-    tip.classList.remove('is-visible');
-    tip.style.visibility = '';
-    tip.style.opacity    = '';
-
-    let left = r.left + r.width / 2 - tw / 2;
-    left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
-    let top = r.top - th - 9;
-    tip.style.transformOrigin = 'bottom center';
-    if (top < 6) { top = r.bottom + 9; tip.style.transformOrigin = 'top center'; }
-    tip.style.left = `${Math.round(left)}px`;
-    tip.style.top  = `${Math.round(top)}px`;
-    tip.classList.add('is-visible');
-  }
-
-  function hide() {
-    tip.classList.remove('is-visible');
+    // Values are parsed integers formatted by QB.fmtTokens; labels are constants.
+    const html = row('Input', inp)
+      + row('Output', out)
+      + row('Cache Read', cread)
+      + (ccreate > 0 ? row('Cache Create', ccreate) : '')
+      + '<hr class="hr-tok-tip-divider">'
+      + row('Total', total, ' hr-tok-tip-total');
+    QB.portalTip?.show(card, null, { variant: 'rows', html });
   }
 
   card.addEventListener('mouseenter', show);
-  card.addEventListener('mouseleave', hide);
+  card.addEventListener('mouseleave', () => QB.portalTip?.hide());
 }
 
 })();

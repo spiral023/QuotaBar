@@ -711,7 +711,7 @@ function _buildStats(data) {
 function _statTileHtml(t) {
   const tip = _statTooltip(t.lbl);
   const tipAttrs = tip
-    ? ` tabindex="0" aria-label="${QB.esc(`${t.lbl}: ${tip}`)}" data-an-tip="${QB.esc(tip)}"`
+    ? ` tabindex="0" aria-label="${QB.esc(`${t.lbl}: ${tip}`)}" data-tip="${QB.esc(tip)}"`
     : '';
   return `
     <div class="an-stat-tile${tip ? ' an-stat-tip' : ''}"${tipAttrs}>
@@ -721,53 +721,9 @@ function _statTileHtml(t) {
   `;
 }
 
-function _ensureAnalyticsTooltipEl() {
-  let tip = document.getElementById('an-kpi-tooltip');
-  if (!tip) {
-    tip = document.createElement('div');
-    tip.id = 'an-kpi-tooltip';
-    tip.className = 'hr-kpi-tok-tip an-kpi-tooltip';
-    document.body.appendChild(tip);
-  }
-  return tip;
-}
-
-function _showAnalyticsTooltip(tip, anchor) {
-  tip.textContent = anchor.dataset.anTip || '';
-  const r = anchor.getBoundingClientRect();
-  tip.style.visibility = 'hidden';
-  tip.style.opacity = '0';
-  tip.classList.add('is-visible');
-  const tw = tip.offsetWidth;
-  const th = tip.offsetHeight;
-  tip.classList.remove('is-visible');
-  tip.style.visibility = '';
-  tip.style.opacity = '';
-
-  let left = r.left + r.width / 2 - tw / 2;
-  left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
-  let top = r.top - th - 9;
-  tip.style.transformOrigin = 'bottom center';
-  if (top < 6) { top = r.bottom + 9; tip.style.transformOrigin = 'top center'; }
-  tip.style.left = `${Math.round(left)}px`;
-  tip.style.top = `${Math.round(top)}px`;
-  tip.classList.add('is-visible');
-}
-
-function _hideAnalyticsTooltip(tip) {
-  tip.classList.remove('is-visible');
-}
-
+// Stat tiles re-render via innerHTML; the delegated portal tooltip binds once per container.
 function _bindAnalyticsStatTooltips(root) {
-  const anchors = root.querySelectorAll('[data-an-tip]');
-  if (!anchors.length) return;
-  const tip = _ensureAnalyticsTooltipEl();
-  anchors.forEach(anchor => {
-    anchor.addEventListener('mouseenter', () => _showAnalyticsTooltip(tip, anchor));
-    anchor.addEventListener('mouseleave', () => _hideAnalyticsTooltip(tip));
-    anchor.addEventListener('focusin', () => _showAnalyticsTooltip(tip, anchor));
-    anchor.addEventListener('focusout', () => _hideAnalyticsTooltip(tip));
-  });
+  QB.portalTip?.bindDataTips(root, '.an-stat-tip[data-tip]');
 }
 
 function _buildWeekdayBars(data) {

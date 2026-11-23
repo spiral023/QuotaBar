@@ -310,38 +310,6 @@ function attrEscape(s) {
   return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Tooltip portal, avoiding overflow clipping in accordion and scroll containers.
-
-function ensureTooltipEl() {
-  let el = document.getElementById('notif-tooltip-float');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'notif-tooltip-float';
-    el.className = 'notif-tooltip-float';
-    document.body.appendChild(el);
-  }
-  return el;
-}
-
-function showTooltip(tip, anchor) {
-  tip.textContent = anchor.dataset.tip || '';
-  const r = anchor.getBoundingClientRect();
-  const tw = tip.offsetWidth;
-  const th = tip.offsetHeight;
-  let left = r.left + r.width / 2 - tw / 2;
-  left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
-  let top = r.top - th - 9;
-  tip.style.transformOrigin = 'bottom center';
-  if (top < 6) { top = r.bottom + 9; tip.style.transformOrigin = 'top center'; }
-  tip.style.left = `${Math.round(left)}px`;
-  tip.style.top = `${Math.round(top)}px`;
-  tip.classList.add('is-visible');
-}
-
-function hideTooltip(tip) {
-  tip.classList.remove('is-visible');
-}
-
 // Event binding.
 
 function bindNotificationsEvents(wrap) {
@@ -361,16 +329,10 @@ function bindNotificationsEvents(wrap) {
     head.addEventListener('click', () => head.closest('.notif-panel').classList.toggle('is-open'));
   });
 
-  // Tooltips rendered as a body-level portal to avoid overflow clipping
-  const tip = ensureTooltipEl();
-  wrap.querySelectorAll('.notif-tip').forEach(el => {
-    el.addEventListener('mouseenter', () => showTooltip(tip, el));
-    el.addEventListener('mouseleave', () => hideTooltip(tip));
-    el.addEventListener('focusin',  () => showTooltip(tip, el));
-    el.addEventListener('focusout', () => hideTooltip(tip));
-  });
+  // Shared body-level portal tooltip (no overflow clipping); binding is idempotent per container.
+  QB.portalTip?.bindDataTips(wrap, '.notif-tip');
   // Hide while scrolling so the tooltip does not remain detached from its anchor
-  wrap.addEventListener('scroll', () => hideTooltip(tip), { passive: true });
+  if (QB.portalTip) wrap.addEventListener('scroll', QB.portalTip.hide, { passive: true });
 
   // Master switch updates the paused badge
   const master = wrap.querySelector('#notif-master');

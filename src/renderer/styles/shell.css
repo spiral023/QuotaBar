@@ -162,7 +162,7 @@
 
     /* Shared portal tooltip for plain-text data-tip anchors (shared/tooltip.js) */
     .qb-portal-tip {
-      position: fixed; z-index: 9999; max-width: 240px;
+      position: fixed; z-index: 9999; max-width: min(240px, calc(100vw - 12px));
       background: #0d1119; border: 1px solid var(--border-mid); border-radius: var(--r-btn);
       padding: 8px 10px; font-size: 10px; line-height: 1.5; color: var(--t200);
       white-space: pre-line; text-wrap: pretty;
@@ -172,6 +172,8 @@
       transition-timing-function: cubic-bezier(0.2,0,0,1);
     }
     .qb-portal-tip.is-visible { opacity: 1; scale: 1; filter: blur(0); }
+    /* Label/value rows (History token breakdown); markup whitespace must not break lines */
+    .qb-portal-tip--rows { white-space: normal; min-width: 150px; line-height: 1.4; }
 
     /* Top Models Tabelle */
     .top-models-table {
