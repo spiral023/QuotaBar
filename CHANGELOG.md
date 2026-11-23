@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.4.1 - 2026-11-23
+
+### Security
+
+- Accept only known notification rule IDs from `quotabar://mute` links, so a crafted link can no longer modify shared object prototypes in the main process.
+
+### Fixes
+
+- Editing a subscription plan no longer shifts its start and end time by the UTC offset on every save.
+- Date range presets in History, Analytics and Models now end on the local day and no longer drift across daylight saving changes.
+- The Window budget section on the Live tab expands and collapses again; its inline handler was blocked by the content security policy.
+- Explanatory tooltips on the Live tab (window budget, bonus week, cost window) now appear, rendered as portal tooltips.
+- The cost factor no longer disappears for very large log histories (all-time window) because of a call stack overflow; calculation failures are now logged.
+- Replace remaining German UI text with English, including the tray tooltip after resume, plan end markers, empty states and weekday labels.
+
+### Validation
+
+- Strict typechecking, lint, 1,580 tests (1,573 run, seven child-fixture placeholders skipped) and production build passed. Live tab toggle, tooltips and the plan editor were verified in a real Electron window.
+
+
 ## 2.4.0 - 2026-11-14
 
 ### Security

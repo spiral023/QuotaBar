@@ -448,7 +448,7 @@
       // would replay the staggered reveal animation on every poll.
       tbody.classList.remove('reveal');
       if (!s.topModels?.length) {
-        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--t400);text-align:center">Keine Daten</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--t400);text-align:center">No data</td></tr>';
         return;
       }
       tbody.innerHTML = s.topModels.map(m =>

@@ -70,7 +70,7 @@ export function planChangePoints(
     if (p.endsAt) {
       const endDay = p.endsAt.slice(0, 10);
       const replaced = mine.some(q => q.id !== p.id && q.startsAt.slice(0, 10) === endDay);
-      if (inRange(endDay) && !replaced) pts.push({ day: endDay, provider, label: `${p.name} endet` });
+      if (inRange(endDay) && !replaced) pts.push({ day: endDay, provider, label: `${p.name} ends` });
     }
   }
   return pts.sort((a, b) => a.day.localeCompare(b.day));

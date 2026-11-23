@@ -42,29 +42,13 @@ window.QB = window.QB || {};
     ['hourly', 'Hr'], ['daily', 'Day'], ['weekly', 'Wk'], ['monthly', 'Mo'],
   ];
 
-  function pad2(n) { return String(n).padStart(2, '0'); }
-
   function minDataDate() {
     return (_data && _data.days.length > 0) ? _data.days[0].date : null;
   }
 
-  // Liefert { from, to } für ein Preset (analog History).
+  // { from, to } for a preset; shared with History and Analytics.
   function presetDates(preset) {
-    const now = new Date();
-    const today = now.toISOString().slice(0, 10);
-    switch (preset) {
-      case '7d':  return { from: new Date(now - 6  * 864e5).toISOString().slice(0, 10), to: today };
-      case '30d': return { from: new Date(now - 29 * 864e5).toISOString().slice(0, 10), to: today };
-      case 'week': {
-        const d = new Date(now); const day = d.getDay();
-        d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
-        return { from: d.toISOString().slice(0, 10), to: today };
-      }
-      case 'month': return { from: `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`, to: today };
-      case 'year':  return { from: `${now.getFullYear()}-01-01`, to: today };
-      case 'all':
-      default:      return { from: minDataDate() ?? new Date(now - 89 * 864e5).toISOString().slice(0, 10), to: today };
-    }
+    return QB.presetRange(preset, minDataDate());
   }
 
   const COLUMNS_COMPACT = [

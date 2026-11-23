@@ -83,10 +83,19 @@ function _fmtDate(s) {
   return new Date(s).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: '2-digit' });
 }
 
-function _nowLocalIso() {
-  const d = new Date(); d.setSeconds(0, 0);
+// `datetime-local` inputs show and return local wall-clock time without a zone.
+// Stored plans are UTC ISO strings, so slicing them would display UTC and the
+// submit path would re-read it as local time, shifting the plan on every save.
+function _toLocalInputValue(value) {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
   const p = (v) => String(v).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function _nowLocalIso() {
+  return _toLocalInputValue(new Date());
 }
 
 /* ── Rendering ─────────────────────────────────────────────── */
@@ -235,7 +244,7 @@ function _renderEditor() {
         <span class="pl-amt-wrap">
           <input id="pl-amount" class="pl-input pl-input-num" type="number" min="0" step="1"
                  inputmode="decimal" value="${e.amount}" placeholder="0">
-          <span class="pl-cur-toggle" role="group" aria-label="Währung">
+          <span class="pl-cur-toggle" role="group" aria-label="Currency">
             <button type="button" class="pl-cur-btn${e.currency === 'USD' ? ' active' : ''}" data-cur="USD">$</button>
             <button type="button" class="pl-cur-btn${e.currency === 'EUR' ? ' active' : ''}" data-cur="EUR">€</button>
           </span>
@@ -248,11 +257,11 @@ function _renderEditor() {
           <span class="pl-f-lbl">Start
             <button type="button" class="pl-f-link" id="pl-start-begin" title="Set first recorded usage day for ${prov.label}">since start</button>
           </span>
-          <input id="pl-start" class="pl-input" type="datetime-local" value="${(e.startsAt || '').slice(0, 16)}">
+          <input id="pl-start" class="pl-input" type="datetime-local" value="${_toLocalInputValue(e.startsAt)}">
         </label>
         <label class="pl-f">
           <span class="pl-f-lbl">End <span class="pl-f-hint">empty = ongoing</span></span>
-          <input id="pl-end" class="pl-input" type="datetime-local" value="${(e.endsAt || '').slice(0, 16)}">
+          <input id="pl-end" class="pl-input" type="datetime-local" value="${_toLocalInputValue(e.endsAt)}">
         </label>
       </div>
 

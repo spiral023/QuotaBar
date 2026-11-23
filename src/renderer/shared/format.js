@@ -30,7 +30,7 @@ QB.formatCountdown = function formatCountdown(isoStr) {
 QB.fmtDate = function fmtDate(isoStr) {
   if (!isoStr) return '—';
   const d = new Date(isoStr);
-  return d.toLocaleDateString('de-AT', { day: '2-digit', month: 'short' });
+  return d.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
 };
 
 QB.fmtUSD = function fmtUSD(n) {

@@ -257,8 +257,7 @@ function windowBudgetCollapseHtml(snap) {
   let isOpen = false;
   try { isOpen = localStorage.getItem('windowBudgetOpen') === '1'; } catch {}
   return `<div class="token-collapse wb-collapse${isOpen ? ' open' : ''}" id="${id}">
-    <button class="token-toggle" aria-expanded="${isOpen}"
-            onclick="QB.toggleWindowBudget('${id}', '${QB.esc(snap.provider)}')">
+    <button type="button" class="token-toggle" aria-expanded="${isOpen}" data-wb-toggle="${id}">
       <svg class="toggle-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none">
         <path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.5"
               stroke-linecap="round" stroke-linejoin="round"/>
@@ -351,7 +350,7 @@ function costBadgeHtml(cf) {
     ? `API cost ÷ proportional subscription price\nfor ${cf.windowLabel || 'this window'} (${cf.windowDays ?? '?'}d).\n1× = subscription equivalent.`
     : '';
   const infoIcon = roiTip
-    ? `<i class="info-icon" data-tip="${roiTip}" style="display:inline-flex;margin-left:3px">i</i>`
+    ? `<i class="info-icon" data-tip="${QB.esc(roiTip)}" style="display:inline-flex;margin-left:3px">i</i>`
     : '';
   if (cf.factor === null) return `<span class="badge b-cost">${QB.esc(cf.label || 'No logs')}</span>`;
   const pre = cf.isEstimate ? '~' : '';
@@ -470,7 +469,7 @@ QB.toggleTokenSection = function toggleTokenSection(id) {
   try { localStorage.setItem('tokenDetailsOpen', isOpen ? '1' : '0'); } catch {}
 };
 
-QB.toggleWindowBudget = function toggleWindowBudget(id, _provider) {
+QB.toggleWindowBudget = function toggleWindowBudget(id) {
   const container = document.getElementById(id);
   if (!container) return;
   const isOpen = container.classList.toggle('open');
@@ -479,8 +478,25 @@ QB.toggleWindowBudget = function toggleWindowBudget(id, _provider) {
   try { localStorage.setItem('windowBudgetOpen', isOpen ? '1' : '0'); } catch {}
 };
 
+// The CSP (`script-src 'self'`) blocks inline on* handlers, so card controls
+// and tooltips are wired once on the persistent #content container.
+let _liveDelegatesBound = false;
+function bindLiveDelegates(el) {
+  if (_liveDelegatesBound) return;
+  _liveDelegatesBound = true;
+  el.addEventListener('click', (event) => {
+    const toggle = event.target instanceof Element ? event.target.closest('[data-wb-toggle]') : null;
+    if (!toggle || !el.contains(toggle)) return;
+    QB.toggleWindowBudget(toggle.getAttribute('data-wb-toggle'));
+  });
+  // .info-icon renders its own CSS tooltip from the same attribute.
+  QB.portalTip?.bindDataTips(el, '[data-tip]:not(.info-icon)');
+}
+
 QB.renderLive = function renderLive(snapshots) {
   const el = document.getElementById('content');
+  bindLiveDelegates(el);
+  QB.portalTip?.hide();
   const wbGen = ++_wbGeneration;
   QB.clearPortableDataRetry('window-budget');
   _wbDataPromise = null;

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { comparablePath } from "./helpers/paths";
 
 type BrowserWindowOptions = {
   webPreferences?: {
@@ -59,7 +60,7 @@ describe("BrowserWindow renderer security", () => {
     const prefs = windows[0].webPreferences;
     expect(prefs?.nodeIntegration).toBe(false);
     expect(prefs?.contextIsolation).toBe(true);
-    expect(prefs?.preload).toBe(path.join(process.cwd(), "src", "main", "preload.js"));
+    expect(comparablePath(prefs?.preload)).toBe(comparablePath(path.join(process.cwd(), "src", "main", "preload.js")));
   });
 
   it("hardens the onboarding window renderer and loads the compiled preload", async () => {
@@ -93,6 +94,6 @@ describe("BrowserWindow renderer security", () => {
     const prefs = windows[0].webPreferences;
     expect(prefs?.nodeIntegration).toBe(false);
     expect(prefs?.contextIsolation).toBe(true);
-    expect(prefs?.preload).toBe(path.join(process.cwd(), "src", "main", "preload.js"));
+    expect(comparablePath(prefs?.preload)).toBe(comparablePath(path.join(process.cwd(), "src", "main", "preload.js")));
   });
 });
