@@ -24,7 +24,7 @@ import {
   type PressureDist,
   type WindowHistoryEntry,
 } from "../usage/windowHistory";
-import { resetsAtChanged } from "../usage/windowRatio";
+import { isFiveHourResetConfirmedByDrop } from "../usage/weeklyTransition";
 import { buildActivityMetrics } from "./analyticsActivity";
 import {
   aggregateSessionDurationBuckets,
@@ -516,7 +516,6 @@ function portableDailyRecords(events: readonly PortableUsageEvent[]): BackfillDa
   return [...grouped.values()];
 }
 
-const FIVE_HOUR_RESET_DROP_PCT = 15;
 const WEEKLY_SPIKE_DELTA_PCT = 20;
 
 interface PortableSeriesState {
@@ -566,11 +565,10 @@ function buildWeeklySeriesForProviders(
       }
       if (typeof fiveHour?.usedPercent === "number") {
         const resetsAt = fiveHour.resetsAt ?? null;
-        if (resetsAtChanged(state.previousFiveResetsAt, resetsAt)
-          && state.previousFivePct !== null && fiveHour.usedPercent < state.previousFivePct) {
-          state.resets.push(snapshot.fetchedAt);
-        } else if (state.previousFivePct !== null
-          && fiveHour.usedPercent < state.previousFivePct - FIVE_HOUR_RESET_DROP_PCT) {
+        const previous = state.previousFivePct === null
+          ? null
+          : { pct: state.previousFivePct, resetsAt: state.previousFiveResetsAt };
+        if (isFiveHourResetConfirmedByDrop(previous, { pct: fiveHour.usedPercent, resetsAt })) {
           state.resets.push(snapshot.fetchedAt);
         }
         state.previousFivePct = fiveHour.usedPercent;

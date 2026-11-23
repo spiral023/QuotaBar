@@ -1,5 +1,5 @@
 import { resetsAtChanged } from "./windowRatio";
-import { isBonusReset, isTransientWeeklySpike } from "./weeklyTransition";
+import { isBonusReset, isFiveHourResetByResetsAt, isTransientWeeklySpike, USED_WINDOW_MIN_PCT } from "./weeklyTransition";
 
 /**
  * Historie „genutzte vs. mögliche 5h-Fenster pro 7d-Fenster". Aus den
@@ -33,8 +33,8 @@ export interface HistoryObservation {
   weeklyResetsAt: string | null;
 }
 
-/** Ab diesem Spitzen-Füllgrad gilt ein 5h-Fenster als „genutzt". */
-export const USED_WINDOW_MIN_PCT = 5;
+/** Re-exported for existing consumers; defined with the 5h rules in weeklyTransition.ts. */
+export { USED_WINDOW_MIN_PCT };
 /** Mindest-Σ-Weekly-Bewegung, damit maxWindows einer Periode belastbar ist. */
 const MIN_PERIOD_WEEKLY_PCT = 5;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -121,7 +121,7 @@ function buildEntry(provider: string, p: Period): WindowHistoryEntry {
       started = true;
       curFiveReset = o.fiveResetsAt;
       curFivePeak = o.fivePct;
-    } else if (resetsAtChanged(curFiveReset, o.fiveResetsAt)) {
+    } else if (isFiveHourResetByResetsAt(curFiveReset, o.fiveResetsAt)) {
       flushFive();
       curFiveReset = o.fiveResetsAt;
       curFivePeak = o.fivePct;
@@ -218,7 +218,7 @@ export function buildFiveHourPressure(
       curReset = o.fiveResetsAt;
       curPeak = o.fivePct;
       curStart = o.ts;
-    } else if (resetsAtChanged(curReset, o.fiveResetsAt)) {
+    } else if (isFiveHourResetByResetsAt(curReset, o.fiveResetsAt)) {
       flush();
       curReset = o.fiveResetsAt;
       curPeak = o.fivePct;

@@ -2,11 +2,10 @@ import { createInterface } from "node:readline";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { resetsAtChanged } from "../usage/windowRatio";
+import { isFiveHourResetConfirmedByDrop } from "../usage/weeklyTransition";
 import { buildCurrentWindowUsage, type CurrentWindowObservation, type CurrentWindowUsage } from "../usage/windowBudgetRollup";
 
 const LIVE_LOG_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
-const RESET_DROP_PCT = 15;
 const SPIKE_DELTA_PCT = 20;
 export const GAP_THRESHOLD_MS = 60 * 60_000;
 export const WEEKLY_RESET_DROP_PCT = 15;
@@ -162,9 +161,8 @@ export async function readWeeklySeriesForProviders(
             // Codex idle windows roll resetsAt forward on every poll (ts+5h) while
             // usage stays flat/rising — only count a resetsAt change as a genuine
             // reset when usage also decreased (a real rollover empties the window).
-            if (resetsAtChanged(st.prevFiveResetsAt, fiveResetsAt) && st.prevFivePct !== null && five.usedPercent < st.prevFivePct) {
-              st.resets.push(ts);
-            } else if (st.prevFivePct !== null && five.usedPercent < st.prevFivePct - RESET_DROP_PCT) {
+            const previous = st.prevFivePct === null ? null : { pct: st.prevFivePct, resetsAt: st.prevFiveResetsAt };
+            if (isFiveHourResetConfirmedByDrop(previous, { pct: five.usedPercent, resetsAt: fiveResetsAt })) {
               st.resets.push(ts);
             }
             st.prevFivePct = five.usedPercent;
